@@ -6,3 +6,4 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [ ] Support conversion to TensorFlow saved model and TFLite.
 - [ ] Does not support quantization to INT8. For quantization, use the official TensorFlow converter to convert from saved_model to your own.
 - [ ] Files exceeding the Protocol Buffers file size limit of 2GB are not supported. Therefore, the external format is not supported at the initial stage of tool creation.
+- [ ] If there are ONNX OPs that are not supported by TensorFlow, use [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools) to replace them with harmless OPs in advance and then use this tool to convert them. In other words, you can convert any model with your efforts.
