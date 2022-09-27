@@ -101,7 +101,7 @@ def convert(
     if not os.path.exists(input_onnx_file_path):
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'The specified *.onnx file does not exist.' + \
+            f'The specified *.onnx file does not exist. ' +
             f'input_onnx_file_path: {input_onnx_file_path}'
         )
         sys.exit(1)
