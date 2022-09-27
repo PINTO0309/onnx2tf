@@ -1,0 +1,14 @@
+.vscode/
+build/
+dist/
+onnx2tf.egg-info/
+onnx2tf/debug/
+onnx2tf/saved_model/
+__pycache__/
+test.py
+
+*.onnx
+*.tflite
+*.npy
+*.txt
+saved_model/
