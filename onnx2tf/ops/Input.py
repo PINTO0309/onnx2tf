@@ -108,7 +108,10 @@ def make_node(
     elif len(shape) > 0:
         # Except scalar, 4D and 5D
         if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
-            error_msg = f'{Color.RED}ERROR:{Color.RESET} The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
+            error_msg = f'' +\
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\
+                f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not nchw_ncdhw_keep, error_msg
 
@@ -125,7 +128,10 @@ def make_node(
     else:
         # Scalar
         if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
-            error_msg = f'{Color.RED}ERROR:{Color.RESET} The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
+            error_msg = f''+\
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\
+                f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not nchw_ncdhw_keep, error_msg
 
