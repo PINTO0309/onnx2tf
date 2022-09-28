@@ -129,6 +129,7 @@ def convert(
             )
 
         # Nodes
+        # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
             optype = graph_node.op
             op = importlib.import_module(f'ops.{optype}')
