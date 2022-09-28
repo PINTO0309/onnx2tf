@@ -1,15 +1,8 @@
-import os
-import logging
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 import tensorflow as tf
-tf.random.set_seed(0)
-tf.get_logger().setLevel('INFO')
-tf.autograph.set_verbosity(0)
-tf.get_logger().setLevel(logging.ERROR)
 
 import onnx_graphsurgeon as gs
 from typing import Optional, List
