@@ -15,6 +15,23 @@ def make_node(
     tf_layers_dict: dict,
     keep_nchw_or_ncdhw_input_names: List[str],
 ):
+    """
+
+    Parameters
+    ----------
+    graph_input: gs.Variable
+        graph_surgeon Variable
+
+    tf_layers_dict: dict
+        optype, shape, dtype, tensorflow graph
+
+    keep_nchw_or_ncdhw_input_names: Optional[List[str]]
+        Holds the NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
+        If a nonexistent INPUT OP name is specified, it is ignored.\n
+        Valid only for 4D and 5D input tensors.\n\n
+        e.g. \n
+        --keep_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+    """
 
     shape = graph_input.shape
     dtype = graph_input.dtype
