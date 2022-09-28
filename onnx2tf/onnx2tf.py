@@ -136,7 +136,9 @@ def convert(
             graph_input.name for graph_input in graph.inputs
         ]
         inputs = [
-            layer_info['tf_node'] for opname, layer_info in tf_layers_dict.items() if opname in input_names
+            layer_info['tf_node'] \
+                for opname, layer_info in tf_layers_dict.items() \
+                    if opname in input_names
         ]
 
         # List Output
@@ -144,7 +146,9 @@ def convert(
             graph_output.name for graph_output in graph.outputs
         ]
         outputs = [
-            layer_info['tf_node'] for opname, layer_info in tf_layers_dict.items() if opname in output_names
+            layer_info['tf_node'] \
+                for opname, layer_info in tf_layers_dict.items() \
+                    if opname in output_names
         ]
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
@@ -160,7 +164,9 @@ def convert(
         tf.saved_model.save(concrete_func, output_folder_path)
 
         # TFLite
-        converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
+        converter = tf.lite.TFLiteConverter.from_concrete_functions(
+            [concrete_func]
+        )
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
