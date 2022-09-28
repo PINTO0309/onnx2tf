@@ -22,12 +22,16 @@ def make_node(
     tf_layers_dict: dict,
     keep_nchw_or_ncdhw_input_names: List[str],
 ):
+
+    shape = graph_input.shape
+    dtype = graph_input.dtype
+
     # Preserving Graph Structure (Dict)
     nchw_ncdhw_keep = False
     tf_layers_dict[graph_input.name] = {
         'optype': 'Input',
-        'shape': graph_input.shape,
-        'dtype': graph_input.dtype,
+        'shape': shape,
+        'dtype': dtype,
     }
     if len(graph_input.shape) == 4 or len(graph_input.shape) == 5:
         if graph_input.name in keep_nchw_or_ncdhw_input_names:
@@ -39,8 +43,8 @@ def make_node(
     tf_layers_dict[graph_input.name]['nchw_ncdhw_keep'] = nchw_ncdhw_keep
 
     # Generation of TF OP
-    shape = graph_input.shape
     if len(shape) == 4:
+        # 4D
         if not nchw_ncdhw_keep:
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.keras.Input(
@@ -51,6 +55,7 @@ def make_node(
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
                     name=graph_input.name,
+                    dtype=dtype,
                 )
         else:
             nchw = tf.keras.Input(
@@ -59,11 +64,13 @@ def make_node(
                 ],
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
                 name=graph_input.name,
+                dtype=dtype,
             )
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,3,1])
 
     elif len(shape) == 5:
+        # 5D
         if not nchw_ncdhw_keep:
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.keras.Input(
@@ -75,6 +82,7 @@ def make_node(
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
                     name=graph_input.name,
+                    dtype=dtype,
                 )
         else:
             ncdhw = tf.keras.Input(
@@ -83,11 +91,13 @@ def make_node(
                 ],
                 batch_size=shape[0],
                 name=graph_input.name,
+                dtype=dtype,
             )
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(ncdhw, perm=[0,2,3,4,1])
 
-    else:
+    elif len(shape) > 0:
+        # Except scalar, 4D and 5D
         if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
             error_msg = f'{Color.RED}ERROR:{Color.RESET} The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
             print(error_msg)
@@ -100,4 +110,19 @@ def make_node(
                 ],
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
                 name=graph_input.name,
+                dtype=dtype,
+            )
+
+    else:
+        # Scalar
+        if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
+            error_msg = f'{Color.RED}ERROR:{Color.RESET} The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
+            print(error_msg)
+            assert not nchw_ncdhw_keep, error_msg
+
+        tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf.keras.Input(
+                shape=shape,
+                name=graph_input.name,
+                dtype=dtype,
             )
