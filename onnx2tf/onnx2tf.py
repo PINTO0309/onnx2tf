@@ -2,48 +2,29 @@
 
 import os
 import sys
+import copy
+import logging
+import warnings
 
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=Warning)
 import random
 random.seed(0)
-
 import numpy as np
 np.random.seed(0)
-
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 import tensorflow as tf
 tf.random.set_seed(0)
-
+tf.get_logger().setLevel('INFO')
+tf.autograph.set_verbosity(0)
+tf.get_logger().setLevel(logging.ERROR)
 import onnx
 import onnx_graphsurgeon as gs
-
 from typing import Optional, List
 from argparse import ArgumentParser
 
-class Color:
-    BLACK          = '\033[30m'
-    RED            = '\033[31m'
-    GREEN          = '\033[32m'
-    YELLOW         = '\033[33m'
-    BLUE           = '\033[34m'
-    MAGENTA        = '\033[35m'
-    CYAN           = '\033[36m'
-    WHITE          = '\033[37m'
-    COLOR_DEFAULT  = '\033[39m'
-    BOLD           = '\033[1m'
-    UNDERLINE      = '\033[4m'
-    INVISIBLE      = '\033[08m'
-    REVERCE        = '\033[07m'
-    BG_BLACK       = '\033[40m'
-    BG_RED         = '\033[41m'
-    BG_GREEN       = '\033[42m'
-    BG_YELLOW      = '\033[43m'
-    BG_BLUE        = '\033[44m'
-    BG_MAGENTA     = '\033[45m'
-    BG_CYAN        = '\033[46m'
-    BG_WHITE       = '\033[47m'
-    BG_DEFAULT     = '\033[49m'
-    RESET          = '\033[0m'
-
+import importlib
+from utils.colors import Color
 
 def convert(
     input_onnx_file_path: Optional[str] = '',
@@ -116,7 +97,44 @@ def convert(
         onnx_graph = onnx.load(input_onnx_file_path)
     graph = gs.import_onnx(onnx_graph)
 
-    a=0
+    tf_layers_dict = {}
+
+    with graph.node_ids():
+
+        # Inputs
+        for graph_input in graph.inputs:
+            """
+            graph_input.shape: [1]
+            graph_input.dtype: dtype('float32')
+            graph_input.name: 'abs6_input'
+
+            graph_input.shape: [1, 3, 192, 256]
+            graph_input.dtype: dtype('float32')
+            graph_input.name: 'input'
+
+            graph_input.shape: [1, 3, 'height', 'width']
+            graph_input.dtype: dtype('float32')
+            graph_input.name: 'input'
+            """
+            op = importlib.import_module(f'ops.Input')
+            op.make_node(
+                graph_input=graph_input,
+                tf_layers_dict=tf_layers_dict,
+                keep_nchw_or_ncdhw_input_names=keep_nchw_or_ncdhw_input_names,
+            )
+
+
+
+
+
+
+        # # Nodes
+        # for graph_node in graph.nodes:
+        #     optype = graph_node.op
+        #     op = importlib.import_module(f'ops.{optype}')
+        #     op.make_node(graph_node, tf_layers_dict)
+
+        a=0
 
 
 def main():
