@@ -3,11 +3,10 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-
 import onnx_graphsurgeon as gs
-from typing import Optional, List
-
+from typing import List
 from utils.colors import Color
+
 
 def make_node(
     *,
@@ -32,12 +31,12 @@ def make_node(
         e.g. \n
         --keep_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
     """
+    nchw_ncdhw_keep = False
 
     shape = graph_input.shape
     dtype = graph_input.dtype
 
     # Preserving Graph Structure (Dict)
-    nchw_ncdhw_keep = False
     tf_layers_dict[graph_input.name] = {
         'optype': 'Input',
         'shape': shape,

@@ -129,12 +129,14 @@ def convert(
                 keep_nchw_or_ncdhw_input_names=keep_nchw_or_ncdhw_input_names,
             )
 
-        # # Nodes
-        # for graph_node in graph.nodes:
-        #     optype = graph_node.op
-        #     op = importlib.import_module(f'ops.{optype}')
-        #     op.make_node(graph_node, tf_layers_dict)
-
+        # Nodes
+        for graph_node in graph.nodes:
+            optype = graph_node.op
+            op = importlib.import_module(f'ops.{optype}')
+            op.make_node(
+                graph_node=graph_node,
+                tf_layers_dict=tf_layers_dict,
+            )
 
         # List "optype"="Input"
         input_names = [
