@@ -33,7 +33,7 @@ def convert(
     output_folder_path: Optional[str] = 'saved_model',
     keep_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     non_verbose: Optional[bool] = False,
-):
+) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
 
     Parameters
@@ -61,6 +61,11 @@ def convert(
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
         Default: False
+
+    Returns
+    ----------
+    model: tf.keras.Model
+        Model
     """
 
     # Either designation required
@@ -175,7 +180,7 @@ def convert(
         with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
             w.write(tflite_model)
 
-        a=0
+        return model
 
 
 def main():
@@ -216,7 +221,7 @@ def main():
     args = parser.parse_args()
 
     # Convert
-    tf_graph = convert(
+    model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         keep_nchw_or_ncdhw_input_names=args.keep_nchw_or_ncdhw_input_names,
