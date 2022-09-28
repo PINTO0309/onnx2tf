@@ -18,6 +18,7 @@ tf.random.set_seed(0)
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
 tf.get_logger().setLevel(logging.ERROR)
+
 import onnx
 import onnx_graphsurgeon as gs
 from typing import Optional, List
@@ -123,16 +124,50 @@ def convert(
                 keep_nchw_or_ncdhw_input_names=keep_nchw_or_ncdhw_input_names,
             )
 
-
-
-
-
-
         # # Nodes
         # for graph_node in graph.nodes:
         #     optype = graph_node.op
         #     op = importlib.import_module(f'ops.{optype}')
         #     op.make_node(graph_node, tf_layers_dict)
+
+
+        # List "optype"="Input"
+        input_names = [
+            graph_input.name for graph_input in graph.inputs
+        ]
+        inputs = [
+            layer_info['tf_node'] for opname, layer_info in tf_layers_dict.items() if opname in input_names
+        ]
+
+        # List Output
+        output_names = [
+            graph_output.name for graph_output in graph.outputs
+        ]
+        outputs = [
+            layer_info['tf_node'] for opname, layer_info in tf_layers_dict.items() if opname in output_names
+        ]
+
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        model.summary()
+
+        # Create concrete func
+        run_model = tf.function(lambda *inputs : model(inputs))
+        concrete_func = run_model.get_concrete_function(
+            *[tf.TensorSpec(tensor.shape, tensor.dtype) for tensor in model.inputs]
+        )
+
+        # saved_model
+        tf.saved_model.save(concrete_func, output_folder_path)
+
+        # TFLite
+        converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
+        converter.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS,
+            tf.lite.OpsSet.SELECT_TF_OPS,
+        ]
+        tflite_model = converter.convert()
+        with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
+            w.write(tflite_model)
 
         a=0
 

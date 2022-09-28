@@ -25,7 +25,7 @@ def make_node(
     # Preserving Graph Structure (Dict)
     nchw_ncdhw_keep = False
     tf_layers_dict[graph_input.name] = {
-        'optype': 'input',
+        'optype': 'Input',
         'shape': graph_input.shape,
         'dtype': graph_input.dtype,
     }
@@ -101,6 +101,3 @@ def make_node(
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
                 name=graph_input.name,
             )
-
-
-    print(f'Input created!')
