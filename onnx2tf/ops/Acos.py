@@ -11,7 +11,7 @@ def make_node(
     graph_node: gs.Node,
     tf_layers_dict: dict,
 ):
-    """Abs
+    """Acos
 
     Parameters
     ----------
@@ -35,7 +35,7 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.abs(
+        tf.math.acos(
             x=tf_layers_dict[graph_node_input.name]['tf_node'],
             name=graph_node.name,
         )
