@@ -23,8 +23,8 @@ def make_node(
     """
     graph_node_input: gs.Variable = graph_node.inputs[0]
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_input.shape
-    dtype = graph_node_input.dtype
+    shape = graph_node_output.shape
+    dtype = graph_node_output.dtype
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
