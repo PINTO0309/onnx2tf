@@ -61,6 +61,8 @@ def convert(
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
+        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
         Default: False
 
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
