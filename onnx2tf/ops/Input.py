@@ -13,6 +13,7 @@ def make_node(
     graph_input: gs.Variable,
     tf_layers_dict: dict,
     keep_nchw_or_ncdhw_input_names: List[str],
+    **kwargs: dict,
 ):
     """
 
@@ -42,7 +43,7 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
-    if len(graph_input.shape) == 4 or len(graph_input.shape) == 5:
+    if (len(graph_input.shape) == 4 or len(graph_input.shape) == 5) and keep_nchw_or_ncdhw_input_names:
         if graph_input.name in keep_nchw_or_ncdhw_input_names:
             nchw_ncdhw_keep = True
         else:
@@ -107,7 +108,7 @@ def make_node(
 
     elif len(shape) > 0:
         # Except scalar, 4D and 5D
-        if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
+        if nchw_ncdhw_keep and keep_nchw_or_ncdhw_input_names and graph_input.name in keep_nchw_or_ncdhw_input_names:
             error_msg = f'' +\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\
@@ -127,7 +128,7 @@ def make_node(
 
     else:
         # Scalar
-        if nchw_ncdhw_keep and graph_input.name in keep_nchw_or_ncdhw_input_names:
+        if nchw_ncdhw_keep and keep_nchw_or_ncdhw_input_names and graph_input.name in keep_nchw_or_ncdhw_input_names:
             error_msg = f''+\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\

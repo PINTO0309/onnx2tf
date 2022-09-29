@@ -10,6 +10,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
+    **kwargs: dict,
 ):
     """Add
 

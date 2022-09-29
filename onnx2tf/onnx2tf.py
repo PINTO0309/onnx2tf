@@ -31,6 +31,8 @@ def convert(
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
     keep_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
+    replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
+    replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -57,8 +59,20 @@ def convert(
         e.g. \n
         --keep_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
 
+    replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
+        Default: False
+
+    replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indicies are float32.\n
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
+        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
+        Default: False
+
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
+        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
         Default: False
 
     Returns
@@ -102,6 +116,12 @@ def convert(
         onnx_graph = onnx.load(input_onnx_file_path)
     graph = gs.import_onnx(onnx_graph)
 
+    # Define additional parameters
+    additional_parameters = {
+        'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
+        'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
+    }
+
     tf_layers_dict = {}
 
     with graph.node_ids():
@@ -126,6 +146,7 @@ def convert(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
                 keep_nchw_or_ncdhw_input_names=keep_nchw_or_ncdhw_input_names,
+                **additional_parameters,
             )
 
         # Nodes
@@ -136,6 +157,7 @@ def convert(
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
+                **additional_parameters,
             )
 
         # List "optype"="Input"
@@ -214,6 +236,25 @@ def main():
             'e.g. \n' +
             '--keep_nchw_or_ncdhw_input_names "input0" "input1" "input2"'
     )
+    rar_group = parser.add_mutually_exclusive_group()
+    rar_group.add_argument(
+        '-rari64',
+        '--replace_argmax_to_reducemax_and_indicies_is_int64',
+        action='store_true',
+        help=\
+            'Replace ArgMax with a ReduceMax. The returned indicies are int64. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+    )
+    rar_group.add_argument(
+        '-rarf32',
+        '--replace_argmax_to_reducemax_and_indicies_is_float32',
+        action='store_true',
+        help=\
+            'Replace ArgMax with a ReduceMax. The returned indicies are float32. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+    )
     parser.add_argument(
         '-n',
         '--non_verbose',
@@ -227,6 +268,8 @@ def main():
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         keep_nchw_or_ncdhw_input_names=args.keep_nchw_or_ncdhw_input_names,
+        replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
+        replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         non_verbose=args.non_verbose,
     )
 
