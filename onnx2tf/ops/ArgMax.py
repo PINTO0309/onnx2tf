@@ -9,6 +9,7 @@ from utils.common_functions import (
     alternative_argmax,
 )
 
+
 def make_node(
     *,
     graph_node: gs.Node,

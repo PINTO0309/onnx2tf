@@ -6,6 +6,7 @@ onnx2tf/debug/
 onnx2tf/saved_model/
 __pycache__/
 test.py
+make_*.py
 
 *.onnx
 *.tflite

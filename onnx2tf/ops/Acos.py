@@ -4,6 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
+from utils.common_functions import alternative_acos
 
 
 def make_node(
@@ -27,6 +28,8 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    replace_Acos_to_pseudo_Acos = kwargs['replace_Acos_to_pseudo_Acos']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -35,8 +38,15 @@ def make_node(
     }
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.acos(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'],
-            name=graph_node.name,
-        )
+    if not replace_Acos_to_pseudo_Acos:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.acos(
+                x=tf_layers_dict[graph_node_input.name]['tf_node'],
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            alternative_acos(
+                input_tensor=tf_layers_dict[graph_node_input.name]['tf_node']
+            )
+

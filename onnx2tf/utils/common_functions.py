@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from utils.colors import Color
 from typing import Any
 
+
 def convert_axis(
     *,
     axis: int,
@@ -119,8 +120,8 @@ def alternative_argmax(
 
     Returns
     ----------
-    converted_axis: int
-        Converted axis
+    pseudo_argmax: Tensor
+        Converted ArgMax
     """
     safe_axis = axis
 
@@ -211,3 +212,70 @@ def alternative_argmax(
             reverse_argmax,
             name=name,
         )
+
+
+# https://zenn.dev/pinto0309/articles/8f6df1d2304395
+def alternative_asin(
+    *,
+    input_tensor,
+):
+    """Replace Asin with a pseudo_Asin.
+
+    Parameters
+    ----------
+    input_tensor: Tensor
+        Tensor to be processed
+
+    Returns
+    ----------
+    pseudo_asin: Tensor
+        Converted Asin
+    """
+    x_abs = None
+    x_abs = tf.abs(input_tensor)
+    neg = tf.math.divide(tf.math.multiply(tf.minimum(input_tensor, 0), -1), x_abs)
+    x = x_abs
+    y = tf.constant(-0.0187293)
+    y = tf.math.multiply(y, x)
+    y = tf.math.add(y, 0.0742610)
+    y = tf.math.multiply(y, x)
+    y = tf.math.subtract(y, 0.2121144)
+    y = tf.math.multiply(y, x)
+    y = tf.math.add(y, 1.5707288)
+    y = tf.math.subtract(tf.math.multiply(3.14159265358979, 0.5), tf.math.multiply(tf.sqrt(tf.math.subtract(1.0, x)), y))
+    pseudo_asin = tf.math.subtract(y, tf.math.multiply(tf.math.multiply(2, neg), y))
+    return pseudo_asin
+
+
+# https://zenn.dev/pinto0309/articles/8f6df1d2304395
+def alternative_acos(
+    *,
+    input_tensor,
+):
+    """Replace Acos with a pseudo_Acos.
+
+    Parameters
+    ----------
+    input_tensor: Tensor
+        Tensor to be processed
+
+    Returns
+    ----------
+    pseudo_acos: Tensor
+        Converted Acos
+    """
+    x_abs = None
+    x_abs = tf.abs(input_tensor)
+    neg = tf.math.divide(tf.math.multiply(tf.minimum(input_tensor, 0), -1), x_abs)
+    x = x_abs
+    y = tf.constant(-0.0187293)
+    y = tf.math.multiply(y, x)
+    y = tf.math.add(y, 0.0742610)
+    y = tf.math.multiply(y, x)
+    y = tf.math.subtract(y, 0.2121144)
+    y = tf.math.multiply(y, x)
+    y = tf.math.add(y, 1.5707288)
+    y = tf.math.multiply(y, tf.sqrt(tf.math.subtract(1.0, x)))
+    y = tf.math.multiply(y, tf.math.subtract(1.0, tf.math.multiply(2.0, neg)))
+    pseudo_acos = tf.math.add(tf.math.multiply(neg, 3.14159265358979), y)
+    return pseudo_acos
