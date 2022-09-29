@@ -108,6 +108,17 @@ def convert(
         )
         sys.exit(1)
 
+    # replace_argmax_to_reducemax_and_indicies_is_int64
+    # replace_argmax_to_reducemax_and_indicies_is_float32
+    if replace_argmax_to_reducemax_and_indicies_is_int64 \
+        and replace_argmax_to_reducemax_and_indicies_is_float32:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and ' +
+            f'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+        )
+        sys.exit(1)
+
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
