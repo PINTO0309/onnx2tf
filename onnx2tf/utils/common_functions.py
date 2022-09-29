@@ -5,7 +5,6 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from utils.colors import Color
-
 from typing import Any
 
 def convert_axis(
