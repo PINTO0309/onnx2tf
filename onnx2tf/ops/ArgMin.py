@@ -28,10 +28,6 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = 0
-    keepdims = True
-    select_last_index = False
-
     axis = graph_node.attrs.get(['axis'], 0)
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
