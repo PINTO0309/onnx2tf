@@ -1,5 +1,4 @@
 import random
-from re import A
 random.seed(0)
 import numpy as np
 np.random.seed(0)
