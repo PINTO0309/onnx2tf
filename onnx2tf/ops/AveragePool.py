@@ -103,21 +103,21 @@ def make_node(
         pooled_tensor = AveragePooling1D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_
+            padding=padding_,
         )(padded_tensor)
 
     elif len(kernel_shape) == 2:
         pooled_tensor = AveragePooling2D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_
+            padding=padding_,
         )(padded_tensor)
 
     elif len(kernel_shape) == 3:
         pooled_tensor = AveragePooling3D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_
+            padding=padding_,
         )(padded_tensor)
 
     else:

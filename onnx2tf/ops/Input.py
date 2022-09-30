@@ -136,7 +136,7 @@ def make_node(
         if ncw_nchw_ncdhw_keep and keep_ncw_or_nchw_or_ncdhw_input_names and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f'' +\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
-                f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\
+                f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
@@ -156,7 +156,7 @@ def make_node(
         if ncw_nchw_ncdhw_keep and keep_ncw_or_nchw_or_ncdhw_input_names and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f''+\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
-                f'The keep_nchw_or_ncdhw_input_names parameter only supports 4D/5D input. ' +\
+                f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg

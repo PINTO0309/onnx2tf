@@ -43,7 +43,7 @@ def convert_axis(
     axis: int,
     tensor_rank: int,
 ) -> int:
-    """Convert axis from NCHW to NHWC or NCDHW to NDHWC. axis for rank numbers other than 4D and 5D do not convert.
+    """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC. axis for rank numbers other than 3D, 4D and 5D do not convert.
 
     Parameters
     ----------
@@ -61,20 +61,21 @@ def convert_axis(
     # Convert a negative number of axis to a positive number
     converted_axis = axis if axis >= 0 else axis + tensor_rank
 
-    # 4D and 5D axis conversion table
+    # 3D and 4D and 5D axis conversion table
+    convertion_table_3d = [0,2,1]
     convertion_table_4d = [0,3,1,2]
     convertion_table_5d = [0,4,1,2,3]
 
-    if tensor_rank == 4:
+    if tensor_rank == 3:
+        # NCW -> NWC
+        converted_axis = convertion_table_3d[converted_axis]
+    elif tensor_rank == 4:
         # NCHW -> NHWC
-        converted_axis = convertion_table_4d[axis]
-
+        converted_axis = convertion_table_4d[converted_axis]
     elif tensor_rank == 5:
         # NCDHW -> NDHWC
-        converted_axis = convertion_table_5d[axis]
-
-    else:
-        return converted_axis
+        converted_axis = convertion_table_5d[converted_axis]
+    return converted_axis
 
 
 def _nnapi_scalar(
