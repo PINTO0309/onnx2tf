@@ -51,10 +51,9 @@ def make_node(
         axes = [convert_axis(axis=idx, tensor_rank=tensor_rank) for idx in axes]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
         axes = convert_axis(axis=axes, tensor_rank=tensor_rank)
+        axes = list(axes[np.newaxis])
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:
-        axes.sort()
-    elif axes is not None and isinstance(axes, np.ndarray) and len(axes) > 0:
         axes.sort()
 
     new_shape = copy.deepcopy(input_tensor_shape)
