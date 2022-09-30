@@ -28,7 +28,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get(['axis'], 0)
+    axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
@@ -36,10 +36,10 @@ def make_node(
     )
 
     # 0: False, 1: True
-    keepdims = bool(graph_node.attrs.get(['keepdims'], 0))
+    keepdims = bool(graph_node.attrs.get('keepdims', 0))
 
     # 0: False, 1: True
-    select_last_index = bool(graph_node.attrs.get(['select_last_index'], 0))
+    select_last_index = bool(graph_node.attrs.get('select_last_index', 0))
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
