@@ -9,6 +9,35 @@ from typing import Any, List
 from collections import namedtuple
 
 
+# https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
+def tf_shape(
+    *,
+    input_tensor: tf.Tensor,
+    dtype: tf.dtypes=tf.int64,
+) -> Any:
+    """Helper function returning the shape of a Tensor.
+
+    Parameters
+    ----------
+    input_tensor: tf.Tensor
+        A Tensor
+
+    dtype: tf.dtypes
+        The output dtype (tf.int32 or tf.int64).
+        Defaults: tf.int64.
+
+    Returns
+    ----------
+    shape:
+        The function will check for fully defined shape and will return numpy array or \n
+        if the shape is not fully defined will use tf.shape() to return the shape as a Tensor.
+    """
+    if input_tensor.shape.is_fully_defined():
+        return np.array(input_tensor.shape.as_list(), dtype=dtype.as_numpy_dtype)
+    else:
+        return tf.shape(input_tensor, out_type=dtype)
+
+
 def convert_axis(
     *,
     axis: int,
@@ -300,7 +329,7 @@ pad_tf_ops = pad_ops(
     lambda tensor: tf.cast(tensor, tf.int64)
 )
 
-def calc_pads_same(
+def calc_pads_same_pooling(
     *,
     in_spatial_shape,
     kernel_shape,
@@ -371,3 +400,173 @@ def calc_pads_same(
         pads[i * pads_order + (spatial_size if pads_order == 1 else 1)] = pad_end
 
     return pads
+
+
+def calc_pads_explicit_pooling(
+    *,
+    padding,
+    spatial_size,
+):
+    """
+    Calculate explicit padding
+    """
+    assert type(padding) is list
+
+    pads = []
+    for i in range(spatial_size):
+        pads += [padding[i], padding[i + spatial_size]]
+    return pads
+
+
+def calc_pads_ceil_mode_pooling(
+    *,
+    in_spatial_shape,
+    spatial_size,
+    kernel_shape,
+    dilations,
+    strides,
+    is_known_shape,
+):
+    """
+    Calculate padding in ceil_mode
+    """
+    pads = []
+    for i in range(spatial_size):
+        dim_size = in_spatial_shape[i]
+        filter_size = (kernel_shape[i] - 1) * dilations[i] + 1
+        out_size = (dim_size - filter_size) / strides[i]
+        if is_known_shape:
+            pad_size = (np.ceil(out_size) - np.floor(out_size)).astype(np.int64)
+        else:
+            pad_size = tf.cast(tf.math.ceil(out_size) - tf.math.floor(out_size), tf.int64)
+
+        pads += [0, pad_size * strides[i]]
+    return pads
+
+
+def calc_pads_same_pooling(
+    *,
+    kernel_shape,
+    strides,
+    dilations,
+    padding,
+    in_spatial_shape,
+    is_known_shape,
+):
+    """
+    Calculate SAME_* paddings.
+    """
+    pad_ops = pad_numpy_ops if is_known_shape else pad_tf_ops
+
+    return calc_pads_same_pooling(
+        in_spatial_shape=in_spatial_shape,
+        kernel_shape=kernel_shape,
+        strides=strides,
+        dilations=dilations,
+        padding=padding,
+        padding_ops=pad_ops,
+        pads_order=2,
+    )
+
+
+def calc_pads_pooling(
+    *,
+    kernel_shape,
+    strides,
+    dilations,
+    padding,
+    is_known_shape,
+    spatial_size,
+    in_spatial_shape,
+    ceil_mode,
+):
+    if is_known_shape:
+        pads = np.zeros([spatial_size * 2], np.int64)
+    else:
+        pads = tf.zeros([spatial_size * 2], tf.int64)
+
+    # check for explicit padding
+    if type(padding) is list:
+        pads += calc_pads_explicit_pooling(
+            padding=padding,
+            spatial_size=spatial_size,
+        )
+    elif padding.lower().startswith("same"):
+        pads += calc_pads_same_pooling(
+            kernel_shape=kernel_shape,
+            strides=strides,
+            dilations=dilations,
+            padding=padding,
+            in_spatial_shape=in_spatial_shape,
+            is_known_shape=is_known_shape,
+        )
+
+    # when padding is set to SAME, ceil_mode will not do anything
+    # because output sizes will be multiple of the strides
+    if ceil_mode and (type(padding) is list or not padding.lower().startswith("same")):
+        new_spatial_shape = [
+            in_spatial_shape[i] + pads[i * 2] + pads[i * 2 + 1]
+            for i in range(spatial_size)
+        ]
+        pads += calc_pads_ceil_mode_pooling(
+            in_spatial_shape=new_spatial_shape,
+            spatial_size=spatial_size,
+            kernel_shape=kernel_shape,
+            dilations=dilations,
+            strides=strides,
+            is_known_shape=is_known_shape,
+        )
+    return pads
+
+
+def pad_input(
+    *,
+    input_tensor,
+    is_known_shape,
+    kernel_shape,
+    ceil_mode,
+    spatial_size,
+    strides,
+    dilations,
+    padding,
+    padding_constant,
+):
+    """
+    Pad the input according to the parameters
+    """
+    # check if we need to do any padding at all
+    if not ceil_mode and ((type(padding) is list and padding == [0] * spatial_size * 2) or padding == "VALID"):
+        return input_tensor
+
+    # in_spatial_shape = self.input_shape[2:]
+    input_shape = tf_shape(
+        input_tensor=input_tensor,
+    )
+    in_spatial_shape = input_shape[1:len(kernel_shape)+1]
+    pads = calc_pads_pooling(
+        kernel_shape=kernel_shape,
+        strides=strides,
+        dilations=dilations,
+        padding=padding,
+        is_known_shape=is_known_shape,
+        spatial_size=spatial_size,
+        in_spatial_shape=in_spatial_shape,
+        ceil_mode=ceil_mode,
+    )
+
+    if is_known_shape and np.count_nonzero(pads) == 0:
+        return input_tensor
+
+    # no padding on the NC dimensions
+    tf_paddings = [[0, 0], [0, 0]]
+    # padding for the (D)HW dimensions
+    for i in range(spatial_size):
+        tf_paddings += [[pads[i * 2], pads[i * 2 + 1]]]
+
+    padded_tensor = tf.pad(
+        input_tensor,
+        tf_paddings,
+        mode='CONSTANT',
+        constant_values=padding_constant,
+    )
+    return padded_tensor
