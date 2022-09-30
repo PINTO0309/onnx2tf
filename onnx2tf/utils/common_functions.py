@@ -9,6 +9,35 @@ from typing import Any, List
 from collections import namedtuple
 
 
+def get_constant_or_variable(
+    const_or_var: Any,
+) -> Any:
+    """Get a Numpy constant or gs.Variable from graph_surgeon node.
+
+    Parameters
+    ----------
+    const_or_var: gs.Variable
+        gs.Variable
+
+    Returns
+    ----------
+    const_or_var:
+        Numpy array or gs.Variable
+    """
+    if hasattr(const_or_var, 'values'):
+        values = const_or_var.values
+        shape_length = values.ndim
+        if shape_length == 3:
+            values = values.transpose([0,2,1])
+        elif shape_length == 4:
+            values = values.transpose([0,2,3,1])
+        elif shape_length == 5:
+            values = values.transpose([0,2,3,4,1])
+        return values
+    else:
+        return const_or_var
+
+
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
 def tf_shape(
     *,

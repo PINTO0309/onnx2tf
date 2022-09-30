@@ -6,6 +6,7 @@ import tensorflow as tf
 from onnx import TensorProto
 import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
+from utils.common_functions import get_constant_or_variable
 
 
 def make_node(
@@ -24,7 +25,7 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
+    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape
@@ -42,7 +43,8 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.cast(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'],
+            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
             dtype=ONNX_DTYPES_TO_TF_DTYPES[to],
             name=graph_node.name,
         )

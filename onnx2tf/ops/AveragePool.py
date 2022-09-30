@@ -11,6 +11,7 @@ from tensorflow.python.keras.layers import (
 )
 from utils.colors import Color
 from utils.common_functions import (
+    get_constant_or_variable,
     calc_pads_same_pooling,
     pad_input,
 )
@@ -32,12 +33,13 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
+    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node']
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # 0: False, 1: True
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))

@@ -4,7 +4,10 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
-from utils.common_functions import convert_axis
+from utils.common_functions import (
+    convert_axis,
+    get_constant_or_variable,
+)
 
 
 def make_node(
@@ -23,10 +26,14 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    values = [
-        tf_layers_dict[graph_node_input.name]['tf_node'] \
-            for graph_node_input in graph_node.inputs
-    ]
+    values = []
+    for graph_node_input in graph_node.inputs:
+        const_or_var = get_constant_or_variable(graph_node_input)
+        if isinstance(const_or_var, gs.Variable):
+            values.append(tf_layers_dict[const_or_var.name]['tf_node'])
+        else:
+            values.append(const_or_var)
+
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape

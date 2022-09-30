@@ -13,7 +13,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """Atan
+    """Sub
 
     Parameters
     ----------
@@ -23,7 +23,8 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
+    graph_node_input_1 = get_constant_or_variable(graph_node.inputs[0])
+    graph_node_input_2 = get_constant_or_variable(graph_node.inputs[1])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -37,8 +38,10 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.atan(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+        tf.math.subtract(
+            x=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+                if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
+            y=tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+                if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
             name=graph_node.name,
         )

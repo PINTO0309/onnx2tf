@@ -13,7 +13,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """Atan
+    """Clip
 
     Parameters
     ----------
@@ -24,7 +24,10 @@ def make_node(
         optype, shape, dtype, tensorflow graph
     """
     graph_node_input = get_constant_or_variable(graph_node.inputs[0])
+    min_value_node = get_constant_or_variable(graph_node.inputs[1])
+    max_value_node = get_constant_or_variable(graph_node.inputs[2])
     graph_node_output: gs.Variable = graph_node.outputs[0]
+
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
@@ -37,8 +40,11 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.atan(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
+        tf.clip_by_value(
+            t=tf_layers_dict[graph_node_input.name]['tf_node'] \
                 if isinstance(graph_node_input, gs.Variable) else graph_node_input,
-            name=graph_node.name,
+            clip_value_min=tf_layers_dict[min_value_node.name]['tf_node'] \
+                if isinstance(min_value_node, gs.Variable) else min_value_node,
+            clip_value_max=tf_layers_dict[max_value_node.name]['tf_node'] \
+                if isinstance(max_value_node, gs.Variable) else max_value_node,
         )

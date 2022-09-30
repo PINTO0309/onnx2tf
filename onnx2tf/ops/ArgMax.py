@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from utils.common_functions import (
     convert_axis,
     alternative_argmax,
+    get_constant_or_variable,
 )
 
 
@@ -26,7 +27,7 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
+    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -60,11 +61,13 @@ def make_node(
     ### 1. Select last index or first index
     reversed_tensor = None
     if not select_last_index:
-        reversed_tensor = tf_layers_dict[graph_node_input.name]['tf_node']
+        reversed_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+            if isinstance(graph_node_input, gs.Variable) else graph_node_input
     else:
         reversed_tensor = \
             tf.reverse(
-                tensor=tf_layers_dict[graph_node_input.name]['tf_node'],
+                tensor=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                    if isinstance(graph_node_input, gs.Variable) else graph_node_input,
                 axis=axis,
                 name=f'{graph_node.name}_reverse',
             )
