@@ -4,7 +4,10 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
-from utils.common_functions import get_constant_or_variable
+from utils.common_functions import (
+    get_constant_or_variable,
+    convert_axis,
+)
 
 
 def make_node(
@@ -31,12 +34,21 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    tensor_rank = len(input_tensor.shape)
+
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
                 if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     if axes is not None and axes.shape is None:
         axes = None
 
     axes = graph_node.attrs.get('axes', axes)
+
+    if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
+        axes = [convert_axis(axis=idx, tensor_rank=tensor_rank) for idx in axes]
+    elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
+        axes = convert_axis(axis=axes, tensor_rank=tensor_rank)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -48,8 +60,7 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.squeeze(
-            input=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-                if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
+            input=input_tensor,
             axis=list(axes) if axes is not None else None,
             name=graph_node.name,
         )
