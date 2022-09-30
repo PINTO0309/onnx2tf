@@ -30,7 +30,7 @@ def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
-    keep_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
+    keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_Asin_to_pseudo_Asin: Optional[bool] = False,
@@ -54,12 +54,12 @@ def convert(
         Output tensorflow model folder path.\n
         Default: "saved_model"
 
-    keep_nchw_or_ncdhw_input_names: Optional[List[str]]
-        Holds the NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
+    keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
+        Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
         If a nonexistent INPUT OP name is specified, it is ignored.\n
-        Valid only for 4D and 5D input tensors.\n\n
+        Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
-        --keep_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+        --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -168,7 +168,7 @@ def convert(
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
-                keep_nchw_or_ncdhw_input_names=keep_nchw_or_ncdhw_input_names,
+                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                 **additional_parameters,
             )
 
@@ -249,15 +249,15 @@ def main():
     )
     parser.add_argument(
         '-k',
-        '--keep_nchw_or_ncdhw_input_names',
+        '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
         nargs='+',
         help=\
-            'Holds the NCHW or NCDHW of the input shape for the specified INPUT OP names. \n' +
+            'Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names. \n' +
             'If a nonexistent INPUT OP name is specified, it is ignored. \n' +
-            'Valid only for 4D and 5D input tensors. \n\n' +
+            'Valid only for 3D, 4D and 5D input tensors. \n\n' +
             'e.g. \n' +
-            '--keep_nchw_or_ncdhw_input_names "input0" "input1" "input2"'
+            '--keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"'
     )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
@@ -302,7 +302,7 @@ def main():
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
-        keep_nchw_or_ncdhw_input_names=args.keep_nchw_or_ncdhw_input_names,
+        keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_Asin_to_pseudo_Asin=args.replace_Asin_to_pseudo_Asin,

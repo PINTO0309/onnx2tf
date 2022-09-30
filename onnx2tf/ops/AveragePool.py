@@ -37,7 +37,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    x = tf_layers_dict[graph_node_input.name]['tf_node']
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node']
 
     # 0: False, 1: True
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))
@@ -48,30 +48,13 @@ def make_node(
     x_rank = spatial_size + 2
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    is_known_shape = x.shape.is_fully_defined()
-
-    # Immediately after the input OP, transpose according to 1D, 2D, or 3D
-    transposed_tensor = None
-    if tf_layers_dict[graph_node_input.name]['optype'] == 'Input':
-        if spatial_size == 1:
-            transposed_tensor = tf.transpose(x, perm=[0,2,1])
-        elif spatial_size == 2:
-            transposed_tensor = tf.transpose(x, perm=[0,2,3,1])
-        elif spatial_size == 3:
-            transposed_tensor = tf.transpose(x, perm=[0,2,3,4,1])
-        else:
-            error_msg = f'' +\
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
-                f'AveragePool supports only 1D, 2D, and 3D. ' +\
-                f'opname: {graph_node.name} Type: AveragePool{len(kernel_shape)}D'
-            print(error_msg)
-            assert False, error_msg
+    is_known_shape = input_tensor.shape.is_fully_defined()
 
     pads = graph_node.attrs.get('auto_pad', 'NOTSET')
     if pads == 'NOTSET':
         pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
         if is_known_shape and pads != [0] * spatial_size * 2:
-            in_shape = transposed_tensor.get_shape()
+            in_shape = input_tensor.get_shape()
             same_paddings = calc_pads_same_pooling(
                 in_spatial_shape=in_shape[1:x_rank - 1],
                 kernel_shape=kernel_shape,
@@ -88,7 +71,7 @@ def make_node(
     if is_explicit_padding or pads == 'SAME_LOWER' or (pads == 'SAME_UPPER' and count_include_pad):
         # pad the input
         padded_tensor = pad_input(
-            input_tensor=transposed_tensor,
+            input_tensor=input_tensor,
             is_known_shape=is_known_shape,
             kernel_shape=kernel_shape,
             ceil_mode=ceil_mode,
@@ -101,11 +84,11 @@ def make_node(
         padding_ = 'valid'
 
     elif pads == 'SAME_UPPER':
-        padded_tensor = transposed_tensor
+        padded_tensor = input_tensor
         padding_ = 'same'
 
     else:
-        padded_tensor = transposed_tensor
+        padded_tensor = input_tensor
         padding_ = 'same'
 
     # Preserving Graph Structure (Dict)
