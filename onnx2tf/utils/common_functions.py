@@ -5,8 +5,9 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from utils.colors import Color
-from typing import Any
+from typing import Any, List
 from collections import namedtuple
+
 
 def convert_axis(
     *,
@@ -218,7 +219,7 @@ def alternative_argmax(
 def alternative_asin(
     *,
     input_tensor,
-):
+) -> Any:
     """Replace Asin with a pseudo_Asin.
 
     Parameters
@@ -251,7 +252,7 @@ def alternative_asin(
 def alternative_acos(
     *,
     input_tensor,
-):
+) -> Any:
     """Replace Acos with a pseudo_Acos.
 
     Parameters
@@ -308,31 +309,42 @@ def calc_pads_same(
     padding,
     padding_ops=pad_numpy_ops,
     pads_order=1
-):
-    """
-        Calculates the SAME paddings that need to be added to the input
-        Args:
-            in_spatial_shape:   input spatial shape
-            kernel_shape:       the size of the kernel along each axis
-            strides:            stride along each spatial axis
-            dilations:          dilations value along each spatial axis
-            padding:            padding to calculate: SAME_UPPER or
-                                SAME_LOWER
-            padding_ops:        namedtuple with ops to be used during
-                                calculations. there are two sets of ops
-                                defined pad_numpy_ops and pad_tf_ops with
-                                numpy and tensorflow ops
-            pads_order:         order of returned pads. possible options are:
-                                    1 - b1, b2, ..., bn, e1, e2, ..., en
-                                    2 - b1, e1, b2, e2, ..., bn, en
-                                where n = len(kernel_shape) * 2,
-                                b1, b2, ..., bn define pads at the begging of
-                                                axis
-                                e1, e2, ..., en define pads at the end of
-                                                axis
-        Return:
-            pads:               array with calculated pads. the order of the
-                                values is determined by `pads_order`
+) -> List[int]:
+    """Calculates the SAME paddings that need to be added to the input.
+
+    Parameters
+    ----------
+    in_spatial_shape:
+        input spatial shape
+
+    kernel_shape:
+        the size of the kernel along each axis
+
+    strides:
+        stride along each spatial axis
+
+    dilations:
+        dilations value along each spatial axis
+
+    padding:
+        padding to calculate: SAME_UPPER orSAME_LOWER
+
+    padding_ops:
+        namedtuple with ops to be used during calculations.\n
+        there are two sets of ops defined pad_numpy_ops and pad_tf_ops with numpy and tensorflow ops
+
+    pads_order:
+        order of returned pads.\n
+        possible options are:\n
+            1 - b1, b2, ..., bn, e1, e2, ..., en\n
+            2 - b1, e1, b2, e2, ..., bn, en\n
+        where n = len(kernel_shape) * 2, b1, b2, ..., bn\n
+        define pads at the begging of axis e1, e2, ..., en define pads at the end of axis
+
+    Returns
+    ----------
+    pads:
+        array with calculated pads. the order of the values is determined by `pads_order`
     """
     spatial_size = len(kernel_shape)
     pads = [0] * (spatial_size * 2)
