@@ -39,12 +39,51 @@ def make_node(
     }
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.clip_by_value(
-            t=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
-            clip_value_min=tf_layers_dict[min_value_node.name]['tf_node'] \
-                if isinstance(min_value_node, gs.Variable) else min_value_node,
-            clip_value_max=tf_layers_dict[max_value_node.name]['tf_node'] \
-                if isinstance(max_value_node, gs.Variable) else max_value_node,
-        )
+    min_value = None
+    if isinstance(min_value_node, gs.Variable) and min_value_node.shape is not None:
+        min_value = tf_layers_dict[min_value_node.name]['tf_node']
+    else:
+        min_value = min_value_node
+    max_value = None
+    if isinstance(max_value_node, gs.Variable) and max_value_node.shape is not None:
+        max_value = tf_layers_dict[max_value_node.name]['tf_node']
+    else:
+        max_value = max_value_node
+
+    if isinstance(min_value, np.ndarray) and min_value == 0.0 \
+        and isinstance(max_value, np.ndarray) and max_value == 6.0:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.nn.relu6(
+                features=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                    if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            )
+    elif isinstance(min_value, np.ndarray) and min_value == 0.0 \
+        and max_value.shape is None:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.nn.relu(
+                features=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                    if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            )
+    else:
+        if min_value.shape is not None and max_value.shape is not None:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.clip_by_value(
+                    t=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                        if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+                    clip_value_min=min_value,
+                    clip_value_max=max_value,
+                )
+        elif min_value.shape is not None and max_value.shape is None:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.maximum(
+                    x=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                        if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+                    y=min_value,
+                )
+        elif min_value.shape is None and max_value.shape is not None:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.minimum(
+                    x=tf_layers_dict[graph_node_input.name]['tf_node'] \
+                        if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+                    y=max_value,
+                )
