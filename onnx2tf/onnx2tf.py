@@ -139,6 +139,7 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
+        'opset': graph.opset,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_Asin_to_pseudo_Asin': replace_Asin_to_pseudo_Asin,
