@@ -8,6 +8,80 @@ import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
 
+def _make_tf_constant(
+    *,
+    value,
+    dtype,
+    name,
+):
+    constant_tensor = tf.constant(
+        value=value,
+        dtype=dtype,
+    )
+    # NCW->NWC, NCHW->NHWC, NCDHW->NDHWC
+    transposed_tensor = None
+    if len(value.shape) == 3:
+        transposed_tensor = \
+            tf.transpose(
+                a=constant_tensor,
+                perm=[0,2,1],
+                name=name,
+            )
+    elif len(value.shape) == 4:
+        transposed_tensor = \
+            tf.transpose(
+                a=constant_tensor,
+                perm=[0,2,3,1],
+                name=name,
+            )
+    elif len(value.shape) == 5:
+        transposed_tensor = \
+            tf.transpose(
+                a=constant_tensor,
+                perm=[0,2,3,4,1],
+                name=name,
+            )
+    else:
+        transposed_tensor = constant_tensor
+    return transposed_tensor
+
+
+def _make_tf_sparsetensor(
+    *,
+    indices,
+    values,
+    dense_shape,
+):
+    sparse_tensor = tf.SparseTensor(
+        indices=indices,
+        values=values,
+        dense_shape=dense_shape,
+    )
+    # NCW->NWC, NCHW->NHWC, NCDHW->NDHWC
+    transposed_tensor = None
+    if len(sparse_tensor.shape) == 3:
+        transposed_tensor = \
+            tf.transpose(
+                a=sparse_tensor,
+                perm=[0,2,1],
+            )
+    elif len(sparse_tensor.shape) == 4:
+        transposed_tensor = \
+            tf.transpose(
+                a=sparse_tensor,
+                perm=[0,2,3,1],
+            )
+    elif len(sparse_tensor.shape) == 5:
+        transposed_tensor = \
+            tf.transpose(
+                a=sparse_tensor,
+                perm=[0,2,3,4,1],
+            )
+    else:
+        transposed_tensor = sparse_tensor
+    return transposed_tensor
+
+
 def make_node(
     *,
     graph_node: gs.Node,
@@ -47,8 +121,8 @@ def make_node(
             const_dtype = ONNX_DTYPES_TO_TF_DTYPES[attr_value.data_type]
             value = numpy_helper.to_array(attr_value)
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.constant(
-                    value,
+                _make_tf_constant(
+                    value=value,
                     dtype=const_dtype,
                     name=graph_node.name,
                 )
@@ -59,7 +133,7 @@ def make_node(
             values = numpy_helper.to_array(sparse_value.values)
             shape = np.array(sparse_value.dims)
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.SparseTensor(
+                _make_tf_sparsetensor(
                     indices=indices,
                     values=values,
                     dense_shape=shape,
@@ -73,8 +147,8 @@ def make_node(
                 const_dtype = ONNX_DTYPES_TO_TF_DTYPES[attr_value.data_type]
                 value = numpy_helper.to_array(attr_value)
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.constant(
-                        value,
+                    _make_tf_constant(
+                        value=value,
                         dtype=const_dtype,
                         name=graph_node.name,
                     )
@@ -85,7 +159,7 @@ def make_node(
                 values = numpy_helper.to_array(sparse_value.values)
                 shape = np.array(sparse_value.dims)
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.SparseTensor(
+                    _make_tf_sparsetensor(
                         indices=indices,
                         values=values,
                         dense_shape=shape,
@@ -110,8 +184,8 @@ def make_node(
             value = graph_node.attrs["value_strings"]
             const_dtype = tf.string
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.constant(
-                value,
+            _make_tf_constant(
+                value=value,
                 dtype=const_dtype,
                 name=graph_node.name,
             )
