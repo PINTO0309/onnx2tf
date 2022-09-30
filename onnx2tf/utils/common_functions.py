@@ -6,7 +6,7 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from utils.colors import Color
 from typing import Any
-
+from collections import namedtuple
 
 def convert_axis(
     *,
@@ -279,3 +279,83 @@ def alternative_acos(
     y = tf.math.multiply(y, tf.math.subtract(1.0, tf.math.multiply(2.0, neg)))
     pseudo_acos = tf.math.add(tf.math.multiply(neg, 3.14159265358979), y)
     return pseudo_acos
+
+
+# https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/pooling_helper.py
+pad_ops = namedtuple(
+    "pad_ops",
+    ["max_op", "ceil_op", "floor_op", "cast_int_op"]
+)
+pad_numpy_ops = pad_ops(
+    np.maximum,
+    np.ceil,
+    np.floor,
+    lambda arr: arr.astype(np.int64)
+)
+pad_tf_ops = pad_ops(
+    tf.maximum,
+    tf.math.ceil,
+    tf.math.floor,
+    lambda tensor: tf.cast(tensor, tf.int64)
+)
+
+def calc_pads_same(
+    *,
+    in_spatial_shape,
+    kernel_shape,
+    strides,
+    dilations,
+    padding,
+    padding_ops=pad_numpy_ops,
+    pads_order=1
+):
+    """
+        Calculates the SAME paddings that need to be added to the input
+        Args:
+            in_spatial_shape:   input spatial shape
+            kernel_shape:       the size of the kernel along each axis
+            strides:            stride along each spatial axis
+            dilations:          dilations value along each spatial axis
+            padding:            padding to calculate: SAME_UPPER or
+                                SAME_LOWER
+            padding_ops:        namedtuple with ops to be used during
+                                calculations. there are two sets of ops
+                                defined pad_numpy_ops and pad_tf_ops with
+                                numpy and tensorflow ops
+            pads_order:         order of returned pads. possible options are:
+                                    1 - b1, b2, ..., bn, e1, e2, ..., en
+                                    2 - b1, e1, b2, e2, ..., bn, en
+                                where n = len(kernel_shape) * 2,
+                                b1, b2, ..., bn define pads at the begging of
+                                                axis
+                                e1, e2, ..., en define pads at the end of
+                                                axis
+        Return:
+            pads:               array with calculated pads. the order of the
+                                values is determined by `pads_order`
+    """
+    spatial_size = len(kernel_shape)
+    pads = [0] * (spatial_size * 2)
+    for i in range(spatial_size):
+        in_size = in_spatial_shape[i]
+        filter_size = (kernel_shape[i] - 1) * dilations[i] + 1
+
+        out_size = padding_ops.ceil_op(in_size / strides[i])
+        out_size = padding_ops.cast_int_op(out_size)
+        pad_along_axis = \
+            padding_ops.max_op((out_size - 1) * strides[i] + filter_size - in_size, 0)
+        if padding.lower() == "same_lower":
+            pad_op = padding_ops.ceil_op
+        else:
+            pad_op = padding_ops.floor_op
+        pad_begin = pad_op(pad_along_axis / 2)
+
+        pad_begin = padding_ops.cast_int_op(pad_begin)
+        pad_along_axis = padding_ops.cast_int_op(pad_along_axis)
+
+        pad_end = pad_along_axis - pad_begin
+
+        pads[i * pads_order] = pad_begin
+        pads[i * pads_order + (spatial_size if pads_order == 1 else 1)] = pad_end
+
+    return pads
