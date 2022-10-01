@@ -12,4 +12,6 @@ make_*.py
 *.tflite
 *.npy
 *.txt
+*.engine
+*.profile
 saved_model/
