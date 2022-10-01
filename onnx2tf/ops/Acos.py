@@ -31,7 +31,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    replace_Acos_to_pseudo_Acos = kwargs['replace_Acos_to_pseudo_Acos']
+    replace_acos_to_pseudo_acos = kwargs['replace_acos_to_pseudo_acos']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -41,7 +41,7 @@ def make_node(
     }
 
     # Generation of TF OP
-    if not replace_Acos_to_pseudo_Acos:
+    if not replace_acos_to_pseudo_acos:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.math.acos(
                 x=tf_layers_dict[graph_node_input.name]['tf_node'] \

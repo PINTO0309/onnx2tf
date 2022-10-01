@@ -33,8 +33,8 @@ def convert(
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
-    replace_Asin_to_pseudo_Asin: Optional[bool] = False,
-    replace_Acos_to_pseudo_Acos: Optional[bool] = False,
+    replace_asin_to_pseudo_asin: Optional[bool] = False,
+    replace_acos_to_pseudo_acos: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -73,11 +73,11 @@ def convert(
         replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
         Default: False
 
-    replace_Asin_to_pseudo_Asin: Optional[bool]
-        Replace Asin with a pseudo_Asin.
+    replace_asin_to_pseudo_asin: Optional[bool]
+        Replace Asin with a pseudo Asin.
 
-    replace_Acos_to_pseudo_Acos: Optional[bool]
-        Replace Acos with a pseudo_Acos.
+    replace_acos_to_pseudo_acos: Optional[bool]
+        Replace Acos with a pseudo Acos.
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -142,8 +142,8 @@ def convert(
         'opset': graph.opset,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
-        'replace_Asin_to_pseudo_Asin': replace_Asin_to_pseudo_Asin,
-        'replace_Acos_to_pseudo_Acos': replace_Acos_to_pseudo_Acos,
+        'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
+        'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
     }
 
     tf_layers_dict = {}
@@ -281,15 +281,15 @@ def main():
     )
     parser.add_argument(
         '-rasin',
-        '--replace_Asin_to_pseudo_Asin',
+        '--replace_asin_to_pseudo_asin',
         action='store_true',
-        help='Replace Asin with a pseudo_Asin.'
+        help='Replace Asin with a pseudo Asin.'
     )
     parser.add_argument(
         '-racos',
-        '--replace_Acos_to_pseudo_Acos',
+        '--replace_acos_to_pseudo_acos',
         action='store_true',
-        help='Replace Acos with a pseudo_Acos.'
+        help='Replace Acos with a pseudo Acos.'
     )
     parser.add_argument(
         '-n',
@@ -306,8 +306,8 @@ def main():
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
-        replace_Asin_to_pseudo_Asin=args.replace_Asin_to_pseudo_Asin,
-        replace_Acos_to_pseudo_Acos=args.replace_Acos_to_pseudo_Acos,
+        replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
+        replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         non_verbose=args.non_verbose,
     )
 

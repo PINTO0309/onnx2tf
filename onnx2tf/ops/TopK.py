@@ -59,9 +59,17 @@ def make_node(
     }
 
     # Generation of TF OP
-    # TODO: _alternative_argmax
     topked_values = None
     topked_indices = None
+    perm = None
+    if axis != (tensor_rank-1):
+        perm = [idx for idx in range(tensor_rank) if idx != axis] + [axis]
+        input_tensor = \
+            tf.transpose(
+                a=input_tensor,
+                perm=perm,
+            )
+
     if largest:
         topked_values, topked_indices = \
             tf.math.top_k(
@@ -79,6 +87,19 @@ def make_node(
                 name=graph_node.name,
             )
         topked_values = tf.negative(topked_values)
+
+    if axis != (tensor_rank-1):
+        perm = [perm.index(idx) for idx in range(tensor_rank)]
+        topked_values = \
+            tf.transpose(
+                a=topked_values,
+                perm=perm,
+            )
+        topked_indices = \
+            tf.transpose(
+                a=topked_indices,
+                perm=perm,
+            )
 
     tf_layers_dict[Values.name]['tf_node'] = topked_values
     tf_layers_dict[Indices.name]['tf_node'] = topked_indices

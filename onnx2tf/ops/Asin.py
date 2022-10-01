@@ -31,7 +31,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    replace_Asin_to_pseudo_Asin = kwargs['replace_Asin_to_pseudo_Asin']
+    replace_asin_to_pseudo_asin = kwargs['replace_asin_to_pseudo_asin']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -41,7 +41,7 @@ def make_node(
     }
 
     # Generation of TF OP
-    if not replace_Asin_to_pseudo_Asin:
+    if not replace_asin_to_pseudo_asin:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.math.asin(
                 x=tf_layers_dict[graph_node_input.name]['tf_node'] \
