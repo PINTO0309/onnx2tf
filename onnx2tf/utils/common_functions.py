@@ -69,7 +69,7 @@ def convert_axis(
     axis: int,
     tensor_rank: int,
 ) -> int:
-    """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC. axis for rank numbers other than 3D, 4D and 5D do not convert.
+    """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC.
 
     Parameters
     ----------
