@@ -41,7 +41,7 @@ def make_node(
     tensor_rank = len(input_tensor_shape)
 
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-                if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     if axes is not None and axes.shape is None:
         axes = None
 
