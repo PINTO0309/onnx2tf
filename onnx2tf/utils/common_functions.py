@@ -102,6 +102,44 @@ def convert_axis(
     return converted_axis
 
 
+def convert_reverse_axis(
+    *,
+    axis: int,
+    tensor_rank: int,
+) -> int:
+    """Convert axis from NWC to NCW or NHWC to NCHW or NDHWC to NCDHW.
+
+    Parameters
+    ----------
+    axis: int
+        Axis value to be replaced
+
+    tensor_rank: int
+        Number of ranks of ex-tensors specified by axis
+
+    Returns
+    ----------
+    converted_axis: int
+        Converted axis
+    """
+    # Convert a negative number of axis to a positive number
+    converted_axis = axis if axis >= 0 else axis + tensor_rank
+
+    # 3D and 4D and 5D axis conversion table
+    """
+    convertion_table_3d = [0,2,1]
+    convertion_table_4d = [0,3,1,2]
+    convertion_table_5d = [0,4,1,2,3]
+    convertion_table_6d = [0,5,1,2,3,4]
+        :
+    """
+    if tensor_rank > 2:
+        convertion_table = [0] + [tensor_rank - 1] + [i for i in range(1, tensor_rank - 1)]
+        converted_axis = convertion_table.index(converted_axis)
+
+    return converted_axis
+
+
 def _nnapi_scalar(
     value,
     dtype: tf.dtypes,
