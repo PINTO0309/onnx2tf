@@ -26,13 +26,10 @@ def get_constant_or_variable(
     """
     if hasattr(const_or_var, 'values'):
         values = const_or_var.values
-        shape_length = values.ndim
-        if shape_length == 3:
-            values = values.transpose([0,2,1])
-        elif shape_length == 4:
-            values = values.transpose([0,2,3,1])
-        elif shape_length == 5:
-            values = values.transpose([0,2,3,4,1])
+        tensor_rank = values.ndim
+        if tensor_rank > 2:
+            convertion_table = [0] + [i for i in range(2, tensor_rank - 2)] + [1]
+            values = values.transpose(convertion_table)
         return values
     else:
         return const_or_var
