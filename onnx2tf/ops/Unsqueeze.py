@@ -57,6 +57,7 @@ def make_node(
         axes.sort()
 
     new_shape = copy.deepcopy(input_tensor_shape)
+    # TODO: Dynamic Tensor
     for idx in axes:
         new_shape.insert(idx, 1)
 
