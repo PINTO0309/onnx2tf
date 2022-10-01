@@ -41,7 +41,7 @@ def make_node(
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(shape),
+        tensor_rank=len(graph_node_input.shape),
     )
 
     # 0: False, 1: True
