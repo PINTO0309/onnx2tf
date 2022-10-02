@@ -25,7 +25,6 @@ def make_node(
     """
     input_tensor = get_constant_or_variable(graph_node.inputs[0])
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
     roi = None
     if len(graph_node.inputs) == 2:
         roi = get_constant_or_variable(graph_node.inputs[1])
