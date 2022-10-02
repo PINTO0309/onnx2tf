@@ -35,6 +35,51 @@ def get_constant_or_variable(
         return const_or_var
 
 
+def get_weights_constant_or_variable(
+    const_or_var: Any,
+    kernel_size: int,
+) -> Any:
+    """For obtaining transposed weights.
+
+    Parameters
+    ----------
+    const_or_var: gs.Variable
+        gs.Variable
+
+    kernel_size: int
+        Number of elements in kernel_shape\n
+        Conv1D: 1\n
+        Conv2D: 2\n
+        Conv3D: 3
+
+    Returns
+    ----------
+    const_or_var:
+        Transposed weights. Numpy array or gs.Variable
+    """
+    if hasattr(const_or_var, 'values'):
+        values = const_or_var.values
+        """
+        e.g.
+        Conv1D
+            ONNX: [C_OUT, C_IN,     X] = [8,1,3]
+            tf  : [    X, C_IN, C_OUT] = [3,1,8]
+
+        Conv2D
+            ONNX: [C_OUT, C_IN,     Y,     X] = [8,1,3,3]
+            tf  : [    Y,    X,  C_IN, C_OUT] = [3,3,1,8]
+
+        Conv3D
+            ONNX: [C_OUT, C_IN, Z,    Y,     X] = [8,1,3,3,3]
+            tf  : [    Z,    Y, X, C_IN, C_OUT] = [3,3,3,1,8]
+        """
+        convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
+        values = values.transpose(convertion_table)
+        return values
+    else:
+        return const_or_var
+
+
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
 def tf_shape(
     *,
