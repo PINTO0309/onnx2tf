@@ -33,7 +33,7 @@ def print_node_info(func):
             result = func(*args, **kwargs)
             return result
         except:
-            print(f'{Color.RED}ERROR:{Color.RESET}  The trace log is below.')
+            print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
             sys.exit(1)
     return info
