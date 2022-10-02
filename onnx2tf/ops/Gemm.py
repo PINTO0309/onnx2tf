@@ -31,18 +31,18 @@ def make_node(
         graph_node_input_3 = 0
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
-    input_tensor_x = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+    x = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    input_tensor_y = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+    y = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    input_tensor_z = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
+    z = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
-    input_tensor_x_dtype = input_tensor_x.dtype
-    input_tensor_x = tf.keras.layers.Flatten()(input_tensor_x)
+    input_tensor_x_dtype = x.dtype
+    x = tf.keras.layers.Flatten()(x)
     # The Flatten API changes data type from tf.float64 to tf.float32
     # so we need the following line to get the original type back
-    input_tensor_x = tf.cast(input_tensor_x, input_tensor_x_dtype) \
-        if input_tensor_x_dtype is tf.float64 else input_tensor_x
+    x = tf.cast(x, input_tensor_x_dtype) \
+        if input_tensor_x_dtype is tf.float64 else x
 
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype

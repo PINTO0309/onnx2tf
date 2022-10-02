@@ -31,7 +31,8 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    input_tensor_shape = input_tensor.shape
+    input_tensor_shape = tf.shape(input_tensor)
+    # input_tensor_rank = len(input_tensor)
 
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
