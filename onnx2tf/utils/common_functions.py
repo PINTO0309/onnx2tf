@@ -1,5 +1,7 @@
+import sys
 import random
 random.seed(0)
+import traceback
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
@@ -7,6 +9,34 @@ import onnx_graphsurgeon as gs
 from utils.colors import Color
 from typing import Any, List
 from collections import namedtuple
+
+
+def print_node_info(func):
+    def info(*args, **kwargs):
+        graph_node: gs.Variable = kwargs['graph_node']
+        print(f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}op_name:{Color.RESET} {graph_node.name}')
+        for idx, graph_node_input in enumerate(graph_node.inputs):
+            print(
+                f'{Color.GREEN}INFO:{Color.RESET} '+
+                f'{Color.BLUE}input_name.{idx+1}:{Color.RESET} {graph_node_input.name} '+
+                f'{Color.BLUE}shape:{Color.RESET} {graph_node_input.shape} '+
+                f'{Color.BLUE}dtype:{Color.RESET} {graph_node_input.dtype}'
+            )
+        for idx, graph_node_output in enumerate(graph_node.outputs):
+            print(
+                f'{Color.GREEN}INFO:{Color.RESET} '+
+                f'{Color.BLUE}output_name.{idx+1}:{Color.RESET} {graph_node_output.name} '+
+                f'{Color.BLUE}shape:{Color.RESET} {graph_node_output.shape} '+
+                f'{Color.BLUE}dtype:{Color.RESET} {graph_node_output.dtype}'
+            )
+        try:
+            result = func(*args, **kwargs)
+            return result
+        except:
+            print(f'{Color.RED}ERROR:{Color.RESET}  The trace log is below.')
+            traceback.print_exc()
+            sys.exit(1)
+    return info
 
 
 def get_constant_or_variable(
