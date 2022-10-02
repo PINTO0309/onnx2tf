@@ -16,7 +16,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """GatherND
+    """ScatterND
 
     Parameters
     ----------
@@ -28,6 +28,7 @@ def make_node(
     """
     graph_node_input_1 = get_constant_or_variable(graph_node.inputs[0])
     graph_node_input_2 = get_constant_or_variable(graph_node.inputs[1])
+    graph_node_input_3 = get_constant_or_variable(graph_node.inputs[2])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -36,10 +37,8 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     indices_tensor = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    tensor_rank = len(input_tensor.shape)
-
-    batch_dims = graph_node.attrs.get('batch_dims', 0)
-    batch_dims = convert_axis(axis=batch_dims, tensor_rank=tensor_rank)
+    updates_tensor = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
+        if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -51,9 +50,9 @@ def make_node(
     # Generation of TF OP
     # TODO: negative indices
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.gather_nd(
-            params=input_tensor,
+        tf.scatter_nd(
             indices=indices_tensor,
-            batch_dims=batch_dims,
+            updates=updates_tensor,
+            shape=input_tensor,
             name=graph_node.name,
         )
