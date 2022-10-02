@@ -37,7 +37,7 @@ def make_node(
     )
     filters = input_weights.shape[-1]
     input_bias = None
-    if len(graph_node.inputs) == 3:
+    if len(graph_node.inputs) >= 3:
         input_bias = get_constant_or_variable(graph_node.inputs[2])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
