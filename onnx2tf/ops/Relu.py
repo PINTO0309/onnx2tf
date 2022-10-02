@@ -39,7 +39,7 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.relu(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
+            features=tf_layers_dict[graph_node_input.name]['tf_node'] \
                 if isinstance(graph_node_input, gs.Variable) else graph_node_input,
             name=graph_node.name,
         )
