@@ -128,15 +128,14 @@ def convert(
         )
         sys.exit(1)
 
-    # Create Output folder
-    os.makedirs(output_folder_path, exist_ok=True)
-
-
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
         onnx_graph = onnx.load(input_onnx_file_path)
     graph = gs.import_onnx(onnx_graph)
+
+    # Create Output folder
+    os.makedirs(output_folder_path, exist_ok=True)
 
     # Define additional parameters
     additional_parameters = {
