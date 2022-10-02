@@ -28,7 +28,7 @@ def get_constant_or_variable(
         values = const_or_var.values
         tensor_rank = values.ndim
         if tensor_rank > 2:
-            convertion_table = [0] + [i for i in range(2, tensor_rank - 2)] + [1]
+            convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             values = values.transpose(convertion_table)
         return values
     else:

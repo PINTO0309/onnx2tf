@@ -72,7 +72,7 @@ def make_node(
     if sizes is not None:
         # sizes is defined
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
-        sizes.set_shape(input_tensor_shape.shape)
+        sizes = sizes.set_shape(input_tensor_shape.shape) if isinstance(sizes, gs.Variable) else sizes
         new_size = tf.cast(sizes[1:3], tf.int32)
     elif scales is not None:
         # only scales is defined
