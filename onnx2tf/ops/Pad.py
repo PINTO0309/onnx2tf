@@ -47,7 +47,10 @@ def _process_neg_pads(
     )
     ends = i_shape + tf.gather(
         params=paddings,
-        indices=tf.range(i_rank, i_rank*2),
+        indices=tf.range(
+            start=i_rank,
+            limit=i_rank*2,
+        ),
     )
     sizes = ends - begins
 
