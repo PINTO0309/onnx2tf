@@ -26,13 +26,13 @@ def make_node(
     input_tensor = get_constant_or_variable(graph_node.inputs[0])
     input_tensor_shape = input_tensor.shape
     roi = None
-    if len(graph_node.inputs) == 2:
+    if len(graph_node.inputs) >= 2:
         roi = get_constant_or_variable(graph_node.inputs[1])
     scales = None
-    if len(graph_node.inputs) == 3:
+    if len(graph_node.inputs) >= 3:
         scales = get_constant_or_variable(graph_node.inputs[2])
     sizes = None
-    if len(graph_node.inputs) == 4:
+    if len(graph_node.inputs) >= 4:
         sizes = get_constant_or_variable(graph_node.inputs[3])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape

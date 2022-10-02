@@ -28,7 +28,7 @@ def make_node(
     """
     graph_node_input_1 = get_constant_or_variable(graph_node.inputs[0])
     graph_node_input_2 = None
-    if len(graph_node.inputs) == 2:
+    if len(graph_node.inputs) >= 2:
         graph_node_input_2 = get_constant_or_variable(graph_node.inputs[1])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape

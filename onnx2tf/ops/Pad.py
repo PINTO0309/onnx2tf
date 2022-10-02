@@ -139,7 +139,7 @@ def make_node(
     input_tensor = get_constant_or_variable(graph_node.inputs[0])
     paddings = get_constant_or_variable(graph_node.inputs[1])
     constant_value = 0
-    if len(graph_node.inputs) == 3:
+    if len(graph_node.inputs) >= 3:
         constant_value = get_constant_or_variable(graph_node.inputs[2])
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
