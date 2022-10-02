@@ -60,8 +60,7 @@ def make_node(
         )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
-            tensor=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            tensor=input_tensor,
             shape=cal_shape,
             name=graph_node.name,
         )
