@@ -14,7 +14,7 @@ from collections import namedtuple
 def print_node_info(func):
     def info(*args, **kwargs):
         graph_node: gs.Variable = kwargs['graph_node']
-        print(f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}op_name:{Color.RESET} {graph_node.name}')
+        print(f'{Color.GREEN}INFO:{Color.RESET} {Color.YELLOW}op_name:{Color.RESET} {graph_node.name}')
         for idx, graph_node_input in enumerate(graph_node.inputs):
             print(
                 f'{Color.GREEN}INFO:{Color.RESET} '+
@@ -25,9 +25,9 @@ def print_node_info(func):
         for idx, graph_node_output in enumerate(graph_node.outputs):
             print(
                 f'{Color.GREEN}INFO:{Color.RESET} '+
-                f'{Color.BLUE}output_name.{idx+1}:{Color.RESET} {graph_node_output.name} '+
-                f'{Color.BLUE}shape:{Color.RESET} {graph_node_output.shape} '+
-                f'{Color.BLUE}dtype:{Color.RESET} {graph_node_output.dtype}'
+                f'{Color.CYAN}output_name.{idx+1}:{Color.RESET} {graph_node_output.name} '+
+                f'{Color.CYAN}shape:{Color.RESET} {graph_node_output.shape} '+
+                f'{Color.CYAN}dtype:{Color.RESET} {graph_node_output.dtype}'
             )
         try:
             result = func(*args, **kwargs)
