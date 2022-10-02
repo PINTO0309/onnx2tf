@@ -694,3 +694,119 @@ def get_padding_as_op(
     )  # tf requires int32 paddings
     return tf.pad(x, padding)
 
+
+def tf_product(
+    *,
+    a,
+    b,
+):
+    """
+            Calculates the cartesian product of two column vectors a and b
+            Example:
+            a = [[1]
+                [2]
+                [3]]
+            b = [[0]
+                [1]]
+            result = [[1 0]
+                    [1 1]
+                    [2 0]
+                    [2 1]
+                    [3 0]
+                    [3 1]]
+    """
+    tile_a = tf.tile(a, [1, tf.shape(b)[0]])
+    tile_a = tf.expand_dims(tile_a, 2)
+    tile_a = tf.reshape(tile_a, [-1, 1])
+    b = tf.tile(b, [tf.shape(a)[0], 1])
+    b = tf.concat([tile_a, b], axis=1)
+    return b
+
+
+def _calc_input_ind(
+    *,
+    output_ind,
+    kernel,
+    dilation,
+    stride
+):
+    return (output_ind // kernel) * (stride - kernel * dilation) + output_ind * dilation
+
+
+def remove_dilations(
+    *,
+    input_tensor,
+    kernel_shape,
+    spatial_size,
+    strides,
+    dilations,
+):
+    input_shape = tf_shape(input_tensor)
+    in_spatial_shape = input_shape[1:len(kernel_shape)+1]
+    channels_count = input_shape[-1]
+
+    # initilize the output_shape with zeros
+    # self.output_shape will contain the shape of the
+    # output tensor after the loop below is executed
+    output_shape = [0] * (spatial_size + 2)
+    output_shape[0] = input_shape[0]
+
+    for dim in range(spatial_size - 1, -1, -1):
+        filter_size = (kernel_shape[dim] - 1) * dilations[dim] + 1
+        output_size = (((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1) * kernel_shape[dim]
+        output_shape[dim + 2] = output_size
+
+        # initialize the output dimension index with the range of the
+        # dimension output size (e.g. 4): [0, 1, 2, 3]
+        dim_ind = tf.range(output_size)
+
+        # calculate the matching indices in the input data
+        # [0, 1, 2, 3] will calculate to [0, 2, 1, 3]
+        # from the above example
+        dim_ind = _calc_input_ind(
+            output_ind=dim_ind,
+            kernel=kernel_shape[dim],
+            dilation=dilations[dim],
+            stride=strides[dim],
+        )
+        # convert to column vector
+        dim_ind = tf.expand_dims(dim_ind, 1)
+
+        if (dim == spatial_size - 1):
+            gather_ind = dim_ind
+        else:
+            # "combine" current dimension indices with the previous dimensions
+            # using cartesian product
+            gather_ind = tf_product(
+                a=dim_ind,
+                b=gather_ind,
+            )
+
+    # The result from the above loop for 2D data will be:
+    # [[y1, x1], [y2, x2], ..., [yn, xm]] where n is the height,
+    # m is the width.
+
+    # set the channels count in the output_shape
+    output_shape[1] = channels_count
+    # create the channel indices
+    channel_ind = tf.range(channels_count, dtype=tf.int64)
+    # convert to column vector
+    channel_ind = tf.expand_dims(channel_ind, 1)
+    # "combine" channel indices with the result from the loop
+    gather_ind = tf_product(
+        a=channel_ind,
+        b=gather_ind,
+    )
+
+    # expand the dimensions to match the input dimensions + 1
+    for x in range(spatial_size):
+        gather_ind = tf.expand_dims(gather_ind, 0)
+    # dublicate the indices for every batch
+    gather_ind = tf.tile(gather_ind, [input_shape[0]] + [1] * (spatial_size + 1))
+
+    # extract the selected values from the input
+    output = tf.gather_nd(input_tensor, gather_ind, batch_dims=1)
+    # reshape the output to the correct shape calculated earlier
+    output = tf.reshape(output, output_shape)
+
+    return output
