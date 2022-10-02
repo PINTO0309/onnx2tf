@@ -2,6 +2,7 @@
 
 import os
 import sys
+import copy
 import logging
 import warnings
 
@@ -214,7 +215,20 @@ def convert(
         )
 
         # saved_model
-        tf.saved_model.save(concrete_func, output_folder_path)
+        try:
+            # concrete_func
+            print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
+            tf.saved_model.save(concrete_func, output_folder_path)
+            print(f'{Color.GREEN}saved_model output complete!{Color.RESET}')
+        except TypeError as e:
+            # Switch to .pb
+            print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
+            output_pb = True
+            flag_for_output_switching_from_saved_model_to_pb_due_to_error = True
+        except Exception as e:
+            print(f'{Color.RED}ERROR:{Color.RESET}', e)
+            import traceback
+            traceback.print_exc()
 
         # TFLite
         converter = tf.lite.TFLiteConverter.from_concrete_functions(

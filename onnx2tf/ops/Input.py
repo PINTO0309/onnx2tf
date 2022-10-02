@@ -48,6 +48,8 @@ def make_node(
             ncw_nchw_ncdhw_keep = True
         else:
             ncw_nchw_ncdhw_keep = False
+    elif len(graph_input.shape) in [3, 4, 5] and not keep_ncw_or_nchw_or_ncdhw_input_names:
+        ncw_nchw_ncdhw_keep = False
     else:
         ncw_nchw_ncdhw_keep = True
     tf_layers_dict[graph_input.name]['ncw_nchw_ncdhw_keep'] = ncw_nchw_ncdhw_keep
@@ -75,6 +77,7 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
+            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,1])
 
@@ -101,6 +104,7 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
+            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,3,1])
 
@@ -128,6 +132,7 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
+            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(ncdhw, perm=[0,2,3,4,1])
 
