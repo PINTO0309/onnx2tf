@@ -146,3 +146,6 @@ convert(
     model: tf.keras.Model
         Model
 ```
+
+## Generated Model
+![model_float32 tflite_30](https://user-images.githubusercontent.com/33194443/193499566-cfed15d9-ccb7-479e-a538-105c938d9b79.png)
