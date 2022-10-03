@@ -1,4 +1,5 @@
 import sys
+import copy
 import random
 random.seed(0)
 import traceback
@@ -92,6 +93,12 @@ def get_constant_or_variable(
         if tensor_rank > 2:
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             values = values.transpose(convertion_table)
+        elif tensor_rank == 1 and values.size > 2:
+            convertion_table = [0] + [i for i in range(2, values.size)] + [1]
+            new_values = np.zeros(values.size, dtype=values.dtype)
+            for new_idx, idx in enumerate(convertion_table):
+                new_values[new_idx] = values[idx]
+            values = copy.deepcopy(new_values)
         return values
     else:
         return const_or_var
