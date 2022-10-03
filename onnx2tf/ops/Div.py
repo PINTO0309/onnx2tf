@@ -41,11 +41,22 @@ def make_node(
     }
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.divide(
-            x=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-                if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
-            y=tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-                if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
-            name=graph_node.name,
-        )
+    target_cast_dtype = [
+        np.int8,
+        np.int16,
+        np.int32,
+        np.int64,
+    ]
+
+    divided_tensor = tf.math.divide(
+        x=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+            if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
+        y=tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+            if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
+        name=graph_node.name,
+    )
+
+    if dtype in target_cast_dtype:
+        divided_tensor = tf.cast(divided_tensor, dtype=dtype)
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = divided_tensor

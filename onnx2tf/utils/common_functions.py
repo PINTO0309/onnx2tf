@@ -506,7 +506,7 @@ pad_tf_ops = pad_ops(
     lambda tensor: tf.cast(tensor, tf.int64)
 )
 
-def calc_pads_same_pooling(
+def _calc_pads_same_pooling(
     *,
     in_spatial_shape,
     kernel_shape,
@@ -635,7 +635,7 @@ def calc_pads_same_pooling(
     """
     pad_ops = pad_numpy_ops if is_known_shape else pad_tf_ops
 
-    return calc_pads_same_pooling(
+    return _calc_pads_same_pooling(
         in_spatial_shape=in_spatial_shape,
         kernel_shape=kernel_shape,
         strides=strides,

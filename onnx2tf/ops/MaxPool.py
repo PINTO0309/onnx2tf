@@ -62,6 +62,7 @@ def make_node(
                 strides=strides,
                 dilations=dilations,
                 padding='SAME_UPPER',
+                is_known_shape=is_known_shape,
             )
             if pads == same_paddings:
                 pads = 'SAME_UPPER'

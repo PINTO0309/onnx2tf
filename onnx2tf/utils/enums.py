@@ -31,3 +31,21 @@ ONNX_DTYPES_TO_TF_DTYPES = {
     # tf.complex64
     # tf.complex128
 }
+
+NUMPY_DTYPES_TO_TF_DTYPES = {
+    np.dtype('int32'): tf.float16,
+    np.dtype('float32'): tf.float32,
+    np.dtype('float64'): tf.float64,
+
+    np.dtype('uint8'): tf.uint8,
+    np.dtype('uint16'): tf.uint16,
+    np.dtype('uint32'): tf.uint32,
+    np.dtype('uint64'): tf.uint64,
+
+    np.dtype('int8'): tf.int8,
+    np.dtype('int16'): tf.int16,
+    np.dtype('int32'): tf.int32,
+    np.dtype('int64'): tf.int64,
+
+    np.dtype('bool_'): tf.bool,
+}
