@@ -12,7 +12,7 @@ from collections import namedtuple
 
 
 def print_node_info(func):
-    def info(*args, **kwargs):
+    def print_wrapper_func(*args, **kwargs):
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
         if graph_input is not None:
@@ -45,7 +45,7 @@ def print_node_info(func):
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
             sys.exit(1)
-    return info
+    return print_wrapper_func
 
 
 def get_constant_or_variable(
