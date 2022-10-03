@@ -10,6 +10,7 @@ make_*.py
 
 demo.yml
 package-lock.json
+*.gif
 
 *.onnx
 *.tflite
