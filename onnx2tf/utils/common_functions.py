@@ -27,6 +27,7 @@ def print_node_info(func):
                     f'{Color.GREEN}dtype{Color.RESET}: {graph_input.dtype}'
                 )
             elif graph_node is not None:
+                print('')
                 print(f'{Color.GREEN}INFO:{Color.RESET} {Color.YELLOW}onnx_op_type{Color.RESET}: {graph_node.op} {Color.YELLOW}onnx_op_name{Color.RESET}: {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     print(
