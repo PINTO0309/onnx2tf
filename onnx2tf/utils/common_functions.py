@@ -8,7 +8,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List
+from typing import Any, List, Optional
 from collections import namedtuple
 
 
@@ -75,6 +75,7 @@ def print_node_info(func):
 
 def get_constant_or_variable(
     const_or_var: Any,
+    before_op_output_shape_trans: Optional[bool] = True, # TODO: 全OPに同じ転置するしない判定処理のための引数を追加したらOptionalを外す
 ) -> Any:
     """Get a Numpy constant or gs.Variable from graph_surgeon node.
 
@@ -90,6 +91,8 @@ def get_constant_or_variable(
     """
     if hasattr(const_or_var, 'values'):
         values = const_or_var.values
+        if not before_op_output_shape_trans:
+            return values
         tensor_rank = values.ndim
         if tensor_rank > 2:
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]

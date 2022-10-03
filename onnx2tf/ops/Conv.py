@@ -30,6 +30,8 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
+    before_op_output_shape_trans = \
+        tf_layers_dict[graph_node.inputs[0].name].get('output_shape_trans', True)
     input_tensor = get_constant_or_variable(graph_node.inputs[0])
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
     kernel_size = len(kernel_shape)

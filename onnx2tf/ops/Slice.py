@@ -29,6 +29,8 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
+    before_op_output_shape_trans = \
+        tf_layers_dict[graph_node.inputs[0].name].get('output_shape_trans', True)
     input_tensor = get_constant_or_variable(graph_node.inputs[0])
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
@@ -221,3 +223,8 @@ def make_node(
             strides=steps,
             name=graph_node.name,
         )
+
+    tf_node_output_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+    tf_layers_dict[graph_node_output.name]['output_shape_trans'] = \
+        True if tf_node_output_shape != shape else False
+
