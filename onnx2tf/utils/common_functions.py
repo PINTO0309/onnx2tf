@@ -15,6 +15,7 @@ def print_node_info(func):
     def print_wrapper_func(*args, **kwargs):
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
+        tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
         if graph_input is not None:
             print(
                 f'{Color.GREEN}INFO:{Color.RESET} '+
@@ -34,12 +35,29 @@ def print_node_info(func):
             for idx, graph_node_output in enumerate(graph_node.outputs):
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
-                    f'{Color.CYAN}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
-                    f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
-                    f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
+                    f'{Color.BLUE}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                    f'{Color.BLUE}shape{Color.RESET}: {graph_node_output.shape} '+
+                    f'{Color.BLUE}dtype{Color.RESET}: {graph_node_output.dtype}'
                 )
         try:
             result = func(*args, **kwargs)
+
+            if graph_node is not None and tf_layers_dict is not None:
+                tf_layer_info: dict = tf_layers_dict.get(graph_node.name, None)
+                if tf_layer_info is not None:
+                    tf_layer = tf_layer_info.get('tf_node', None)
+                    if tf_layer is not None:
+                        type_spec_info = ''
+                        if hasattr(tf_layer, 'type_spec'):
+                            type_spec_info = tf_layer.type_spec
+                        else:
+                            type_spec_info = graph_node_output
+                        print(
+                            f'{Color.GREEN}INFO:{Color.RESET} '+
+                            f'{Color.CYAN}gen_tfop_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
+                            f'{Color.CYAN}shape{Color.RESET}: {type_spec_info.shape} '+
+                            f'{Color.CYAN}dtype{Color.RESET}: {type_spec_info.dtype}'
+                        )
             return result
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
