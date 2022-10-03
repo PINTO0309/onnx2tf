@@ -76,7 +76,7 @@ def make_node(
         topked_values, topked_indices = \
             tf.math.top_k(
                 input=input_tensor,
-                k=k_tensor,
+                k=int(k_tensor),
                 sorted=sorted,
                 name=graph_node.name,
             )
@@ -84,7 +84,7 @@ def make_node(
         topked_values, topked_indices = \
             tf.math.top_k(
                 input=tf.negative(input_tensor),
-                k=k_tensor,
+                k=int(k_tensor),
                 sorted=sorted,
                 name=graph_node.name,
             )
