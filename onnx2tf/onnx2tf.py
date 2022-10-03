@@ -137,8 +137,9 @@ def convert(
         onnx_graph = onnx.load(input_onnx_file_path)
     graph = gs.import_onnx(onnx_graph)
 
-    print('')
-    print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
+    if not non_verbose:
+        print('')
+        print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
 
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
@@ -146,6 +147,7 @@ def convert(
     # Define additional parameters
     additional_parameters = {
         'opset': graph.opset,
+        'non_verbose': non_verbose,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
@@ -154,8 +156,9 @@ def convert(
 
     tf_layers_dict = {}
 
-    print('')
-    print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
+    if not non_verbose:
+        print('')
+        print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
 
     with graph.node_ids():
         # Inputs
@@ -213,9 +216,10 @@ def convert(
         ]
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        print('')
-        model.summary(line_length=140)
-        print('')
+        if not non_verbose:
+            print('')
+            model.summary(line_length=140)
+            print('')
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
@@ -226,12 +230,15 @@ def convert(
         # saved_model
         try:
             # concrete_func
-            print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
+            if not non_verbose:
+                print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
             tf.saved_model.save(concrete_func, output_folder_path)
-            print(f'{Color.GREEN}saved_model output complete!{Color.RESET}')
+            if not non_verbose:
+                print(f'{Color.GREEN}saved_model output complete!{Color.RESET}')
         except TypeError as e:
             # Switch to .pb
-            print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
+            if not non_verbose:
+                print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
             output_pb = True
             flag_for_output_switching_from_saved_model_to_pb_due_to_error = True
         except Exception as e:
