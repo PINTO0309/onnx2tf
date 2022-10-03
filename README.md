@@ -49,7 +49,9 @@ optional arguments:
   -o OUTPUT_FOLDER_PATH, --output_folder_path OUTPUT_FOLDER_PATH
     Output folder path. Default: "saved_model"
 
-  -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]
+  -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], \
+      --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES \
+          [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]
     Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
     If a nonexistent INPUT OP name is specified, it is ignored.
     Valid only for 3D, 4D and 5D input tensors.
