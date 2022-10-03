@@ -1,23 +1,26 @@
 #! /usr/bin/env python
 
 import os
+__path__ = (os.path.dirname(__file__), )
 import sys
-import copy
 import logging
 import warnings
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
+warnings.simplefilter(action='ignore', category=DeprecationWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=RuntimeWarning)
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 tf.random.set_seed(0)
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
-tf.get_logger().setLevel(logging.ERROR)
+tf.get_logger().setLevel(logging.FATAL)
 
 import onnx
 import onnx_graphsurgeon as gs
@@ -25,7 +28,7 @@ from typing import Optional, List
 from argparse import ArgumentParser
 
 import importlib
-from utils.colors import Color
+from onnx2tf.utils.colors import Color
 
 def convert(
     input_onnx_file_path: Optional[str] = '',
@@ -134,6 +137,9 @@ def convert(
         onnx_graph = onnx.load(input_onnx_file_path)
     graph = gs.import_onnx(onnx_graph)
 
+    print('')
+    print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
+
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
@@ -148,8 +154,10 @@ def convert(
 
     tf_layers_dict = {}
 
-    with graph.node_ids():
+    print('')
+    print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
 
+    with graph.node_ids():
         # Inputs
         for graph_input in graph.inputs:
             """
@@ -165,7 +173,7 @@ def convert(
             graph_input.dtype: dtype('float32')
             graph_input.name: 'input'
             """
-            op = importlib.import_module(f'ops.Input')
+            op = importlib.import_module(f'onnx2tf.ops.Input')
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -177,7 +185,7 @@ def convert(
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
             optype = graph_node.op
-            op = importlib.import_module(f'ops.{optype}')
+            op = importlib.import_module(f'onnx2tf.ops.{optype}')
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
@@ -205,7 +213,9 @@ def convert(
         ]
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        model.summary()
+        print('')
+        model.summary(line_length=140)
+        print('')
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))

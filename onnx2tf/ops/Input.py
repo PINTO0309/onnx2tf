@@ -5,8 +5,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from typing import List
-from utils.colors import Color
-from utils.common_functions import (
+from onnx2tf.utils.colors import Color
+from onnx2tf.utils.common_functions import (
     print_node_info,
 )
 

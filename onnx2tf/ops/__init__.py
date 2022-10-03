@@ -1,1 +1,1 @@
-from ops import *
+from onnx2tf.ops import *

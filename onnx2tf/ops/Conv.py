@@ -4,13 +4,13 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
-from utils.common_functions import (
+from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     get_weights_constant_or_variable,
     get_padding_as_op,
     print_node_info,
 )
-from utils.colors import Color
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
