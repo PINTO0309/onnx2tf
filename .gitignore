@@ -8,7 +8,6 @@ __pycache__/
 test.py
 make_*.py
 
-demo.yml
 package-lock.json
 *.gif
 
