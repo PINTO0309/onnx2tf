@@ -51,7 +51,8 @@ optional arguments:
 
   -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]
     Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
-    If a nonexistent INPUT OP name is specified, it is ignored. Valid only for 3D, 4D and 5D input tensors.
+    If a nonexistent INPUT OP name is specified, it is ignored.
+    Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"
 
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
