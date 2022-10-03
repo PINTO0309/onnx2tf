@@ -8,6 +8,9 @@ __pycache__/
 test.py
 make_*.py
 
+demo.yml
+package-lock.json
+
 *.onnx
 *.tflite
 *.npy
@@ -15,3 +18,4 @@ make_*.py
 *.engine
 *.profile
 saved_model/
+node_modules/
