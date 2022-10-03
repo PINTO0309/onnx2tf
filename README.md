@@ -16,3 +16,60 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 
 # Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
+
+# Sample Usage
+```
+$ pip install -U onnx2tf
+```
+```
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx -o saved_model
+```
+# Parameter
+```
+$ onnx2tf -h
+
+usage: onnx2tf
+[-h]
+-i INPUT_ONNX_FILE_PATH
+[-o OUTPUT_FOLDER_PATH]
+[-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
+[-rari64 | -rarf32]
+[-rasin]
+[-racos]
+[-n]
+
+optional arguments:
+  -h, --help
+    show this help message and exit
+
+  -i INPUT_ONNX_FILE_PATH, --input_onnx_file_path INPUT_ONNX_FILE_PATH
+    Input onnx file path.
+
+  -o OUTPUT_FOLDER_PATH, --output_folder_path OUTPUT_FOLDER_PATH
+    Output folder path. Default: "saved_model"
+
+  -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]
+    Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+    If a nonexistent INPUT OP name is specified, it is ignored. Valid only for 3D, 4D and 5D input tensors.
+    e.g. --keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"
+
+  -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
+    Replace ArgMax with a ReduceMax. The returned indicies are int64.
+    Only one of replace_argmax_to_reducemax_and_indicies_is_int64
+    and replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+
+  -rarf32, --replace_argmax_to_reducemax_and_indicies_is_float32
+    Replace ArgMax with a ReduceMax. The returned indicies are float32.
+    Only one of replace_argmax_to_reducemax_and_indicies_is_int64
+    and replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+
+  -rasin, --replace_asin_to_pseudo_asin
+    Replace Asin with a pseudo Asin.
+
+  -racos, --replace_acos_to_pseudo_acos
+    Replace Acos with a pseudo Acos.
+
+  -n, --non_verbose
+    Do not show all information logs. Only error logs are displayed.
+```
