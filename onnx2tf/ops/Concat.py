@@ -7,9 +7,11 @@ import onnx_graphsurgeon as gs
 from utils.common_functions import (
     convert_axis,
     get_constant_or_variable,
+    print_node_info,
 )
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

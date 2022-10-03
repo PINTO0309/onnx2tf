@@ -4,8 +4,12 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
+from utils.common_functions import (
+    print_node_info,
+)
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

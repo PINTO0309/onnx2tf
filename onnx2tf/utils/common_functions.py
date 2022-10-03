@@ -13,22 +13,31 @@ from collections import namedtuple
 
 def print_node_info(func):
     def info(*args, **kwargs):
-        graph_node: gs.Variable = kwargs['graph_node']
-        print(f'{Color.GREEN}INFO:{Color.RESET} {Color.YELLOW}op_name:{Color.RESET} {graph_node.name}')
-        for idx, graph_node_input in enumerate(graph_node.inputs):
+        graph_input: gs.Variable = kwargs.get('graph_input', None)
+        graph_node: gs.Variable = kwargs.get('graph_node', None)
+        if graph_input is not None:
             print(
                 f'{Color.GREEN}INFO:{Color.RESET} '+
-                f'{Color.BLUE}input_name.{idx+1}:{Color.RESET} {graph_node_input.name} '+
-                f'{Color.BLUE}shape:{Color.RESET} {graph_node_input.shape} '+
-                f'{Color.BLUE}dtype:{Color.RESET} {graph_node_input.dtype}'
+                f'{Color.GREEN}input_op_name{Color.RESET}: {graph_input.name} '+
+                f'{Color.GREEN}shape{Color.RESET}: {graph_input.shape} '+
+                f'{Color.GREEN}dtype{Color.RESET}: {graph_input.dtype}'
             )
-        for idx, graph_node_output in enumerate(graph_node.outputs):
-            print(
-                f'{Color.GREEN}INFO:{Color.RESET} '+
-                f'{Color.CYAN}output_name.{idx+1}:{Color.RESET} {graph_node_output.name} '+
-                f'{Color.CYAN}shape:{Color.RESET} {graph_node_output.shape} '+
-                f'{Color.CYAN}dtype:{Color.RESET} {graph_node_output.dtype}'
-            )
+        elif graph_node is not None:
+            print(f'{Color.GREEN}INFO:{Color.RESET} {Color.YELLOW}op_name:{Color.RESET} {graph_node.name}')
+            for idx, graph_node_input in enumerate(graph_node.inputs):
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} '+
+                    f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
+                    f'{Color.BLUE}shape{Color.RESET}: {graph_node_input.shape} '+
+                    f'{Color.BLUE}dtype{Color.RESET}: {graph_node_input.dtype}'
+                )
+            for idx, graph_node_output in enumerate(graph_node.outputs):
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} '+
+                    f'{Color.CYAN}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                    f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
+                    f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
+                )
         try:
             result = func(*args, **kwargs)
             return result

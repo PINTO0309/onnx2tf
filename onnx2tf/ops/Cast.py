@@ -6,9 +6,13 @@ import tensorflow as tf
 from onnx import TensorProto
 import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
-from utils.common_functions import get_constant_or_variable
+from utils.common_functions import (
+    get_constant_or_variable,
+    print_node_info,
+)
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

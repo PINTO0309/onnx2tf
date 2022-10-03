@@ -8,10 +8,12 @@ from utils.common_functions import (
     get_constant_or_variable,
     get_weights_constant_or_variable,
     get_padding_as_op,
+    print_node_info,
 )
 from utils.colors import Color
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

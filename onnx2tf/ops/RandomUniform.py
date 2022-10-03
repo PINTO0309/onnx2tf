@@ -5,8 +5,12 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
+from utils.common_functions import (
+    print_node_info,
+)
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

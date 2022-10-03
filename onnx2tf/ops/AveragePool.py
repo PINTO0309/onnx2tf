@@ -14,9 +14,11 @@ from utils.common_functions import (
     get_constant_or_variable,
     calc_pads_same_pooling,
     pad_input,
+    print_node_info,
 )
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

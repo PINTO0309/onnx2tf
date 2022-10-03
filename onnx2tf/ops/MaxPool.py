@@ -9,9 +9,11 @@ from utils.common_functions import (
     calc_pads_same_pooling,
     pad_input,
     remove_dilations,
+    print_node_info,
 )
 
 
+@print_node_info
 def make_node(
     *,
     graph_node: gs.Node,

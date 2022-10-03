@@ -6,8 +6,12 @@ import tensorflow as tf
 from onnx import numpy_helper
 import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
+from utils.common_functions import (
+    print_node_info,
+)
 
 
+@print_node_info
 def _make_tf_constant(
     *,
     value,
