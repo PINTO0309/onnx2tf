@@ -47,18 +47,20 @@ def make_node(
 
     axes = graph_node.attrs.get('axes', [-1])
     # NCHW->NHWC, NCDHW->NDHWC
-    axes = convert_axis(
-        axis=axes,
-        tensor_rank=tensor_rank,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-    )
-    axes = [
-        convert_axis(
-            axis=idx,
+    if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
+        axes = [
+            convert_axis(
+                axis=idx,
+                tensor_rank=tensor_rank,
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            ) for idx in axes
+        ]
+    elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
+        axes = convert_axis(
+            axis=axes,
             tensor_rank=tensor_rank,
             before_op_output_shape_trans=before_op_output_shape_trans,
-        ) for idx in axes
-    ]
+        )
 
     # 0: False, 1: True
     keepdims = bool(graph_node.attrs.get('keepdims', 1))
