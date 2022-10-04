@@ -32,7 +32,7 @@ def make_node(
         optype, shape, dtype, tensorflow graph
     """
     before_op_output_shape_trans = \
-        tf_layers_dict[graph_node.inputs[0].name].get('output_shape_trans', True)
+        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     input_tensor = get_constant_or_variable(graph_node.inputs[0], before_op_output_shape_trans)
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor

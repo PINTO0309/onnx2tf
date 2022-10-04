@@ -30,7 +30,7 @@ def make_node(
         optype, shape, dtype, tensorflow graph
     """
     before_op_output_shape_trans = \
-        tf_layers_dict[graph_node.inputs[0].name].get('output_shape_trans', True)
+        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     graph_node_input = get_constant_or_variable(graph_node.inputs[0])
     min_value_node = get_constant_or_variable(graph_node.inputs[1])
     max_value_node = get_constant_or_variable(graph_node.inputs[2])
