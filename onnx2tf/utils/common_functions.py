@@ -79,12 +79,15 @@ def inverted_operation_enable_disable(func):
     @wraps(func)
     def inverted_operation_enable_disable_wrapper_func(*args, **kwargs):
         result = func(*args, **kwargs)
-        # The output_shape_trans stores the result of determining
-        # whether the final output shape of the connected OP differs between ONNX and TensorFlow.
-        # before_op_output_shape_trans is used to determine
-        # if the input tensor needs to be transposed within the processing body of each OP.
-        # True: Transpose the input tensor from NCHW to NHWC and so on
-        # False: No transposition
+        """
+        The output_shape_trans stores the result of determining
+        whether the final output shape of the connected OP differs between ONNX and TensorFlow.
+        before_op_output_shape_trans is used to determine
+        if the input tensor needs to be transposed within the processing body of each OP.
+
+        True: Transpose the input tensor from NCHW to NHWC and so on
+        False: No transposition
+        """
         graph_node = kwargs.get('graph_node', None)
         tf_layers_dict = kwargs.get('tf_layers_dict', None)
         output_shape_trans = False
