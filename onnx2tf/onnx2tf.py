@@ -28,7 +28,7 @@ from typing import Optional, List
 from argparse import ArgumentParser
 
 import importlib
-from onnx2tf.utils.colors import Color
+from utils.colors import Color
 
 def convert(
     input_onnx_file_path: Optional[str] = '',
@@ -176,7 +176,7 @@ def convert(
             graph_input.dtype: dtype('float32')
             graph_input.name: 'input'
             """
-            op = importlib.import_module(f'onnx2tf.ops.Input')
+            op = importlib.import_module(f'ops.Input')
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -188,7 +188,7 @@ def convert(
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
             optype = graph_node.op
-            op = importlib.import_module(f'onnx2tf.ops.{optype}')
+            op = importlib.import_module(f'ops.{optype}')
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,

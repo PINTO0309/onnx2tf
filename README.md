@@ -106,7 +106,7 @@ optional arguments:
 >>> from onnx2tf import convert
 >>> help(convert)
 
-Help on function convert in module onnx2tf.onnx2tf:
+Help on function convert in module onnx2tf:
 
 convert(
   input_onnx_file_path: Union[str, NoneType] = '',

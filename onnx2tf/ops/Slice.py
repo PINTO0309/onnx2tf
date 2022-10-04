@@ -5,12 +5,12 @@ np.random.seed(0)
 import tensorflow as tf
 from tensorflow.python.keras.layers import Lambda
 import onnx_graphsurgeon as gs
-from onnx2tf.utils.common_functions import (
+from utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
 )
-from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
+from utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info

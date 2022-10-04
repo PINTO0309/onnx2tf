@@ -5,7 +5,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
-from onnx2tf.utils.common_functions import (
+from utils.common_functions import (
     get_constant_or_variable,
     convert_axis,
     print_node_info,

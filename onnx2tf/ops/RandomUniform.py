@@ -5,7 +5,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from utils.enums import ONNX_DTYPES_TO_TF_DTYPES
-from onnx2tf.utils.common_functions import (
+from utils.common_functions import (
     print_node_info,
 )
 

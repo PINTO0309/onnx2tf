@@ -9,8 +9,8 @@ from tensorflow.python.keras.layers import (
     AveragePooling2D,
     AveragePooling3D,
 )
-from onnx2tf.utils.colors import Color
-from onnx2tf.utils.common_functions import (
+from utils.colors import Color
+from utils.common_functions import (
     get_constant_or_variable,
     calc_pads_same_pooling,
     pad_input,
