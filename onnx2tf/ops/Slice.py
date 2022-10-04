@@ -145,7 +145,7 @@ def make_node(
                             updated_starts[i] = min(full_sizes[axis], updated_starts[i])
 
                         updated_full_begin[axis] = updated_starts[i]
-                        updated_full_sizes[axis] = updated_ends[i] - updated_starts[i]
+                        updated_full_sizes[axis] = updated_ends[i]
 
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.strided_slice(
