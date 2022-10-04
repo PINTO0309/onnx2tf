@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    convert_axis,
 )
 
 
@@ -55,18 +56,29 @@ def make_node(
     # Generation of TF OP
 
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
+    tensor_rank = len(input_tensor_shape)
 
     start = graph_node.attrs.get('start', 0)
+    start = convert_axis(
+        axis=start,
+        tensor_rank=tensor_rank,
+        before_op_output_shape_trans=before_op_output_shape_trans,
+    )
 
     if start < 0:
-        start += input_tensor_rank
+        start += tensor_rank
         # Clip if start is still < 0
         start = 0 if start < 0 else start
 
-    end = graph_node.attrs.get('end', input_tensor_rank)
+    end = graph_node.attrs.get('end', tensor_rank)
+    end = convert_axis(
+        axis=end,
+        tensor_rank=tensor_rank,
+        before_op_output_shape_trans=before_op_output_shape_trans,
+    )
+
     if end < 0:
-        end += input_tensor_rank
+        end += tensor_rank
         # Clip if end is still < 0
         end = 0 if end < 0 else end
 
