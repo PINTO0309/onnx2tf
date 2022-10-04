@@ -15,7 +15,7 @@ RUN pip install pip -U \
     && pip install -U onnx-simplifier \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
     && pip install -U simple_onnx_processing_tools \
-    && pip install -U onnx2tf==0.0.5 \
+    && pip install -U onnx2tf \
     && pip install tensorflow==2.10.0
 
 ENV USERNAME=user
