@@ -8,7 +8,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional
+from typing import Any, List
 from functools import wraps
 from collections import namedtuple
 
