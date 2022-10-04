@@ -192,7 +192,6 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
     },
     {
       "op_name": "StatefulPartitionedCall/Sum_3",
-      # attributes or inputs
       "param_target": "attributes", # attributes or inputs
       "param_name": "axes",
       "values": [2] # Disable parameter transposition or overwrite parameters
