@@ -100,7 +100,7 @@ def inverted_operation_enable_disable(func):
 
 def get_constant_or_variable(
     const_or_var: Any,
-    before_op_output_shape_trans: Optional[bool] = True, # TODO: 全OPに同じ転置するしない判定処理のための引数を追加したらOptionalを外す
+    before_op_output_shape_trans: bool,
 ) -> Any:
     """Get a Numpy constant or gs.Variable from graph_surgeon node.
 
@@ -178,6 +178,50 @@ def get_weights_constant_or_variable(
         return const_or_var
 
 
+
+
+def convert_axis(
+    *,
+    axis: int,
+    tensor_rank: int,
+    before_op_output_shape_trans: bool,
+) -> int:
+    """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC.
+
+    Parameters
+    ----------
+    axis: int
+        Axis value to be replaced
+
+    tensor_rank: int
+        Number of ranks of ex-tensors specified by axis
+
+    Returns
+    ----------
+    converted_axis: int
+        Converted axis
+    """
+    # Convert a negative number of axis to a positive number
+    converted_axis = axis if axis >= 0 else axis + tensor_rank
+
+    if not before_op_output_shape_trans:
+        return converted_axis
+
+    # 3D and 4D and 5D axis conversion table
+    """
+    convertion_table_3d = [0,2,1]
+    convertion_table_4d = [0,3,1,2]
+    convertion_table_5d = [0,4,1,2,3]
+    convertion_table_6d = [0,5,1,2,3,4]
+        :
+    """
+    if tensor_rank > 2:
+        convertion_table = [0] + [tensor_rank - 1] + [i for i in range(1, tensor_rank - 1)]
+        converted_axis = convertion_table[converted_axis]
+
+    return converted_axis
+
+
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
 def tf_shape(
     *,
@@ -205,44 +249,6 @@ def tf_shape(
         return np.array(input_tensor.shape.as_list(), dtype=dtype.as_numpy_dtype)
     else:
         return tf.shape(input_tensor, out_type=dtype)
-
-
-def convert_axis(
-    *,
-    axis: int,
-    tensor_rank: int,
-) -> int:
-    """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC.
-
-    Parameters
-    ----------
-    axis: int
-        Axis value to be replaced
-
-    tensor_rank: int
-        Number of ranks of ex-tensors specified by axis
-
-    Returns
-    ----------
-    converted_axis: int
-        Converted axis
-    """
-    # Convert a negative number of axis to a positive number
-    converted_axis = axis if axis >= 0 else axis + tensor_rank
-
-    # 3D and 4D and 5D axis conversion table
-    """
-    convertion_table_3d = [0,2,1]
-    convertion_table_4d = [0,3,1,2]
-    convertion_table_5d = [0,4,1,2,3]
-    convertion_table_6d = [0,5,1,2,3,4]
-        :
-    """
-    if tensor_rank > 2:
-        convertion_table = [0] + [tensor_rank - 1] + [i for i in range(1, tensor_rank - 1)]
-        converted_axis = convertion_table[converted_axis]
-
-    return converted_axis
 
 
 def convert_reverse_axis(

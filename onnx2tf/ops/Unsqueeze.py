@@ -30,12 +30,21 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    graph_node_input_1 = get_constant_or_variable(graph_node.inputs[0])
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1
+
+    graph_node_input_1 = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
     graph_node_input_2 = None
     if len(graph_node.inputs) >= 2:
-        graph_node_input_2 = get_constant_or_variable(graph_node.inputs[1])
+        graph_node_input_2 = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -53,9 +62,19 @@ def make_node(
     axes = graph_node.attrs.get('axes', axes)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-        axes = [convert_axis(axis=idx, tensor_rank=tensor_rank) for idx in axes]
+        axes = [
+            convert_axis(
+                axis=idx,
+                tensor_rank=tensor_rank,
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            ) for idx in axes
+        ]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-        axes = convert_axis(axis=axes, tensor_rank=tensor_rank)
+        axes = convert_axis(
+            axis=axes,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
         axes = list(axes[np.newaxis])
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:

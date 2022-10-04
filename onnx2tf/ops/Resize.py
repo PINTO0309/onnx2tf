@@ -29,19 +29,34 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    input_tensor = get_constant_or_variable(graph_node.inputs[0])
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1
+
+    input_tensor = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
     input_tensor_shape = input_tensor.shape
     roi = None
     if len(graph_node.inputs) >= 2:
-        roi = get_constant_or_variable(graph_node.inputs[1])
+        roi = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
     scales = None
     if len(graph_node.inputs) >= 3:
-        scales = get_constant_or_variable(graph_node.inputs[2])
+        scales = get_constant_or_variable(
+            graph_node.inputs[2],
+            before_op_output_shape_trans,
+        )
     sizes = None
     if len(graph_node.inputs) >= 4:
-        sizes = get_constant_or_variable(graph_node.inputs[3])
+        sizes = get_constant_or_variable(
+            graph_node.inputs[3],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype

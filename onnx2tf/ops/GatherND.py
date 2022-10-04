@@ -30,10 +30,22 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    graph_node_input_1 = get_constant_or_variable(graph_node.inputs[0])
-    graph_node_input_2 = get_constant_or_variable(graph_node.inputs[1])
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2
+
+    graph_node_input_1 = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    graph_node_input_2 = get_constant_or_variable(
+        graph_node.inputs[1],
+        before_op_output_shape_trans,
+    )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -45,7 +57,11 @@ def make_node(
     tensor_rank = len(input_tensor.shape)
 
     batch_dims = graph_node.attrs.get('batch_dims', 0)
-    batch_dims = convert_axis(axis=batch_dims, tensor_rank=tensor_rank)
+    batch_dims = convert_axis(
+        axis=batch_dims,
+        tensor_rank=tensor_rank,
+        before_op_output_shape_trans=before_op_output_shape_trans,
+    )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

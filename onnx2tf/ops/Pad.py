@@ -142,13 +142,28 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    input_tensor = get_constant_or_variable(graph_node.inputs[0])
-    paddings = get_constant_or_variable(graph_node.inputs[1])
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2
+
+    input_tensor = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    paddings = get_constant_or_variable(
+        graph_node.inputs[1],
+        before_op_output_shape_trans,
+    )
     constant_value = 0
     if len(graph_node.inputs) >= 3:
-        constant_value = get_constant_or_variable(graph_node.inputs[2])
+        constant_value = get_constant_or_variable(
+            graph_node.inputs[2],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype

@@ -28,8 +28,6 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
-        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     # Inputs
     X: gs.Variable = graph_node.inputs[0]
     scale: gs.Constant = graph_node.inputs[1]

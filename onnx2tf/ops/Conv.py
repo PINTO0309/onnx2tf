@@ -32,19 +32,27 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    input_tensor = get_constant_or_variable(graph_node.inputs[0])
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1
+
+    input_tensor = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
     kernel_size = len(kernel_shape)
     input_weights = get_weights_constant_or_variable(
         const_or_var=graph_node.inputs[1],
         kernel_size=kernel_size,
     )
-    filters = input_weights.shape[-1]
     input_bias = None
     if len(graph_node.inputs) >= 3:
-        input_bias = get_constant_or_variable(graph_node.inputs[2])
+        input_bias = get_constant_or_variable(
+            graph_node.inputs[2],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype

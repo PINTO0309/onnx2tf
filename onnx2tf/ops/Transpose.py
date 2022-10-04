@@ -30,9 +30,15 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1
+
+    graph_node_input = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -44,9 +50,19 @@ def make_node(
     perm = graph_node.attrs.get('perm', [idx for idx in reversed(range(tensor_rank))])
 
     if isinstance(perm, list) or (isinstance(perm, np.ndarray) and len(perm.shape) > 0):
-        perm = [convert_axis(axis=idx, tensor_rank=tensor_rank) for idx in perm]
+        perm = [
+            convert_axis(
+                axis=idx,
+                tensor_rank=tensor_rank,
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            ) for idx in perm
+        ]
     elif perm is not None and isinstance(perm, np.ndarray) and len(perm.shape) == 0:
-        perm = convert_axis(axis=perm, tensor_rank=tensor_rank)
+        perm = convert_axis(
+            axis=perm,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

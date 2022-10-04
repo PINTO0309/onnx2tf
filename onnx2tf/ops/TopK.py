@@ -30,10 +30,22 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    X = get_constant_or_variable(graph_node.inputs[0])
-    K = get_constant_or_variable(graph_node.inputs[1])
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2
+
+    X = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    K = get_constant_or_variable(
+        graph_node.inputs[1],
+        before_op_output_shape_trans,
+    )
     Values: gs.Variable = graph_node.outputs[0]
     Indices: gs.Variable = graph_node.outputs[1]
     Values_shape = Values.shape
@@ -48,7 +60,11 @@ def make_node(
     tensor_rank = len(input_tensor.shape)
 
     axis = graph_node.attrs.get('axis', -1)
-    axis = convert_axis(axis=axis, tensor_rank=tensor_rank)
+    axis = convert_axis(
+        axis=axis,
+        tensor_rank=tensor_rank,
+        before_op_output_shape_trans=before_op_output_shape_trans,
+    )
     largest = bool(graph_node.attrs.get('largest', 1))
     sorted = bool(graph_node.attrs.get('sorted', 1))
 

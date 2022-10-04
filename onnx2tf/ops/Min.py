@@ -29,11 +29,19 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
-        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans = True
+    for graph_node_input in graph_node.inputs:
+        before_op_output_shape_trans_n = \
+            tf_layers_dict.get(graph_node_input.name, {}).get('before_op_output_shape_trans', True)
+        before_op_output_shape_trans = \
+            before_op_output_shape_trans and before_op_output_shape_trans_n
+
     values = []
     for graph_node_input in graph_node.inputs:
-        const_or_var = get_constant_or_variable(graph_node_input)
+        const_or_var = get_constant_or_variable(
+            graph_node_input,
+            before_op_output_shape_trans,
+        )
         if isinstance(const_or_var, gs.Variable):
             values.append(tf_layers_dict[const_or_var.name]['tf_node'])
         else:

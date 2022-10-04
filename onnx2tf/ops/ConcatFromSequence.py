@@ -29,8 +29,6 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
-        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     graph_node_input: gs.Variable = graph_node.inputs[0]
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
@@ -53,6 +51,7 @@ def make_node(
     new_axis = convert_axis(
         axis=new_axis,
         tensor_rank=len(shape),
+        before_op_output_shape_trans=True,
     )
 
     # Preserving Graph Structure (Dict)

@@ -29,11 +29,29 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans = \
+    before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    graph_node_input = get_constant_or_variable(graph_node.inputs[0])
-    min_value_node = get_constant_or_variable(graph_node.inputs[1])
-    max_value_node = get_constant_or_variable(graph_node.inputs[2])
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_3 = \
+        tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans = \
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2 \
+        and before_op_output_shape_trans_3
+
+    graph_node_input = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    min_value_node = get_constant_or_variable(
+        graph_node.inputs[1],
+        before_op_output_shape_trans,
+    )
+    max_value_node = get_constant_or_variable(
+        graph_node.inputs[2],
+        before_op_output_shape_trans,
+    )
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape
