@@ -24,7 +24,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
 - [ ] Add process to replace `GatherND` with `pseudo-GatherND`.
-- [ ] Add process to replace `HardSwish` with `pseudo-HardSwish`.
+- [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
 
 ## Demo
@@ -121,18 +121,18 @@ convert(
 ) -> keras.engine.training.Model
 
     Convert ONNX to TensorFlow models.
-    
+
     Parameters
     ----------
     input_onnx_file_path: Optional[str]
         Input onnx file path.
         Either input_onnx_file_path or onnx_graph must be specified.
-    
+
     onnx_graph: Optional[onnx.ModelProto]
         onnx.ModelProto.
         Either input_onnx_file_path or onnx_graph must be specified.
         onnx_graph If specified, ignore input_onnx_file_path and process onnx_graph.
-    
+
     output_folder_path: Optional[str]
         Output tensorflow model folder path.
         Default: "saved_model"
@@ -141,33 +141,33 @@ convert(
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
         If a nonexistent INPUT OP name is specified, it is ignored.
         Valid only for 3D, 4D and 5D input tensors.
-        e.g. 
+        e.g.
         --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
-    
+
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and 
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
         replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
         Default: False
-    
+
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are float32.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and 
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
         replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
         Default: False
-    
+
     replace_asin_to_pseudo_asin: Optional[bool]
         Replace Asin with a pseudo Asin.
-    
+
     replace_acos_to_pseudo_acos: Optional[bool]
         Replace Acos with a pseudo Acos.
-    
+
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and 
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
         replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
         Default: False
-    
+
     Returns
     ----------
     model: tf.keras.Model
