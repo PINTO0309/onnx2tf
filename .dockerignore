@@ -1,0 +1,12 @@
+*.onnx
+onnx2tf/
+onnx2tf.egg-info/
+demo.yml
+Dockerfile
+LICENSE
+LICENSE_onnx-tensorflow
+*.py
+README.md
+*.gif
+saved_model/
+.vscode/
