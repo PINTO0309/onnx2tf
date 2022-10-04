@@ -30,26 +30,50 @@ def print_node_info(func):
                 )
             elif graph_node is not None:
                 print('')
-                print(f'{Color.GREEN}INFO:{Color.RESET} {Color.YELLOW}onnx_op_type{Color.RESET}: {graph_node.op} {Color.YELLOW}onnx_op_name{Color.RESET}: {graph_node.name}')
+                print(f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}onnx_op_type{Color.RESET}: {graph_node.op} {Color.MAGENTA}onnx_op_name{Color.RESET}: {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
-                        f'{Color.BLUE}shape{Color.RESET}: {graph_node_input.shape} '+
-                        f'{Color.BLUE}dtype{Color.RESET}: {graph_node_input.dtype}'
+                        f'{Color.CYAN}input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
+                        f'{Color.CYAN}shape{Color.RESET}: {graph_node_input.shape} '+
+                        f'{Color.CYAN}dtype{Color.RESET}: {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.BLUE}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
-                        f'{Color.BLUE}shape{Color.RESET}: {graph_node_output.shape} '+
-                        f'{Color.BLUE}dtype{Color.RESET}: {graph_node_output.dtype}'
+                        f'{Color.CYAN}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                        f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
+                        f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
                     )
         try:
             result = func(*args, **kwargs)
 
             if not non_verbose:
+
                 if graph_node is not None and tf_layers_dict is not None:
+                    for idx, graph_node_output in enumerate(graph_node.outputs):
+                        tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
+                        if tf_layer_info is not None:
+                            tf_layer = tf_layer_info.get('tf_node', None)
+                            if tf_layer is not None:
+                                if isinstance(tf_layer.node.input_tensors, list):
+                                    for in_idx, input_tensor in enumerate(tf_layer.node.input_tensors):
+                                        print(
+                                            f'{Color.GREEN}INFO:{Color.RESET} '+
+                                            f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
+                                            f'{Color.BLUE}input_name.{in_idx+1}{Color.RESET}: {input_tensor.name if hasattr(input_tensor, "name") else "np.ndarray"} '+
+                                            f'{Color.BLUE}shape{Color.RESET}: {input_tensor.shape} '+
+                                            f'{Color.BLUE}dtype{Color.RESET}: {input_tensor.dtype}'
+                                        )
+                                else:
+                                    print(
+                                        f'{Color.GREEN}INFO:{Color.RESET} '+
+                                        f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
+                                        f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {tf_layer.node.input_tensors.name  if hasattr(tf_layer.node.input_tensors, "name") else "np.ndarray"} '+
+                                        f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape} '+
+                                        f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype}'
+                                    )
+
                     for idx, graph_node_output in enumerate(graph_node.outputs):
                         tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
                         if tf_layer_info is not None:
@@ -62,10 +86,10 @@ def print_node_info(func):
                                     type_spec_info = graph_node_output
                                 print(
                                     f'{Color.GREEN}INFO:{Color.RESET} '+
-                                    f'{Color.CYAN}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
-                                    f'{Color.CYAN}output_name.{idx}{Color.RESET}: {graph_node_output.name} '+
-                                    f'{Color.CYAN}shape{Color.RESET}: {type_spec_info.shape} '+
-                                    f'{Color.CYAN}dtype{Color.RESET}: {type_spec_info.dtype}'
+                                    f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
+                                    f'{Color.BLUE}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                                    f'{Color.BLUE}shape{Color.RESET}: {type_spec_info.shape} '+
+                                    f'{Color.BLUE}dtype{Color.RESET}: {type_spec_info.dtype}'
                                 )
             return result
         except:
