@@ -32,6 +32,17 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 
 ## Sample Usage
 ```
+$ docker run --rm -it \
+-v `pwd`:/workdir \
+-w /workdir \
+ghcr.io/pinto0309/onn2tf:0.0.5
+
+or
+
+$ pip install -e . -U
+
+or
+
 $ pip install -U onnx2tf
 ```
 ```
