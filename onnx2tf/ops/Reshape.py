@@ -78,7 +78,13 @@ def make_node(
 
     # Generation of TF OP
     # NWC->NCW, NHWC->NCHW, NDHWC->NCDHW Transpose
-    perm = [convert_reverse_axis(axis=idx, tensor_rank=tensor_rank) for idx in range(tensor_rank)]
+    perm = [
+        convert_reverse_axis(
+            axis=idx,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        ) for idx in range(tensor_rank)
+    ]
     transposed_tensor = tf.transpose(
         a=input_tensor,
         perm=list(perm) if perm is not None else None,
