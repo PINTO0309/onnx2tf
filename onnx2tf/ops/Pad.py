@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
+    inverted_operation_enable_disable,
 )
 
 
@@ -124,6 +125,7 @@ def _process_pos_pads(
 
 
 @print_node_info
+@inverted_operation_enable_disable
 def make_node(
     *,
     graph_node: gs.Node,

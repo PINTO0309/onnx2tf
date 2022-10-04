@@ -10,10 +10,12 @@ from onnx2tf.utils.common_functions import (
     pad_input,
     remove_dilations,
     print_node_info,
+    inverted_operation_enable_disable,
 )
 
 
 @print_node_info
+@inverted_operation_enable_disable
 def make_node(
     *,
     graph_node: gs.Node,

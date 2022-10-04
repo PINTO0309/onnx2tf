@@ -9,10 +9,12 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
 from typing import Any, List, Optional
+from functools import wraps
 from collections import namedtuple
 
 
 def print_node_info(func):
+    @wraps(func)
     def print_wrapper_func(*args, **kwargs):
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
@@ -71,6 +73,43 @@ def print_node_info(func):
             traceback.print_exc()
             sys.exit(1)
     return print_wrapper_func
+
+
+def inverted_operation_enable_disable(func):
+    @wraps(func)
+    def inverted_operation_enable_disable_wrapper_func(*args, **kwargs):
+        graph_node = kwargs.get('graph_node', None)
+        tf_layers_dict = kwargs.get('tf_layers_dict', None)
+
+        # The output_shape_trans stores the result of determining
+        # whether the final output shape of the connected OP differs between ONNX and TensorFlow.
+        # before_op_output_shape_trans is used to determine
+        # if the input tensor needs to be transposed within the processing body of each OP.
+        # True: Transpose the input tensor from NCHW to NHWC and so on
+        # False: No transposition
+        if graph_node is not None and tf_layers_dict is not None:
+            kwargs['before_op_output_shape_trans'] = \
+                tf_layers_dict[graph_node.inputs[0].name].get('output_shape_trans', True)
+        else:
+            kwargs['before_op_output_shape_trans'] = True
+
+        result = func(*args, **kwargs)
+
+        # Set True if the output shape of the generated OP is inconsistent
+        # with the output shape of ONNX before conversion, False if it is consistent.
+        # For OPs with multiple outputs, check the results of all outputs
+        # and set False only if the shapes of all outputs match.
+        output_shape_trans = False
+        for graph_node_output in graph_node.outputs:
+            onnx_node_output: gs.Variable = graph_node_output
+            onnx_node_output_shape = onnx_node_output.shape
+            tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
+            output_shape_trans = output_shape_trans or (onnx_node_output_shape != tf_node_output_shape)
+
+        tf_layers_dict[onnx_node_output.name]['output_shape_trans'] = output_shape_trans
+
+        return result
+    return inverted_operation_enable_disable_wrapper_func
 
 
 def get_constant_or_variable(

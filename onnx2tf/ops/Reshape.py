@@ -8,11 +8,13 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     convert_reverse_axis,
     print_node_info,
+    inverted_operation_enable_disable,
 )
 from onnx2tf.utils.colors import Color
 
 
 @print_node_info
+@inverted_operation_enable_disable
 def make_node(
     *,
     graph_node: gs.Node,
