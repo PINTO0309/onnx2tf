@@ -118,6 +118,7 @@ def inverted_operation_enable_disable(func):
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
+            onnx_node_output_shape = [shape if not isinstance(shape, str) else None for shape in onnx_node_output_shape]
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
             output_shape_trans = output_shape_trans or (onnx_node_output_shape != tf_node_output_shape)
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
