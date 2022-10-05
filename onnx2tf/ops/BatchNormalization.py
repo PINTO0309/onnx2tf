@@ -36,8 +36,8 @@ def make_node(
     input_var: gs.Constant = graph_node.inputs[4]
     # Outputs
     Y: gs.Variable = graph_node.outputs[0]
-    running_mean: gs.Variable = graph_node.outputs[1] # disuse
-    running_var: gs.Variable = graph_node.outputs[2] # disuse
+    # running_mean: gs.Variable = graph_node.outputs[1] # disuse
+    # running_var: gs.Variable = graph_node.outputs[2] # disuse
 
     shape = Y.shape
     dtype = Y.dtype
