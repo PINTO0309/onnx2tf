@@ -10,3 +10,4 @@ README.md
 *.gif
 saved_model/
 .vscode/
+.github/

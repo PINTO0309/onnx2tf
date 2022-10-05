@@ -258,6 +258,16 @@ def convert(
         with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
             w.write(tflite_model)
 
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_types = [tf.float16]
+        converter.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS,
+            tf.lite.OpsSet.SELECT_TF_OPS,
+        ]
+        tflite_model = converter.convert()
+        with open(f'{output_folder_path}/model_float16.tflite', 'wb') as w:
+            w.write(tflite_model)
+
         return model
 
 
