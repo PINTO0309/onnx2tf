@@ -56,7 +56,7 @@ def print_node_info(func):
                         if tf_layer_info is not None:
                             tf_layer = tf_layer_info.get('tf_node', None)
                             if tf_layer is not None:
-                                if isinstance(tf_layer.node.input_tensors, list):
+                                if hasattr(tf_layer, 'node') and isinstance(tf_layer.node.input_tensors, list):
                                     for in_idx, input_tensor in enumerate(tf_layer.node.input_tensors):
                                         print(
                                             f'{Color.GREEN}INFO:{Color.RESET} '+
@@ -69,9 +69,9 @@ def print_node_info(func):
                                     print(
                                         f'{Color.GREEN}INFO:{Color.RESET} '+
                                         f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
-                                        f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {tf_layer.node.input_tensors.name  if hasattr(tf_layer.node.input_tensors, "name") else "np.ndarray"} '+
-                                        f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape} '+
-                                        f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype}'
+                                        f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {tf_layer.node.input_tensors.name if hasattr(tf_layer, "node") and hasattr(tf_layer.node.input_tensors, "name") else "np.ndarray"} '+
+                                        f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape if hasattr(tf_layer, "node") else ""} '+
+                                        f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype if hasattr(tf_layer, "node") else ""}'
                                     )
 
                     for idx, graph_node_output in enumerate(graph_node.outputs):
