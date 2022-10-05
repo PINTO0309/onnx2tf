@@ -20,7 +20,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """Flatten
+    """Gather
 
     Parameters
     ----------
@@ -32,26 +32,34 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans = \
-        before_op_output_shape_trans_1
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2
 
-    graph_node_input = get_constant_or_variable(
+    graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    graph_node_input_2 = get_constant_or_variable(
+        graph_node.inputs[1],
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-        if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    input_tensor_shape = tf.shape(input_tensor)
+    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    indices = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get("axis", 1)
+    axis = graph_node.attrs.get("axis", 0)
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(graph_node_input.shape),
+        tensor_rank=len(input_tensor.shape),
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
@@ -63,17 +71,9 @@ def make_node(
     }
 
     # Generation of TF OP
-    cal_shape = None
-    if axis == 0:
-        cal_shape = (1, -1)
-    else:
-        cal_shape = (
-            tf.reduce_prod(input_tensor_shape[0:axis]),
-            tf.reduce_prod(input_tensor_shape[axis:tf.size(input_tensor_shape)]),
-        )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.reshape(
-            tensor=input_tensor,
-            shape=cal_shape,
+        tf.gather(
+            data=input_tensor,
+            indices=indices,
             name=graph_node.name,
         )
