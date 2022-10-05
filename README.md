@@ -39,6 +39,7 @@ ghcr.io/pinto0309/onn2tf:0.0.7
 
 or
 
+$ git clone https://github.com/PINTO0309/onnx2tf.git && cd onnx2tf
 $ pip install -e . -U
 
 or
