@@ -33,14 +33,18 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_2 = \
-        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_3 = \
-        tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_4 = \
-        tf_layers_dict.get(graph_node.inputs[3].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_5 = \
-        tf_layers_dict.get(graph_node.inputs[4].name, {}).get('before_op_output_shape_trans', True)
+    if len(graph_node.inputs) >= 2:
+        before_op_output_shape_trans_2 = \
+            tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    if len(graph_node.inputs) >= 3:
+        before_op_output_shape_trans_3 = \
+            tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
+    if len(graph_node.inputs) >= 4:
+        before_op_output_shape_trans_4 = \
+            tf_layers_dict.get(graph_node.inputs[3].name, {}).get('before_op_output_shape_trans', True)
+    if len(graph_node.inputs) >= 5:
+        before_op_output_shape_trans_5 = \
+            tf_layers_dict.get(graph_node.inputs[4].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1 \
         and before_op_output_shape_trans_2 \
@@ -55,29 +59,23 @@ def make_node(
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
 
-    starts = get_constant_or_variable(
-        graph_node.inputs[1],
-        before_op_output_shape_trans,
-    )
-    starts = tf_layers_dict[starts.name]['tf_node'] \
-        if isinstance(starts, gs.Variable) else starts
-    # if isinstance(starts, np.ndarray):
-    #     starts = tf.constant(starts, dtype=NUMPY_DTYPES_TO_TF_DTYPES[starts.dtype])
+    starts = None
+    if len(graph_node.inputs) >= 2:
+        starts = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
+        starts = tf_layers_dict[starts.name]['tf_node'] \
+            if isinstance(starts, gs.Variable) else starts
 
-    ends = get_constant_or_variable(
-        graph_node.inputs[2],
-        before_op_output_shape_trans,
-    )
-    ends = tf_layers_dict[ends.name]['tf_node'] \
-        if isinstance(ends, gs.Variable) else ends
-    # if isinstance(ends, np.ndarray):
-    #     ends = tf.constant(ends, dtype=NUMPY_DTYPES_TO_TF_DTYPES[ends.dtype])
-
-    # input_tensor_shape = tf.shape(
-    #     input=input_tensor,
-    #     out_type=ends.dtype,
-    # )
-    # input_tensor_rank = tf.rank(input_tensor)
+    ends = None
+    if len(graph_node.inputs) >= 3:
+        ends = get_constant_or_variable(
+            graph_node.inputs[2],
+            before_op_output_shape_trans,
+        )
+        ends = tf_layers_dict[ends.name]['tf_node'] \
+            if isinstance(ends, gs.Variable) else ends
 
     axes = None
     if len(graph_node.inputs) >= 4:
@@ -90,7 +88,7 @@ def make_node(
     if isinstance(axes, np.ndarray):
         axes = tf.constant(axes, dtype=NUMPY_DTYPES_TO_TF_DTYPES[axes.dtype]) \
             if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
-    else:
+    elif axes is not None:
         axes = axes if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
 
     steps = None
@@ -104,11 +102,13 @@ def make_node(
     if isinstance(steps, np.ndarray):
         steps = tf.constant(steps, dtype=NUMPY_DTYPES_TO_TF_DTYPES[steps.dtype])
 
+    axes = graph_node.attrs.get('axes', axes)
+    starts = graph_node.attrs.get('starts', starts)
+    ends = graph_node.attrs.get('ends', ends)
+
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
-
-
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
