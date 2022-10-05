@@ -188,7 +188,14 @@ def convert(
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
             optype = graph_node.op
-            op = importlib.import_module(f'onnx2tf.ops.{optype}')
+            try:
+                op = importlib.import_module(f'onnx2tf.ops.{optype}')
+            except ModuleNotFoundError as ex:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+                )
+                sys.exit(1)
+
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
