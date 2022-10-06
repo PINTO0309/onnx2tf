@@ -75,5 +75,6 @@ def make_node(
         tf.gather(
             params=input_tensor,
             indices=indices,
+            axis=axis,
             name=graph_node.name,
         )
