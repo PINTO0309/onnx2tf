@@ -85,6 +85,8 @@ def make_node(
     for idx in axes:
         new_shape.insert(idx, 1)
 
+    new_shape = [dim if dim is not None else -1 for dim in new_shape]
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
