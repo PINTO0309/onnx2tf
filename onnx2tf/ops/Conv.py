@@ -87,7 +87,7 @@ def make_node(
     Conv2D
     Conv3D
     DepthwiseConv2D
-    TODO: SeparableConv2D
+    SeparableConv2D
     TODO: Conv2DTranspose
     """
     # Check auto_pad nonexistent or NOTSET first
@@ -129,18 +129,40 @@ def make_node(
     # Conv
     if input_bias is not None:
         if not depthwise:
-            # Conv1D, Conv2D, Conv3D - Bias Add
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.add(
-                    tf.nn.convolution(
-                        input=input_tensor,
-                        filters=input_weights,
-                        strides=strides,
-                        padding=pad_mode,
-                        dilations=dilations,
-                    ),
-                    input_bias,
-                )
+            if group == 1:
+                # Conv1D, Conv2D, Conv3D - Bias Add
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.add(
+                        tf.nn.convolution(
+                            input=input_tensor,
+                            filters=input_weights,
+                            strides=strides,
+                            padding=pad_mode,
+                            dilations=dilations,
+                        ),
+                        input_bias,
+                    )
+            else:
+                # SeparableConv
+                input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+                weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.add(
+                        tf.concat(
+                            values=[
+                                tf.nn.convolution(
+                                    input=input_tensor_split,
+                                    filters=weight_split,
+                                    padding=pad_mode,
+                                    strides=strides,
+                                    dilations=dilations,
+                                ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                            ],
+                            axis=-1
+                        ),
+                        input_bias,
+                    )
+
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]
@@ -157,15 +179,33 @@ def make_node(
                 )
     else:
         if not depthwise:
-            # Conv1D, Conv2D, Conv3D - No Bias
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.nn.convolution(
-                    input=input_tensor,
-                    filters=input_weights,
-                    strides=strides,
-                    padding=pad_mode,
-                    dilations=dilations,
-                )
+            if group == 1:
+                # Conv1D, Conv2D, Conv3D - No Bias
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.nn.convolution(
+                        input=input_tensor,
+                        filters=input_weights,
+                        strides=strides,
+                        padding=pad_mode,
+                        dilations=dilations,
+                    )
+            else:
+                # SeparableConv
+                input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+                weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.concat(
+                        values=[
+                            tf.nn.convolution(
+                                input=input_tensor_split,
+                                filters=weight_split,
+                                padding=pad_mode,
+                                strides=strides,
+                                dilations=dilations,
+                            ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                        ],
+                        axis=-1
+                    )
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]
