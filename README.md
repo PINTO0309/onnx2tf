@@ -26,6 +26,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [ ] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
+- [ ] Add process to replace `GridSample` with `pseudo-LeakyRelu`.
 
 ## Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
