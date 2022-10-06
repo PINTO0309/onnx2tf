@@ -64,8 +64,10 @@ def make_node(
     input_bias = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_bias, gs.Variable) else input_bias
 
-    x_rank = len(input_tensor.shape)
-    spatial_size = x_rank - 2
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
+    spatial_size = input_tensor_rank - 2
+    input_weights_shape = input_weights.shape
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
     group = graph_node.attrs.get('group', 1)
@@ -84,7 +86,7 @@ def make_node(
     Conv1D
     Conv2D
     Conv3D
-    TODO: DepthwiseConv2D
+    DepthwiseConv2D
     TODO: SeparableConv2D
     TODO: Conv2DTranspose
     """
@@ -115,28 +117,63 @@ def make_node(
         print(error_msg)
         assert False, error_msg
 
+
+    depthwise = (input_tensor_rank == 4 and len(input_weights_shape) == 4 and group != 1 and not (None in input_weights_shape))
+    if depthwise and input_tensor_shape[-1] != None:
+        depthwise = bool(group == input_tensor_shape[-1])
+
+    if depthwise is True:
+        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
+        input_weights = tf.reshape(input_weights, depthwise_filter_shape)
+
     # Conv
     if input_bias is not None:
-        # Conv1D, Conv2D, Conv3D - Bias Add
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.add(
+        if not depthwise:
+            # Conv1D, Conv2D, Conv3D - Bias Add
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.add(
+                    tf.nn.convolution(
+                        input=input_tensor,
+                        filters=input_weights,
+                        strides=strides,
+                        padding=pad_mode,
+                        dilations=dilations,
+                    ),
+                    input_bias,
+                )
+        else:
+            # DepthwiseConv2D
+            strides = [1] + strides + [1]
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.add(
+                    tf.nn.depthwise_conv2d(
+                        input=input_tensor,
+                        filter=input_weights,
+                        padding=pad_mode,
+                        strides=strides,
+                        dilations=dilations,
+                    ),
+                    input_bias,
+                )
+    else:
+        if not depthwise:
+            # Conv1D, Conv2D, Conv3D - No Bias
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.nn.convolution(
                     input=input_tensor,
                     filters=input_weights,
                     strides=strides,
                     padding=pad_mode,
                     dilations=dilations,
-                ),
-                input_bias,
-            )
-    else:
-        # Conv1D, Conv2D, Conv3D - No Bias
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.nn.convolution(
-                input=input_tensor,
-                filters=input_weights,
-                strides=strides,
-                padding=pad_mode,
-                dilations=dilations,
-            )
-
+                )
+        else:
+            # DepthwiseConv2D
+            strides = [1] + strides + [1]
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.nn.depthwise_conv2d(
+                    input=input_tensor,
+                    filter=input_weights,
+                    padding=pad_mode,
+                    strides=strides,
+                    dilations=dilations,
+                )
