@@ -52,11 +52,13 @@ def make_node(
         'dtype': dtype,
     }
 
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.leaky_relu(
-            features=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            features=input_tensor,
             alpha=alpha,
             name=graph_node.name,
         )

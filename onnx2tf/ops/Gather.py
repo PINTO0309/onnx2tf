@@ -73,7 +73,7 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.gather(
-            data=input_tensor,
+            params=input_tensor,
             indices=indices,
             name=graph_node.name,
         )

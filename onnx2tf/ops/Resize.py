@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -38,7 +39,6 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
-    input_tensor_shape = input_tensor.shape
     roi = None
     if len(graph_node.inputs) >= 2:
         roi = get_constant_or_variable(
@@ -63,6 +63,7 @@ def make_node(
 
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
+    input_tensor_shape = input_tensor.shape
     roi = tf_layers_dict[roi.name]['tf_node'] \
         if isinstance(roi, gs.Variable) else roi
     scales = tf_layers_dict[scales.name]['tf_node'] \
@@ -81,16 +82,46 @@ def make_node(
         'dtype': dtype,
     }
 
+
+
+    def upsampling2d_bilinear(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        return tf.compat.v1.image.resize_bilinear(
+            images=input_tensor,
+            size=new_size,
+            align_corners=align_corners,
+            half_pixel_centers=half_pixel_centers,
+            name=name,
+        )
+
+    def upsampling2d_bicubic(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        return tf.compat.v1.image.resize_bicubic(
+            images=input_tensor,
+            size=new_size,
+            align_corners=align_corners,
+            half_pixel_centers=half_pixel_centers,
+            name=name,
+        )
+
+    def upsampling2d_nearest(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        return tf.compat.v1.image.resize_nearest_neighbor(
+            images=input_tensor,
+            size=new_size,
+            align_corners=align_corners,
+            half_pixel_centers=half_pixel_centers,
+            name=name,
+        )
+
+
     # Generation of TF OP
     if mode.lower() == "linear":
         mode = tf.image.ResizeMethod.BILINEAR
-        tf_resize = tf.compat.v1.image.resize_bilinear
+        tf_resize = upsampling2d_bilinear
     elif mode.lower() == "cubic":
         mode = tf.image.ResizeMethod.BICUBIC
-        tf_resize = tf.compat.v1.image.resize_bicubic
+        tf_resize = upsampling2d_bicubic
     else:
         mode = tf.image.ResizeMethod.NEAREST_NEIGHBOR
-        tf_resize = tf.compat.v1.image.resize_nearest_neighbor
+        tf_resize = upsampling2d_nearest
 
     if sizes is not None:
         # sizes is defined
@@ -129,21 +160,25 @@ def make_node(
             name=graph_node.name,
         )
     elif coordinate_transformation_mode == "align_corners":
-        resized_tensor = tf_resize(
-            images=input_tensor,
-            size=new_size,
-            align_corners=True,
-            half_pixel_centers=False,
-            name=graph_node.name,
-        )
+        resized_tensor = Lambda(
+            tf_resize,
+            arguments={
+                'new_size': new_size,
+                'align_corners': True,
+                'half_pixel_centers': False,
+                'name': graph_node.name,
+            }
+        )(input_tensor)
     elif coordinate_transformation_mode == "asymmetric":
-        resized_tensor = tf_resize(
-            images=input_tensor,
-            size=new_size,
-            align_corners=False,
-            half_pixel_centers=False,
-            name=graph_node.name,
-        )
+        resized_tensor = Lambda(
+            tf_resize,
+            arguments={
+                'new_size': new_size,
+                'align_corners': False,
+                'half_pixel_centers': False,
+                'name': graph_node.name,
+            }
+        )(input_tensor)
     else:
         resized_tensor = tf.image.resize(
             images=input_tensor,
