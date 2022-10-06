@@ -54,13 +54,6 @@ def make_node(
     }
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.atan(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
-            name=graph_node.name,
-        )
-
     if isinstance(input_tensor, (list, tuple)):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity_n(input_tensor)
