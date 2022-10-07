@@ -90,18 +90,21 @@ def make_node(
         a=input_tensor,
         perm=list(perm) if perm is not None else None,
     )
-    perm_shape = [
-        convert_axis(
-            axis=idx,
-            tensor_rank=len(reshape_shape),
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        ) for idx in range(len(reshape_shape))
-    ]
-    transposed_reshape_shape = list(reshape_shape)
-    if before_op_output_shape_trans:
-        transposed_reshape_shape = [
-            transposed_reshape_shape[perm_shape_dim] for perm_shape_dim in list(perm_shape)
+    if isinstance(reshape_shape, np.ndarray):
+        perm_shape = [
+            convert_axis(
+                axis=idx,
+                tensor_rank=len(reshape_shape),
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            ) for idx in range(len(reshape_shape))
         ]
+        transposed_reshape_shape = list(reshape_shape)
+        if before_op_output_shape_trans:
+            transposed_reshape_shape = [
+                transposed_reshape_shape[perm_shape_dim] for perm_shape_dim in list(perm_shape)
+            ]
+    else:
+        transposed_reshape_shape = reshape_shape
 
     # Reshape
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
