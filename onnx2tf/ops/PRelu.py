@@ -8,6 +8,8 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    explicit_broadcast,
+    convert_axis,
 )
 
 
@@ -49,7 +51,19 @@ def make_node(
     )
     slope = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    slope_rank = len(slope.shape)
 
+    if slope_rank == 1:
+        pass
+    elif slope_rank == 3:
+        slope = slope.transpose(1,2,0)
+    elif slope_rank == 4:
+        slope = slope.transpose(0,2,3,1)
+
+    slope = explicit_broadcast(
+        x=input_tensor,
+        y=slope,
+    )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -65,5 +79,4 @@ def make_node(
     # Generation of TF OP
     pos = tf.nn.relu(input_tensor)
     neg = slope * (input_tensor - abs(input_tensor)) * 0.5
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        pos + neg
+    tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
