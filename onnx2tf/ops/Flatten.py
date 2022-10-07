@@ -48,7 +48,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get("axis", 1)
+    axis = graph_node.attrs.get("axis", 0)
     axis = convert_axis(
         axis=axis,
         tensor_rank=len(graph_node_input.shape),
