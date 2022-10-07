@@ -70,7 +70,7 @@ def make_node(
         # Clip if start is still < 0
         start = 0 if start < 0 else start
 
-    end = graph_node.attrs.get('end', tensor_rank)
+    end = graph_node.attrs.get('end', tensor_rank - 1)
     end = convert_axis(
         axis=end,
         tensor_rank=tensor_rank,
