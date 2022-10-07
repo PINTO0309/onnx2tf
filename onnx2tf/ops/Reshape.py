@@ -6,6 +6,7 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
+    convert_axis,
     convert_reverse_axis,
     print_node_info,
     inverted_operation_enable_disable,
@@ -79,7 +80,7 @@ def make_node(
     # Generation of TF OP
     # NWC->NCW, NHWC->NCHW, NDHWC->NCDHW Transpose
     perm = [
-        convert_reverse_axis(
+        convert_axis(
             axis=idx,
             tensor_rank=tensor_rank,
             before_op_output_shape_trans=before_op_output_shape_trans,
@@ -89,10 +90,23 @@ def make_node(
         a=input_tensor,
         perm=list(perm) if perm is not None else None,
     )
+    perm_shape = [
+        convert_axis(
+            axis=idx,
+            tensor_rank=len(reshape_shape),
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        ) for idx in range(len(reshape_shape))
+    ]
+    transposed_reshape_shape = list(reshape_shape)
+    if before_op_output_shape_trans:
+        transposed_reshape_shape = [
+            transposed_reshape_shape[perm_shape_dim] for perm_shape_dim in list(perm_shape)
+        ]
+
     # Reshape
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
             tensor=transposed_tensor,
-            shape=reshape_shape,
+            shape=transposed_reshape_shape,
             name=graph_node.name,
         )

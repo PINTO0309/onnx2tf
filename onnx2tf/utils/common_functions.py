@@ -115,6 +115,8 @@ def inverted_operation_enable_disable(func):
         graph_node = kwargs.get('graph_node', None)
         tf_layers_dict = kwargs.get('tf_layers_dict', None)
         output_shape_trans = False
+        # TODO: palm_detection_Nx3x128x128_post.onnx - channel_padding
+        # TODO: Countermeasure for the problem that transposition is failed when all dimensions except batch size are the same shape.
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
