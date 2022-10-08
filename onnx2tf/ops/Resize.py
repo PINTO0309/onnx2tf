@@ -140,6 +140,16 @@ def make_node(
     # "new_size" should always contain [h, w], therefore the shape must be 2.
     new_size.set_shape([2])
 
+    if hasattr(new_size, '_inferred_value'):
+        new_size_values = new_size._inferred_value
+        if new_size_values.count(None) == len(new_size_values):
+            tensor_rank = len(graph_node_output.shape)
+            convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
+            new_values = [0] * tensor_rank
+            for new_idx, idx in enumerate(convertion_table):
+                new_values[new_idx] = graph_node_output.shape[idx]
+            new_size = new_values[-3:-1]
+
     # TODO: upsampling2d_bilinear_5d
     # TODO: upsampling2d_nearest_5d
     resized_tensor = None

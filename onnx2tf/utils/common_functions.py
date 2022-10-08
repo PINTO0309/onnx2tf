@@ -114,15 +114,19 @@ def inverted_operation_enable_disable(func):
         """
         graph_node = kwargs.get('graph_node', None)
         tf_layers_dict = kwargs.get('tf_layers_dict', None)
+        batch_size = kwargs.get('batch_size', None)
         output_shape_trans = False
-        # TODO: palm_detection_Nx3x128x128_post.onnx - channel_padding
-        # TODO: Countermeasure for the problem that transposition is failed when all dimensions except batch size are the same shape.
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
             onnx_node_output_shape = [
                 shape if not isinstance(shape, str) else None for shape in onnx_node_output_shape
             ] if onnx_node_output_shape is not None else None
+            if onnx_node_output_shape is not None \
+                and len(onnx_node_output_shape) > 0 \
+                and onnx_node_output_shape.count(None) != len(onnx_node_output_shape) \
+                and batch_size is not None:
+                onnx_node_output_shape[0] = batch_size
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
             output_shape_trans = output_shape_trans or (onnx_node_output_shape != tf_node_output_shape)
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans

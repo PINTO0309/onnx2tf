@@ -58,37 +58,45 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape)
 
-    start = graph_node.attrs.get('start', 0)
-    start = convert_axis(
-        axis=start,
-        tensor_rank=tensor_rank,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-    )
+    start = graph_node.attrs.get('start', None)
+    if start is not None:
+        start = convert_axis(
+            axis=start,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
+        if start < 0:
+            start += tensor_rank
+            # Clip if start is still < 0
+            start = 0 if start < 0 else start
 
-    if start < 0:
-        start += tensor_rank
-        # Clip if start is still < 0
-        start = 0 if start < 0 else start
+    end = graph_node.attrs.get('end', None)
+    if end is not None:
+        end = convert_axis(
+            axis=end,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
+        if end < 0:
+            end += tensor_rank
+            # Clip if end is still < 0
+            end = 0 if end < 0 else end
 
-    end = graph_node.attrs.get('end', tensor_rank - 1)
-    end = convert_axis(
-        axis=end,
-        tensor_rank=tensor_rank,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-    )
-
-    if end < 0:
-        end += tensor_rank
-        # Clip if end is still < 0
-        end = 0 if end < 0 else end
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.slice(
+    if start is not None and end is not None:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.slice(
+                tf.shape(
+                    input=input_tensor,
+                    out_type=dtype,
+                    name=graph_node.name,
+                ),
+                [start],
+                [end - start],
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.shape(
                 input=input_tensor,
                 out_type=dtype,
                 name=graph_node.name,
-            ),
-            [start],
-            [end - start],
-        )
+            )

@@ -126,7 +126,11 @@ def make_node(
 
     if slice_len == 1:
         # Shape output as int64 since the spec implicitly allows int64
-        full_sizes = np.asarray(input_tensor.shape, dtype=np.int64)
+        full_sizes = None
+        if None not in input_tensor.shape:
+            full_sizes = np.asarray(input_tensor.shape, dtype=np.int64)
+        else:
+            full_sizes = [s if s is not None else -1 for s in input_tensor.shape]
 
         updated_full_sizes = [0] * len(input_tensor.get_shape())
         updated_full_begin = [0] * len(input_tensor.get_shape())
