@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
         nano python3-pip python3-mock libpython3-dev \
-        libpython3-all-dev python-is-python3 \
+        libpython3-all-dev python-is-python3 wget \
         software-properties-common nano sudo \
     && sed -i 's/# set linenumbers/set linenumbers/g' /etc/nanorc \
     && apt clean \
@@ -16,7 +16,8 @@ RUN pip install pip -U \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
-    && pip install tensorflow==2.10.0
+    && pip install tensorflow==2.10.0 \
+    && python -m pip cache purge
 
 ENV USERNAME=user
 RUN echo "root:root" | chpasswd \
