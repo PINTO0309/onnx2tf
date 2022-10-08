@@ -39,6 +39,10 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    input_tensor_rank = len(graph_node_input_1.shape) \
+        if graph_node_input_1.shape is not None \
+            else len(tf_layers_dict[graph_node_input_1.name]['tf_node'].shape)
+
     graph_node_input_2 = None
     if len(graph_node.inputs) >= 2:
         graph_node_input_2 = get_constant_or_variable(
@@ -57,7 +61,7 @@ def make_node(
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(graph_node_input_1.shape),
+        tensor_rank=input_tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
@@ -72,6 +76,7 @@ def make_node(
         split = len(graph_node_outputs)
     if split is None:
         split = len(graph_node_outputs)
+    split = graph_node.attrs.get('split', split)
 
     for graph_node_output in graph_node_outputs:
         # Preserving Graph Structure (Dict)

@@ -64,7 +64,8 @@ def make_node(
     pads = graph_node.attrs.get('auto_pad', 'NOTSET')
     if pads == 'NOTSET':
         pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
-        if is_known_shape and pads != [0] * spatial_size * 2:
+        # if is_known_shape and pads != [0] * spatial_size * 2:
+        if pads != [0] * spatial_size * 2:
             in_shape = input_tensor.get_shape()
             same_paddings = calc_pads_same_pooling(
                 in_spatial_shape=in_shape[1:x_rank - 1],

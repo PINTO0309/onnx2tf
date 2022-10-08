@@ -33,15 +33,19 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_2 = True
     if len(graph_node.inputs) >= 2:
         before_op_output_shape_trans_2 = \
             tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_3 = True
     if len(graph_node.inputs) >= 3:
         before_op_output_shape_trans_3 = \
             tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_4 = True
     if len(graph_node.inputs) >= 4:
         before_op_output_shape_trans_4 = \
             tf_layers_dict.get(graph_node.inputs[3].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_5 = True
     if len(graph_node.inputs) >= 5:
         before_op_output_shape_trans_5 = \
             tf_layers_dict.get(graph_node.inputs[4].name, {}).get('before_op_output_shape_trans', True)
@@ -128,6 +132,9 @@ def make_node(
         updated_full_begin = [0] * len(input_tensor.get_shape())
         updated_starts = [0] * slice_len
         updated_ends = [0] * slice_len
+
+        if axes is None:
+            axes = [i for i in range(input_tensor.shape.rank)]
 
         for axis in range(input_tensor.shape.rank):
             if axis not in axes:
