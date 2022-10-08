@@ -46,6 +46,7 @@ def make_node(
         'optype': 'Input',
         'shape': shape,
         'dtype': dtype,
+        'op': None,
     }
     if len(graph_input.shape) in [3, 4, 5] and keep_ncw_or_nchw_or_ncdhw_input_names:
         if graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
@@ -72,6 +73,7 @@ def make_node(
                     name=graph_input.name,
                     dtype=dtype,
                 )
+            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
         else:
             nchw = tf.keras.Input(
                 shape=[
@@ -81,9 +83,9 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
-            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,1])
+            tf_layers_dict[graph_input.name]['op'] = nchw
 
     elif len(shape) == 4:
         # 4D
@@ -99,6 +101,7 @@ def make_node(
                     name=graph_input.name,
                     dtype=dtype,
                 )
+            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
         else:
             nchw = tf.keras.Input(
                 shape=[
@@ -108,9 +111,9 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
-            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,3,1])
+            tf_layers_dict[graph_input.name]['op'] = nchw
 
     elif len(shape) == 5:
         # 5D
@@ -127,6 +130,7 @@ def make_node(
                     name=graph_input.name,
                     dtype=dtype,
                 )
+            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
         else:
             ncdhw = tf.keras.Input(
                 shape=[
@@ -136,9 +140,9 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
-            # TODO: Need to switch INPUT information of the next connection OP to Transpose
             tf_layers_dict[graph_input.name]['tf_node'] = \
                 tf.transpose(ncdhw, perm=[0,2,3,4,1])
+            tf_layers_dict[graph_input.name]['op'] = ncdhw
 
     elif len(shape) > 0:
         # Except scalar, 4D and 5D
@@ -159,6 +163,7 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
+        tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
 
     else:
         # Scalar
@@ -176,3 +181,4 @@ def make_node(
                 name=graph_input.name,
                 dtype=dtype,
             )
+        tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']

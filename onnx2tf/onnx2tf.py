@@ -203,13 +203,10 @@ def convert(
             )
 
         # List "optype"="Input"
-        input_names = [
-            graph_input.name for graph_input in graph.inputs
-        ]
         inputs = [
-            layer_info['tf_node'] \
-                for opname, layer_info in tf_layers_dict.items() \
-                    if opname in input_names
+            layer_info['op'] \
+                for layer_info in tf_layers_dict.values() \
+                    if layer_info['optype'] == 'Input'
         ]
 
         # List Output
