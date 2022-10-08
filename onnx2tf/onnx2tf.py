@@ -39,6 +39,7 @@ def convert(
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
+    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -82,6 +83,9 @@ def convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
         Replace Acos with a pseudo Acos.
+
+    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
+        Replace LeakyReLU with a pseudo LeakyReLU.
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -152,6 +156,7 @@ def convert(
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
+        'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
     }
 
     tf_layers_dict = {}
@@ -340,6 +345,12 @@ def main():
         help='Replace Acos with a pseudo Acos.'
     )
     parser.add_argument(
+        '-rlr',
+        '--replace_leakyrelu_to_pseudo_leakyrelu',
+        action='store_true',
+        help='Replace LeakyReLU with a pseudo LeakyReLU.'
+    )
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -356,6 +367,7 @@ def main():
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
+        replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         non_verbose=args.non_verbose,
     )
 

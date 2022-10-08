@@ -28,7 +28,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [ ] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
-- [ ] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
+- [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 
 ## Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
@@ -38,7 +38,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onn2tf:0.0.15
+ghcr.io/pinto0309/onn2tf:0.0.16
 
 or
 
@@ -60,6 +60,7 @@ usage: onnx2tf
 [-rari64 | -rarf32]
 [-rasin]
 [-racos]
+[-rlr]
 [-n]
 
 optional arguments:
@@ -96,6 +97,9 @@ optional arguments:
   -racos, --replace_acos_to_pseudo_acos
     Replace Acos with a pseudo Acos.
 
+  -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
+    Replace LeakyReLU with a pseudo LeakyReLU.
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -116,6 +120,7 @@ convert(
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
+  replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -160,6 +165,9 @@ convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
         Replace Acos with a pseudo Acos.
+
+    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
+        Replace LeakyReLU with a pseudo LeakyReLU.
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.

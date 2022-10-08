@@ -44,6 +44,8 @@ def make_node(
     dtype = graph_node_output.dtype
 
     alpha = graph_node.attrs.get('alpha', 0.01)
+    replace_leakyrelu_to_pseudo_leakyrelu = \
+        kwargs['replace_leakyrelu_to_pseudo_leakyrelu']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -56,9 +58,14 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.nn.leaky_relu(
-            features=input_tensor,
-            alpha=alpha,
-            name=graph_node.name,
-        )
+    if not replace_leakyrelu_to_pseudo_leakyrelu:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.nn.leaky_relu(
+                features=input_tensor,
+                alpha=alpha,
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.maximum(0.0, input_tensor) + \
+                tf.minimum(0.0, alpha * input_tensor)
