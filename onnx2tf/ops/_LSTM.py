@@ -1,8 +1,11 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+from functools import partial
 import tensorflow as tf
+from tensorflow.python.ops import array_ops
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -10,6 +13,95 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
 )
+from onnx2tf.utils.colors import Color
+
+
+class RNNMixin(object):
+    ONNX_ACTIVATION_MAPPING = {
+        # Added from tf 1.8
+        # "affine": tf.contrib.distributions.bijectors.AffineScalar,
+        # tf.contrib was removed since tf 2.0,
+        # Class Affine had been move to the following module
+        # "affine": tfp.bijectors.Affine,
+        "elu": tf.nn.elu,
+        "hard_sigmoid": tf.keras.backend.hard_sigmoid,
+        "leaky_relu": tf.nn.leaky_relu,
+        "relu": tf.nn.relu,
+        "sigmoid": tf.sigmoid,
+        "softsign": tf.nn.softsign,
+        "softplus": tf.nn.softplus,
+        "tanh": tf.tanh,
+        "thresholded_relu": tf.keras.layers.ThresholdedReLU,
+    }
+
+    rnn_cell = None
+
+    @classmethod
+    def rnn(cls, x, cell_class, cell_kwargs, rnn_kwargs, activations, direction):
+        cell_kwargs["activation"] = activations[0]
+
+        if cls.rnn_cell is None:
+            cls.rnn_cell = [cell_class(**cell_kwargs)]
+        rnn_cell = cls.rnn_cell
+        cell_fw = tf.compat.v1.nn.rnn_cell.MultiRNNCell(rnn_cell)
+
+        if direction == "bidirectional":
+            cell_kwargs["activation"] = activations[1]
+            rnn_cell_bw = [cell_class(**cell_kwargs)]
+            cell_bw = tf.compat.v1.nn.rnn_cell.MultiRNNCell(rnn_cell_bw)
+
+        if direction == "forward":
+            outputs, states = tf.compat.v1.nn.dynamic_rnn(cell_fw, x, **rnn_kwargs)
+        elif direction == "bidirectional":
+            outputs, states = tf.compat.v1.nn.bidirectional_dynamic_rnn(
+            cell_fw, cell_bw, x, **rnn_kwargs)
+        elif direction == "reverse":
+
+            def _reverse(input_, seq_dim):
+                return array_ops.reverse(input_, axis=[seq_dim])
+
+            time_dim = 0
+            inputs_reverse = _reverse(x, time_dim)
+            outputs, states = tf.compat.v1.nn.dynamic_rnn(cell_fw, inputs_reverse, **rnn_kwargs)
+            outputs = _reverse(outputs, time_dim)
+
+        return outputs, states
+
+    @classmethod
+    def rnn_get_activation(cls, name, alpha, beta):
+        if name not in cls.ONNX_ACTIVATION_MAPPING:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'Activation function {name} for {cls.__name__}'
+            )
+            sys.exit(1)
+        activation = cls.ONNX_ACTIVATION_MAPPING[name]
+        kwargs = {}
+        if name == "affine":
+            kwargs["scale"] = alpha
+            kwargs["shift"] = beta
+            activation = activation(**kwargs)
+        elif name == "elu":
+            if alpha != 1:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'Activation function {name} with alpha={alpha} for {cls.__name__}'
+                )
+                sys.exit(1)
+        elif name == "hard_sigmoid":
+            if alpha != 0.2 or beta != 0.5:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'Activation function {name} with alpha={alpha}, beta={beta} for {cls.__name__}'
+                )
+                sys.exit(1)
+        elif name == "leaky_relu":
+            kwargs["alpha"] = alpha or 0.01
+            activation = partial(activation, **kwargs)
+        elif name == "thresholded_relu":
+            kwargs["theta"] = alpha
+            activation = activation(**kwargs)
+        return activation
 
 
 @print_node_info
@@ -30,6 +122,8 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
+    cls = RNNMixin()
+
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans_2 = \
@@ -92,7 +186,9 @@ def make_node(
 
     X = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    X_shape = X.shape
     X_rank = len(X.shape)
+
     W = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     R = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -111,33 +207,47 @@ def make_node(
 
 
 
-    activation_alpha = graph_node.attrs.get('activation_alpha', None)
-    activation_beta = graph_node.attrs.get('activation_beta', None)
+    activation_alpha = graph_node.attrs.get('activation_alpha', [None] * 6)
+    activation_beta = graph_node.attrs.get('activation_beta', [None] * 6)
     activations = graph_node.attrs.get('activations', None)
     clip = graph_node.attrs.get('clip', None)
     direction = graph_node.attrs.get('direction', 'forward')
+    num_directions = 2 if direction == "bidirectional" else 1
     hidden_size = graph_node.attrs.get('hidden_size', None)
     input_forget = graph_node.attrs.get('input_forget', 0)
     layout = graph_node.attrs.get('layout', 0)
+    output_sequence = graph_node.attrs.get("output_sequence", 0)
+
+    if layout == 1:
+        X = tf.transpose(X, perm=[1, 0, 2])
+
+    if len(X_shape) == 4 and X_shape[1] == 1:
+        x = tf.squeeze(x)
+
+    sequence_length = sequence_lens
+
+    cell_kwargs = {}
+
+    if clip is not None:
+        cell_kwargs["cell_clip"] = clip
+
+    tf_activations = [tf.nn.tanh] * num_directions
+
+    if activations is not None:
+        activations = list(map(lambda x: x.lower(), activations))
+        activation_idxs = [1, 4] if num_directions == 2 else [1]
+
+        tf_activations = [
+            cls.rnn_get_activation(activations[i], activation_alpha[i], activation_beta[i]) for i in activation_idxs
+        ]
 
 
 
 
 
-    # if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-    #     axes = [
-    #         convert_axis(
-    #             axis=idx,
-    #             tensor_rank=tensor_rank,
-    #             before_op_output_shape_trans=before_op_output_shape_trans,
-    #         ) for idx in axes
-    #     ]
-    # elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-    #     axes = convert_axis(
-    #         axis=axes,
-    #         tensor_rank=tensor_rank,
-    #         before_op_output_shape_trans=before_op_output_shape_trans,
-    #     )
+
+
+
 
     # # Preserving Graph Structure (Dict)
     # tf_layers_dict[graph_node_output.name] = {
