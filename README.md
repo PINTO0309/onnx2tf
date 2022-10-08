@@ -30,6 +30,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
+- [ ] Add output shape estimation functionality for `Resize` OP in the dynamic batch shape model.
 
 ## Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
