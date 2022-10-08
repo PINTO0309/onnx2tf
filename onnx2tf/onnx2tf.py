@@ -34,6 +34,7 @@ def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
+    batch_size: Optional[int] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
@@ -58,6 +59,10 @@ def convert(
     output_folder_path: Optional[str]
         Output tensorflow model folder path.\n
         Default: "saved_model"
+
+    batch_size: Optional[int]
+        Fixes the dynamic batch size to the specified numeric batch size.\n
+        A value of 1 or more must be specified.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
@@ -124,6 +129,14 @@ def convert(
         )
         sys.exit(1)
 
+    # batch_size
+    if batch_size is not None and batch_size <= 0:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'batch_size must be greater than or equal to 1. batch_size: {batch_size}'
+        )
+        sys.exit(1)
+
     # replace_argmax_to_reducemax_and_indicies_is_int64
     # replace_argmax_to_reducemax_and_indicies_is_float32
     if replace_argmax_to_reducemax_and_indicies_is_int64 \
@@ -151,6 +164,7 @@ def convert(
     # Define additional parameters
     additional_parameters = {
         'opset': graph.opset,
+        'batch_size': batch_size,
         'non_verbose': non_verbose,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
@@ -302,6 +316,14 @@ def main():
             'Default: "saved_model"'
     )
     parser.add_argument(
+        '-b',
+        '--batch_size',
+        type=int,
+        help=\
+            'Fixes the dynamic batch size to the specified numeric batch size. \n' +
+            'A value of 1 or more must be specified.'
+    )
+    parser.add_argument(
         '-k',
         '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
@@ -362,6 +384,7 @@ def main():
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
+        batch_size=args.batch_size,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,

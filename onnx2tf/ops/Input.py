@@ -37,9 +37,15 @@ def make_node(
         --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
     """
     ncw_nchw_ncdhw_keep = False
+    batch_size = kwargs.get('batch_size', None)
 
     shape = graph_input.shape
     dtype = graph_input.dtype
+
+    if batch_size is not None \
+        and len(shape) > 0 \
+        and (isinstance(shape[0], str) or shape[0] == -1):
+        shape[0] = batch_size
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_input.name] = {

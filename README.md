@@ -29,6 +29,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
+- [x] Added option to fix dynamic batch size N to a specified number.
 
 ## Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
@@ -38,7 +39,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onn2tf:0.0.16
+ghcr.io/pinto0309/onn2tf:0.0.17
 
 or
 
@@ -56,6 +57,7 @@ usage: onnx2tf
 [-h]
 -i INPUT_ONNX_FILE_PATH
 [-o OUTPUT_FOLDER_PATH]
+[-b BATCH_SIZE]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-rari64 | -rarf32]
 [-rasin]
@@ -72,6 +74,10 @@ optional arguments:
 
   -o OUTPUT_FOLDER_PATH, --output_folder_path OUTPUT_FOLDER_PATH
     Output folder path. Default: "saved_model"
+
+  -b BATCH_SIZE, --batch_size BATCH_SIZE
+    Fixes the dynamic batch size to the specified numeric batch size.
+    A value of 1 or more must be specified.
 
   -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], \
       --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES \
@@ -115,6 +121,7 @@ convert(
   input_onnx_file_path: Union[str, NoneType] = '',
   onnx_graph: Union[onnx.onnx_ml_pb2.ModelProto, NoneType] = None,
   output_folder_path: Union[str, NoneType] = 'saved_model',
+  batch_size: Union[int, NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
@@ -140,6 +147,10 @@ convert(
     output_folder_path: Optional[str]
         Output tensorflow model folder path.
         Default: "saved_model"
+
+    batch_size: Optional[int]
+        Fixes the dynamic batch size to the specified numeric batch size.
+        A value of 1 or more must be specified.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
