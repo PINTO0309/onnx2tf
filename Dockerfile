@@ -28,3 +28,6 @@ USER ${USERNAME}
 ARG WKDIR=/workdir
 WORKDIR ${WKDIR}
 RUN sudo chown ${USERNAME}:${USERNAME} ${WKDIR}
+
+RUN echo 'export CUDA_VISIBLE_DEVICES=-1' >> ${HOME}/.bashrc \
+    && echo 'export TF_CPP_MIN_LOG_LEVEL=3' >> ${HOME}/.bashrc
