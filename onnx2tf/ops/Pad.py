@@ -173,6 +173,20 @@ def make_node(
     tensor_rank = len(input_tensor.shape)
     paddings = tf_layers_dict[paddings.name]['tf_node'] \
         if isinstance(paddings, gs.Variable) else paddings
+
+    # Transpose pads values
+    paddings = graph_node.inputs[1]
+    if hasattr(paddings, 'values'):
+        values = paddings.values
+        paddings = values.reshape([2, tensor_rank]).transpose()
+        paddings_rank = paddings.shape[0]
+        if paddings_rank > 2:
+            convertion_table = [0] + [i for i in range(2, paddings_rank)] + [1]
+            new_paddings = []
+            for idx in convertion_table:
+                new_paddings.append(paddings[idx, :])
+            paddings = np.asarray(new_paddings)
+
     constant_value = tf_layers_dict[constant_value.name]['tf_node'] \
         if isinstance(constant_value, gs.Variable) else constant_value
 

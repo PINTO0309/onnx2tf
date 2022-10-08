@@ -1,3 +1,4 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
@@ -9,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -117,6 +119,17 @@ def make_node(
         boxes = tf.transpose(boxes_t, perm=[0, 2, 1])
 
     num_batches = boxes.shape[0]
+
+    if num_batches is None:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} '+
+            f'It is not possible to specify a dynamic shape '+
+            f'for the batch size of the input tensor in NonMaxSuppression. '+
+            f'Use the --batch_size option to change the batch size to a fixed size. \n'+
+            f'boxes.shape: {boxes.shape} scores.shape: {scores.shape}'
+        )
+        sys.exit(1)
+
     for batch_i in tf.range(num_batches):
         # get boxes in batch_i only
         tf_boxes = tf.squeeze(tf.gather(boxes, [batch_i]), axis=0)
