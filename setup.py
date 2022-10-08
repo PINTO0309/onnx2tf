@@ -17,7 +17,7 @@ setup(
     name=package_name,
     version=version,
     description=\
-        "Unique tool to convert ONNX files (NCHW) to TensorFlow format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf).",
+        "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf).",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Katsuya Hyodo",
