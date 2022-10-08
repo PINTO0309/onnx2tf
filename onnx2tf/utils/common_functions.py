@@ -120,7 +120,9 @@ def inverted_operation_enable_disable(func):
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
-            onnx_node_output_shape = [shape if not isinstance(shape, str) else None for shape in onnx_node_output_shape] if onnx_node_output_shape is not None else None
+            onnx_node_output_shape = [
+                shape if not isinstance(shape, str) else None for shape in onnx_node_output_shape
+            ] if onnx_node_output_shape is not None else None
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
             output_shape_trans = output_shape_trans or (onnx_node_output_shape != tf_node_output_shape)
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
@@ -507,7 +509,13 @@ def alternative_asin(
     """
     x_abs = None
     x_abs = tf.abs(input_tensor)
-    neg = tf.math.divide(tf.math.multiply(tf.minimum(input_tensor, 0), -1), x_abs)
+    neg = tf.math.divide(
+        tf.math.multiply(
+            tf.minimum(input_tensor, 0),
+            -1
+        ),
+        x_abs
+    )
     x = x_abs
     y = tf.constant(-0.0187293)
     y = tf.math.multiply(y, x)
@@ -516,8 +524,20 @@ def alternative_asin(
     y = tf.math.subtract(y, 0.2121144)
     y = tf.math.multiply(y, x)
     y = tf.math.add(y, 1.5707288)
-    y = tf.math.subtract(tf.math.multiply(3.14159265358979, 0.5), tf.math.multiply(tf.sqrt(tf.math.subtract(1.0, x)), y))
-    pseudo_asin = tf.math.subtract(y, tf.math.multiply(tf.math.multiply(2, neg), y))
+    y = tf.math.subtract(
+        tf.math.multiply(3.14159265358979, 0.5),
+        tf.math.multiply(
+            tf.sqrt(tf.math.subtract(1.0, x)),
+            y
+        )
+    )
+    pseudo_asin = tf.math.subtract(
+        y,
+        tf.math.multiply(
+            tf.math.multiply(2, neg),
+            y
+        )
+    )
     return pseudo_asin
 
 
@@ -540,7 +560,13 @@ def alternative_acos(
     """
     x_abs = None
     x_abs = tf.abs(input_tensor)
-    neg = tf.math.divide(tf.math.multiply(tf.minimum(input_tensor, 0), -1), x_abs)
+    neg = tf.math.divide(
+        tf.math.multiply(
+            tf.minimum(input_tensor, 0),
+            -1
+        ),
+        x_abs
+    )
     x = x_abs
     y = tf.constant(-0.0187293)
     y = tf.math.multiply(y, x)
@@ -549,9 +575,24 @@ def alternative_acos(
     y = tf.math.subtract(y, 0.2121144)
     y = tf.math.multiply(y, x)
     y = tf.math.add(y, 1.5707288)
-    y = tf.math.multiply(y, tf.sqrt(tf.math.subtract(1.0, x)))
-    y = tf.math.multiply(y, tf.math.subtract(1.0, tf.math.multiply(2.0, neg)))
-    pseudo_acos = tf.math.add(tf.math.multiply(neg, 3.14159265358979), y)
+    y = tf.math.multiply(
+        y,
+        tf.sqrt(tf.math.subtract(1.0, x))
+    )
+    y = tf.math.multiply(
+        y,
+        tf.math.subtract(
+            1.0,
+            tf.math.multiply(2.0, neg)
+        )
+    )
+    pseudo_acos = tf.math.add(
+        tf.math.multiply(
+            neg,
+            3.14159265358979
+        ),
+        y
+    )
     return pseudo_acos
 
 
