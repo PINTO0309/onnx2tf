@@ -261,6 +261,8 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
             w.write(tflite_model)
+        if not non_verbose:
+            print(f'{Color.GREEN}Float32 tflite output complete!{Color.RESET}')
 
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_types = [tf.float16]
@@ -271,6 +273,8 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/model_float16.tflite', 'wb') as w:
             w.write(tflite_model)
+        if not non_verbose:
+            print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
 
         return model
 
