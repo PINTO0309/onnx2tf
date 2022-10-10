@@ -41,6 +41,7 @@ def convert(
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
+    mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -91,6 +92,12 @@ def convert(
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
         Replace LeakyReLU with a pseudo LeakyReLU.
+
+    mvn_epsilon: Optional[float]
+        For MeanVarianceNormalization.\n
+        The number to be added to the variance to avoid division by zero when normalizing the value.\n
+        (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)\n
+        Default: 0.0000000001
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -171,6 +178,7 @@ def convert(
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
+        'mvn_epsilon': mvn_epsilon,
     }
 
     tf_layers_dict = {}
@@ -373,6 +381,17 @@ def main():
         help='Replace LeakyReLU with a pseudo LeakyReLU.'
     )
     parser.add_argument(
+        '-me',
+        '--mvn_epsilon',
+        type=float,
+        default=0.0000000001,
+        help=\
+            'For MeanVarianceNormalization. \n' +
+            'The number to be added to the variance to avoid division by zero when normalizing the value. \n' +
+            '(input_tensor - mean) / tf.sqrt(variance + mvn_epsilon) \n'
+            'Default: 0.0000000001'
+    )
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -391,6 +410,7 @@ def main():
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
+        mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
     )
 

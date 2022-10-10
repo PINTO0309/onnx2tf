@@ -65,6 +65,7 @@ def make_node(
             before_op_output_shape_trans=before_op_output_shape_trans,
         )
 
+    mvn_epsilon = kwargs.get('mvn_epsilon', 0.0000000001)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -81,4 +82,4 @@ def make_node(
         keepdims=True,
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        (input_tensor - mean) / tf.sqrt(variance)
+        (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
