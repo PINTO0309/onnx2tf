@@ -88,7 +88,6 @@ def make_node(
     Conv3D
     DepthwiseConv2D
     SeparableConv2D
-    TODO: Conv2DTranspose
     """
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
