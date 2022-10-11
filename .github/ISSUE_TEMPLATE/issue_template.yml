@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please provide as much detail as possible to convey the history of your problem. Sloppy issues will be closed immediately. If there is no response for 5 days after the last reply, the bot will automatically close the message.
+        Please provide as much detail as possible to convey the history of your problem. Sloppy issues will be closed immediately. If there is no response for 5 days after the last reply, the bot will automatically close the issue.
   - type: dropdown
     id: issue-type
     attributes:
