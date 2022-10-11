@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 from onnx2tf.utils.colors import Color
 
@@ -85,11 +86,15 @@ def make_node(
     max_output_boxes_per_class = tf.squeeze(max_output_boxes_per_class) \
         if len(max_output_boxes_per_class.shape) == 1 else max_output_boxes_per_class
 
-    iou_threshold = iou_threshold if (iou_threshold is not None and iou_threshold != "") else tf.constant(0, tf.float32)
-    iou_threshold = tf.squeeze(iou_threshold) if len(iou_threshold.shape) == 1 else iou_threshold
+    iou_threshold = iou_threshold \
+        if (iou_threshold is not None and iou_threshold != "") else tf.constant(0, tf.float32)
+    iou_threshold = tf.squeeze(iou_threshold) \
+        if len(iou_threshold.shape) == 1 else iou_threshold
 
-    score_threshold = score_threshold if (score_threshold is not None and score_threshold != "") else tf.constant(float('-inf'))
-    score_threshold = tf.squeeze(score_threshold) if len(score_threshold.shape) == 1 else score_threshold
+    score_threshold = score_threshold \
+        if (score_threshold is not None and score_threshold != "") else tf.constant(float('-inf'))
+    score_threshold = tf.squeeze(score_threshold) \
+        if len(score_threshold.shape) == 1 else score_threshold
 
     center_point_box = graph_node.attrs.get('center_point_box', 0)
 
@@ -166,3 +171,21 @@ def make_node(
             result = output if tf.equal(batch_i, 0) and tf.equal(class_j, 0) else tf.concat([result, output], 0)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = result
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.image.non_max_suppression,
+                'tf_inputs': {
+                    'boxes': tf_boxes,
+                    'scores': tf_scores,
+                    'max_output_boxes_per_class': max_output_boxes_per_class,
+                    'iou_threshold': iou_threshold,
+                    'score_threshold': score_threshold,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

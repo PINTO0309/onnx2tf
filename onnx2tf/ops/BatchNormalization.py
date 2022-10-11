@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -62,3 +63,21 @@ def make_node(
         tf_layers_dict[Y.name]['tf_node'] = \
             tf_layers_dict[X.name]['tf_node'] \
                 / tf.math.sqrt(input_var.values + epsilon) * scale.values + B.values
+
+    # Generation of Debug Info
+    tf_layers_dict[Y.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'BatchNormalization',
+                'tf_inputs': {
+                    'X': tf_layers_dict[X.name]['tf_node'],
+                    'B': B,
+                    'mean': input_mean,
+                    'var': input_var,
+                    'scale': scale,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[Y.name]['tf_node'],
+                },
+            }
+        )

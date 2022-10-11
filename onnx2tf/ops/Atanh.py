@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -50,9 +51,25 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.atanh(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            x=input_tensor,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.atanh,
+                'tf_inputs': {
+                    'x': input_tensor,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

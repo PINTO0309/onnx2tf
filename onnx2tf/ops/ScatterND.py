@@ -8,6 +8,8 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    process_neg_idx,
+    make_tf_node_info,
 )
 
 
@@ -71,11 +73,31 @@ def make_node(
     }
 
     # Generation of TF OP
-    # TODO: negative indices
+    indices_tensor = process_neg_idx(
+        data=input_tensor,
+        indices=indices_tensor,
+    )
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.scatter_nd(
+        tf.tensor_scatter_nd_update(
+            tensor=input_tensor,
             indices=indices_tensor,
             updates=updates_tensor,
-            shape=input_tensor,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.tensor_scatter_nd_update,
+                'tf_inputs': {
+                    'tensor': input_tensor,
+                    'indices': indices_tensor,
+                    'updates': updates_tensor,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

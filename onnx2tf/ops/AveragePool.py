@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     pad_input,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -113,12 +114,14 @@ def make_node(
     }
 
     # Generation of TF OP
+    tf_op_type = None
     if len(kernel_shape) == 1:
         pooled_tensor = AveragePooling1D(
             pool_size=kernel_shape,
             strides=strides,
             padding=padding_,
         )(padded_tensor)
+        tf_op_type = AveragePooling1D
 
     elif len(kernel_shape) == 2:
         pooled_tensor = AveragePooling2D(
@@ -126,6 +129,7 @@ def make_node(
             strides=strides,
             padding=padding_,
         )(padded_tensor)
+        tf_op_type = AveragePooling2D
 
     elif len(kernel_shape) == 3:
         pooled_tensor = AveragePooling3D(
@@ -133,6 +137,7 @@ def make_node(
             strides=strides,
             padding=padding_,
         )(padded_tensor)
+        tf_op_type = AveragePooling3D
 
     else:
         error_msg = f'' +\
@@ -143,3 +148,20 @@ def make_node(
         assert False, error_msg
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'x': input_tensor,
+                    'pool_size': kernel_shape,
+                    'strides': strides,
+                    'padding': padding_,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

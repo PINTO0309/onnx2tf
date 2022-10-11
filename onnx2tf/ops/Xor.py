@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -31,11 +32,18 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_2 = \
+        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans = \
-        before_op_output_shape_trans_1
+        before_op_output_shape_trans_1 \
+        and before_op_output_shape_trans_2
 
-    graph_node_input = get_constant_or_variable(
+    graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
+        before_op_output_shape_trans,
+    )
+    graph_node_input_2 = get_constant_or_variable(
+        graph_node.inputs[1],
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
@@ -51,9 +59,29 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.logical_xor(
-            x=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+            x=input_tensor_1,
+            y=input_tensor_2,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.logical_xor,
+                'tf_inputs': {
+                    'x': input_tensor_1,
+                    'y': input_tensor_2,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

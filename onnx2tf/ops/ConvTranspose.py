@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     convert_reverse_axis,
     tf_shape,
+    make_tf_node_info,
 )
 from onnx2tf.utils.colors import Color
 
@@ -286,3 +287,21 @@ def make_node(
                     values=convolved,
                     axis=-1
                 )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': conv_func,
+                'tf_inputs': {
+                    'input': input_tensor_split,
+                    'filters': weight_split,
+                    'output_shape': conv_output_shape,
+                    'strides': strides,
+                    'padding': pad_mode,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -54,9 +55,26 @@ def make_node(
     }
 
     # Generation of TF OP
+    tf_op_type = None
     if isinstance(input_tensor, (list, tuple)):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity_n(input_tensor)
+        tf_op_type = tf.identity_n
     else:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input_tensor)
+        tf_op_type = tf.identity
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'input': input_tensor,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

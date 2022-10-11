@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -19,7 +20,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """Div
+    """Expand
 
     Parameters
     ----------
@@ -73,3 +74,18 @@ def make_node(
         expanded_tensor = input_tensor * ones
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = expanded_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'Expand',
+                'tf_inputs': {
+                    'input_tensor': input_tensor,
+                    'input_tensor_shape': input_tensor_shape,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

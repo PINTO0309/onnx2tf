@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     convert_axis,
+    make_tf_node_info,
 )
 
 
@@ -97,3 +98,19 @@ def make_node(
         )
     for splited_tensor, graph_node_output in zip(splited_tensors, graph_node_outputs):
         tf_layers_dict[graph_node_output.name]['tf_node'] = splited_tensor
+
+    # Generation of Debug Info
+    tf_outputs = {f"output{idx}": value for idx, value in enumerate(splited_tensors)}
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.split,
+                'tf_inputs': {
+                    'value': input_tensor,
+                    'num_or_size_splits': split,
+                    'axis': axis,
+                    'num': num_outputs,
+                },
+                'tf_outputs': tf_outputs,
+            }
+        )

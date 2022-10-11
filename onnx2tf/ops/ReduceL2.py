@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -72,10 +73,11 @@ def make_node(
     }
 
     # Generation of TF OP
+    axis = list(axes) if axes is not None else None
     l2normed_tensor = \
         tf.math.l2_normalize(
             x=input_tensor,
-            axis=list(axes) if axes is not None else None,
+            axis=axis,
             name=graph_node.name,
         )
     if keepdims:
@@ -88,3 +90,18 @@ def make_node(
                 )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = l2normed_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.l2_normalize,
+                'tf_inputs': {
+                    'x': input_tensor,
+                    'axis': axis,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

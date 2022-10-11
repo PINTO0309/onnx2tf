@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -71,22 +72,23 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
     ### 1. Select last index or first index
     reversed_tensor = None
     if not select_last_index:
-        reversed_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-            if isinstance(graph_node_input, gs.Variable) else graph_node_input
+        reversed_tensor = input_tensor
     else:
         reversed_tensor = \
             tf.reverse(
-                tensor=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                    if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+                tensor=input_tensor,
                 axis=axis,
                 name=f'{graph_node.name}_reverse',
             )
 
     ### 2. Replace ArgMax with a ReduceMax or no replace
     final_tensor = None
+    tf_op_type = None
     if not replace_argmax_to_reducemax_and_indicies_is_int64 \
         and not replace_argmax_to_reducemax_and_indicies_is_float32:
         argmaxed_tensor = tf.math.argmax(
@@ -104,6 +106,7 @@ def make_node(
                 )
         else:
             final_tensor = argmaxed_tensor
+        tf_op_type = tf.math.argmax
     else:
         final_tensor = alternative_argmax(
             input_tensor=reversed_tensor,
@@ -113,5 +116,22 @@ def make_node(
             replace_argmax_to_reducemax_and_indicies_is_int64=replace_argmax_to_reducemax_and_indicies_is_int64,
             replace_argmax_to_reducemax_and_indicies_is_float32=replace_argmax_to_reducemax_and_indicies_is_float32,
         )
+        tf_op_type = 'alternative_argmax'
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = final_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'axis': axis,
+                    'output_type': dtype,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

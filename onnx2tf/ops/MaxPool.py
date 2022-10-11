@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     remove_dilations,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -47,6 +48,12 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
+    filter = None
+    strides = None
+    dilations = None
+    kernel_shape = None
+    ceil_mode = None
 
     # 0: False, 1: True
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))
@@ -112,6 +119,7 @@ def make_node(
     }
 
     # Generation of TF OP
+    tf_op_type = None
 
     # tf.nn.dilation2d
     if spatial_size == 2 and dilations != [1] * spatial_size:
@@ -130,6 +138,7 @@ def make_node(
             dilations=dilations,
             padding=padding_,
         )
+        tf_op_type = tf.nn.dilation2d
 
     # if spatial_size < 4 and strides == 1 or dilation == 1 use tf.nn.pool
     elif spatial_size < 4 and (strides == [1] * spatial_size or dilations == [1] * spatial_size):
@@ -143,6 +152,7 @@ def make_node(
                 padding=padding_,
                 pooling_type='MAX',
             )
+            tf_op_type = tf.nn.pool
         else:
             # othwerwise check the pooling_type and use the correct op
             pooled_tensor = tf.nn.max_pool(
@@ -151,6 +161,7 @@ def make_node(
                 strides=strides,
                 padding=padding_,
             )
+            tf_op_type = tf.nn.max_pool
     # in any other case we use custom implementation _remove_dilations
     # to reduce atrous/dilated pooling into regular pooling and selecting
     # only the values of the input that should have been selected by
@@ -171,19 +182,41 @@ def make_node(
                 padding=pads,
                 padding_constant=0,
             )
-        input_ = remove_dilations(
+        input_tensor = remove_dilations(
             input_tensor=padded_tensor,
             kernel_shape=kernel_shape,
             spatial_size=spatial_size,
             strides=strides,
             dilations=dilations,
         )
+        padding_ = 'VALID'
         pooled_tensor = tf.nn.pool(
-            input=input_,
+            input=input_tensor,
             window_shape=kernel_shape,
             strides=kernel_shape,
-            padding='VALID',
+            padding=padding_,
             pooling_type='MAX',
         )
+        tf_op_type = tf.nn.pool
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'filters': filter,
+                    'kernel_shape': kernel_shape,
+                    'strides': strides,
+                    'dilations': dilations,
+                    'padding': padding_,
+                    'ceil_mode': ceil_mode,
+                },
+                'tf_outputs': {
+                    'output': pooled_tensor,
+                },
+            }
+        )

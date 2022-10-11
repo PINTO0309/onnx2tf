@@ -7,6 +7,7 @@ from onnx import numpy_helper
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     print_node_info,
+    make_tf_node_info,
 )
 
 
@@ -57,7 +58,23 @@ def make_node(
     else:
         constant_tensor = 0.
 
-    return tf.constant(
+    cons = tf.constant(
         value=constant_tensor,
         name=graph_node.name,
     )
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = cons
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.constant,
+                'tf_inputs': {
+                    'value': constant_tensor,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

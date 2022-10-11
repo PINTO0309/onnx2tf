@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -91,3 +92,19 @@ def make_node(
     )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = output_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'ConcatFromSequence',
+                'tf_inputs': {
+                    'input_sequence': input_sequence,
+                    'axis': axis,
+                    'new_axis': new_axis,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

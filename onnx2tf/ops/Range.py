@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -65,14 +66,35 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    input_tensor_3 = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
+        if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.range(
-            start=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-                if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
-            limit=tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-                if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
-            delta=tf_layers_dict[graph_node_input_3.name]['tf_node'] \
-                if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3,
+            start=input_tensor_1,
+            limit=input_tensor_2,
+            delta=input_tensor_3,
             dtype=dtype,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.range,
+                'tf_inputs': {
+                    'start': input_tensor_1,
+                    'limit': input_tensor_2,
+                    'delta': input_tensor_3,
+                    'dtype': dtype,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

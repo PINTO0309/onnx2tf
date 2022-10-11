@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     convert_axis,
+    make_tf_node_info,
 )
 
 
@@ -87,3 +88,19 @@ def make_node(
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'MeanVarianceNormalization',
+                'tf_inputs': {
+                    'x': input_tensor,
+                    'axes': axes,
+                    'epsilon': mvn_epsilon,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

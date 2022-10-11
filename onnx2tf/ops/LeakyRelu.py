@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -58,6 +59,7 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # Generation of TF OP
+    tf_op_type = None
     if not replace_leakyrelu_to_pseudo_leakyrelu:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.leaky_relu(
@@ -65,7 +67,24 @@ def make_node(
                 alpha=alpha,
                 name=graph_node.name,
             )
+        tf_op_type = tf.nn.leaky_relu
     else:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.maximum(0.0, input_tensor) + \
                 tf.minimum(0.0, alpha * input_tensor)
+        tf_op_type = 'tf.maximum + tf.minimum'
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'features': input_tensor,
+                    'alpha': alpha,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

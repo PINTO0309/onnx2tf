@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     get_padding_as_op,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 from onnx2tf.utils.colors import Color
 
@@ -126,6 +127,7 @@ def make_node(
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     # Conv
+    tf_op_type = None
     if input_bias is not None:
         if not depthwise:
             if group == 1:
@@ -141,6 +143,7 @@ def make_node(
                         ),
                         input_bias,
                     )
+                tf_op_type = tf.nn.convolution
             else:
                 # SeparableConv
                 input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
@@ -161,6 +164,7 @@ def make_node(
                         ),
                         input_bias,
                     )
+                tf_op_type = tf.nn.convolution
 
         else:
             # DepthwiseConv2D
@@ -176,6 +180,7 @@ def make_node(
                     ),
                     input_bias,
                 )
+            tf_op_type = tf.nn.depthwise_conv2d
     else:
         if not depthwise:
             if group == 1:
@@ -188,6 +193,7 @@ def make_node(
                         padding=pad_mode,
                         dilations=dilations,
                     )
+                tf_op_type = tf.nn.convolution
             else:
                 # SeparableConv
                 input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
@@ -205,6 +211,7 @@ def make_node(
                         ],
                         axis=-1
                     )
+                tf_op_type = tf.nn.convolution
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]
@@ -216,3 +223,20 @@ def make_node(
                     strides=strides,
                     dilations=dilations,
                 )
+            tf_op_type = tf.nn.depthwise_conv2d
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'weights': input_weights,
+                    'bias': input_bias,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

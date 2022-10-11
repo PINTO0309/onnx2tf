@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -76,4 +77,19 @@ def make_node(
             tensor=input_tensor,
             shape=cal_shape,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.reshape,
+                'tf_inputs': {
+                    'tensor': input_tensor,
+                    'shape': cal_shape,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

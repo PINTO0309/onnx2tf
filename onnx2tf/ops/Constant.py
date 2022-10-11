@@ -8,6 +8,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
     print_node_info,
+    make_tf_node_info,
 )
 
 
@@ -118,6 +119,13 @@ def make_node(
 
     # Generation of TF OP
     # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/handlers/backend/constant.py
+
+    sparse_value = None
+    indices = None
+    value = None
+    shape = None
+    const_dtype = None
+
     if opset <= 11:
         # either value or sparse_value
         if "value" in graph_node.attrs:
@@ -130,6 +138,23 @@ def make_node(
                     dtype=const_dtype,
                     name=graph_node.name,
                 )
+            # Generation of Debug Info
+            tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+                make_tf_node_info(
+                    node_info={
+                        'tf_op_type': tf.constant,
+                        'tf_inputs': {
+                            'sparse_value': sparse_value,
+                            'indices': indices,
+                            'value': value,
+                            'shape': shape,
+                            'const_dtype': const_dtype,
+                        },
+                        'tf_outputs': {
+                            'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                        },
+                    }
+                )
             return
         else:
             sparse_value = graph_node.attrs["sparse_value"]
@@ -141,6 +166,23 @@ def make_node(
                     indices=indices,
                     values=values,
                     dense_shape=shape,
+                )
+            # Generation of Debug Info
+            tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+                make_tf_node_info(
+                    node_info={
+                        'tf_op_type': tf.constant,
+                        'tf_inputs': {
+                            'sparse_value': sparse_value,
+                            'indices': indices,
+                            'value': value,
+                            'shape': shape,
+                            'const_dtype': const_dtype,
+                        },
+                        'tf_outputs': {
+                            'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                        },
+                    }
                 )
             return
     elif opset >= 12:
@@ -156,6 +198,23 @@ def make_node(
                         dtype=const_dtype,
                         name=graph_node.name,
                     )
+                # Generation of Debug Info
+                tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+                    make_tf_node_info(
+                        node_info={
+                            'tf_op_type': tf.constant,
+                            'tf_inputs': {
+                                'sparse_value': sparse_value,
+                                'indices': indices,
+                                'value': value,
+                                'shape': shape,
+                                'const_dtype': const_dtype,
+                            },
+                            'tf_outputs': {
+                                'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                            },
+                        }
+                    )
                 return
             else:
                 sparse_value = graph_node.attrs["sparse_value"]
@@ -167,6 +226,23 @@ def make_node(
                         indices=indices,
                         values=values,
                         dense_shape=shape,
+                    )
+                # Generation of Debug Info
+                tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+                    make_tf_node_info(
+                        node_info={
+                            'tf_op_type': tf.constant,
+                            'tf_inputs': {
+                                'sparse_value': sparse_value,
+                                'indices': indices,
+                                'value': value,
+                                'shape': shape,
+                                'const_dtype': const_dtype,
+                            },
+                            'tf_outputs': {
+                                'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                            },
+                        }
                     )
                 return
         elif "value_float" in graph_node.attrs:
@@ -192,4 +268,21 @@ def make_node(
                 value=value,
                 dtype=const_dtype,
                 name=graph_node.name,
+            )
+        # Generation of Debug Info
+        tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+            make_tf_node_info(
+                node_info={
+                    'tf_op_type': tf.constant,
+                    'tf_inputs': {
+                        'sparse_value': sparse_value,
+                        'indices': indices,
+                        'value': value,
+                        'shape': shape,
+                        'const_dtype': const_dtype,
+                    },
+                    'tf_outputs': {
+                        'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                    },
+                }
             )

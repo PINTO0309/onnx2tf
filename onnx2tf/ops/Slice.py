@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
@@ -158,11 +159,14 @@ def make_node(
                         updated_full_begin[axis] = updated_starts[i]
                         updated_full_sizes[axis] = updated_ends[i]
 
+        starts = updated_full_begin
+        ends = updated_full_sizes
+
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.strided_slice(
                 input_=input_tensor,
-                begin=updated_full_begin,
-                end=updated_full_sizes,
+                begin=starts,
+                end=ends,
                 name=graph_node.name,
             )
     else:
@@ -174,3 +178,20 @@ def make_node(
                 strides=steps,
                 name=graph_node.name,
             )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.strided_slice,
+                'tf_inputs': {
+                    'input_': input_tensor,
+                    'begin': starts,
+                    'end': ends,
+                    'strides': steps,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

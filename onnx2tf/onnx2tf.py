@@ -18,6 +18,8 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 tf.random.set_seed(0)
+tf.keras.utils.set_random_seed(0)
+tf.config.experimental.enable_op_determinism()
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
 tf.get_logger().setLevel(logging.FATAL)

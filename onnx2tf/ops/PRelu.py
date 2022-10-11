@@ -9,7 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     explicit_broadcast,
-    convert_axis,
+    make_tf_node_info,
 )
 
 
@@ -80,3 +80,18 @@ def make_node(
     pos = tf.nn.relu(input_tensor)
     neg = slope * (input_tensor - abs(input_tensor)) * 0.5
     tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'PReLU',
+                'tf_inputs': {
+                    'x': input_tensor,
+                    'slope': slope,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

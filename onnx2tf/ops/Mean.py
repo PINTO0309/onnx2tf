@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -60,9 +61,25 @@ def make_node(
     }
 
     # Generation of TF OP
+    axis = 0
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reduce_mean(
             input_tensor=tf.stack(values),
-            axis=0,
+            axis=axis,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_inputs = {f"input{idx}": value for idx, value in enumerate(values)}
+    tf_inputs['axis'] = axis
+
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.reduce_mean,
+                'tf_inputs': tf_inputs,
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

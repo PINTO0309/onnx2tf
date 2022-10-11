@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -153,6 +154,11 @@ def make_node(
     # TODO: upsampling2d_bilinear_5d
     # TODO: upsampling2d_nearest_5d
     resized_tensor = None
+    boxes = None
+    box_indices = None
+    tf_op_type = None
+    align_corners = None
+    half_pixel_centers = None
     if coordinate_transformation_mode == "tf_crop_and_resize":
         # get boxes for crop
         indices = [1,2,5,6]
@@ -169,26 +175,33 @@ def make_node(
             extrapolation_value=extrapolation_value,
             name=graph_node.name,
         )
+        tf_op_type = tf.image.crop_and_resize
     elif coordinate_transformation_mode == "align_corners":
+        align_corners = True
+        half_pixel_centers = False
         resized_tensor = Lambda(
             tf_resize,
             arguments={
                 'new_size': new_size,
-                'align_corners': True,
-                'half_pixel_centers': False,
+                'align_corners': align_corners,
+                'half_pixel_centers': half_pixel_centers,
                 'name': graph_node.name,
             }
         )(input_tensor)
+        tf_op_type = tf_resize
     elif coordinate_transformation_mode == "asymmetric":
+        align_corners = False
+        half_pixel_centers = False
         resized_tensor = Lambda(
             tf_resize,
             arguments={
                 'new_size': new_size,
-                'align_corners': False,
-                'half_pixel_centers': False,
+                'align_corners': align_corners,
+                'half_pixel_centers': half_pixel_centers,
                 'name': graph_node.name,
             }
         )(input_tensor)
+        tf_op_type = tf_resize
     else:
         resized_tensor = tf.image.resize(
             images=input_tensor,
@@ -196,5 +209,26 @@ def make_node(
             method=mode,
             name=graph_node.name,
         )
+        tf_op_type = tf.image.resize
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'images': input_tensor,
+                    'boxes': boxes,
+                    'box_indices': box_indices,
+                    'new_size/crop_size': new_size,
+                    'method': mode,
+                    'extrapolation_value': extrapolation_value,
+                    'align_corners': align_corners,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

@@ -7,9 +7,9 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     convert_axis,
-    convert_reverse_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 from onnx2tf.utils.colors import Color
 
@@ -112,4 +112,19 @@ def make_node(
             tensor=transposed_tensor,
             shape=transposed_reshape_shape,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.reshape,
+                'tf_inputs': {
+                    'tensor': transposed_tensor,
+                    'shape': transposed_reshape_shape,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

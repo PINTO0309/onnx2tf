@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 from onnx2tf.utils.colors import Color
 
@@ -83,6 +84,9 @@ def make_node(
             before_op_output_shape_trans=before_op_output_shape_trans,
         )
 
+    # 0: False, 1: True
+    keepdims = bool(graph_node.attrs.get('keepdims', 1))
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -97,6 +101,23 @@ def make_node(
             tf.reduce_sum(
                 input_tensor=reducesumed_tensor,
                 axis=idx,
+                keepdims=keepdims,
                 name=f'{graph_node.name}_{idx}',
             )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducesumed_tensor
+
+    # Generation of Debug Info
+    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)}
+    tf_inputs['input_tensor'] = input_tensor
+    tf_inputs['keepdims'] = keepdims
+
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.reduce_sum,
+                'tf_inputs': tf_inputs,
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

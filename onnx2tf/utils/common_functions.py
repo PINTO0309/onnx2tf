@@ -13,6 +13,68 @@ from functools import wraps
 from collections import namedtuple
 
 
+def make_tf_node_info(**kwargs):
+    """Generate information for debug log output.
+
+    Parameters
+    ----------
+        tf_op_type: dict
+        tf_attrs: dict
+        tf_inputs: dict
+        tf_outputs: dict
+
+    Returns
+    ----------
+        tf_node_info: dict
+    """
+    tf_node_info = {}
+    node_info: dict = kwargs.get('node_info', None)
+    if node_info is not None:
+        tf_op_type = node_info.get('tf_op_type', None)
+        tf_node_info['tf_op_type'] = tf_op_type.__name__ if hasattr(tf_op_type, '__name__') else \
+            tf_op_type if isinstance(tf_op_type, str) else ''
+        tf_attrs: dict = node_info.get('tf_attrs', None)
+        if tf_attrs is not None:
+            tf_node_info['tf_attrs'] = {
+                attr_key: {
+                    'shape': attr_val.shape if hasattr(attr_val, 'shape') else None,
+                    'dtype': attr_val.dtype if hasattr(attr_val, 'dtype') else None,
+                    'val': attr_val,
+                } for attr_key, attr_val in tf_attrs.items()
+            }
+        tf_inputs: dict = node_info.get('tf_inputs', None)
+        if tf_inputs is not None:
+            tf_node_info['tf_inputs'] = {
+                input_key: {
+                    'name': input_val.name if hasattr(input_val, 'name') else None,
+                    'shape': input_val.shape if hasattr(input_val, 'shape') else None,
+                    'dtype': input_val.dtype if hasattr(input_val, 'dtype') else None,
+                    'val': input_val \
+                        if isinstance(input_val, list) \
+                            or isinstance(input_val, str) \
+                            or isinstance(input_val, bool) \
+                            or isinstance(input_val, int) \
+                            or isinstance(input_val, float) else None,
+                } for input_key, input_val in tf_inputs.items()
+            }
+        tf_outputs: dict = node_info.get('tf_outputs', None)
+        if tf_outputs is not None:
+            tf_node_info['tf_outputs'] = {
+                output_key: {
+                    'name': output_val.name if hasattr(output_val, 'name') else None,
+                    'shape': output_val.shape if hasattr(output_val, 'shape') else None,
+                    'dtype': output_val.dtype if hasattr(output_val, 'dtype') else None,
+                    'val': output_val \
+                        if isinstance(output_val, list) \
+                            or isinstance(output_val, str) \
+                            or isinstance(output_val, bool) \
+                            or isinstance(output_val, int) \
+                            or isinstance(output_val, float) else None,
+                } for output_key, output_val in tf_outputs.items()
+            }
+    return tf_node_info
+
+
 def print_node_info(func):
     @wraps(func)
     def print_wrapper_func(*args, **kwargs):
@@ -49,48 +111,32 @@ def print_node_info(func):
             result = func(*args, **kwargs)
 
             if not non_verbose:
-
                 if graph_node is not None and tf_layers_dict is not None:
                     for idx, graph_node_output in enumerate(graph_node.outputs):
                         tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
                         if tf_layer_info is not None:
-                            tf_layer = tf_layer_info.get('tf_node', None)
-                            if tf_layer is not None:
-                                if hasattr(tf_layer, 'node') and isinstance(tf_layer.node.input_tensors, list):
-                                    for in_idx, input_tensor in enumerate(tf_layer.node.input_tensors):
-                                        print(
-                                            f'{Color.GREEN}INFO:{Color.RESET} '+
-                                            f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
-                                            f'{Color.BLUE}input_name.{in_idx+1}{Color.RESET}: {input_tensor.name if hasattr(input_tensor, "name") else "np.ndarray"} '+
-                                            f'{Color.BLUE}shape{Color.RESET}: {input_tensor.shape} '+
-                                            f'{Color.BLUE}dtype{Color.RESET}: {input_tensor.dtype}'
-                                        )
-                                else:
-                                    print(
-                                        f'{Color.GREEN}INFO:{Color.RESET} '+
-                                        f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
-                                        f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {tf_layer.node.input_tensors.name if hasattr(tf_layer, "node") and hasattr(tf_layer.node.input_tensors, "name") else "np.ndarray"} '+
-                                        f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape if hasattr(tf_layer, "node") and not isinstance(tf_layer.node.input_tensors, str) else "None"} '+
-                                        f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype if hasattr(tf_layer, "node") and not isinstance(tf_layer.node.input_tensors, str) else "None"}'
-                                    )
+                            tf_node_info = tf_layer_info.get('tf_node_info', None)
+                            if tf_node_info is not None:
+                                tf_op_type = tf_node_info.get('tf_op_type', None)
+                                print(f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}tf_op_type{Color.RESET}: {tf_op_type}')
 
-                    for idx, graph_node_output in enumerate(graph_node.outputs):
-                        tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
-                        if tf_layer_info is not None:
-                            tf_layer = tf_layer_info.get('tf_node', None)
-                            if tf_layer is not None:
-                                type_spec_info = ''
-                                if hasattr(tf_layer, 'type_spec'):
-                                    type_spec_info = tf_layer.type_spec
-                                else:
-                                    type_spec_info = graph_node_output
-                                print(
-                                    f'{Color.GREEN}INFO:{Color.RESET} '+
-                                    f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
-                                    f'{Color.BLUE}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
-                                    f'{Color.BLUE}shape{Color.RESET}: {type_spec_info.shape} '+
-                                    f'{Color.BLUE}dtype{Color.RESET}: {type_spec_info.dtype}'
-                                )
+                                tf_inputs = tf_node_info.get('tf_inputs', None)
+                                if tf_inputs is not None:
+                                    for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
+                                        input_info_text = f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}input.{input_idx+1}.{input_key}{Color.RESET}: '
+                                        for input_attr_name, input_attr_value in input_values.items():
+                                            input_info_text += f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
+                                                if input_attr_value  is not None else ''
+                                        print(input_info_text)
+
+                                tf_outputs = tf_node_info.get('tf_outputs', None)
+                                if tf_outputs is not None:
+                                    for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
+                                        output_info_text = f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}output.{output_idx+1}.{output_key}{Color.RESET}: '
+                                        for output_attr_name, output_attr_value in output_values.items():
+                                            output_info_text += f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
+                                                if output_attr_value  is not None else ''
+                                        print(output_info_text)
             return result
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
@@ -1020,3 +1066,46 @@ def explicit_broadcast(
         if i not in dims:
             new_y = tf.expand_dims(new_y, i)
     return new_y
+
+
+def process_neg_idx(
+    *,
+    data,
+    indices,
+    batch_dims=0,
+):
+    """ Convert all the negative indices to positive
+    GatherND and ScatterND/TensorScatterNDUpdate in Tensorflow
+    doesn't support negative indices. Therefore need to run this
+    function to convert all the negative indices to positive before
+    send it to Tensorflow.
+    """
+    data_shape = tf_shape(input_tensor=data)
+    if data.get_shape().is_fully_defined():
+        if not isinstance(indices, np.ndarray):
+            indices_shape = indices.get_shape().as_list()
+        else:
+            indices_shape = indices.shape
+    else:
+        indices_shape = tf_shape(input_tensor=indices)
+    if batch_dims > 0:
+        max_i = tf.cast(data_shape[batch_dims:indices_shape[-1] + batch_dims], indices.dtype)
+    else:
+        max_i = tf.cast(data_shape[:indices_shape[-1]], indices.dtype)
+    return tf.math.floormod(tf.add(indices, max_i), max_i)
+
+
+def process_neg_idx_along_axis(
+    *,
+    data,
+    axis,
+    indices,
+):
+    """ Convert all the negative indices to positive
+    ScatterND/TensorScatterNDUpdate in Tensorflow doesn't support
+    negative indices. Therefore need to run this function to convert
+    all the negative indices to positive before send it to Tensorflow.
+    """
+    data_shape = tf_shape(input_tensor=data)
+    max_i = tf.cast(data_shape[axis], indices.dtype)
+    return tf.math.floormod(tf.add(indices, max_i), max_i)

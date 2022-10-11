@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
     print_node_info,
+    make_tf_node_info,
 )
 
 
@@ -54,4 +55,22 @@ def make_node(
             dtype=ONNX_DTYPES_TO_TF_DTYPES[rdtype],
             seed=rseed,
             name=graph_node.name,
+        )
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.random.uniform,
+                'tf_inputs': {
+                    'shape': shape,
+                    'minval': rlow,
+                    'maxval': rhigh,
+                    'dtype': ONNX_DTYPES_TO_TF_DTYPES[rdtype],
+                    'seed': rseed,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
         )

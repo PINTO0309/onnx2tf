@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -65,15 +66,16 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     reversed_tensor = None
     if not select_last_index:
-        reversed_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-            if isinstance(graph_node_input, gs.Variable) else graph_node_input
+        reversed_tensor = input_tensor
     else:
         reversed_tensor = \
             tf.reverse(
-                tensor=tf_layers_dict[graph_node_input.name]['tf_node'] \
-                    if isinstance(graph_node_input, gs.Variable) else graph_node_input,
+                tensor=input_tensor,
                 axis=axis,
                 name=f'{graph_node.name}_reverse',
             )
@@ -96,3 +98,19 @@ def make_node(
         final_tensor = argmined_tensor
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = final_tensor
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.argmin,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'axis': axis,
+                    'output_type': dtype,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

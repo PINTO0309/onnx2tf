@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -55,3 +56,17 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         input_tensor * tf.tanh(tf.nn.softplus(input_tensor))
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': 'Mish',
+                'tf_inputs': {
+                    'x': input_tensor,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

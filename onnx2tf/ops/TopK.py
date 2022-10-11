@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -125,3 +126,33 @@ def make_node(
 
     tf_layers_dict[Values.name]['tf_node'] = topked_values
     tf_layers_dict[Indices.name]['tf_node'] = topked_indices
+
+    # Generation of Debug Info
+    tf_layers_dict[Values.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.top_k,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'k': int(k_tensor),
+                    'sorted': sorted,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[Values.name]['tf_node'],
+                },
+            }
+        )
+    tf_layers_dict[Indices.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.math.top_k,
+                'tf_inputs': {
+                    'input': input_tensor,
+                    'k': int(k_tensor),
+                    'sorted': sorted,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[Indices.name]['tf_node'],
+                },
+            }
+        )

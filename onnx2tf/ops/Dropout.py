@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -79,16 +80,19 @@ def make_node(
     }
 
     # Generation of TF OP
+    dropout_result = None
+    mask = None
     if opset < 7:
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.nn.dropout(
-                x=data,
-                rate=ratio,
-                seed=seed,
-                name=graph_node.name,
-            )
+        dropout_result = tf.nn.dropout(
+            x=data,
+            rate=ratio,
+            seed=seed,
+            name=graph_node.name,
+        )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = dropout_result
     elif opset < 12:
         tf_layers_dict[graph_node_output.name]['tf_node'] = data
+        dropout_result = data
     else:
         # ratio and training_mode are optional and passed as inputs
         return_mask = len(graph_node.outputs) >= 2 # if there are 2 outputs, mask is requested
@@ -100,6 +104,7 @@ def make_node(
                 tf_layers_dict[graph_node.outputs[1].name]['tf_node'] = mask
             else:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = data
+            dropout_result = data
         else:
             # Training
             dropout_result = tf.nn.dropout(
@@ -118,4 +123,22 @@ def make_node(
                 tf_layers_dict[graph_node_output.name]['tf_node'] = dropout_result
                 tf_layers_dict[graph_node.outputs[1].name]['tf_node'] = mask
             else:
-                tf_layers_dict[graph_node_output.name]['tf_node'] = data
+                tf_layers_dict[graph_node_output.name]['tf_node'] = dropout_result
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.nn.dropout,
+                'tf_inputs': {
+                    'x': data,
+                    'rate': ratio,
+                    'noise_shape': None,
+                    'seed': seed,
+                },
+                'tf_outputs': {
+                    'dropout_result': dropout_result,
+                    'mask': mask,
+                },
+            }
+        )

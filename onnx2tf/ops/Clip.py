@@ -8,6 +8,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -81,14 +82,18 @@ def make_node(
     else:
         max_value = max_value_node
 
+
+    tf_op_type = None
     if isinstance(min_value, np.ndarray) and min_value == 0.0 \
         and isinstance(max_value, np.ndarray) and max_value == 6.0:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu6(features=features)
+        tf_op_type = tf.nn.relu6
     elif isinstance(min_value, np.ndarray) and min_value == 0.0 \
         and max_value.shape is None:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu(features=features)
+        tf_op_type = tf.nn.relu
     else:
         if min_value.shape is not None and max_value.shape is not None:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -97,15 +102,34 @@ def make_node(
                     clip_value_min=min_value,
                     clip_value_max=max_value,
                 )
+            tf_op_type = tf.clip_by_value
         elif min_value.shape is not None and max_value.shape is None:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(
                     x=features,
                     y=min_value,
                 )
+            tf_op_type = tf.maximum
         elif min_value.shape is None and max_value.shape is not None:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.minimum(
                     x=features,
                     y=max_value,
                 )
+            tf_op_type = tf.minimum
+
+    # Generation of Debug Info
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf_op_type,
+                'tf_inputs': {
+                    'features': features,
+                    'min_value': min_value,
+                    'max_value': max_value,
+                },
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )

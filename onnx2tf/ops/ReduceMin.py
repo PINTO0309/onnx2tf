@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    make_tf_node_info,
 )
 
 
@@ -73,8 +74,10 @@ def make_node(
     }
 
     # Generation of TF OP
-    reducemined_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
+    reducemined_tensor = input_tensor
     for idx in axes:
         reducemined_tensor = tf.math.reduce_min(
             input_tensor=reducemined_tensor,
@@ -83,3 +86,19 @@ def make_node(
             name=f'{graph_node.name}_{idx}',
         )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducemined_tensor
+
+    # Generation of Debug Info
+    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)}
+    tf_inputs['input_tensor'] = input_tensor
+    tf_inputs['keepdims'] = keepdims
+
+    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+        make_tf_node_info(
+            node_info={
+                'tf_op_type': tf.reduce_min,
+                'tf_inputs': tf_inputs,
+                'tf_outputs': {
+                    'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                },
+            }
+        )
