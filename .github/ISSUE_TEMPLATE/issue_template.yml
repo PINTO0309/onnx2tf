@@ -1,10 +1,10 @@
 name: Issue
-description: Miscellaneous issues are closed immediately. If you have no intention of returning useful information to the community, you have no right to post an issue here. Please withdraw. If there is no response for 5 days after the last reply, the bot will automatically close the message.
+description: Miscellaneous issues are closed immediately. If you have no intention of returning useful information to the community, you have no right to post an issue here. Please withdraw.
 body:
   - type: markdown
     attributes:
       value: |
-        Please provide as much detail as possible to convey the history of your problem. Sloppy issues will be closed immediately.
+        Please provide as much detail as possible to convey the history of your problem. Sloppy issues will be closed immediately. If there is no response for 5 days after the last reply, the bot will automatically close the message.
   - type: dropdown
     id: issue-type
     attributes:
