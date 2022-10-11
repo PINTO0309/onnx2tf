@@ -66,6 +66,10 @@ def make_node(
         )
 
     mvn_epsilon = kwargs.get('mvn_epsilon', 0.0000000001)
+    mvn_epsilon = tf.constant(
+        value=mvn_epsilon,
+        dtype=tf.float32,
+    )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
