@@ -70,8 +70,6 @@ def print_node_info(func):
                                         f'{Color.GREEN}INFO:{Color.RESET} '+
                                         f'{Color.BLUE}tf_op_type{Color.RESET}: {tf_layer_info.get("optype", "")} '+
                                         f'{Color.BLUE}input_name.{idx+1}{Color.RESET}: {tf_layer.node.input_tensors.name if hasattr(tf_layer, "node") and hasattr(tf_layer.node.input_tensors, "name") else "np.ndarray"} '+
-                                        # f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape if hasattr(tf_layer, "node") and hasattr(tf_layer, "input_tensors") and hasattr(tf_layer, "shape") else ""} '+
-                                        # f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype if hasattr(tf_layer, "node") and hasattr(tf_layer, "input_tensors") and hasattr(tf_layer, "dtype") else ""}'
                                         f'{Color.BLUE}shape{Color.RESET}: {tf_layer.node.input_tensors.shape if hasattr(tf_layer, "node") and not isinstance(tf_layer.node.input_tensors, str) else "None"} '+
                                         f'{Color.BLUE}dtype{Color.RESET}: {tf_layer.node.input_tensors.dtype if hasattr(tf_layer, "node") and not isinstance(tf_layer.node.input_tensors, str) else "None"}'
                                     )
