@@ -62,6 +62,6 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.einsum(
             equation,
-            inputs,
+            *inputs,
             name=graph_node.name,
         )
