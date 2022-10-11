@@ -1,0 +1,33 @@
+name: Issue
+description: Miscellaneous issues are closed immediately. If you have no intention of returning useful information to the community, you have no right to post an issue here. Please withdraw.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide as much detail as possible to convey the history of your problem. Sloppy issues will be closed immediately.
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: What type of issue would you like to report?
+      multiple: true
+      options:
+        - Feature Request
+        - Documentation Feature Request
+        - Others
+    validations:
+      required: true
+  - type: textarea
+    id: Download-URL-for-ONNX
+    attributes:
+      label: Download URL for ONNX
+      description: Please include the URL where you quoted the ONNX file (.onnx).
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Description
+      description: Please describe the current and expected behaviour, and attach all files/info needed to reproduce the situation if applicable. If the minimum information required to reproduce the event is not provided, it will be closed immediately.
+    validations:
+      required: true
