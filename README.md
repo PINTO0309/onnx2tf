@@ -64,6 +64,7 @@ usage: onnx2tf
 [-rasin]
 [-racos]
 [-rlr]
+[-me]
 [-n]
 
 optional arguments:
@@ -107,6 +108,13 @@ optional arguments:
   -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
     Replace LeakyReLU with a pseudo LeakyReLU.
 
+  -me, --mvn_epsilon
+    For MeanVarianceNormalization.
+    The number to be added to the variance to avoid division by zero
+    when normalizing the value.
+    (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+    Default: 0.0000000001
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -129,6 +137,7 @@ convert(
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
+  mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -180,6 +189,13 @@ convert(
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
         Replace LeakyReLU with a pseudo LeakyReLU.
+
+    mvn_epsilon: Optional[float]
+        For MeanVarianceNormalization.
+        The number to be added to the variance to avoid division by zero
+        when normalizing the value.
+        (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+        Default: 0.0000000001
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.
