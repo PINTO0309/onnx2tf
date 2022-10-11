@@ -45,6 +45,10 @@ ghcr.io/pinto0309/onnx2tf:0.0.21
 or
 
 $ pip install -U onnx2tf
+
+or
+
+$ pip install -e .
 ```
 ```
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
