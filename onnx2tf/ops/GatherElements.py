@@ -121,6 +121,7 @@ def make_node(
                 'tf_inputs': {
                     'data': input_tensor,
                     'indices': indices_tensor,
+                    'axis': axis,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
