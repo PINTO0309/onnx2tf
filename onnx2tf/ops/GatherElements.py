@@ -10,7 +10,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
-    process_neg_idx,
+    process_neg_idx_along_axis,
 )
 
 
@@ -22,7 +22,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """GatherND
+    """GatherElements
 
     Parameters
     ----------
@@ -58,9 +58,9 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     tensor_rank = len(input_tensor.shape)
 
-    batch_dims = graph_node.attrs.get('batch_dims', 0)
-    batch_dims = convert_axis(
-        axis=batch_dims,
+    axis = graph_node.attrs.get('axis', 0)
+    axis = convert_axis(
+        axis=axis,
         tensor_rank=tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
@@ -73,29 +73,54 @@ def make_node(
     }
 
     # Generation of TF OP
-    indices_tensor = process_neg_idx(
+    indices_tensor = process_neg_idx_along_axis(
         data=input_tensor,
+        axis=axis,
         indices=indices_tensor,
-        batch_dims=batch_dims,
     )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.gather_nd(
-            params=input_tensor,
-            indices=indices_tensor,
-            batch_dims=batch_dims,
-            name=graph_node.name,
+    if axis == 0:
+        axis_perm = tf.range(tf.rank(input_tensor))
+        data_swaped = input_tensor
+        index_swaped = indices_tensor
+    else:
+        axis_perm = tf.tensor_scatter_nd_update(
+            tf.range(tf.rank(input_tensor)),
+            tf.constant([[0], [axis]]),
+            tf.constant([axis, 0])
         )
+        data_swaped = tf.transpose(input_tensor, perm=axis_perm)
+        index_swaped = tf.transpose(indices_tensor, perm=axis_perm)
+
+    idx_tensors_per_axis = [
+        tf.range(tf.shape(index_swaped, index_swaped.dtype)[i]) \
+            for i in range(index_swaped.shape.rank)
+    ]
+
+    idx_tensors_per_axis = tf.meshgrid(
+        *idx_tensors_per_axis,
+        indexing='ij',
+    )
+    idx_tensors_per_axis[0] = index_swaped
+    dim_expanded_idx_tensors_per_axis = [
+        tf.expand_dims(idx_tensor, axis=-1)
+        for idx_tensor in idx_tensors_per_axis
+    ]
+    index_expanded = tf.concat(dim_expanded_idx_tensors_per_axis, axis=-1)
+
+    gathered = tf.gather_nd(data_swaped, index_expanded)
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        tf.transpose(gathered, perm=axis_perm)
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.gather_nd,
+                'tf_op_type': 'GatherElements',
                 'tf_inputs': {
-                    'params': input_tensor,
+                    'data': input_tensor,
                     'indices': indices_tensor,
-                    'batch_dims': batch_dims,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
