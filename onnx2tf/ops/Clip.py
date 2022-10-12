@@ -58,6 +58,9 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    min_value_node = graph_node.attrs.get('min', min_value_node)
+    max_value_node = graph_node.attrs.get('max', max_value_node)
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
