@@ -3,6 +3,7 @@
 import os
 __path__ = (os.path.dirname(__file__), )
 import sys
+import json
 import logging
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -36,6 +37,7 @@ def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
+    output_signaturedefs: Optional[bool] = False,
     batch_size: Optional[int] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
@@ -44,6 +46,7 @@ def convert(
     replace_acos_to_pseudo_acos: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     replace_power_to_pseudo_power: Optional[bool] = False,
+    param_replacement_file: Optional[str] = '',
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
@@ -63,6 +66,11 @@ def convert(
     output_folder_path: Optional[str]
         Output tensorflow model folder path.\n
         Default: "saved_model"
+
+    output_signaturedefs: Optional[bool]
+        Signature is added to the output for serving or for conversion\n
+        to other model formats. However, this can significantly reduce the speed\n
+        of model conversion and significant increase the size of the model.
 
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.\n
@@ -104,6 +112,9 @@ def convert(
         The number to be added to the variance to avoid division by zero when normalizing the value.\n
         (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)\n
         Default: 0.0000000001
+
+    param_replacement_file: Optional[str]
+        Parameter replacement path. (.json)
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -161,6 +172,26 @@ def convert(
         )
         sys.exit(1)
 
+    replacement_parameters = None
+    if param_replacement_file:
+        if not os.path.isfile(param_replacement_file):
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'File specified in param_replacement_file not found. \n' +
+                f'param_replacement_file: {param_replacement_file}'
+            )
+            sys.exit(1)
+        try:
+            with open(param_replacement_file, 'r') as f:
+                replacement_parameters = json.load(f)['operations']
+        except json.decoder.JSONDecodeError as ex:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'The file specified in param_replacement_file is not in JSON format. \n' +
+                f'param_replacement_file: {param_replacement_file}'
+            )
+            sys.exit(1)
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -185,6 +216,7 @@ def convert(
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
         'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
+        'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
     }
 
@@ -270,7 +302,10 @@ def convert(
             # concrete_func
             if not non_verbose:
                 print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
-            tf.saved_model.save(concrete_func, output_folder_path)
+            if not output_signaturedefs:
+                tf.saved_model.save(concrete_func, output_folder_path)
+            else:
+                tf.saved_model.save(model, output_folder_path)
             if not non_verbose:
                 print(f'{Color.GREEN}saved_model output complete!{Color.RESET}')
         except TypeError as e:
@@ -329,6 +364,15 @@ def main():
         help=\
             'Output folder path. \n' +
             'Default: "saved_model"'
+    )
+    parser.add_argument(
+        '-osd',
+        '--output_signaturedefs',
+        action='store_true',
+        help=\
+            'Signature is added to the output for serving or for conversion \n' +
+            'to other model formats. However, this can significantly reduce the speed \n' +
+            'of model conversion and significant increase the size of the model.'
     )
     parser.add_argument(
         '-b',
@@ -405,6 +449,13 @@ def main():
             'Default: 0.0000000001'
     )
     parser.add_argument(
+        '-prf',
+        '--param_replacement_file',
+        type=str,
+        default='',
+        help='Parameter replacement path. (.json)'
+    )
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -416,6 +467,7 @@ def main():
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
+        output_signaturedefs=args.output_signaturedefs,
         batch_size=args.batch_size,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
@@ -424,6 +476,7 @@ def main():
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,
+        param_replacement_file=args.param_replacement_file,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
     )

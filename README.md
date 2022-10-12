@@ -83,6 +83,11 @@ optional arguments:
   -o OUTPUT_FOLDER_PATH, --output_folder_path OUTPUT_FOLDER_PATH
     Output folder path. Default: "saved_model"
 
+  -osd, --output_signaturedefs
+    Signature is added to the output for serving or for conversion
+    to other model formats. However, this can significantly reduce the speed
+    of model conversion and significant increase the size of the model.
+
   -b BATCH_SIZE, --batch_size BATCH_SIZE
     Fixes the dynamic batch size to the specified numeric batch size.
     A value of 1 or more must be specified.
@@ -139,6 +144,7 @@ convert(
   input_onnx_file_path: Union[str, NoneType] = '',
   onnx_graph: Union[onnx.onnx_ml_pb2.ModelProto, NoneType] = None,
   output_folder_path: Union[str, NoneType] = 'saved_model',
+  output_signaturedefs: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -167,6 +173,11 @@ convert(
     output_folder_path: Optional[str]
         Output tensorflow model folder path.
         Default: "saved_model"
+
+    output_signaturedefs: Optional[bool]
+        Signature is added to the output for serving or for conversion
+        to other model formats. However, this can significantly reduce the speed
+        of model conversion and significant increase the size of the model.
 
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.

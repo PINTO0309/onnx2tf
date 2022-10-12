@@ -5,6 +5,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     convert_axis,
     print_node_info,
@@ -15,6 +17,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -117,8 +120,11 @@ def make_node(
         'dtype': dtype,
     }
 
-    # Generation of TF OP
+    # Param replacement
     perm = list(perm) if perm is not None else None
+    perm = replace_parameter(perm, 'attributes', 'perm', **kwargs)
+
+    # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.transpose(
             a=input_tensor,

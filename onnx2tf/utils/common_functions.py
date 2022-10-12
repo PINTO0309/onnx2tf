@@ -13,6 +13,37 @@ from functools import wraps
 from collections import namedtuple
 
 
+def get_replacement_parameter(func):
+    @wraps(func)
+    def get_replacement_parameter_wrapper_func(*args, **kwargs):
+        op_name = kwargs['graph_node'].name
+        replacement_parameters = kwargs.get('replacement_parameters', None)
+        kwargs['op_rep_params'] = []
+        if replacement_parameters is not None:
+            kwargs['op_rep_params'] = [
+                replacement_parameter \
+                    for replacement_parameter in replacement_parameters \
+                        if replacement_parameter['op_name'] == op_name
+            ]
+        func(*args, **kwargs)
+    return get_replacement_parameter_wrapper_func
+
+
+def replace_parameter(
+    value_before_replacement,
+    param_target,
+    param_name,
+    **kwargs,
+):
+    replace_value = value_before_replacement
+    for op_rep_param in kwargs['op_rep_params']:
+        if op_rep_param['param_target'] == param_target \
+            and op_rep_param['param_name'] == param_name:
+            replace_value = op_rep_param.get('values', value_before_replacement)
+            break
+    return replace_value
+
+
 def make_tf_node_info(**kwargs):
     """Generate information for debug log output.
 
