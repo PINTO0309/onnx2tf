@@ -31,7 +31,8 @@ def make_tf_node_info(**kwargs):
     node_info: dict = kwargs.get('node_info', None)
     if node_info is not None:
         tf_op_type = node_info.get('tf_op_type', None)
-        tf_node_info['tf_op_type'] = tf_op_type.__name__ if hasattr(tf_op_type, '__name__') else \
+        tf_node_info['tf_op_type'] = \
+            tf_op_type.__name__ if hasattr(tf_op_type, '__name__') else \
             tf_op_type if isinstance(tf_op_type, str) else ''
         tf_attrs: dict = node_info.get('tf_attrs', None)
         if tf_attrs is not None:
@@ -92,7 +93,9 @@ def print_node_info(func):
                 )
             elif graph_node is not None:
                 print('')
-                print(f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}onnx_op_type{Color.RESET}: {graph_node.op} {Color.MAGENTA}onnx_op_name{Color.RESET}: {graph_node.name}')
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}onnx_op_type{Color.RESET}: '+
+                    f'{graph_node.op} {Color.MAGENTA}onnx_op_name{Color.RESET}: {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
@@ -118,23 +121,32 @@ def print_node_info(func):
                             tf_node_info = tf_layer_info.get('tf_node_info', None)
                             if tf_node_info is not None:
                                 tf_op_type = tf_node_info.get('tf_op_type', None)
-                                print(f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}tf_op_type{Color.RESET}: {tf_op_type}')
+                                print(
+                                    f'{Color.GREEN}INFO:{Color.RESET} ' + \
+                                    f'{Color.MAGENTA}tf_op_type{Color.RESET}: {tf_op_type}'
+                                )
 
                                 tf_inputs = tf_node_info.get('tf_inputs', None)
                                 if tf_inputs is not None:
                                     for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
-                                        input_info_text = f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}input.{input_idx+1}.{input_key}{Color.RESET}: '
+                                        input_info_text = \
+                                            f'{Color.GREEN}INFO:{Color.RESET} ' + \
+                                            f'{Color.BLUE}input.{input_idx+1}.{input_key}{Color.RESET}: '
                                         for input_attr_name, input_attr_value in input_values.items():
-                                            input_info_text += f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
+                                            input_info_text += \
+                                                f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
                                                 if input_attr_value  is not None else ''
                                         print(input_info_text)
 
                                 tf_outputs = tf_node_info.get('tf_outputs', None)
                                 if tf_outputs is not None:
                                     for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
-                                        output_info_text = f'{Color.GREEN}INFO:{Color.RESET} {Color.BLUE}output.{output_idx+1}.{output_key}{Color.RESET}: '
+                                        output_info_text = \
+                                            f'{Color.GREEN}INFO:{Color.RESET} ' + \
+                                            f'{Color.BLUE}output.{output_idx+1}.{output_key}{Color.RESET}: '
                                         for output_attr_name, output_attr_value in output_values.items():
-                                            output_info_text += f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
+                                            output_info_text += \
+                                                f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
                                                 if output_attr_value  is not None else ''
                                         print(output_info_text)
             return result
@@ -470,7 +482,8 @@ def alternative_argmax(
             _nnapi_scalar(eps, input_tensor.dtype),
             zero_if_max,
         )
-        zero_if_max_else_one = zero_if_max_else_eps * _nnapi_scalar(1 / eps, input_tensor.dtype)
+        zero_if_max_else_one = \
+            zero_if_max_else_eps * _nnapi_scalar(1 / eps, input_tensor.dtype)
     elif input_tensor.dtype.is_integer:
         zero_if_max_else_one = tf.math.minimum(
             _nnapi_scalar(1, input_tensor.dtype),
@@ -771,9 +784,14 @@ def calc_pads_ceil_mode_pooling(
         filter_size = (kernel_shape[i] - 1) * dilations[i] + 1
         out_size = (dim_size - filter_size) / strides[i]
         if is_known_shape:
-            pad_size = (np.ceil(out_size) - np.floor(out_size)).astype(np.int64)
+            pad_size = (
+                np.ceil(out_size) - np.floor(out_size)
+            ).astype(np.int64)
         else:
-            pad_size = tf.cast(tf.math.ceil(out_size) - tf.math.floor(out_size), tf.int64)
+            pad_size = tf.cast(
+                tf.math.ceil(out_size) - tf.math.floor(out_size),
+                tf.int64,
+            )
 
         pads += [0, pad_size * strides[i]]
     return pads
@@ -870,7 +888,8 @@ def pad_input(
     Pad the input according to the parameters
     """
     # check if we need to do any padding at all
-    if not ceil_mode and ((type(padding) is list and padding == [0] * spatial_size * 2) or padding == "VALID"):
+    if not ceil_mode \
+        and ((type(padding) is list and padding == [0] * spatial_size * 2) or padding == "VALID"):
         return input_tensor
 
     # in_spatial_shape = self.input_shape[2:]
@@ -957,7 +976,10 @@ def _calc_input_ind(
     dilation,
     stride
 ):
-    return (output_ind // kernel) * (stride - kernel * dilation) + output_ind * dilation
+    return \
+        (output_ind // kernel) * \
+        (stride - kernel * dilation) + \
+        output_ind * dilation
 
 
 def remove_dilations(
@@ -980,7 +1002,9 @@ def remove_dilations(
 
     for dim in range(spatial_size - 1, -1, -1):
         filter_size = (kernel_shape[dim] - 1) * dilations[dim] + 1
-        output_size = (((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1) * kernel_shape[dim]
+        output_size = (
+            ((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1
+        ) * kernel_shape[dim]
         output_shape[dim + 2] = output_size
 
         # initialize the output dimension index with the range of the
@@ -1029,7 +1053,10 @@ def remove_dilations(
     for x in range(spatial_size):
         gather_ind = tf.expand_dims(gather_ind, 0)
     # dublicate the indices for every batch
-    gather_ind = tf.tile(gather_ind, [input_shape[0]] + [1] * (spatial_size + 1))
+    gather_ind = tf.tile(
+        gather_ind,
+        [input_shape[0]] + [1] * (spatial_size + 1),
+    )
 
     # extract the selected values from the input
     output = tf.gather_nd(input_tensor, gather_ind, batch_dims=1)
@@ -1089,9 +1116,15 @@ def process_neg_idx(
     else:
         indices_shape = tf_shape(input_tensor=indices)
     if batch_dims > 0:
-        max_i = tf.cast(data_shape[batch_dims:indices_shape[-1] + batch_dims], indices.dtype)
+        max_i = tf.cast(
+            data_shape[batch_dims:indices_shape[-1] + batch_dims],
+            indices.dtype,
+        )
     else:
-        max_i = tf.cast(data_shape[:indices_shape[-1]], indices.dtype)
+        max_i = tf.cast(
+            data_shape[:indices_shape[-1]],
+            indices.dtype,
+        )
     return tf.math.floormod(tf.add(indices, max_i), max_i)
 
 
@@ -1131,8 +1164,10 @@ def is_integer_num(
         return True
     elif isinstance(x, float):
         return x.is_integer()
-    elif isinstance(x, np.ndarray) and x.dtype in [np.int8, np.int16, np.int32, np.int64]:
+    elif isinstance(x, np.ndarray) \
+        and x.dtype in [np.int8, np.int16, np.int32, np.int64]:
         return True
-    elif isinstance(x, np.ndarray) and x.squeeze().ndim == 0 and int(x) == x:
+    elif isinstance(x, np.ndarray) \
+        and x.squeeze().ndim == 0 and int(x) == x:
         return True
     return False
