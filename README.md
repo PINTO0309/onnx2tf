@@ -29,6 +29,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
+- [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [ ] Add output shape estimation functionality for `Resize` OP in the dynamic batch shape model.
 
@@ -68,6 +69,7 @@ usage: onnx2tf
 [-rasin]
 [-racos]
 [-rlr]
+[-rpw]
 [-me]
 [-n]
 
@@ -112,6 +114,9 @@ optional arguments:
   -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
     Replace LeakyReLU with a pseudo LeakyReLU.
 
+  -rpw, --replace_power_to_pseudo_power
+    Replace Power with a pseudo Power.
+
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -141,6 +146,7 @@ convert(
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
+  replace_power_to_pseudo_power: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
@@ -193,6 +199,9 @@ convert(
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
         Replace LeakyReLU with a pseudo LeakyReLU.
+
+    replace_power_to_pseudo_power: Optional[bool]
+        Replace Power with a pseudo Power.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.

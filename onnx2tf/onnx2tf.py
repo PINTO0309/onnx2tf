@@ -43,6 +43,7 @@ def convert(
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
+    replace_power_to_pseudo_power: Optional[bool] = False,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
@@ -94,6 +95,9 @@ def convert(
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
         Replace LeakyReLU with a pseudo LeakyReLU.
+
+    replace_power_to_pseudo_power: Optional[bool]
+        Replace Power with a pseudo Power.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -180,6 +184,7 @@ def convert(
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
+        'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
         'mvn_epsilon': mvn_epsilon,
     }
 
@@ -383,6 +388,12 @@ def main():
         help='Replace LeakyReLU with a pseudo LeakyReLU.'
     )
     parser.add_argument(
+        '-rpw',
+        '--replace_power_to_pseudo_power',
+        action='store_true',
+        help='Replace Power with a pseudo Power.'
+    )
+    parser.add_argument(
         '-me',
         '--mvn_epsilon',
         type=float,
@@ -412,6 +423,7 @@ def main():
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
+        replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
     )

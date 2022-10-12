@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    is_integer_num,
 )
 
 
@@ -63,12 +64,33 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.pow(
-            x=input_tensor_1,
-            y=input_tensor_2,
-            name=graph_node.name,
-        )
+    replace_power_to_pseudo_power = kwargs['replace_power_to_pseudo_power']
+
+    if not replace_power_to_pseudo_power:
+        powed_tensor = \
+            tf.math.pow(
+                x=input_tensor_1,
+                y=input_tensor_2,
+                name=graph_node.name,
+            )
+    else:
+        if is_integer_num(x=input_tensor_2):
+            if isinstance(input_tensor_2, np.ndarray):
+                pow = input_tensor_2.squeeze()
+            pow = int(pow)
+            powed_tensor = input_tensor_1
+            for i in range(pow-1):
+                powed_tensor = tf.math.multiply(
+                    powed_tensor,
+                    (input_tensor_1 * 1.0)
+                )
+        else:
+            powed_tensor = tf.math.pow(
+                x=input_tensor_1,
+                y=input_tensor_2,
+                name=graph_node.name,
+            )
+    tf_layers_dict[graph_node_output.name]['tf_node'] = powed_tensor
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

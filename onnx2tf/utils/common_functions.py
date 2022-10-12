@@ -18,14 +18,14 @@ def make_tf_node_info(**kwargs):
 
     Parameters
     ----------
-        tf_op_type: dict
-        tf_attrs: dict
-        tf_inputs: dict
-        tf_outputs: dict
+    tf_op_type: dict
+    tf_attrs: dict
+    tf_inputs: dict
+    tf_outputs: dict
 
     Returns
     ----------
-        tf_node_info: dict
+    tf_node_info: dict
     """
     tf_node_info = {}
     node_info: dict = kwargs.get('node_info', None)
@@ -1109,3 +1109,30 @@ def process_neg_idx_along_axis(
     data_shape = tf_shape(input_tensor=data)
     max_i = tf.cast(data_shape[axis], indices.dtype)
     return tf.math.floormod(tf.add(indices, max_i), max_i)
+
+
+def is_integer_num(
+    *,
+    x: Any,
+) -> bool:
+    """Determines whether an integer or not.
+
+    Parameters
+    ----------
+    x: Any
+
+    Returns
+    ----------
+    Result: bool
+        True: integer
+        False: non-integer
+    """
+    if isinstance(x, int):
+        return True
+    elif isinstance(x, float):
+        return x.is_integer()
+    elif isinstance(x, np.ndarray) and x.dtype in [np.int8, np.int16, np.int32, np.int64]:
+        return True
+    elif isinstance(x, np.ndarray) and x.squeeze().ndim == 0 and int(x) == x:
+        return True
+    return False
