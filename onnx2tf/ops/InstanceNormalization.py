@@ -41,12 +41,16 @@ def make_node(
         and before_op_output_shape_trans_2 \
         and before_op_output_shape_trans_3
 
-    input_tensor = get_constant_or_variable(
+    graph_node_input = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = input_tensor.shape.ndims
+    input_tensor_rank = len(input_tensor.shape)
 
     scale = get_constant_or_variable(
         graph_node.inputs[1],
@@ -72,8 +76,10 @@ def make_node(
 
     # Generation of TF OP
     moments_axes = list(range(input_tensor_rank))[1:-1]
-    channel_size = input_tensor_shape[-1] if input_tensor_shape[-1] is not None else scale.shape[0]
-    params_shape_broadcast = list([1] + [1 for _ in range(2, input_tensor_rank)] + [channel_size])
+    channel_size = input_tensor_shape[-1] \
+        if input_tensor_shape[-1] is not None else scale.shape[0]
+    params_shape_broadcast = \
+        list([1] + [1 for _ in range(2, input_tensor_rank)] + [channel_size])
 
     beta = tf.reshape(B, params_shape_broadcast)
     gamma = tf.reshape(scale, params_shape_broadcast)
