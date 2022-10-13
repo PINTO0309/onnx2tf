@@ -5,6 +5,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -14,6 +16,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -71,10 +74,8 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    if bool(graph_node.attrs.get('transA', 0)):
-        x = tf.transpose(x)
-    if bool(graph_node.attrs.get('transB', 0)):
-        y = tf.transpose(y)
+    transA = bool(graph_node.attrs.get('transA', 0))
+    transB = bool(graph_node.attrs.get('transB', 0))
     alpha = graph_node.attrs.get('alpha', 1.0)
     beta = graph_node.attrs.get('beta', 1.0)
 
@@ -85,7 +86,55 @@ def make_node(
         'dtype': dtype,
     }
 
+    # Param replacement
+    x = replace_parameter(
+        value_before_replacement=x,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    y = replace_parameter(
+        value_before_replacement=y,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+    z = replace_parameter(
+        value_before_replacement=z,
+        param_target='inputs',
+        param_name=graph_node.inputs[2].name,
+        **kwargs,
+    )
+    alpha = replace_parameter(
+        value_before_replacement=alpha,
+        param_target='attributes',
+        param_name='alpha',
+        **kwargs,
+    )
+    beta = replace_parameter(
+        value_before_replacement=beta,
+        param_target='attributes',
+        param_name='beta',
+        **kwargs,
+    )
+    transA = replace_parameter(
+        value_before_replacement=transA,
+        param_target='attributes',
+        param_name='transA',
+        **kwargs,
+    )
+    transB = replace_parameter(
+        value_before_replacement=transB,
+        param_target='attributes',
+        param_name='transB',
+        **kwargs,
+    )
+
     # Generation of TF OP
+    if transA == True:
+        x = tf.transpose(x)
+    if transB == True:
+        y = tf.transpose(y)
     # We cast to either input or attribute data type to preserve precision
     if input_tensor_x_dtype in [tf.float64]:
         # cast to input data type

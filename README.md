@@ -41,7 +41,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.25
+ghcr.io/pinto0309/onnx2tf:0.0.26
 
 or
 
@@ -72,6 +72,7 @@ usage: onnx2tf
 [-rlr]
 [-rpw]
 [-me]
+[-prf PARAM_REPLACEMENT_FILE]
 [-n]
 
 optional arguments:
@@ -130,6 +131,9 @@ optional arguments:
     (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
     Default: 0.0000000001
 
+  -prf PARAM_REPLACEMENT_FILE, --param_replacement_file PARAM_REPLACEMENT_FILE
+    Parameter replacement file path. (.json)
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -155,6 +159,7 @@ convert(
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
+  param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -222,6 +227,9 @@ convert(
         (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
         Default: 0.0000000001
 
+    param_replacement_file: Optional[str]
+        Parameter replacement file path. (.json)
+
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.
         Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
@@ -235,7 +243,7 @@ convert(
 ```
 
 ## [WIP] Parameter replacement
-This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC`, `NCDDHW` to `NDDHWC`, `NCDDDDDDHW` to `NDDDDDDHWC`. Therefore, as stated in the Key Concepts, the conversion will inevitably break down at some point in the model. You need to look at the entire conversion log to see which OP transpositions are failing and correct them yourself. I dare to explain very little because I know that no matter how much detail I put in the README, you guys will not read it at all.
+This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC`, `NCDDHW` to `NDDHWC`, `NCDDDDDDHW` to `NDDDDDDHWC`. Therefore, as stated in the Key Concepts, the conversion will inevitably break down at some point in the model. You need to look at the entire conversion log to see which OP transpositions are failing and correct them yourself. I dare to explain very little because I know that no matter how much detail I put in the README, you guys will not read it at all. `attribute` or `INPUT constant` or `INPUT Initializer` can be replaced with the specified value.
 
 "A conversion error occurs." Please don't post such low level questions as issues.
 
@@ -255,6 +263,12 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
       "param_target": "attributes", # attributes or inputs
       "param_name": "axes",
       "values": [2] # Disable parameter transposition or overwrite parameters
+    },
+    {
+      "op_name": "Resize__697",
+      "param_target": "inputs",
+      "param_name": "Concat__696:0",
+      "values": [26,26] # Replacement of unk__x (Resize OP, sizes height/width parameter)
     }
   ]
 }

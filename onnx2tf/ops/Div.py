@@ -5,6 +5,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -14,6 +16,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -57,6 +60,25 @@ def make_node(
         'dtype': dtype,
     }
 
+    input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    # Param replacement
+    input_tensor_1 = replace_parameter(
+        value_before_replacement=input_tensor_1,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    input_tensor_2 = replace_parameter(
+        value_before_replacement=input_tensor_2,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
     # Generation of TF OP
     target_cast_dtype = [
         np.int8,
@@ -65,16 +87,9 @@ def make_node(
         np.int64,
     ]
 
-    input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-
     divided_tensor = tf.math.divide(
-        x=tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-            if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
-        y=tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-            if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
+        x=input_tensor_1,
+        y=input_tensor_2,
         name=graph_node.name,
     )
 

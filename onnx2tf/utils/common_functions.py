@@ -12,6 +12,10 @@ from typing import Any, List
 from functools import wraps
 from collections import namedtuple
 
+from onnx2tf.utils.enums import (
+    TF_DTYPES_TO_NUMPY_DTYPES,
+)
+
 
 def get_replacement_parameter(func):
     @wraps(func)
@@ -30,16 +34,43 @@ def get_replacement_parameter(func):
 
 
 def replace_parameter(
+    *,
     value_before_replacement,
     param_target,
     param_name,
     **kwargs,
 ):
     replace_value = value_before_replacement
-    for op_rep_param in kwargs['op_rep_params']:
+    op_rep_params = kwargs.get('op_rep_params', [])
+    for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == param_target \
             and op_rep_param['param_name'] == param_name:
             replace_value = op_rep_param.get('values', value_before_replacement)
+            if isinstance(value_before_replacement, np.ndarray):
+                replace_value = np.asarray(
+                    replace_value,
+                    dtype=value_before_replacement.dtype,
+                )
+            elif isinstance(value_before_replacement, list):
+                replace_value = list(replace_value)
+            elif isinstance(value_before_replacement, bool):
+                replace_value = \
+                    bool(replace_value) if isinstance(replace_value, int) and replace_value in [0, 1] else \
+                    bool(int(replace_value)) if isinstance(replace_value, str) and replace_value in ["0", "1"] else \
+                    False if isinstance(replace_value, str) and replace_value.lower() == "false" else \
+                    True if isinstance(replace_value, str) and replace_value.lower() == "True" else \
+                    replace_value
+            elif isinstance(value_before_replacement, int):
+                replace_value = int(replace_value)
+            elif isinstance(value_before_replacement, float):
+                replace_value = float(replace_value)
+            elif isinstance(value_before_replacement, str):
+                replace_value = str(replace_value)
+            elif tf.keras.backend.is_keras_tensor(value_before_replacement):
+                replace_value = np.asarray(
+                    replace_value,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[value_before_replacement.dtype],
+                )
             break
     return replace_value
 

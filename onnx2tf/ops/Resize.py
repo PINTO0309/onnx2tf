@@ -6,6 +6,8 @@ import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -15,6 +17,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -84,7 +87,6 @@ def make_node(
     }
 
 
-
     def upsampling2d_bilinear(input_tensor, new_size, align_corners, half_pixel_centers, name):
         return tf.compat.v1.image.resize_bilinear(
             images=input_tensor,
@@ -150,6 +152,51 @@ def make_node(
             for new_idx, idx in enumerate(convertion_table):
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-3:-1]
+
+    # Param replacement
+    input_tensor = replace_parameter(
+        value_before_replacement=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    roi = replace_parameter(
+        value_before_replacement=roi,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+    scales = replace_parameter(
+        value_before_replacement=scales,
+        param_target='inputs',
+        param_name=graph_node.inputs[2].name,
+        **kwargs,
+    )
+    new_size = replace_parameter(
+        value_before_replacement=new_size,
+        param_target='inputs',
+        param_name=graph_node.inputs[3].name,
+        **kwargs,
+    )
+
+    coordinate_transformation_mode = replace_parameter(
+        value_before_replacement=coordinate_transformation_mode,
+        param_target='attributes',
+        param_name='coordinate_transformation_mode',
+        **kwargs,
+    )
+    extrapolation_value = replace_parameter(
+        value_before_replacement=extrapolation_value,
+        param_target='attributes',
+        param_name='extrapolation_value',
+        **kwargs,
+    )
+    mode = replace_parameter(
+        value_before_replacement=mode,
+        param_target='attributes',
+        param_name='mode',
+        **kwargs,
+    )
 
     # TODO: upsampling2d_bilinear_5d
     # TODO: upsampling2d_nearest_5d

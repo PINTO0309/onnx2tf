@@ -5,6 +5,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     convert_axis,
     print_node_info,
@@ -16,6 +18,7 @@ from onnx2tf.utils.colors import Color
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -105,6 +108,20 @@ def make_node(
             ]
     else:
         transposed_reshape_shape = reshape_shape
+
+    # Param replacement
+    transposed_tensor = replace_parameter(
+        value_before_replacement=transposed_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    transposed_reshape_shape = replace_parameter(
+        value_before_replacement=transposed_reshape_shape,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
 
     # Reshape
     tf_layers_dict[graph_node_output.name]['tf_node'] = \

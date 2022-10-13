@@ -120,9 +120,21 @@ def make_node(
         'dtype': dtype,
     }
 
-    # Param replacement
     perm = list(perm) if perm is not None else None
-    perm = replace_parameter(perm, 'attributes', 'perm', **kwargs)
+
+    # Param replacement
+    input_tensor = replace_parameter(
+        value_before_replacement=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    perm = replace_parameter(
+        value_before_replacement=perm,
+        param_target='attributes',
+        param_name='perm',
+        **kwargs,
+    )
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \

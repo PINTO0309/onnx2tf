@@ -114,7 +114,7 @@ def convert(
         Default: 0.0000000001
 
     param_replacement_file: Optional[str]
-        Parameter replacement path. (.json)
+        Parameter replacement file path. (.json)
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -453,7 +453,7 @@ def main():
         '--param_replacement_file',
         type=str,
         default='',
-        help='Parameter replacement path. (.json)'
+        help='Parameter replacement file path. (.json)'
     )
     parser.add_argument(
         '-n',
