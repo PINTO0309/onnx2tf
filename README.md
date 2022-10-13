@@ -27,7 +27,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
 - [ ] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
-- [ ] Add process to replace `GridSample` with `pseudo-GridSample`.
+- [x] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
@@ -41,7 +41,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.26
+ghcr.io/pinto0309/onnx2tf:0.0.27
 
 or
 
