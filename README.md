@@ -247,6 +247,11 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
 
 "A conversion error occurs." Please don't post such low level questions as issues.
 
+- convert option
+  ```
+  --param_replacement_file param_replacement.json
+  ```
+
 - param_replacement.json
   ```yaml
   {
