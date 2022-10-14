@@ -49,6 +49,7 @@ def convert(
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     replace_power_to_pseudo_power: Optional[bool] = False,
     replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
+    replace_neg_to_pseudo_neg: Optional[bool] = False,
     param_replacement_file: Optional[str] = '',
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
@@ -116,6 +117,9 @@ def convert(
 
     replace_gathernd_to_pseudo_gathernd: Optional[bool]
         Replace GatherND with a pseudo GatherND.
+
+    replace_neg_to_pseudo_neg: Optional[bool]
+        Replace Neg with a pseudo Neg.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -259,6 +263,7 @@ def convert(
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
         'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
         'replace_gathernd_to_pseudo_gathernd': replace_gathernd_to_pseudo_gathernd,
+        'replace_neg_to_pseudo_neg': replace_neg_to_pseudo_neg,
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
     }
@@ -495,6 +500,12 @@ def main():
         help='Replace GatherND with a pseudo GatherND.'
     )
     parser.add_argument(
+        '-rng',
+        '--replace_neg_to_pseudo_neg',
+        action='store_true',
+        help='Replace Neg with a pseudo Neg.'
+    )
+    parser.add_argument(
         '-me',
         '--mvn_epsilon',
         type=float,
@@ -535,6 +546,7 @@ def main():
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,
         replace_gathernd_to_pseudo_gathernd=args.replace_gathernd_to_pseudo_gathernd,
+        replace_neg_to_pseudo_neg=args.replace_neg_to_pseudo_neg,
         param_replacement_file=args.param_replacement_file,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,

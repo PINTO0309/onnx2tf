@@ -51,14 +51,25 @@ def make_node(
         'dtype': dtype,
     }
 
+    replace_neg_to_pseudo_neg = kwargs['replace_neg_to_pseudo_neg']
+
     # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.negative(
-            x=input_tensor,
-            name=graph_node.name,
-        )
+
+    if not replace_neg_to_pseudo_neg:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.negative(
+                x=input_tensor,
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.multiply(
+                x=input_tensor,
+                y=tf.cast(-1, dtype=input_tensor.dtype),
+                name=graph_node.name,
+            )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

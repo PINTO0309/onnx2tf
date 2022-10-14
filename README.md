@@ -30,6 +30,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
+- [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [ ] Add output shape estimation functionality for `Resize` OP in the dynamic batch shape model.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
@@ -42,7 +43,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.30
+ghcr.io/pinto0309/onnx2tf:0.0.31
 
 or
 
@@ -74,6 +75,7 @@ usage: onnx2tf
 [-rlr]
 [-rpw]
 [-rgn]
+[-rng]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
 [-n]
@@ -134,6 +136,9 @@ optional arguments:
   -rgn, --replace_gathernd_to_pseudo_gathernd
     Replace GatherND with a pseudo GatherND.
 
+  -rng, --replace_neg_to_pseudo_neg
+    Replace Neg with a pseudo Neg.
+
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -170,6 +175,7 @@ convert(
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
   replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
+  replace_neg_to_pseudo_neg: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
@@ -238,6 +244,9 @@ convert(
 
     replace_gathernd_to_pseudo_gathernd: Optional[bool]
         Replace GatherND with a pseudo GatherND.
+
+    replace_neg_to_pseudo_neg: Optional[bool]
+        Replace Neg with a pseudo Neg.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.
