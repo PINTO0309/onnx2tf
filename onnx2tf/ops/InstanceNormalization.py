@@ -55,10 +55,12 @@ def make_node(
     scale = get_constant_or_variable(
         graph_node.inputs[1],
         before_op_output_shape_trans,
+        is_bias=True,
     )
     B = get_constant_or_variable(
         graph_node.inputs[2],
         before_op_output_shape_trans,
+        is_bias=True,
     )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]

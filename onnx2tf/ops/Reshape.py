@@ -65,13 +65,14 @@ def make_node(
     if reshape_shape is None:
         reshape_shape = []
 
+    # Ignore
     allowzero = bool(graph_node.attrs.get('allowzero', 0))
-    if allowzero:
-        error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
-            f'TensorFlow does not support allowzero=1 (True).'
-        print(error_msg)
-        assert not allowzero, error_msg
+
+    # If Reshape's shape contains zeros, get the deformed shape from the output shape
+    if isinstance(reshape_shape, list) and reshape_shape.count(0) > 0:
+        reshape_shape = shape
+    elif isinstance(reshape_shape, np.ndarray) and np.count_nonzero(reshape_shape == 0) > 0:
+        reshape_shape = shape
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
