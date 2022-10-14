@@ -20,7 +20,7 @@ body:
   - type: input
     id: onnx2tf-version
     attributes:
-      label: onnx2tf Version number
+      label: onnx2tf version number
       description: Please list the version number of onnx2tf used.
       placeholder: x.x.x
     validations:
