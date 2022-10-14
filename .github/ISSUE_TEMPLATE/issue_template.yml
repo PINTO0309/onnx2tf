@@ -17,6 +17,14 @@ body:
         - Others
     validations:
       required: true
+  - type: input
+    id: onnx2tf-version
+    attributes:
+      label: onnx2tf Version number
+      description: Please list the version number of onnx2tf used.
+      placeholder: x.x.x
+    validations:
+      required: true
   - type: textarea
     id: Download-URL-for-ONNX
     attributes:
