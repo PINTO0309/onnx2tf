@@ -275,6 +275,12 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
         "param_target": "attributes",
         "param_name": "perm",
         "values": [0,1,2,3] # Disable parameter transposition or overwrite parameters
+      },
+      {
+        "op_name": "StatefulPartitionedCall/functional_1/max_unpooling2d_2/Reshape_1",
+        "param_target": "inputs",
+        "param_name": "const_fold_opt__911",
+        "values": [4,131072] # Overwrite shape parameters
       }
     ]
   }
