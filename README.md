@@ -269,6 +269,12 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
         "param_target": "inputs",
         "param_name": "Concat__696:0",
         "values": [26,26] # Replacement of unk__x (Resize OP, sizes height/width parameter)
+      },
+      {
+        "op_name": "Transpose__927",
+        "param_target": "attributes",
+        "param_name": "perm",
+        "values": [0,1,2,3] # Disable parameter transposition or overwrite parameters
       }
     ]
   }
