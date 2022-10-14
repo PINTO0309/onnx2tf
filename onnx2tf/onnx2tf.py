@@ -208,6 +208,9 @@ def convert(
     # I have no choice but to use subprocesses that we do not want to use.
     if not not_use_onnxsim:
         try:
+            if not non_verbose:
+                print('')
+                print(f'{Color.REVERCE}Model optimizing started{Color.RESET}', '=' * 60)
             for _ in range(3):
                 result = subprocess.check_output(
                     [
@@ -219,6 +222,8 @@ def convert(
                 ).decode('utf-8')
                 if not non_verbose:
                     print(result)
+            if not non_verbose:
+                print(f'{Color.GREEN}Model optimizing complete!{Color.RESET}')
         except Exception as e:
             if not non_verbose:
                 print(
