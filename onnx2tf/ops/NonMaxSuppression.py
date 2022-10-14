@@ -131,7 +131,7 @@ def make_node(
             f'It is not possible to specify a dynamic shape '+
             f'for the batch size of the input tensor in NonMaxSuppression. '+
             f'Use the --batch_size option to change the batch size to a fixed size. \n'+
-            f'boxes.shape: {boxes.shape} scores.shape: {scores.shape}'
+            f'graph_node.name: {graph_node.name} boxes.shape: {boxes.shape} scores.shape: {scores.shape}'
         )
         sys.exit(1)
 

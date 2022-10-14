@@ -11,6 +11,7 @@ warnings.simplefilter(action='ignore', category=Warning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
+import subprocess
 import random
 random.seed(0)
 import numpy as np
@@ -38,6 +39,7 @@ def convert(
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
+    not_use_onnxsim: Optional[bool] = False,
     batch_size: Optional[int] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
@@ -46,6 +48,7 @@ def convert(
     replace_acos_to_pseudo_acos: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     replace_power_to_pseudo_power: Optional[bool] = False,
+    replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
     param_replacement_file: Optional[str] = '',
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
@@ -71,6 +74,10 @@ def convert(
         Signature is added to the output for serving or for conversion\n
         to other model formats. However, this can significantly reduce the speed\n
         of model conversion and significant increase the size of the model.
+
+    not_use_onnxsim: Optional[bool]
+        No optimization by onnx-simplifier is performed.\n
+        If this option is used, the probability of a conversion error is very high.
 
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.\n
@@ -106,6 +113,9 @@ def convert(
 
     replace_power_to_pseudo_power: Optional[bool]
         Replace Power with a pseudo Power.
+
+    replace_gathernd_to_pseudo_gathernd: Optional[bool]
+        Replace GatherND with a pseudo GatherND.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -192,10 +202,37 @@ def convert(
             )
             sys.exit(1)
 
+    # onnx-simplifier
+    # To fully optimize the model, run onnxsim three times in a row.
+    # Due to unstable script execution of onnxsim in v0.4.8,
+    # I have no choice but to use subprocesses that we do not want to use.
+    if not not_use_onnxsim:
+        try:
+            for _ in range(3):
+                result = subprocess.check_output(
+                    [
+                        'onnxsim',
+                        f'{input_onnx_file_path}',
+                        f'{input_onnx_file_path}'
+                    ],
+                    stderr=subprocess.PIPE
+                ).decode('utf-8')
+                if not non_verbose:
+                    print(result)
+        except Exception as e:
+            if not non_verbose:
+                print(
+                    f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                    'Failed to optimize the onnx file.'
+                )
+                tracetxt = traceback.format_exc().splitlines()[-1]
+                print(f'{Color.YELLOW}WARNING:{Color.RESET} {tracetxt}')
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
         onnx_graph = onnx.load(input_onnx_file_path)
+
     graph = gs.import_onnx(onnx_graph)
 
     if not non_verbose:
@@ -216,6 +253,7 @@ def convert(
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
         'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
+        'replace_gathernd_to_pseudo_gathernd': replace_gathernd_to_pseudo_gathernd,
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
     }
@@ -375,6 +413,14 @@ def main():
             'of model conversion and significant increase the size of the model.'
     )
     parser.add_argument(
+        '-nuo',
+        '--not_use_onnxsim',
+        action='store_true',
+        help=\
+            'No optimization by onnx-simplifier is performed. \n' +
+            'If this option is used, the probability of a conversion error is very high.'
+    )
+    parser.add_argument(
         '-b',
         '--batch_size',
         type=int,
@@ -438,6 +484,12 @@ def main():
         help='Replace Power with a pseudo Power.'
     )
     parser.add_argument(
+        '-rgn',
+        '--replace_gathernd_to_pseudo_gathernd',
+        action='store_true',
+        help='Replace GatherND with a pseudo GatherND.'
+    )
+    parser.add_argument(
         '-me',
         '--mvn_epsilon',
         type=float,
@@ -468,6 +520,7 @@ def main():
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
+        not_use_onnxsim=args.not_use_onnxsim,
         batch_size=args.batch_size,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
@@ -476,6 +529,7 @@ def main():
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,
+        replace_gathernd_to_pseudo_gathernd=args.replace_gathernd_to_pseudo_gathernd,
         param_replacement_file=args.param_replacement_file,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,

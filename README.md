@@ -25,13 +25,14 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [ ] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
-- [ ] Add process to replace `GatherND` with `pseudo-GatherND`.
+- [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [ ] Add output shape estimation functionality for `Resize` OP in the dynamic batch shape model.
+- [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 
 ## Demo
 ![render1664767369339](https://user-images.githubusercontent.com/33194443/193496368-58cd9af9-e1fc-4d02-bf0e-1a92694c3e98.gif)
@@ -41,7 +42,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.27
+ghcr.io/pinto0309/onnx2tf:0.0.28
 
 or
 
@@ -64,6 +65,7 @@ usage: onnx2tf
 -i INPUT_ONNX_FILE_PATH
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
+[-nuo]
 [-b BATCH_SIZE]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-rari64 | -rarf32]
@@ -71,6 +73,7 @@ usage: onnx2tf
 [-racos]
 [-rlr]
 [-rpw]
+[-rgn]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
 [-n]
@@ -89,6 +92,10 @@ optional arguments:
     Signature is added to the output for serving or for conversion
     to other model formats. However, this can significantly reduce the speed
     of model conversion and significant increase the size of the model.
+
+  -nuo, --not_use_onnxsim
+    No optimization by onnx-simplifier is performed.
+    If this option is used, the probability of a conversion error is very high.
 
   -b BATCH_SIZE, --batch_size BATCH_SIZE
     Fixes the dynamic batch size to the specified numeric batch size.
@@ -124,6 +131,9 @@ optional arguments:
   -rpw, --replace_power_to_pseudo_power
     Replace Power with a pseudo Power.
 
+  -rgn, --replace_gathernd_to_pseudo_gathernd
+    Replace GatherND with a pseudo GatherND.
+
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -150,6 +160,7 @@ convert(
   onnx_graph: Union[onnx.onnx_ml_pb2.ModelProto, NoneType] = None,
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
+  not_use_onnxsim: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -158,6 +169,7 @@ convert(
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
+  replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
@@ -184,6 +196,10 @@ convert(
         Signature is added to the output for serving or for conversion
         to other model formats. However, this can significantly reduce the speed
         of model conversion and significant increase the size of the model.
+
+    not_use_onnxsim: Optional[bool]
+        No optimization by onnx-simplifier is performed.
+        If this option is used, the probability of a conversion error is very high.
 
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.
@@ -219,6 +235,9 @@ convert(
 
     replace_power_to_pseudo_power: Optional[bool]
         Replace Power with a pseudo Power.
+
+    replace_gathernd_to_pseudo_gathernd: Optional[bool]
+        Replace GatherND with a pseudo GatherND.
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.

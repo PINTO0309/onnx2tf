@@ -1,3 +1,4 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
@@ -12,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     process_neg_idx,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -65,6 +67,8 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
+    replace_gathernd_to_pseudo_gathernd = kwargs['replace_gathernd_to_pseudo_gathernd']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -79,13 +83,57 @@ def make_node(
         batch_dims=batch_dims,
     )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.gather_nd(
-            params=input_tensor,
-            indices=indices_tensor,
-            batch_dims=batch_dims,
-            name=graph_node.name,
+    if not replace_gathernd_to_pseudo_gathernd:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.gather_nd(
+                params=input_tensor,
+                indices=indices_tensor,
+                batch_dims=batch_dims,
+                name=graph_node.name,
+            )
+    else:
+        if batch_dims != 0:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} '+
+                f'--replace_gathernd_to_pseudo_gathernd is supported only if batch_dims=0.'+
+                f'graph_node.name: {graph_node.name}'
+            )
+            sys.exit(1)
+
+        params_shape = input_tensor.shape
+        idx_shape = indices_tensor.shape
+        idx_dims = idx_shape[-1]
+        gather_shape = params_shape[idx_dims:]
+        params_flat = tf.reshape(
+            input_tensor,
+            tf.concat([[-1], gather_shape], axis=0),
         )
+        axis_step = tf.math.cumprod(
+            params_shape[:idx_dims],
+            exclusive=True,
+            reverse=True,
+        )
+        mul = tf.math.multiply(
+            indices_tensor,
+            tf.cast(axis_step, dtype=indices_tensor.dtype),
+        )
+        indices_flat = tf.reduce_sum(
+            mul,
+            axis=-1,
+        )
+        result_flat = tf.gather(
+            params_flat,
+            indices_flat,
+        )
+        pseudo_gathernd = None
+        if len(idx_shape) > 0 and len(idx_shape[:-1]) > 0 and idx_shape[:-1][0] is not None:
+            pseudo_gathernd = tf.reshape(
+                result_flat,
+                tf.concat([idx_shape[:-1], gather_shape], axis=0),
+            )
+        else:
+            pseudo_gathernd = result_flat
+        tf_layers_dict[graph_node_output.name]['tf_node'] = pseudo_gathernd
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
