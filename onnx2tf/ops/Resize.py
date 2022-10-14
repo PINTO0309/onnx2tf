@@ -1,3 +1,4 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
@@ -13,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -68,6 +70,7 @@ def make_node(
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
     input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
     roi = tf_layers_dict[roi.name]['tf_node'] \
         if isinstance(roi, gs.Variable) else roi
     scales = tf_layers_dict[scales.name]['tf_node'] \
@@ -115,16 +118,152 @@ def make_node(
         )
 
 
+    def upsampling3d_bilinear(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        d = new_size.shape[0]
+        h = new_size.shape[1]
+        w = new_size.shape[2]
+        # Dpeth (height x width)
+        resized_list = []
+        unstack_img_list = tf.unstack(input_tensor, axis=1)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_bilinear(
+                    images=input_tensor,
+                    size=[h, w],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+            )
+        stack_img_hw = tf.stack(resized_list, axis=1)
+        # Width (depth x Height)
+        resized_list = []
+        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_bilinear(
+                    images=input_tensor,
+                    size=[d, h],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+                )
+        stack_img_dh = tf.stack(resized_list, axis=3)
+        return stack_img_dh
+
+    def upsampling3d_bicubic(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        d = new_size.shape[0]
+        h = new_size.shape[1]
+        w = new_size.shape[2]
+        # Dpeth (height x width)
+        resized_list = []
+        unstack_img_list = tf.unstack(input_tensor, axis=1)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_bicubic(
+                    images=input_tensor,
+                    size=[h, w],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+            )
+        stack_img_hw = tf.stack(resized_list, axis=1)
+        # Width (depth x Height)
+        resized_list = []
+        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_bicubic(
+                    images=input_tensor,
+                    size=[d, h],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+                )
+        stack_img_dh = tf.stack(resized_list, axis=3)
+        return stack_img_dh
+
+    def upsampling3d_nearest(input_tensor, new_size, align_corners, half_pixel_centers, name):
+        d = new_size.shape[0]
+        h = new_size.shape[1]
+        w = new_size.shape[2]
+        # Dpeth (height x width)
+        resized_list = []
+        unstack_img_list = tf.unstack(input_tensor, axis=1)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_nearest_neighbor(
+                    images=input_tensor,
+                    size=[h, w],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+            )
+        stack_img_hw = tf.stack(resized_list, axis=1)
+        # Width (depth x Height)
+        resized_list = []
+        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+        for i in unstack_img_list:
+            resized_list.append(
+                tf.compat.v1.image.resize_nearest_neighbor(
+                    images=input_tensor,
+                    size=[d, h],
+                    align_corners=align_corners,
+                    half_pixel_centers=half_pixel_centers,
+                    name=name,
+                )
+                )
+        stack_img_dh = tf.stack(resized_list, axis=3)
+        return stack_img_dh
+
+
     # Generation of TF OP
     if mode.lower() == "linear":
         mode = tf.image.ResizeMethod.BILINEAR
-        tf_resize = upsampling2d_bilinear
+        if input_tensor_rank == 4:
+            tf_resize = upsampling2d_bilinear
+        elif input_tensor_rank == 5:
+            tf_resize = upsampling3d_bilinear
+        else:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} '+
+                f'Currently, Resize operations other than 4D and 5D are not supported. '+
+                'Pull requests are welcome. \n'+
+                f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'
+            )
+            sys.exit(1)
     elif mode.lower() == "cubic":
         mode = tf.image.ResizeMethod.BICUBIC
-        tf_resize = upsampling2d_bicubic
+        if input_tensor_rank == 4:
+            tf_resize = upsampling2d_bicubic
+        elif input_tensor_rank == 5:
+            tf_resize = upsampling3d_bicubic
+        else:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} '+
+                f'Currently, Resize operations other than 4D and 5D are not supported. '+
+                'Pull requests are welcome. \n'+
+                f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'
+            )
+            sys.exit(1)
     else:
         mode = tf.image.ResizeMethod.NEAREST_NEIGHBOR
-        tf_resize = upsampling2d_nearest
+        if input_tensor_rank == 4:
+            tf_resize = upsampling2d_nearest
+        elif input_tensor_rank == 5:
+            tf_resize = upsampling3d_nearest
+        else:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} '+
+                f'Currently, Resize operations other than 4D and 5D are not supported. '+
+                'Pull requests are welcome. \n'+
+                f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'
+            )
+            sys.exit(1)
 
     if sizes is not None:
         # sizes is defined

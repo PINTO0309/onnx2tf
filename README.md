@@ -22,7 +22,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Only for `opset=11` or higher
 - [x] If you do not like the generated TFLite OP name, edit it using [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite).
 - [x] The generated Keras models cannot be used for retraining. If you want to train, you must build your own model.
-- [ ] Implement the `Resize` process for the 5D tensor.
+- [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
@@ -42,7 +42,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.29
+ghcr.io/pinto0309/onnx2tf:0.0.30
 
 or
 
