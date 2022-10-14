@@ -13,7 +13,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-from onnx2tf.utils.colors import Color
 
 
 @print_node_info
