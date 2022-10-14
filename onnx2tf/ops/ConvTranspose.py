@@ -300,6 +300,7 @@ def make_node(
                     'output_shape': conv_output_shape,
                     'strides': strides,
                     'padding': pad_mode,
+                    'group': group,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],

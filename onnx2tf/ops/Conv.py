@@ -235,6 +235,10 @@ def make_node(
                     'input': input_tensor,
                     'weights': input_weights,
                     'bias': input_bias,
+                    'strides': strides,
+                    'dilations': dilations,
+                    'padding': pad_mode,
+                    'group': group,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
