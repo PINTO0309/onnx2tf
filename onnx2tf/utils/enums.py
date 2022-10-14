@@ -22,6 +22,8 @@ ONNX_DTYPES_TO_TF_DTYPES = {
 
     TensorProto.BOOL: tf.bool,
 
+    TensorProto.STRING: tf.string,
+
     # tf.qint8
     # tf.qint16
     # tf.qint32

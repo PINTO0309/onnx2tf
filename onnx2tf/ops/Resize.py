@@ -160,24 +160,27 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
-    roi = replace_parameter(
-        value_before_replacement=roi,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
-        **kwargs,
-    )
-    scales = replace_parameter(
-        value_before_replacement=scales,
-        param_target='inputs',
-        param_name=graph_node.inputs[2].name,
-        **kwargs,
-    )
-    new_size = replace_parameter(
-        value_before_replacement=new_size,
-        param_target='inputs',
-        param_name=graph_node.inputs[3].name,
-        **kwargs,
-    )
+    if len(graph_node.inputs) >= 2:
+        roi = replace_parameter(
+            value_before_replacement=roi,
+            param_target='inputs',
+            param_name=graph_node.inputs[1].name,
+            **kwargs,
+        )
+    if len(graph_node.inputs) >= 3:
+        scales = replace_parameter(
+            value_before_replacement=scales,
+            param_target='inputs',
+            param_name=graph_node.inputs[2].name,
+            **kwargs,
+        )
+    if len(graph_node.inputs) >= 4:
+        new_size = replace_parameter(
+            value_before_replacement=new_size,
+            param_target='inputs',
+            param_name=graph_node.inputs[3].name,
+            **kwargs,
+        )
 
     coordinate_transformation_mode = replace_parameter(
         value_before_replacement=coordinate_transformation_mode,

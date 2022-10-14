@@ -55,7 +55,6 @@ def make_node(
     }
 
     # Generation of TF OP
-
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape)
 

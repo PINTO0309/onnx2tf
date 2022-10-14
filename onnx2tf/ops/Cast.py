@@ -7,6 +7,8 @@ from onnx import TensorProto
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -16,6 +18,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -55,10 +58,24 @@ def make_node(
         'dtype': dtype,
     }
 
-    # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
+    # Param replacement
+    input_tensor = replace_parameter(
+        value_before_replacement=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    to = replace_parameter(
+        value_before_replacement=to,
+        param_target='attributes',
+        param_name='to',
+        **kwargs,
+    )
+
+    # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.cast(
             x=input_tensor,

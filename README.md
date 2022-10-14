@@ -242,41 +242,52 @@ convert(
         Model
 ```
 
-## [WIP] Parameter replacement
+## Parameter replacement
 This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC`, `NCDDHW` to `NDDHWC`, `NCDDDDDDHW` to `NDDDDDDHWC`. Therefore, as stated in the Key Concepts, the conversion will inevitably break down at some point in the model. You need to look at the entire conversion log to see which OP transpositions are failing and correct them yourself. I dare to explain very little because I know that no matter how much detail I put in the README, you guys will not read it at all. `attribute` or `INPUT constant` or `INPUT Initializer` can be replaced with the specified value.
 
 "A conversion error occurs." Please don't post such low level questions as issues.
 
 - param_replacement.json
-```yaml
-{
-  "format_version": 1,
-  "operations": [
-    {
-      "op_name": "StatefulPartitionedCall/Tile_4",
-      "param_target": "inputs", # attributes or inputs
-      "param_name": "const_fold_opt__677",
-      "values": [1,1,17] # Disable parameter transposition or overwrite parameters
-    },
-    {
-      "op_name": "StatefulPartitionedCall/Sum_3",
-      "param_target": "attributes", # attributes or inputs
-      "param_name": "axes",
-      "values": [2] # Disable parameter transposition or overwrite parameters
-    },
-    {
-      "op_name": "Resize__697",
-      "param_target": "inputs",
-      "param_name": "Concat__696:0",
-      "values": [26,26] # Replacement of unk__x (Resize OP, sizes height/width parameter)
-    }
-  ]
-}
-```
+  ```yaml
+  {
+    "format_version": 1,
+    "operations": [
+      {
+        "op_name": "StatefulPartitionedCall/Tile_4",
+        "param_target": "inputs", # attributes or inputs
+        "param_name": "const_fold_opt__677",
+        "values": [1,1,17] # Disable parameter transposition or overwrite parameters
+      },
+      {
+        "op_name": "StatefulPartitionedCall/Cast_3",
+        "param_target": "attributes", # attributes or inputs
+        "param_name": "to",
+        "values": 1 # Disable parameter transposition or overwrite parameters
+      },
+      {
+        "op_name": "Resize__697",
+        "param_target": "inputs",
+        "param_name": "Concat__696:0",
+        "values": [26,26] # Replacement of unk__x (Resize OP, sizes height/width parameter)
+      }
+    ]
+  }
+  ```
+- Replacement Supported OPs
+  |No.|OP type|Remarks|
+  |:-:|:-|:-|
+  |1|Cast|<table><thead><th>Type</th><th align="right">Values</th><th>Type</th><th align="right">Values</th></thead><tbody><tr><td>float16</td><td align="right">10</td><td>int8</td><td align="right">3</td></tr><tr><td>float32</td><td align="right">1</td><td>int16</td><td align="right">5</td></tr><tr><td>float64</td><td align="right">11</td><td>int32</td><td align="right">6</td></tr><tr><td>bool</td><td align="right">9</td><td>int64</td><td align="right">7</td></tr><tr><td>uint8</td><td align="right">2</td><td colspan="2" rowspan="4"></td></tr><tr><td>uint16</td><td align="right">4</td></tr><tr><td>uint32</td><td align="right">12</td></tr><tr><td>uint64</td><td align="right">13</td></tr></tbody></table>|
+  |2|Div||
+  |3|Gemm||
+  |4|Mul||
+  |5|Reshape||
+  |6|Resize||
+  |7|Sub||
+  |8|Tile||
+  |9|Transpose||
 
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
-
-|onnx2tf|onnx-tensorflow<br>(Super redundant + Broken)|
-|:-:|:-:|
-|![image](https://user-images.githubusercontent.com/33194443/195248901-21d992fa-2b48-4533-b4b1-cbd25a5aba2b.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
+  |onnx2tf|onnx-tensorflow<br>(Super redundant + Broken)|
+  |:-:|:-:|
+  |![image](https://user-images.githubusercontent.com/33194443/195248901-21d992fa-2b48-4533-b4b1-cbd25a5aba2b.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
