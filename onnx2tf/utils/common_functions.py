@@ -8,7 +8,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List
+from typing import Any, List, Optional
 from functools import wraps
 from collections import namedtuple
 
@@ -257,6 +257,7 @@ def inverted_operation_enable_disable(func):
 def get_constant_or_variable(
     const_or_var: Any,
     before_op_output_shape_trans: bool,
+    is_bias: Optional[bool] = False,
 ) -> Any:
     """Get a Numpy constant or gs.Variable from graph_surgeon node.
 
@@ -278,7 +279,7 @@ def get_constant_or_variable(
         if tensor_rank > 2:
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             values = values.transpose(convertion_table)
-        elif tensor_rank == 1 and values.size > 2:
+        elif tensor_rank == 1 and values.size > 2 and not is_bias:
             convertion_table = [0] + [i for i in range(2, values.size)] + [1]
             new_values = np.zeros(values.size, dtype=values.dtype)
             for new_idx, idx in enumerate(convertion_table):
