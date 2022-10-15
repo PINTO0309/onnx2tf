@@ -38,7 +38,8 @@ body:
       label: Parameter Replacement JSON
       description: Please include the Parameter Replacement JSON.
       render: json
-      placeholder: {
+      placeholder: |
+'{
   "format_version": 1,
   "operations": [
     {
@@ -72,7 +73,7 @@ body:
       "post_process_transpose_perm": [0,2,1]
     }
   ]
-}
+}'
     validations:
       required: true
   - type: textarea

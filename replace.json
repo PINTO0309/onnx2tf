@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Reshape_11",
+      "param_target": "outputs",
+      "param_name": "onnx::InstanceNormalization_252",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_16",
+      "param_target": "outputs",
+      "param_name": "onnx::Mul_257",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_25",
+      "param_target": "outputs",
+      "param_name": "onnx::InstanceNormalization_270",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_30",
+      "param_target": "outputs",
+      "param_name": "onnx::Mul_275",
+      "post_process_transpose_perm": [0,2,3,1]
+    }
+  ]
+}
