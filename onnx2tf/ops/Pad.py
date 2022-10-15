@@ -160,7 +160,7 @@ def make_node(
         before_op_output_shape_trans,
     )
     constant_value = 0
-    if len(graph_node.inputs) >= 3:
+    if len(graph_node.inputs) >= 3  and graph_node.inputs[2].name != '':
         constant_value = get_constant_or_variable(
             graph_node.inputs[2],
             before_op_output_shape_trans,
@@ -175,6 +175,9 @@ def make_node(
     paddings = tf_layers_dict[paddings.name]['tf_node'] \
         if isinstance(paddings, gs.Variable) else paddings
 
+    constant_value = tf_layers_dict[constant_value.name]['tf_node'] \
+        if isinstance(constant_value, gs.Variable) else constant_value
+
     # Transpose pads values
     paddings = graph_node.inputs[1]
     if hasattr(paddings, 'values'):
@@ -187,9 +190,6 @@ def make_node(
             for idx in convertion_table:
                 new_paddings.append(paddings[idx, :])
             paddings = np.asarray(new_paddings)
-
-    constant_value = tf_layers_dict[constant_value.name]['tf_node'] \
-        if isinstance(constant_value, gs.Variable) else constant_value
 
     mode = graph_node.attrs.get('mode', 'constant')
 
