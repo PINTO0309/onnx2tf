@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    pre_process_transpose,
     post_process_transpose,
 )
 
@@ -121,6 +122,14 @@ def make_node(
         value_before_replacement=transposed_reshape_shape,
         param_target='inputs',
         param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
+    # Pre-process transpose
+    transposed_tensor = pre_process_transpose(
+        value_before_transpose=transposed_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
         **kwargs,
     )
 

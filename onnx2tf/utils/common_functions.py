@@ -88,6 +88,41 @@ def replace_parameter(
     return replace_value
 
 
+def pre_process_transpose(
+    *,
+    value_before_transpose: Any,
+    param_target: str,
+    param_name: str,
+    **kwargs: dict,
+):
+    """Add Transpose as a post-processing step for Reshape OP.
+
+    Parameters
+    ----------
+    value_before_transpose: tf_op
+    param_target: dict
+    param_name: dict
+    **kwargs: dict
+
+    Returns
+    ----------
+    transposed_value: tf_op
+    """
+    transposed_value = value_before_transpose
+    op_rep_params = kwargs.get('op_rep_params', [])
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == param_target \
+            and op_rep_param['param_name'] == param_name:
+            transpose_perm = op_rep_param.get('pre_process_transpose_perm', None)
+            if transpose_perm is not None:
+                transposed_value = tf.transpose(
+                    a=value_before_transpose,
+                    perm=transpose_perm,
+                )
+            break
+    return transposed_value
+
+
 def post_process_transpose(
     *,
     value_before_transpose: Any,

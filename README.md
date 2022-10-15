@@ -49,7 +49,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.0
+ghcr.io/pinto0309/onnx2tf:1.0.1
 
 or
 
@@ -332,6 +332,12 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
         "param_target": "outputs",
         "param_name": "onnx::Mul_275",
         "post_process_transpose_perm": [0,2,3,1] # Extrapolate 4D Transpose after Reshape
+      },
+      {
+        "op_name": "flatten_1127",
+        "param_target": "inputs",
+        "param_name": "dropout0",
+        "pre_process_transpose_perm": [0,3,1,2]
       }
     ]
   }
@@ -343,11 +349,12 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
   |2|Div||
   |3|Gemm||
   |4|Mul||
-  |5|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |6|Resize||
-  |7|Sub||
-  |8|Tile||
-  |9|Transpose||
+  |5|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as post-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |6|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as post-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |7|Resize||
+  |8|Sub||
+  |9|Tile||
+  |10|Transpose||
 
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
