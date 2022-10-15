@@ -50,7 +50,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:0.0.32
+ghcr.io/pinto0309/onnx2tf:0.0.33
 
 or
 
@@ -302,7 +302,7 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
         "op_name": "StatefulPartitionedCall/Cast_3",
         "param_target": "attributes", # attributes or inputs
         "param_name": "to",
-        "values": 1 # Disable parameter transposition or overwrite parameters
+        "values": 1 # Disable parameter transposition or overwrite "to" parameters
       },
       {
         "op_name": "Resize__697",
@@ -314,13 +314,25 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
         "op_name": "Transpose__927",
         "param_target": "attributes",
         "param_name": "perm",
-        "values": [0,1,2,3] # Disable parameter transposition or overwrite parameters
+        "values": [0,1,2,3] # Disable parameter transposition or overwrite "perm" parameters
       },
       {
         "op_name": "StatefulPartitionedCall/functional_1/max_unpooling2d_2/Reshape_1",
         "param_target": "inputs",
         "param_name": "const_fold_opt__911",
-        "values": [4,131072] # Overwrite shape parameters
+        "values": [4,131072] # Overwrite "shape" parameters
+      },
+      {
+        "op_name": "Reshape_25",
+        "param_target": "outputs",
+        "param_name": "onnx::InstanceNormalization_270",
+        "post_process_transpose_perm": [0,2,1] # Extrapolate 3D Transpose after Reshape
+      },
+      {
+        "op_name": "Reshape_30",
+        "param_target": "outputs",
+        "param_name": "onnx::Mul_275",
+        "post_process_transpose_perm": [0,2,3,1] # Extrapolate 4D Transpose after Reshape
       }
     ]
   }
@@ -332,7 +344,7 @@ This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC
   |2|Div||
   |3|Gemm||
   |4|Mul||
-  |5|Reshape||
+  |5|Reshape|`values`: Value of `shape`<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
   |6|Resize||
   |7|Sub||
   |8|Tile||
