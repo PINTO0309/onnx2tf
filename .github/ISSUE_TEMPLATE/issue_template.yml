@@ -39,41 +39,41 @@ body:
       description: Please include the Parameter Replacement JSON.
       render: json
       placeholder: |
-'{
-  "format_version": 1,
-  "operations": [
-    {
-      "op_name": "StatefulPartitionedCall/Cast_3",
-      "param_target": "attributes",
-      "param_name": "to",
-      "values": 1
-    },
-    {
-      "op_name": "Resize__697",
-      "param_target": "inputs",
-      "param_name": "Concat__696:0",
-      "values": [26,26]
-    },
-    {
-      "op_name": "Transpose__927",
-      "param_target": "attributes",
-      "param_name": "perm",
-      "values": [0,1,2,3]
-    },
-    {
-      "op_name": "StatefulPartitionedCall/functional_1/max_unpooling2d_2/Reshape_1",
-      "param_target": "inputs",
-      "param_name": "const_fold_opt__911",
-      "values": [4,131072]
-    },
-    {
-      "op_name": "Reshape_25",
-      "param_target": "outputs",
-      "param_name": "onnx::InstanceNormalization_270",
-      "post_process_transpose_perm": [0,2,1]
-    }
-  ]
-}'
+        {
+          "format_version": 1,
+          "operations": [
+            {
+              "op_name": "StatefulPartitionedCall/Cast_3",
+              "param_target": "attributes",
+              "param_name": "to",
+              "values": 1
+            },
+            {
+              "op_name": "Resize__697",
+              "param_target": "inputs",
+              "param_name": "Concat__696:0",
+              "values": [26,26]
+            },
+            {
+              "op_name": "Transpose__927",
+              "param_target": "attributes",
+              "param_name": "perm",
+              "values": [0,1,2,3]
+            },
+            {
+              "op_name": "StatefulPartitionedCall/functional_1/max_unpooling2d_2/Reshape_1",
+              "param_target": "inputs",
+              "param_name": "const_fold_opt__911",
+              "values": [4,131072]
+            },
+            {
+              "op_name": "Reshape_25",
+              "param_target": "outputs",
+              "param_name": "onnx::InstanceNormalization_270",
+              "post_process_transpose_perm": [0,2,1]
+            }
+          ]
+        }
     validations:
       required: true
   - type: textarea
