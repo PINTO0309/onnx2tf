@@ -32,7 +32,6 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
-- [ ] Add output shape estimation functionality for `Resize` OP in the dynamic batch shape model.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 
 ## Demo
