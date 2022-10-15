@@ -30,6 +30,7 @@ body:
     attributes:
       label: Download URL for ONNX
       description: Please include the URL where you quoted the ONNX file (.onnx).
+      placeholder: https://abcxyz.aa.en/xxxx.onnx
     validations:
       required: true
   - type: textarea
