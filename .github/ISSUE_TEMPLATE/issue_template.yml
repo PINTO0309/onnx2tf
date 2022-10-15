@@ -33,6 +33,14 @@ body:
     validations:
       required: true
   - type: textarea
+    id: parameter-replacement-json
+    attributes:
+      label: Parameter Replacement JSON
+      description: Please include the Parameter Replacement JSON.
+      render: json
+    validations:
+      required: true
+  - type: textarea
     id: what-happened
     attributes:
       label: Description
