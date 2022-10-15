@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    channel_transpose,
 )
 
 
@@ -62,6 +63,11 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    input_tensor_2 = channel_transpose(
+        const_or_var_1=input_tensor_1,
+        const_or_var_2=input_tensor_2,
+    )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.add(

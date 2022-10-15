@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    channel_transpose,
 )
 
 
@@ -77,6 +78,11 @@ def make_node(
         param_target='inputs',
         param_name=graph_node.inputs[1].name,
         **kwargs,
+    )
+
+    input_tensor_2 = channel_transpose(
+        const_or_var_1=input_tensor_1,
+        const_or_var_2=input_tensor_2,
     )
 
     # Generation of TF OP
