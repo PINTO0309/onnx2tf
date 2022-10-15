@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     explicit_broadcast,
     make_tf_node_info,
+    channel_transpose,
 )
 
 
@@ -63,6 +64,11 @@ def make_node(
     slope = explicit_broadcast(
         x=input_tensor,
         y=slope,
+    )
+
+    slope = channel_transpose(
+        const_or_var_1=input_tensor,
+        const_or_var_2=slope,
     )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
