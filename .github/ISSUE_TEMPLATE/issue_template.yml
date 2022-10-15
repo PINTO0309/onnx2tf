@@ -90,11 +90,10 @@ body:
         4. Why: Why do you need this problem solved?
         5. Resources: Material you have cited or referenced other than ONNX or JSON.
       placeholder: |
-        e.g.
-        1. Purpose: Personal development or Research or Product development. How much impact will solving this problem have on your efforts?
-        2. What: What events are occurring? What error logs are being displayed?
-        3. How: How did you attempt to solve the problem yourself?
-        4. Why: Why do you need this problem solved?
-        5. Resources: Material you have cited or referenced other than ONNX or JSON.
+        1. Purpose
+        2. What
+        3. How
+        4. Why
+        5. Resources
     validations:
       required: true
