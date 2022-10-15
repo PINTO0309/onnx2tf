@@ -81,7 +81,14 @@ body:
     id: what-happened
     attributes:
       label: Description
-      description: Please describe the current and expected behaviour, and attach all files/info needed to reproduce the situation if applicable. If the minimum information required to reproduce the event is not provided, it will be closed immediately.
+      description: |
+        Please describe the current and expected behaviour, and attach all files/info needed to reproduce the situation if applicable. If the minimum information required to reproduce the event is not provided, it will be closed immediately.
+        e.g.
+        1. Purpose: Personal development or Research or Product development. How much impact will solving this problem have on your efforts?
+        2. What: What events are occurring? What error logs are being displayed?
+        3. How: How did you attempt to solve the problem yourself?
+        4. Why: Why do you need this problem solved?
+        5. Resources: Material you have cited or referenced other than ONNX or JSON.
       placeholder: |
         e.g.
         1. Purpose: Personal development or Research or Product development. How much impact will solving this problem have on your efforts?
