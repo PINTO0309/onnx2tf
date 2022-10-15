@@ -35,11 +35,24 @@ def get_replacement_parameter(func):
 
 def replace_parameter(
     *,
-    value_before_replacement,
-    param_target,
-    param_name,
-    **kwargs,
+    value_before_replacement: Any,
+    param_target: str,
+    param_name: str,
+    **kwargs: dict,
 ):
+    """Replace attributes, INPUT constants, and INPUT initializers with the specified values.
+
+    Parameters
+    ----------
+    value_before_replacement: Any
+    param_target: dict
+    param_name: dict
+    **kwargs: dict
+
+    Returns
+    ----------
+    replace_value: Any
+    """
     replace_value = value_before_replacement
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
@@ -73,6 +86,41 @@ def replace_parameter(
                 )
             break
     return replace_value
+
+
+def post_process_transpose(
+    *,
+    value_before_transpose: Any,
+    param_target: str,
+    param_name: str,
+    **kwargs: dict,
+):
+    """Add Transpose as a post-processing step for Reshape OP.
+
+    Parameters
+    ----------
+    value_before_transpose: tf_op
+    param_target: dict
+    param_name: dict
+    **kwargs: dict
+
+    Returns
+    ----------
+    transposed_value: tf_op
+    """
+    transposed_value = value_before_transpose
+    op_rep_params = kwargs.get('op_rep_params', [])
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == param_target \
+            and op_rep_param['param_name'] == param_name:
+            transpose_perm = op_rep_param.get('post_process_transpose_perm', None)
+            if transpose_perm is not None:
+                transposed_value = tf.transpose(
+                    a=value_before_transpose,
+                    perm=transpose_perm,
+                )
+            break
+    return transposed_value
 
 
 def make_tf_node_info(**kwargs):
@@ -417,6 +465,19 @@ def convert_reverse_axis(
         converted_axis = convertion_table.index(converted_axis)
 
     return converted_axis
+
+
+def channel_transpose(
+    *,
+    const_or_var_1: Any,
+    const_or_var_2: Any,
+):
+    if isinstance(const_or_var_2, np.ndarray) \
+        and len(const_or_var_2.shape) > 1 \
+        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
+        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
+        const_or_var_2 = const_or_var_2.squeeze()
+    return const_or_var_2
 
 
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
