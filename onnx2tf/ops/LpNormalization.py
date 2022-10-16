@@ -21,7 +21,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """ReduceSumSquare
+    """LpNormalization
 
     Parameters
     ----------
@@ -36,35 +36,25 @@ def make_node(
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1
 
-    graph_node_input_1 = get_constant_or_variable(
+    graph_node_input = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
-
-    axes = graph_node.attrs.get('axes', -1)
-    if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-        axes = [
-            convert_axis(
-                axis=idx,
-                tensor_rank=input_tensor_rank,
-                before_op_output_shape_trans=before_op_output_shape_trans,
-            ) for idx in axes
-        ]
-    elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-        axes = convert_axis(
-            axis=axes,
-            tensor_rank=input_tensor_rank,
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        )
-    keepdims = bool(graph_node.attrs.get('keepdims', 1))
+    axis = bool(graph_node.attrs.get('axis', -1))
+    axis = convert_axis(
+        axis=axis,
+        tensor_rank=input_tensor_rank,
+        before_op_output_shape_trans=before_op_output_shape_trans,
+    )
+    p = bool(graph_node.attrs.get('p', 2))
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -75,10 +65,14 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.reduce_sum(
-            input_tensor=tf.square(x=input_tensor),
-            axis=axes,
-            keepdims=keepdims,
+        tf.math.truediv(
+            x=input_tensor,
+            y=tf.norm(
+                tensor=input_tensor,
+                ord=p,
+                axis=axis,
+                keepdims=True,
+            ),
             name=graph_node.name,
         )
 
@@ -86,11 +80,9 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': 'ReduceSumSquare',
+                'tf_op_type': tf.size,
                 'tf_inputs': {
-                    'data': input_tensor,
-                    'axes': axes,
-                    'keepdims': keepdims,
+                    'input': input_tensor,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
