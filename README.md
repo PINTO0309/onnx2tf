@@ -357,7 +357,7 @@ Please don't post such low level questions as issues.
   |7|Resize||
   |8|Sub||
   |9|Tile||
-  |10|Transpose||
+  |10|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
 
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
