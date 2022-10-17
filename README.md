@@ -10,7 +10,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
 - [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
-- [x] Not only does it handle conversions of 4-dimensional inputs, such as `NCHW` to `NHWC`, but also the number of input dimensions in 3, 5, or even more dimensions. For example, `NCDHW` to `NDHWC`, etc. However, since 1-D, 2-D, 3-D and 6-D input may produce patterns that are mechanically difficult to convert, it should be possible to give parameters to externally modify the tool's behavior.
+- [x] Not only does it handle conversions of 4-dimensional inputs, such as `NCHW` to `NHWC`, but also the number of input dimensions in 3, 5, or even more dimensions. For example, `NCDHW` to `NDHWC`, etc. However, since 1-D, 2-D, 3-D and 6-D input may produce patterns that are mechanically difficult to convert, it should be possible to give parameters to externally modify the tool's behavior. See [Parameter replacement](https://github.com/PINTO0309/onnx2tf#parameter-replacement)
 - [x] If there are undefined dimensions in the input OP, the model structure is not fully optimized and conversion errors are very likely to occur.
 - [x] Immediately following a `Reshape` OP with dimensional compression and dimensional decompression, there is a 95% probability that the model transformation operation will be disrupted and errors will occur. For example, patterns such as `[1,200,200,5]` -> `[1,200,-1]` or `[10,20,30,40,50]` -> `[10,2,10,30,10,4,50]` or `Flatten`.
 - [x] TensorFlow's Convolution does not have an equivalent operation to ONNX's Padding operation. Therefore, a `Pad` OP is inserted immediately before a Convolution with Padding of size greater than 1.
@@ -22,6 +22,17 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Only for `opset=11` or higher
 - [x] If you do not like the generated TFLite OP name, edit it using [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite).
 - [x] The generated Keras models cannot be used for retraining. If you want to train, you must build your own model.
+- [x] The main factors that cause accuracy degradation after model conversion are as follows
+1. differences in Padding specifications
+2. difference in Python division specification in the process of model transformation (error due to even rounding)
+3. Divide epsilon without consideration
+4. deprecated TrueDivision
+5. support difference of powers
+6. differences in interpolation operation specifications during resizing
+7. Difference in arithmetic precision supported by each operation
+8. Calculation error due to scaling up or down by specifying a scale when resizing images
+
+The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
@@ -393,3 +404,15 @@ Please don't post such low level questions as issues.
   |onnx2tf|onnx-tensorflow<br>(Super redundant + Broken)|
   |:-:|:-:|
   |![image](https://user-images.githubusercontent.com/33194443/195248901-21d992fa-2b48-4533-b4b1-cbd25a5aba2b.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
+
+## Related tools
+1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
+2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
+3. [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite)
+4. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
+5. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
+6. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
+7. [onnx](https://github.com/onnx/onnx)
+8. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
+9. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
+10. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
