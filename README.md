@@ -61,7 +61,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.5
+ghcr.io/pinto0309/onnx2tf:1.0.6
 
 or
 
@@ -95,6 +95,7 @@ usage: onnx2tf
 [-rpw]
 [-rgn]
 [-rng]
+[-rhs]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
 [-n]
@@ -171,6 +172,9 @@ optional arguments:
   -rng, --replace_neg_to_pseudo_neg
     Replace Neg with a pseudo Neg.
 
+  -rhs, --replace_hardswish_to_hardswish
+    Replace HardSwish with a pseudo HardSwish.
+
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -209,6 +213,7 @@ convert(
   replace_power_to_pseudo_power: Optional[bool] = False,
   replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
   replace_neg_to_pseudo_neg: Optional[bool] = False,
+  replace_hardswish_to_hardswish: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
@@ -292,6 +297,9 @@ convert(
 
     replace_neg_to_pseudo_neg: Optional[bool]
       Replace Neg with a pseudo Neg.
+
+    replace_hardswish_to_hardswish: Optional[bool]
+      Replace HardSwish with a pseudo HardSwish.
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.
