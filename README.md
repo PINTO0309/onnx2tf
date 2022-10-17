@@ -25,7 +25,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] The main factors that cause accuracy degradation after model conversion are as follows
 1. differences in Padding specifications
 2. difference in Python division specification in the process of model transformation (error due to even rounding)
-3. epsilon non-idealization in the division process
+3. Divide epsilon without consideration
 4. deprecated TrueDivision
 5. support difference of powers
 6. differences in interpolation operation specifications during resizing
