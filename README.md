@@ -402,3 +402,6 @@ Please don't post such low level questions as issues.
 5. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
 6. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
 7. [onnx](https://github.com/onnx/onnx)
+8. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
+9. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
+10. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
