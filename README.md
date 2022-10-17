@@ -393,3 +393,12 @@ Please don't post such low level questions as issues.
   |onnx2tf|onnx-tensorflow<br>(Super redundant + Broken)|
   |:-:|:-:|
   |![image](https://user-images.githubusercontent.com/33194443/195248901-21d992fa-2b48-4533-b4b1-cbd25a5aba2b.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
+
+## Related tools
+1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
+2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
+3. [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite)
+4. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
+5. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
+6. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
+7. [onnx](https://github.com/onnx/onnx)
