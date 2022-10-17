@@ -46,7 +46,8 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
-    replace_hardswish_to_hardswish = kwargs['replace_hardswish_to_hardswish']
+    replace_hardswish_to_pseudo_hardswish = \
+        kwargs['replace_hardswish_to_pseudo_hardswish']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -57,7 +58,7 @@ def make_node(
 
     # Generation of TF OP
     # For TPU workaround
-    if not replace_hardswish_to_hardswish:
+    if not replace_hardswish_to_pseudo_hardswish:
         multiplier = 0.16666667
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             input_tensor * tf.nn.relu6(input_tensor + 3) * multiplier
