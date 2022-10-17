@@ -30,7 +30,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 5. support difference of powers
 6. differences in interpolation operation specifications during resizing
 7. Difference in arithmetic precision supported by each operation
-8. Calculation error due to scaling up or down by specifying a scale when resizing images
+8. Calculation error due to scaling up or down by specifying a `scale` when resizing images
 
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
 - [x] Implement the `Resize` process for the 5D tensor.
