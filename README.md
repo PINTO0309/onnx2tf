@@ -22,6 +22,16 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Only for `opset=11` or higher
 - [x] If you do not like the generated TFLite OP name, edit it using [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite).
 - [x] The generated Keras models cannot be used for retraining. If you want to train, you must build your own model.
+- [x] The main factors that cause accuracy degradation after model conversion are as follows
+1. differences in Padding specifications
+2. difference in Python division specification in the process of model transformation (error due to even rounding)
+3. epsilon non-idealization in the division process
+4. deprecated TrueDivision
+5. support difference of powers
+6. differences in interpolation operation specifications during resizing
+7. Difference in arithmetic precision supported by each operation
+
+The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
