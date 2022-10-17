@@ -46,6 +46,8 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
+    replace_hardswish_to_hardswish = kwargs['replace_hardswish_to_hardswish']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -55,9 +57,14 @@ def make_node(
 
     # Generation of TF OP
     # For TPU workaround
-    multiplier = 0.16666666 # 0.16666667
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        input_tensor * tf.nn.relu6(input_tensor + 3) * multiplier
+    if not replace_hardswish_to_hardswish:
+        multiplier = 0.16666667
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            input_tensor * tf.nn.relu6(input_tensor + 3) * multiplier
+    else:
+        multiplier = 0.16666666
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            input_tensor * tf.nn.relu6(input_tensor + 3) * multiplier
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
