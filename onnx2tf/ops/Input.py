@@ -54,12 +54,14 @@ def make_node(
         'dtype': dtype,
         'op': None,
     }
-    if len(graph_input.shape) in [3, 4, 5] and keep_ncw_or_nchw_or_ncdhw_input_names:
+    if len(graph_input.shape) in [3, 4, 5] \
+        and keep_ncw_or_nchw_or_ncdhw_input_names:
         if graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
             ncw_nchw_ncdhw_keep = True
         else:
             ncw_nchw_ncdhw_keep = False
-    elif len(graph_input.shape) in [3, 4, 5] and not keep_ncw_or_nchw_or_ncdhw_input_names:
+    elif len(graph_input.shape) in [3, 4, 5] \
+        and not keep_ncw_or_nchw_or_ncdhw_input_names:
         ncw_nchw_ncdhw_keep = False
     else:
         ncw_nchw_ncdhw_keep = True
@@ -152,7 +154,9 @@ def make_node(
 
     elif len(shape) > 0:
         # Except scalar, 4D and 5D
-        if ncw_nchw_ncdhw_keep and keep_ncw_or_nchw_or_ncdhw_input_names and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
+        if ncw_nchw_ncdhw_keep \
+            and keep_ncw_or_nchw_or_ncdhw_input_names \
+            and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f'' +\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
@@ -173,7 +177,9 @@ def make_node(
 
     else:
         # Scalar
-        if ncw_nchw_ncdhw_keep and keep_ncw_or_nchw_or_ncdhw_input_names and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
+        if ncw_nchw_ncdhw_keep \
+            and keep_ncw_or_nchw_or_ncdhw_input_names \
+            and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f''+\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
