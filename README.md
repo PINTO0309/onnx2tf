@@ -114,7 +114,7 @@ optional arguments:
       --overwrite_input_shape OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]
     Overwrite the input shape.
     The format is
-    "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN".
+    "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN"
     When there is only one input, for example,
     "data:1,3,224,224"
     When there are multiple inputs, for example,
