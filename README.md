@@ -49,7 +49,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.4
+ghcr.io/pinto0309/onnx2tf:1.0.5
 
 or
 
@@ -74,6 +74,7 @@ usage: onnx2tf
 [-osd]
 [-nuo]
 [-b BATCH_SIZE]
+[-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-rari64 | -rarf32]
 [-rasin]
@@ -108,6 +109,16 @@ optional arguments:
   -b BATCH_SIZE, --batch_size BATCH_SIZE
     Fixes the dynamic batch size to the specified numeric batch size.
     A value of 1 or more must be specified.
+
+  -ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...], \
+      --overwrite_input_shape OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]
+    Overwrite the input shape.
+    The format is "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN".
+    When there is only one input, for example, "data:1,3,224,224"
+    When there are multiple inputs, for example, "data1:1,3,224,224" "data2:1,3,112,112" "data3:5"
+    A value of 1 or more must be specified.
+    Numerical values other than dynamic dimensions are ignored.
+    Ignores --batch_size if specified at the same time as --batch_size.
 
   -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], \
       --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES \
@@ -173,6 +184,7 @@ convert(
   output_signaturedefs: Optional[bool] = False,
   not_use_onnxsim: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
+  overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
@@ -216,6 +228,15 @@ convert(
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.
         A value of 1 or more must be specified.
+
+    overwrite_input_shape: Optional[List[str]]
+        Overwrite the input shape.
+        The format is "i1:dim0,dim1,...,dimN" "i2:dim0,dim1,...,dimN" "i3:dim0,dim1,...,dimN".
+        When there is only one input, for example, ['data:1,3,224,224']
+        When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112,112','data3:5']
+        A value of 1 or more must be specified.
+        Numerical values other than dynamic dimensions are ignored.
+        Ignores --batch_size if specified at the same time as --batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.

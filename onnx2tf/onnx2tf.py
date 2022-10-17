@@ -34,6 +34,7 @@ from argparse import ArgumentParser
 import importlib
 from onnx2tf.utils.colors import Color
 
+
 def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
@@ -41,6 +42,7 @@ def convert(
     output_signaturedefs: Optional[bool] = False,
     not_use_onnxsim: Optional[bool] = False,
     batch_size: Optional[int] = None,
+    overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
@@ -83,6 +85,15 @@ def convert(
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.\n
         A value of 1 or more must be specified.
+
+    overwrite_input_shape: Optional[List[str]]
+        Overwrite the input shape.
+        The format is ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].
+        When there is only one input, for example, ['data:1,3,224,224']
+        When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112,112','data3:5']
+        A value of 1 or more must be specified.
+        Numerical values other than dynamic dimensions are ignored.
+        Ignores --batch_size if specified at the same time as --batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
@@ -175,6 +186,15 @@ def convert(
         )
         sys.exit(1)
 
+    # overwrite_input_shape
+    if overwrite_input_shape is not None \
+        and not isinstance(overwrite_input_shape, list):
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'overwrite_input_shape must be specified by list.'
+        )
+        sys.exit(1)
+
     # replace_argmax_to_reducemax_and_indicies_is_int64
     # replace_argmax_to_reducemax_and_indicies_is_float32
     if replace_argmax_to_reducemax_and_indicies_is_int64 \
@@ -221,7 +241,7 @@ def convert(
                         'onnxsim',
                         f'{input_onnx_file_path}',
                         f'{input_onnx_file_path}'
-                    ],
+                    ] + list(['--overwrite-input-shape'] + overwrite_input_shape) if overwrite_input_shape is not None else [],
                     stderr=subprocess.PIPE
                 ).decode('utf-8')
                 if not non_verbose:
@@ -234,8 +254,8 @@ def convert(
                     f'{Color.YELLOW}WARNING:{Color.RESET} '+
                     'Failed to optimize the onnx file.'
                 )
-                tracetxt = traceback.format_exc().splitlines()[-1]
-                print(f'{Color.YELLOW}WARNING:{Color.RESET} {tracetxt}')
+                import traceback
+                traceback.print_exc()
 
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
@@ -439,6 +459,20 @@ def main():
             'A value of 1 or more must be specified.'
     )
     parser.add_argument(
+        '-ois',
+        '--overwrite_input_shape',
+        type=str,
+        nargs='+',
+        help=\
+            'Overwrite the input shape. \n' +
+            'The format is "input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n' +
+            'When there is only one input, for example, "data:1,3,224,224" \n' +
+            'When there are multiple inputs, for example, "data1:1,3,224,224" "data2:1,3,112,112" "data3:5" \n' +
+            'A value of 1 or more must be specified. \n' +
+            'Numerical values other than dynamic dimensions are ignored. \n' +
+            'Ignores --batch_size if specified at the same time as --batch_size.'
+    )
+    parser.add_argument(
         '-k',
         '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
@@ -538,6 +572,7 @@ def main():
         output_signaturedefs=args.output_signaturedefs,
         not_use_onnxsim=args.not_use_onnxsim,
         batch_size=args.batch_size,
+        overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,

@@ -42,6 +42,7 @@ def make_node(
     shape = graph_input.shape
     dtype = graph_input.dtype
 
+    # Overwrite batch or shapes
     if batch_size is not None \
         and len(shape) > 0 \
         and (isinstance(shape[0], str) or shape[0] == -1):
