@@ -204,97 +204,97 @@ convert(
     Parameters
     ----------
     input_onnx_file_path: Optional[str]
-        Input onnx file path.
-        Either input_onnx_file_path or onnx_graph must be specified.
+      Input onnx file path.
+      Either input_onnx_file_path or onnx_graph must be specified.
 
     onnx_graph: Optional[onnx.ModelProto]
-        onnx.ModelProto.
-        Either input_onnx_file_path or onnx_graph must be specified.
-        onnx_graph If specified, ignore input_onnx_file_path and process onnx_graph.
+      onnx.ModelProto.
+      Either input_onnx_file_path or onnx_graph must be specified.
+      onnx_graph If specified, ignore input_onnx_file_path and process onnx_graph.
 
     output_folder_path: Optional[str]
-        Output tensorflow model folder path.
-        Default: "saved_model"
+      Output tensorflow model folder path.
+      Default: "saved_model"
 
     output_signaturedefs: Optional[bool]
-        Signature is added to the output for serving or for conversion
-        to other model formats. However, this can significantly reduce the speed
-        of model conversion and significant increase the size of the model.
+      Signature is added to the output for serving or for conversion
+      to other model formats. However, this can significantly reduce the speed
+      of model conversion and significant increase the size of the model.
 
     not_use_onnxsim: Optional[bool]
-        No optimization by onnx-simplifier is performed.
-        If this option is used, the probability of a conversion error is very high.
+      No optimization by onnx-simplifier is performed.
+      If this option is used, the probability of a conversion error is very high.
 
     batch_size: Optional[int]
-        Fixes the dynamic batch size to the specified numeric batch size.
-        A value of 1 or more must be specified.
+      Fixes the dynamic batch size to the specified numeric batch size.
+      A value of 1 or more must be specified.
 
     overwrite_input_shape: Optional[List[str]]
-        Overwrite the input shape.
-        The format is "i1:dim0,dim1,...,dimN" "i2:dim0,dim1,...,dimN" "i3:dim0,dim1,...,dimN".
-        When there is only one input, for example, ['data:1,3,224,224']
-        When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112','data3:5']
-        A value of 1 or more must be specified.
-        Numerical values other than dynamic dimensions are ignored.
-        Ignores --batch_size if specified at the same time as --batch_size.
+      Overwrite the input shape.
+      The format is "i1:dim0,dim1,...,dimN" "i2:dim0,dim1,...,dimN" "i3:dim0,dim1,...,dimN".
+      When there is only one input, for example, ['data:1,3,224,224']
+      When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112','data3:5']
+      A value of 1 or more must be specified.
+      Numerical values other than dynamic dimensions are ignored.
+      Ignores --batch_size if specified at the same time as --batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
-        Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
-        If a nonexistent INPUT OP name is specified, it is ignored.
-        Valid only for 3D, 4D and 5D input tensors.
-        e.g.
-        --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+      Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+      If a nonexistent INPUT OP name is specified, it is ignored.
+      Valid only for 3D, 4D and 5D input tensors.
+      e.g.
+      --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are int64.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
-        Default: False
+      Replace ArgMax with a ReduceMax. The returned indicies are int64.
+      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
+      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+      Default: False
 
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are float32.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
-        Default: False
+      Replace ArgMax with a ReduceMax. The returned indicies are float32.
+      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
+      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+      Default: False
 
     replace_asin_to_pseudo_asin: Optional[bool]
-        Replace Asin with a pseudo Asin.
+      Replace Asin with a pseudo Asin.
 
     replace_acos_to_pseudo_acos: Optional[bool]
-        Replace Acos with a pseudo Acos.
+      Replace Acos with a pseudo Acos.
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
-        Replace LeakyReLU with a pseudo LeakyReLU.
+      Replace LeakyReLU with a pseudo LeakyReLU.
 
     replace_power_to_pseudo_power: Optional[bool]
-        Replace Power with a pseudo Power.
+      Replace Power with a pseudo Power.
 
     replace_gathernd_to_pseudo_gathernd: Optional[bool]
-        Replace GatherND with a pseudo GatherND.
+      Replace GatherND with a pseudo GatherND.
 
     replace_neg_to_pseudo_neg: Optional[bool]
-        Replace Neg with a pseudo Neg.
+      Replace Neg with a pseudo Neg.
 
     mvn_epsilon: Optional[float]
-        For MeanVarianceNormalization.
-        The number to be added to the variance to avoid division by zero
-        when normalizing the value.
-        (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
-        Default: 0.0000000001
+      For MeanVarianceNormalization.
+      The number to be added to the variance to avoid division by zero
+      when normalizing the value.
+      (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+      Default: 0.0000000001
 
     param_replacement_file: Optional[str]
-        Parameter replacement file path. (.json)
+      Parameter replacement file path. (.json)
 
     non_verbose: Optional[bool]
-        Do not show all information logs. Only error logs are displayed.
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
-        Default: False
+      Do not show all information logs. Only error logs are displayed.
+      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
+      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+      Default: False
 
     Returns
     ----------
     model: tf.keras.Model
-        Model
+      Model
 ```
 
 ## Parameter replacement
