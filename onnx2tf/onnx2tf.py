@@ -87,12 +87,15 @@ def convert(
         A value of 1 or more must be specified.
 
     overwrite_input_shape: Optional[List[str]]
-        Overwrite the input shape.
-        The format is ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].
-        When there is only one input, for example, ['data:1,3,224,224']
-        When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112,112','data3:5']
-        A value of 1 or more must be specified.
-        Numerical values other than dynamic dimensions are ignored.
+        Overwrite the input shape.\n
+        The format is\n
+        ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].\n
+        When there is only one input, for example,\n
+        ['data:1,3,224,224']\n
+        When there are multiple inputs, for example,\n
+        ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
+        A value of 1 or more must be specified.\n
+        Numerical values other than dynamic dimensions are ignored.\n
         Ignores --batch_size if specified at the same time as --batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]

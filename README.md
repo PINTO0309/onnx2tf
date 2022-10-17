@@ -231,9 +231,12 @@ convert(
 
     overwrite_input_shape: Optional[List[str]]
       Overwrite the input shape.
-      The format is "i1:dim0,dim1,...,dimN" "i2:dim0,dim1,...,dimN" "i3:dim0,dim1,...,dimN".
-      When there is only one input, for example, ['data:1,3,224,224']
-      When there are multiple inputs, for example, ['data1:1,3,224,224','data2:1,3,112','data3:5']
+      The format is
+      ['i1:dim0,dim1,...,dimN' 'i2:dim0,dim1,...,dimN' 'i3:dim0,dim1,...,dimN'].
+      When there is only one input, for example,
+      ['data:1,3,224,224']
+      When there are multiple inputs, for example,
+      ['data1:1,3,224,224','data2:1,3,112','data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
       Ignores --batch_size if specified at the same time as --batch_size.
