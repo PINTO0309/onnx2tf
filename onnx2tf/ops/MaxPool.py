@@ -51,7 +51,7 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
-    if graph_node.outputs > 1:
+    if len(graph_node.outputs) > 1:
         print(
             f'{Color.RED}ERROR:{Color.RESET} '+
             f'MaxPoolWithArgmax is not yet implemented. '+
