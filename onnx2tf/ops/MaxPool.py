@@ -1,3 +1,4 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
@@ -13,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -48,6 +50,16 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
+    if graph_node.outputs > 1:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} '+
+            f'MaxPoolWithArgmax is not yet implemented. '+
+            f'Pull requests are welcome. \n'+
+            f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n'+
+            f'graph_node.name: {graph_node.name}'
+        )
+        sys.exit(1)
 
     filter = None
     strides = None
