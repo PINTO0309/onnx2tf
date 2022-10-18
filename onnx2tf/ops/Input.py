@@ -38,6 +38,7 @@ def make_node(
     """
     ncw_nchw_ncdhw_keep = False
     batch_size = kwargs.get('batch_size', None)
+    graph_input_name = kwargs.get('subgraph_input_name', graph_input.name)
 
     shape = graph_input.shape
     dtype = graph_input.dtype
@@ -49,57 +50,57 @@ def make_node(
         shape[0] = batch_size
 
     # Preserving Graph Structure (Dict)
-    tf_layers_dict[graph_input.name] = {
+    tf_layers_dict[graph_input_name] = {
         'optype': 'Input',
         'shape': shape,
         'dtype': dtype,
         'op': None,
     }
-    if len(graph_input.shape) in [3, 4, 5] \
+    if graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
         and keep_ncw_or_nchw_or_ncdhw_input_names:
-        if graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
+        if graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
             ncw_nchw_ncdhw_keep = True
         else:
             ncw_nchw_ncdhw_keep = False
-    elif len(graph_input.shape) in [3, 4, 5] \
+    elif graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
         and not keep_ncw_or_nchw_or_ncdhw_input_names:
         ncw_nchw_ncdhw_keep = False
     else:
         ncw_nchw_ncdhw_keep = True
-    tf_layers_dict[graph_input.name]['ncw_nchw_ncdhw_keep'] = ncw_nchw_ncdhw_keep
+    tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_keep'] = ncw_nchw_ncdhw_keep
 
     # Generation of TF OP
-    if len(shape) == 3:
+    if graph_input.shape != tf.TensorShape(None) and len(shape) == 3:
         # 3D
         if not ncw_nchw_ncdhw_keep:
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
                         shape[1] if isinstance(shape[1], int) else None,
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
-                    name=graph_input.name,
+                    name=graph_input_name,
                     dtype=dtype,
                 )
-            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
+            tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
         else:
             nchw = tf.keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
-                name=graph_input.name,
+                name=graph_input_name,
                 dtype=dtype,
             )
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,1])
-            tf_layers_dict[graph_input.name]['op'] = nchw
+            tf_layers_dict[graph_input_name]['op'] = nchw
 
-    elif len(shape) == 4:
+    elif graph_input.shape != tf.TensorShape(None) and len(shape) == 4:
         # 4D
         if not ncw_nchw_ncdhw_keep:
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
@@ -107,27 +108,27 @@ def make_node(
                         shape[1] if isinstance(shape[1], int) else None,
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
-                    name=graph_input.name,
+                    name=graph_input_name,
                     dtype=dtype,
                 )
-            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
+            tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
         else:
             nchw = tf.keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
-                name=graph_input.name,
+                name=graph_input_name,
                 dtype=dtype,
             )
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.transpose(nchw, perm=[0,2,3,1])
-            tf_layers_dict[graph_input.name]['op'] = nchw
+            tf_layers_dict[graph_input_name]['op'] = nchw
 
-    elif len(shape) == 5:
+    elif graph_input.shape != tf.TensorShape(None) and len(shape) == 5:
         # 5D
         if not ncw_nchw_ncdhw_keep:
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
@@ -136,62 +137,62 @@ def make_node(
                         shape[1] if isinstance(shape[5], int) else None,
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
-                    name=graph_input.name,
+                    name=graph_input_name,
                     dtype=dtype,
                 )
-            tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
+            tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
         else:
             ncdhw = tf.keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
                 batch_size=shape[0],
-                name=graph_input.name,
+                name=graph_input_name,
                 dtype=dtype,
             )
-            tf_layers_dict[graph_input.name]['tf_node'] = \
+            tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.transpose(ncdhw, perm=[0,2,3,4,1])
-            tf_layers_dict[graph_input.name]['op'] = ncdhw
+            tf_layers_dict[graph_input_name]['op'] = ncdhw
 
-    elif len(shape) > 0:
+    elif graph_input.shape != tf.TensorShape(None) and len(shape) > 0:
         # Except scalar, 4D and 5D
         if ncw_nchw_ncdhw_keep \
             and keep_ncw_or_nchw_or_ncdhw_input_names \
-            and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
+            and graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f'' +\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
 
-        tf_layers_dict[graph_input.name]['tf_node'] = \
+        tf_layers_dict[graph_input_name]['tf_node'] = \
             tf.keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
                 batch_size=shape[0] if isinstance(shape[0], int) else None,
-                name=graph_input.name,
+                name=graph_input_name,
                 dtype=dtype,
             )
-        tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
+        tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
 
     else:
         # Scalar
         if ncw_nchw_ncdhw_keep \
             and keep_ncw_or_nchw_or_ncdhw_input_names \
-            and graph_input.name in keep_ncw_or_nchw_or_ncdhw_input_names:
+            and graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f''+\
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input.name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
 
-        tf_layers_dict[graph_input.name]['tf_node'] = \
+        tf_layers_dict[graph_input_name]['tf_node'] = \
             tf.keras.Input(
-                shape=shape,
-                name=graph_input.name,
+                shape=shape if graph_input.shape != tf.TensorShape(None) else [None],
+                name=graph_input_name,
                 dtype=dtype,
             )
-        tf_layers_dict[graph_input.name]['op'] = tf_layers_dict[graph_input.name]['tf_node']
+        tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
