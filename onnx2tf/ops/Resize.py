@@ -272,7 +272,10 @@ def make_node(
         new_size = tf.cast(sizes[1:3], tf.int32)
     elif scales is not None:
         # only scales is defined
-        if hasattr(graph_node.outputs[0], 'shape') and graph_node.outputs[0].shape is not None:
+        if hasattr(graph_node.outputs[0], 'shape') \
+            and graph_node.outputs[0].shape is not None \
+            and isinstance(graph_node.outputs[0].shape[-2], int) \
+            and isinstance(graph_node.outputs[0].shape[-1], int):
             new_size = graph_node.outputs[0].shape[-2:len(graph_node.outputs[0].shape)] # Estimated from ONNX output shape
         else:
             h_w_scale = scales[1:3]
