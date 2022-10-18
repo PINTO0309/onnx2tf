@@ -6,14 +6,10 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
-    replace_parameter,
     get_constant_or_variable,
-    convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
-    pre_process_transpose,
-    post_process_transpose,
 )
 
 
