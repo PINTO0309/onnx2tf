@@ -187,7 +187,7 @@ def make_node(
     X = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     X_shape = X.shape
-    X_rank = len(X.shape)
+    X_rank = len(X_shape)
 
     W = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
@@ -197,22 +197,20 @@ def make_node(
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
 
     sequence_lens = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
-        if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
+        if isinstance(graph_node_input_5, gs.Variable) and graph_node_input_5.name != '' else graph_node_input_5
     initial_h = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
-        if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
+        if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.name != ''  else graph_node_input_6
     initial_c = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
-        if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
+        if isinstance(graph_node_input_7, gs.Variable) and graph_node_input_7.name != ''  else graph_node_input_7
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
-        if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
-
-
+        if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != ''  else graph_node_input_8
 
     activation_alpha = graph_node.attrs.get('activation_alpha', [None] * 6)
     activation_beta = graph_node.attrs.get('activation_beta', [None] * 6)
     activations = graph_node.attrs.get('activations', None)
     clip = graph_node.attrs.get('clip', None)
     direction = graph_node.attrs.get('direction', 'forward')
-    num_directions = 2 if direction == "bidirectional" else 1
+    num_directions = 2 if direction == 'bidirectional' else 1
     hidden_size = graph_node.attrs.get('hidden_size', None)
     input_forget = graph_node.attrs.get('input_forget', 0)
     layout = graph_node.attrs.get('layout', 0)
