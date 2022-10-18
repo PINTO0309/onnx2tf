@@ -272,15 +272,19 @@ def make_node(
         new_size = tf.cast(sizes[1:3], tf.int32)
     elif scales is not None:
         # only scales is defined
-        h_w_scale = scales[1:3]
-        h_w_shape = input_tensor_shape[1:3]
-        new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
+        if hasattr(graph_node.outputs[0], 'shape') and graph_node.outputs[0].shape is not None:
+            new_size = graph_node.outputs[0].shape[-2:len(graph_node.outputs[0].shape)] # Estimated from ONNX output shape
+        else:
+            h_w_scale = scales[1:3]
+            h_w_shape = input_tensor_shape[1:3]
+            new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
 
     # Tensorflow require the shape of "size" in the "tf.image.resize" must be known at
     # graph creation time. However in the dynamic shape situation, the shape of "new_size"
     # will be "None", the actual shape can only be determine at runtime. But we know
     # "new_size" should always contain [h, w], therefore the shape must be 2.
-    new_size.set_shape([2])
+    if hasattr(new_size, 'set_shape'):
+        new_size.set_shape([2])
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value

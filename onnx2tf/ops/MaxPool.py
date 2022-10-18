@@ -85,7 +85,7 @@ def make_node(
         pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
         # if is_known_shape and pads != [0] * spatial_size * 2:
         if pads != [0] * spatial_size * 2:
-            in_shape = input_tensor.get_shape()
+            in_shape = input_tensor.shape
             same_paddings = calc_pads_same_pooling(
                 in_spatial_shape=in_shape[1:x_rank - 1],
                 kernel_shape=kernel_shape,
@@ -144,7 +144,7 @@ def make_node(
             input_tensor_dtype,
         )
         pooled_tensor = tf.nn.dilation2d(
-            input=input_tensor,
+            input=padded_tensor,
             filters=filter,
             strides=strides,
             dilations=dilations,
@@ -157,7 +157,7 @@ def make_node(
         # if strides == 1 and not LpPool use tf.nn.pool directly
         if strides == [1] * spatial_size:
             pooled_tensor = tf.nn.pool(
-                input=input_tensor,
+                input=padded_tensor,
                 window_shape=kernel_shape,
                 dilations=dilations,
                 strides=strides,
@@ -168,7 +168,7 @@ def make_node(
         else:
             # othwerwise check the pooling_type and use the correct op
             pooled_tensor = tf.nn.max_pool(
-                input=input_tensor,
+                input=padded_tensor,
                 ksize=kernel_shape,
                 strides=strides,
                 padding=padding_,

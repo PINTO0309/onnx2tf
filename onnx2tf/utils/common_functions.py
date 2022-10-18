@@ -1071,10 +1071,11 @@ def pad_input(
         return input_tensor
 
     # no padding on the NC dimensions
-    tf_paddings = [[0, 0], [0, 0]]
+    tf_paddings = [[0, 0]]
     # padding for the (D)HW dimensions
     for i in range(spatial_size):
         tf_paddings += [[pads[i * 2], pads[i * 2 + 1]]]
+    tf_paddings += [[0, 0]]
 
     padded_tensor = tf.pad(
         input_tensor,
