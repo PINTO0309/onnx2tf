@@ -414,6 +414,10 @@ Please don't post such low level questions as issues.
   |:-:|:-:|
   |![image](https://user-images.githubusercontent.com/33194443/195248901-21d992fa-2b48-4533-b4b1-cbd25a5aba2b.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
 
+- YOLACT-Edge MobileNetV2 with Post-Process (MultiClass-NMS) ONNX to TFLite Float32
+  https://github.com/PINTO0309/onnx2tf/releases/download/1.0.11/yolact_edge_mobilenetv2_550x550.onnx
+  ![yolact_edge_mobilenetv2_550x550 onnx](https://user-images.githubusercontent.com/33194443/196831065-1f912ac1-1c7d-4d7c-8a25-58a45746bc45.png)
+
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
 2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
