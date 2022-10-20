@@ -6,6 +6,8 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -16,6 +18,7 @@ from onnx2tf.utils.colors import Color
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -108,6 +111,47 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
+
+    # Param replacement
+    boxes = replace_parameter(
+        value_before_replacement=boxes,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    scores = replace_parameter(
+        value_before_replacement=scores,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+    if len(graph_node.inputs) >= 3:
+        max_output_boxes_per_class = replace_parameter(
+            value_before_replacement=max_output_boxes_per_class,
+            param_target='inputs',
+            param_name=graph_node.inputs[2].name,
+            **kwargs,
+        )
+    if len(graph_node.inputs) >= 4:
+        iou_threshold = replace_parameter(
+            value_before_replacement=iou_threshold,
+            param_target='inputs',
+            param_name=graph_node.inputs[3].name,
+            **kwargs,
+        )
+    if len(graph_node.inputs) >= 5:
+        score_threshold = replace_parameter(
+            value_before_replacement=score_threshold,
+            param_target='inputs',
+            param_name=graph_node.inputs[4].name,
+            **kwargs,
+        )
+    center_point_box = replace_parameter(
+        value_before_replacement=center_point_box,
+        param_target='attributes',
+        param_name='center_point_box',
+        **kwargs,
+    )
 
     # Generation of TF OP
     if center_point_box == 1:

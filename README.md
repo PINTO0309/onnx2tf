@@ -64,7 +64,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.11
+ghcr.io/pinto0309/onnx2tf:1.0.12
 
 or
 
@@ -408,6 +408,7 @@ Please don't post such low level questions as issues.
   |8|Sub||
   |9|Tile||
   |10|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |11|NonMaxSuppression||
 
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32

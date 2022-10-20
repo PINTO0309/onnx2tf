@@ -347,8 +347,6 @@ def make_node(
         **kwargs,
     )
 
-    # TODO: upsampling2d_bilinear_5d
-    # TODO: upsampling2d_nearest_5d
     resized_tensor = None
     boxes = None
     box_indices = None
