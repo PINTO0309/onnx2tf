@@ -416,7 +416,7 @@ Please don't post such low level questions as issues.
 
 - YOLACT-Edge MobileNetV2 with Post-Process (MultiClass-NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.11/yolact_edge_mobilenetv2_550x550.onnx
-  ![yolact_edge_mobilenetv2_550x550 onnx](https://user-images.githubusercontent.com/33194443/196831065-1f912ac1-1c7d-4d7c-8a25-58a45746bc45.png)
+  ![model_float32 tflite](https://user-images.githubusercontent.com/33194443/196831377-891dfc49-6cdb-41e0-a723-8f0087817ddf.svg)
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
