@@ -65,7 +65,7 @@ def make_node(
         else:
             # ゼロ次元目の転置が発生しているときは、ONNXの最終出力テンソルの形状とTFの入力テンソルの形状を比較して
             # ONNX側の最終出力テンソルの形状に合うように転置する
-            onnx_output_shape = shape
+            onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
             tf_input_shape = input_tensor.shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
@@ -94,7 +94,7 @@ def make_node(
         else:
             # ゼロ次元目の転置が発生しているときは、ONNXの最終出力テンソルの形状とTFの入力テンソルの形状を比較して
             # ONNX側の最終出力テンソルの形状に合うように転置する
-            onnx_output_shape = shape
+            onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
             tf_input_shape = input_tensor.shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
