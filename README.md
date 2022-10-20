@@ -23,6 +23,8 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 - [x] Only for `opset=11` or higher
 - [x] If you do not like the generated TFLite OP name, edit it using [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite).
 - [x] The generated Keras models cannot be used for retraining. If you want to train, you must build your own model.
+When converting to TensorFlow.js, CoreML, etc., please generate saved_model with the --output_signaturedefs option and use the generated saved_model to convert with various converters. [tensorflowjs_converter](https://github.com/tensorflow/tfjs), [coremltools](https://github.com/apple/coremltools), [edgetpu_compilier](https://coral.ai/docs/edgetpu/compiler/)
+- [x] There are many OPs on ONNX that do not support EdgeTPU. Therefore, if you need to generate an EdgeTPU model, please specify `--replace_***_to_pseudo_***` to convert your model. onnx2tf will attempt to replace the OP with an EdgeTPU-compatible OP whenever possible.
 - [x] The main factors that cause accuracy degradation after model conversion are as follows
 1. differences in Padding specifications
 2. difference in Python division specification in the process of model transformation (error due to even rounding)
@@ -423,10 +425,11 @@ Please don't post such low level questions as issues.
 2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
 3. [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite)
 4. [tensorflowjs_converter](https://github.com/tensorflow/tfjs)
-5. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
-6. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
-7. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
-8. [onnx](https://github.com/onnx/onnx)
-9. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-10. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
-11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
+5. [coremltools](https://github.com/apple/coremltools)
+6. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
+7. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
+8. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
+9. [onnx](https://github.com/onnx/onnx)
+10. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
+11. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
+12. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
