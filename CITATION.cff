@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC)"
+authors:
+- family-names: "Hyodo"
+  given-names: "Katsuya"
+  orcid: "https://orcid.org/0000-0002-6163-6251"
+date-released: 2022-09-25
+message: "If you use onnx2tf in your research, please cite it using these metadata."
+url: "https://github.com/PINTO0309/onnx2tf"
