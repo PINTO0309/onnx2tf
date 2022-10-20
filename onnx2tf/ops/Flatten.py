@@ -79,8 +79,8 @@ def make_node(
         )
 
     # Param replacement
-    transposed_tensor = replace_parameter(
-        value_before_replacement=transposed_tensor,
+    input_tensor = replace_parameter(
+        value_before_replacement=input_tensor,
         param_target='inputs',
         param_name=graph_node.inputs[0].name,
         **kwargs,
