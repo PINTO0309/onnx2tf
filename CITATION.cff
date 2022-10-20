@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC)"
+title: "Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC)"
 authors:
 - family-names: "Hyodo"
   given-names: "Katsuya"
