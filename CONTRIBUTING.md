@@ -22,6 +22,8 @@ https://github.com/PINTO0309/onnx2tf/issues
 ## 2. Pull Request
 - Basically any reasonable pull request is welcome. There are no strict rules.
 
+https://github.com/PINTO0309/onnx2tf/pulls
+
 ## 3. Code Structure
 ### 3-1. Code hierarchy
 ### 3-2. Code block structure
