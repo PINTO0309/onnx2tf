@@ -15,7 +15,7 @@ In other words, I am mainly interested in how interesting your project is to me 
 
 If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means.
 
-Also, never abbreviate logs or error messages displayed in the console and never post them. It makes it difficult to understand the situation.
+Also, never post logs or error messages displayed in the console in an abbreviated form. Omission makes it difficult to understand the situation.
 
 https://github.com/PINTO0309/onnx2tf/issues
 
