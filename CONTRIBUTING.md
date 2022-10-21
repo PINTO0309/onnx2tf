@@ -13,7 +13,7 @@ Simply put, there are five factors that motivate me,
 
 In other words, I am mainly interested in how interesting your project is to me and why you are in trouble and how big an impact it will have on your project. The issue template has all the required fields for the minimum information you want me to provide to motivate me. Please describe the information as politely and gentlemanly as possible without omission.
 
-If you are unable to share the ONNX files owned by your project due to policy, you are still welcome to politely submit an issue and share only the ONNX files with me via email or other means.
+If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means.
 
 https://github.com/PINTO0309/onnx2tf/issues
 
