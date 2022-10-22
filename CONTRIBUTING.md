@@ -161,4 +161,13 @@ https://github.com/PINTO0309/onnx2tf/pulls
   )
   ```
   #### 4. Generation of TF OP section
+  Generate a TensorFlow OP and store it in `tf_layers_dict[graph_node_output.name]['tf_node']`. The entire graph structure is preserved in dict format.
+  ```python
+  tf_layers_dict[graph_node_output.name]['tf_node'] = \
+      tf.math.abs(
+          x=input_tensor,
+          name=graph_node.name,
+      )
+  ```
+
   #### 5. Generation of Debug Info section
