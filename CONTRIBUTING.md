@@ -56,3 +56,21 @@ https://github.com/PINTO0309/onnx2tf/pulls
 └── setup.py
 ```
 ### 3-2. Code block structure
+- `ops/xxx.py`
+  ```python
+  @print_node_info
+  @inverted_operation_enable_disable
+  @get_replacement_parameter
+  def make_node(
+      *,
+      graph_node: gs.Node,
+      tf_layers_dict: dict,
+      **kwargs: dict,
+  ):
+
+      # 1. ONNX parameter read section
+      # 2. Preserving Graph Structure (Dict) section
+      # 3. Param replacement section
+      # 4. Generation of TF OP section
+      # 5. Generation of Debug Info section
+  ```
