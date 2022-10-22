@@ -132,6 +132,18 @@ https://github.com/PINTO0309/onnx2tf/pulls
       center_point_box = graph_node.attrs.get('center_point_box', 0)
       ```
   #### 2. Preserving Graph Structure (Dict) section
+  Generates metadata for debugging. It does not directly affect the operation of the tool.
+  ```python
+  graph_node_output: gs.Variable = graph_node.outputs[0]
+  shape = graph_node_output.shape
+  dtype = graph_node_output.dtype
+
+  tf_layers_dict[graph_node_output.name] = {
+      'optype': graph_node.op,
+      'shape': shape,
+      'dtype': dtype,
+  }
+  ```
   #### 3. Param replacement section
   #### 4. Generation of TF OP section
   #### 5. Generation of Debug Info section
