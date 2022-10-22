@@ -75,7 +75,19 @@ https://github.com/PINTO0309/onnx2tf/pulls
       # 5. Generation of Debug Info section
   ```
   #### 1. ONNX parameter read section
-  1. NCW to NWC, NCHW to NHWC, NCDHW to NDHWC transposition determination
+  1. `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC`, etc... transposition determination
+
+      It has no effect on most OPs, but is used to determine whether to transpose or not transpose the input of an OP after dimensional compression or dimensional expansion has occurred in `Reshape`. Determines if the ONNX output shape of the previous OP and the TensorFlow output shape are the same, returning `True` if they are different and `False` if they are the same. `True` indicates that the input data transposition operation must be performed; `False` indicates that the input data transposition operation need not be performed.
+      ```python
+      before_op_output_shape_trans_1 = \
+          tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+      before_op_output_shape_trans_2 = \
+          tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+      before_op_output_shape_trans = \
+          before_op_output_shape_trans_1 \
+          and before_op_output_shape_trans_2
+      ```
+
   2. Transposition of input values and conversion process to Numpy.ndarray
   3. Type annotation for debugging efficiency
   4. Read the attribute values that the OP has
