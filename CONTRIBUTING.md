@@ -21,6 +21,22 @@ https://github.com/PINTO0309/onnx2tf/issues
 
 ## 2. Pull Request
 - Basically any reasonable pull request is welcome. There are no strict rules.
+- To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
+  - HostPC install
+    ```bash
+    pip install pip -U \
+    && pip install -U onnx \
+    && pip install -U onnx-simplifier \
+    && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
+    && pip install -U simple_onnx_processing_tools \
+    && pip install -U onnx2tf \
+    && pip install tensorflow==2.10.0
+    ```
+  - Docker
+    ```bash
+    git clone https://github.com/PINTO0309/onnx2tf && cd onnx2tf
+    docker build -t onnx2tf_develop .
+    ```
 
 https://github.com/PINTO0309/onnx2tf/pulls
 
