@@ -126,6 +126,11 @@ https://github.com/PINTO0309/onnx2tf/pulls
           if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
       ```
   4. Read the attribute values that the OP has
+
+      Obtain the attribute values that the OP of ONNX has. If no value exists, the default value follows the description in the official ONNX specification. [Operator Schemas](https://github.com/onnx/onnx/blob/main/docs/Operators.md)
+      ```python
+      center_point_box = graph_node.attrs.get('center_point_box', 0)
+      ```
   #### 2. Preserving Graph Structure (Dict) section
   #### 3. Param replacement section
   #### 4. Generation of TF OP section
