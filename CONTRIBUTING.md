@@ -24,7 +24,7 @@ https://github.com/PINTO0309/onnx2tf/issues
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
   - HostPC install
     ```bash
-    pip install pip -U \
+    pip install -U pip \
     && pip install -U onnx \
     && pip install -U onnx-simplifier \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
