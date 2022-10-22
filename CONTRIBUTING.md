@@ -75,6 +75,10 @@ https://github.com/PINTO0309/onnx2tf/pulls
       # 5. Generation of Debug Info section
   ```
   #### 1. ONNX parameter read section
+  1. NCW to NWC, NCHW to NHWC, NCDHW to NDHWC transposition determination
+  2. Transposition of input values and conversion process to Numpy.ndarray
+  3. Type annotation for debugging efficiency
+  4. Read the attribute values that the OP has
   #### 2. Preserving Graph Structure (Dict) section
   #### 3. Param replacement section
   #### 4. Generation of TF OP section
