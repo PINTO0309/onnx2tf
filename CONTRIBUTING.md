@@ -89,6 +89,17 @@ https://github.com/PINTO0309/onnx2tf/pulls
       ```
 
   2. Transposition of input values and conversion process to Numpy.ndarray
+      Transposes input data based on `before_op_output_shape_trans` True/False; if `before_op_output_shape_trans=True`, transposition is performed; if `before_op_output_shape_trans=False`, no transposition is performed. In addition, if the parameter type of ONNX is `Initializer`, it is automatically converted to `Numpy.ndarray`.
+      ```python
+      graph_node_input_1 = get_constant_or_variable(
+          graph_node.inputs[0],
+          before_op_output_shape_trans,
+      )
+      graph_node_input_2 = get_constant_or_variable(
+          graph_node.inputs[1],
+          before_op_output_shape_trans,
+      )
+      ```
   3. Type annotation for debugging efficiency
   4. Read the attribute values that the OP has
   #### 2. Preserving Graph Structure (Dict) section
