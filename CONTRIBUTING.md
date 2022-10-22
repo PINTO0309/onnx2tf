@@ -145,7 +145,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
   }
   ```
   #### 3. Param replacement section
-  `@get_replacement_parameter` Overwrites the ONNX value with the parameter for extrapolation read by the decorator. Reads a JSON format file written by the user and replaces ONNX parameters according to the described rules. [Parameter replacement](https://github.com/PINTO0309/onnx2tf#parameter-replacement)
+  `@get_replacement_parameter` Overwrites the ONNX value with the parameter for extrapolation read by the decorator. Reads a JSON format file written by the user and replaces ONNX parameters according to the described rules. [Parameter replacement](https://github.com/PINTO0309/onnx2tf#parameter-replacement). All information read from JSON is stored in `kwargs`.
   ```python
   boxes = replace_parameter(
       value_before_replacement=boxes,
