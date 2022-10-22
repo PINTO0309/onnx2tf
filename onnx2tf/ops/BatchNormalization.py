@@ -55,14 +55,14 @@ def make_node(
     }
 
     # Generation of TF OP
+    mul_values = 1.0 / np.sqrt(input_var.values + epsilon) * scale.values
+
     if np.count_nonzero(input_mean.values) > 0:
         tf_layers_dict[Y.name]['tf_node'] = \
-            (tf_layers_dict[X.name]['tf_node'] - input_mean.values) \
-                / tf.math.sqrt(input_var.values + epsilon) * scale.values + B.values
+            (tf_layers_dict[X.name]['tf_node'] - input_mean.values) * mul_values + B.values
     else:
         tf_layers_dict[Y.name]['tf_node'] = \
-            tf_layers_dict[X.name]['tf_node'] \
-                / tf.math.sqrt(input_var.values + epsilon) * scale.values + B.values
+            tf_layers_dict[X.name]['tf_node'] * mul_values + B.values
 
     # Generation of Debug Info
     tf_layers_dict[Y.name]['tf_node_info'] = \
