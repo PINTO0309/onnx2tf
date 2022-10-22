@@ -180,3 +180,22 @@ https://github.com/PINTO0309/onnx2tf/pulls
   ```
 
   #### 5. Generation of Debug Info section
+  Generates model conversion log information. `tf_op_type` can be set to TensorFlow OP as is or to any string. `tf_inputs` and `tf_outputs` can be set to any key value.
+  ```python
+  tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+      make_tf_node_info(
+          node_info={
+              'tf_op_type': tf.image.non_max_suppression,
+              'tf_inputs': {
+                  'boxes': tf_boxes,
+                  'scores': tf_scores,
+                  'max_output_boxes_per_class': max_output_boxes_per_class,
+                  'iou_threshold': iou_threshold,
+                  'score_threshold': score_threshold,
+              },
+              'tf_outputs': {
+                  'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+              },
+          }
+      )
+  ```
