@@ -132,7 +132,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
       center_point_box = graph_node.attrs.get('center_point_box', 0)
       ```
   #### 2. Preserving Graph Structure (Dict) section
-  Generates metadata for debugging. It does not directly affect the operation of the tool.
+  Generates metadata. It is needed to maintain the graph structure of the entire model.
   ```python
   graph_node_output: gs.Variable = graph_node.outputs[0]
   shape = graph_node_output.shape
