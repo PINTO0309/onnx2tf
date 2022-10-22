@@ -26,4 +26,33 @@ https://github.com/PINTO0309/onnx2tf/pulls
 
 ## 3. Code Structure
 ### 3-1. Code hierarchy
+```
+.
+├── CITATION.cff
+├── CONTRIBUTING.md
+├── Dockerfile
+├── LICENSE
+├── LICENSE_onnx-tensorflow
+├── README.md
+├── demo.yml
+├── onnx2tf
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── onnx2tf.py
+│   ├── ops
+│   │   ├── Abs.py
+│   │   ├── Acos.py
+│   │   ├── Acosh.py
+:   :   :    :
+│   │   ├── Xor.py
+│   │   ├── _LSTM.py
+│   │   ├── _Loop.py
+│   │   └── __init__.py
+│   └── utils
+│       ├── __init__.py
+│       ├── colors.py
+│       ├── common_functions.py
+│       └── enums.py
+└── setup.py
+```
 ### 3-2. Code block structure
