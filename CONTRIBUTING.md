@@ -169,5 +169,14 @@ https://github.com/PINTO0309/onnx2tf/pulls
           name=graph_node.name,
       )
   ```
+  The structure of dict is assumed to be as follows when this is processed.
+  ```python
+  tf_layers_dict[graph_node_output.name] = {
+      'optype': graph_node.op,
+      'shape': shape,
+      'dtype': dtype,
+      'tf_node': (TensorFlow Op),
+  }
+  ```
 
   #### 5. Generation of Debug Info section
