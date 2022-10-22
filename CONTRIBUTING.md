@@ -103,6 +103,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
       ```
 
   2. Transposition of input values and conversion process to Numpy.ndarray
+
       Transposes input data based on `before_op_output_shape_trans` True/False; if `before_op_output_shape_trans=True`, transposition is performed; if `before_op_output_shape_trans=False`, no transposition is performed. In addition, if the parameter type of ONNX is `Initializer`, it is automatically converted to `Numpy.ndarray`.
       ```python
       graph_node_input_1 = get_constant_or_variable(
@@ -114,7 +115,9 @@ https://github.com/PINTO0309/onnx2tf/pulls
           before_op_output_shape_trans,
       )
       ```
+
   3. Type annotation for debugging efficiency
+
       Although it does not affect the operation of the tool itself, type annotations are added to make the best use of Lint when debugging with IDEs such as VSCode.
       ```python
       boxes = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
@@ -122,7 +125,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
       scores = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
           if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
       ```
-  5. Read the attribute values that the OP has
+  4. Read the attribute values that the OP has
   #### 2. Preserving Graph Structure (Dict) section
   #### 3. Param replacement section
   #### 4. Generation of TF OP section
