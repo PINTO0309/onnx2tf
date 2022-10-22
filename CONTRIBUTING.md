@@ -74,3 +74,8 @@ https://github.com/PINTO0309/onnx2tf/pulls
       # 4. Generation of TF OP section
       # 5. Generation of Debug Info section
   ```
+  #### 1. ONNX parameter read section
+  #### 2. Preserving Graph Structure (Dict) section
+  #### 3. Param replacement section
+  #### 4. Generation of TF OP section
+  #### 5. Generation of Debug Info section
