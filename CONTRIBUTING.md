@@ -38,8 +38,8 @@ https://github.com/PINTO0309/onnx2tf/pulls
 ├── onnx2tf
 │   ├── __init__.py
 │   ├── __main__.py
-│   ├── onnx2tf.py
-│   ├── ops
+│   ├── onnx2tf.py             ... Main process of onnx2tf
+│   ├── ops                    ... Various OP conversion processes compatible with ONNX
 │   │   ├── Abs.py
 │   │   ├── Acos.py
 │   │   ├── Acosh.py
@@ -48,7 +48,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
 │   │   ├── _LSTM.py
 │   │   ├── _Loop.py
 │   │   └── __init__.py
-│   └── utils
+│   └── utils                  ... common processing
 │       ├── __init__.py
 │       ├── colors.py
 │       ├── common_functions.py
