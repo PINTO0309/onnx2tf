@@ -115,7 +115,14 @@ https://github.com/PINTO0309/onnx2tf/pulls
       )
       ```
   3. Type annotation for debugging efficiency
-  4. Read the attribute values that the OP has
+      Although it does not affect the operation of the tool itself, type annotations are added to make the best use of Lint when debugging with IDEs such as VSCode.
+      ```python
+      boxes = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+          if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+      scores = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+          if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+      ```
+  5. Read the attribute values that the OP has
   #### 2. Preserving Graph Structure (Dict) section
   #### 3. Param replacement section
   #### 4. Generation of TF OP section
