@@ -56,7 +56,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
 └── setup.py
 ```
 ### 3-2. Code block structure
-- `ops/xxx.py`
+- `onnx2tf/ops/xxx.py`
   ```python
   @print_node_info
   @inverted_operation_enable_disable
