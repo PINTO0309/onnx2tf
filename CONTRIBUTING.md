@@ -28,8 +28,6 @@ https://github.com/PINTO0309/onnx2tf/issues
     && pip install -U onnx \
     && pip install -U onnx-simplifier \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U simple_onnx_processing_tools \
-    && pip install -U onnx2tf \
     && pip install tensorflow==2.10.0
     ```
   - Docker
