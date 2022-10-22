@@ -39,7 +39,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── onnx2tf.py             ... Main process of onnx2tf
-│   ├── ops                    ... Various OP conversion processes compatible with ONNX
+│   ├── ops                    ... Various OP conversion processes compatible with ONNX OP name
 │   │   ├── Abs.py
 │   │   ├── Acos.py
 │   │   ├── Acosh.py
