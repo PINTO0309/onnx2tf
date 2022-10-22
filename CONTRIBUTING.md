@@ -180,7 +180,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
   ```
 
   #### 5. Generation of Debug Info section
-  Generates model conversion log information. `tf_op_type` can be set to TensorFlow OP as is or to any string. `tf_inputs` and `tf_outputs` can be set to any key value.
+  Generates model conversion log information. `tf_op_type` can be set to TensorFlow OP as is or to any string. `tf_inputs` and `tf_outputs` can be set to any key value. The `@print_node_info` decorator automatically reads the information and outputs the conversion log to the console.
   ```python
   tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
       make_tf_node_info(
