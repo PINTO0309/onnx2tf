@@ -421,6 +421,7 @@ Please don't post such low level questions as issues.
   |11|NonMaxSuppression||
 
 ## Supported layers
+- https://github.com/onnx/onnx/blob/main/docs/Operators.md
 - :heavy_check_mark:: Supported　**Help wanted**: Pull Request are welcome
   |OP|Status|
   |:-|:-:|
