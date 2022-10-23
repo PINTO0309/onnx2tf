@@ -33,192 +33,94 @@ class LayerNormalization(nn.Module):
 
 
 if __name__ == "__main__":
-    OPSET=11
+    OPSET=[11, 17]
 
-    MODEL = f'LayerNormalization2D'
-    N, C, H, W = 20, 5, 10, 10
-    embedding_dim = [C, H, W]
-    embedding_dim_tensor = torch.zeros([C, H, W])
-    input = torch.randn(N, C, H, W)
-    model = LayerNormalization(
-        embedding_dim=embedding_dim,
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+    for opset in OPSET:
+        MODEL = f'LayerNormalization2D'
+        N, C, H, W = 20, 5, 10, 10
+        embedding_dim = [C, H, W]
+        embedding_dim_tensor = torch.zeros([C, H, W])
+        input = torch.randn(N, C, H, W)
+        model = LayerNormalization(
+            embedding_dim=embedding_dim,
+            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
+            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+        )
+        onnx_file = f"{MODEL}_{opset}.onnx"
+        torch.onnx.export(
+            model,
+            args=(input),
+            f=onnx_file,
+            opset_version=opset,
+            input_names=[
+                f'{MODEL}_input',
+            ],
+            output_names=[
+                f'{MODEL}_output',
+            ],
+        )
+        model_onnx1 = onnx.load(onnx_file)
+        model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+        onnx.save(model_onnx1, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
 
-    MODEL = f'LayerNormalization1D'
-    batch, sentence_length, embedding_dim = 20, 5, 10
-    input = torch.randn(batch, sentence_length, embedding_dim)
-    embedding_dim_tensor = torch.zeros(embedding_dim)
-    model = LayerNormalization(
-        embedding_dim=[embedding_dim],
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+        MODEL = f'LayerNormalization1D'
+        batch, sentence_length, embedding_dim = 20, 5, 10
+        input = torch.randn(batch, sentence_length, embedding_dim)
+        embedding_dim_tensor = torch.zeros(embedding_dim)
+        model = LayerNormalization(
+            embedding_dim=[embedding_dim],
+            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
+            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+        )
+        onnx_file = f"{MODEL}_{opset}.onnx"
+        torch.onnx.export(
+            model,
+            args=(input),
+            f=onnx_file,
+            opset_version=opset,
+            input_names=[
+                f'{MODEL}_input',
+            ],
+            output_names=[
+                f'{MODEL}_output',
+            ],
+        )
+        model_onnx1 = onnx.load(onnx_file)
+        model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+        onnx.save(model_onnx1, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
 
-    MODEL = f'LayerNormalization3D'
-    N, C, D, H, W = 20, 5, 10, 10, 10
-    embedding_dim = [C, D, H, W]
-    embedding_dim_tensor = torch.zeros([C, D, H, W])
-    input = torch.randn(N, C, D, H, W)
-    model = LayerNormalization(
-        embedding_dim=embedding_dim,
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
-
-    ###################################################
-
-    OPSET=17
-
-    MODEL = f'LayerNormalization2D'
-    N, C, H, W = 20, 5, 10, 10
-    embedding_dim = [C, H, W]
-    embedding_dim_tensor = torch.zeros([C, H, W])
-    input = torch.randn(N, C, H, W)
-    model = LayerNormalization(
-        embedding_dim=embedding_dim,
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
-
-    MODEL = f'LayerNormalization1D'
-    batch, sentence_length, embedding_dim = 20, 5, 10
-    input = torch.randn(batch, sentence_length, embedding_dim)
-    embedding_dim_tensor = torch.zeros(embedding_dim)
-    model = LayerNormalization(
-        embedding_dim=[embedding_dim],
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
-
-    MODEL = f'LayerNormalization3D'
-    N, C, D, H, W = 20, 5, 10, 10, 10
-    embedding_dim = [C, D, H, W]
-    embedding_dim_tensor = torch.zeros([C, D, H, W])
-    input = torch.randn(N, C, D, H, W)
-    model = LayerNormalization(
-        embedding_dim=embedding_dim,
-        weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-        bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
-    )
-    onnx_file = f"{MODEL}_{OPSET}.onnx"
-    torch.onnx.export(
-        model,
-        args=(input),
-        f=onnx_file,
-        opset_version=OPSET,
-        input_names=[
-            f'{MODEL}_input',
-        ],
-        output_names=[
-            f'{MODEL}_output',
-        ],
-        do_constant_folding=False,
-    )
-    model_onnx1 = onnx.load(onnx_file)
-    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
-    onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+        MODEL = f'LayerNormalization3D'
+        N, C, D, H, W = 20, 5, 10, 10, 10
+        embedding_dim = [C, D, H, W]
+        embedding_dim_tensor = torch.zeros([C, D, H, W])
+        input = torch.randn(N, C, D, H, W)
+        model = LayerNormalization(
+            embedding_dim=embedding_dim,
+            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
+            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+        )
+        onnx_file = f"{MODEL}_{opset}.onnx"
+        torch.onnx.export(
+            model,
+            args=(input),
+            f=onnx_file,
+            opset_version=opset,
+            input_names=[
+                f'{MODEL}_input',
+            ],
+            output_names=[
+                f'{MODEL}_output',
+            ],
+        )
+        model_onnx1 = onnx.load(onnx_file)
+        model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+        onnx.save(model_onnx1, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
