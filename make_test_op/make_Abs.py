@@ -54,11 +54,11 @@ if __name__ == "__main__":
     onnx.save(model_simp, onnx_file)
 
     MODEL = f'Abs'
-    model = Model2()
+    model = Model1()
     onnx_file = f"{MODEL}_{OPSET}.onnx"
     torch.onnx.export(
         model,
-        args=(),
+        args=(x),
         f=onnx_file,
         opset_version=OPSET,
         input_names=[
