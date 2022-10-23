@@ -415,7 +415,7 @@ Please don't post such low level questions as issues.
   |11|NonMaxSuppression||
 
 ## Supported layers
-- :heavy_check_mark:: Supported, **Help wanted**: Pull Request are welcome
+- :heavy_check_mark:: Supported　**Help wanted**: Pull Request are welcome
   |OP|Status|
   |:-|:-:|
   |Abs|:heavy_check_mark:|
@@ -470,9 +470,12 @@ Please don't post such low level questions as issues.
   |GreaterOrEqual|:heavy_check_mark:|
   |Greater|:heavy_check_mark:|
   |GridSample|:heavy_check_mark:|
+  |GRU|**Help wanted**|
+  |Hardmax|**Help wanted**|
   |HardSigmoid|:heavy_check_mark:|
   |HardSwish|:heavy_check_mark:|
   |Identity|:heavy_check_mark:|
+  |If|**Help wanted**|
   |Input|:heavy_check_mark:|
   |InstanceNormalization|:heavy_check_mark:|
   |IsInf|:heavy_check_mark:|
@@ -488,24 +491,33 @@ Please don't post such low level questions as issues.
   |LRN|:heavy_check_mark:|
   |LSTM|**Help wanted**|
   |MatMul|:heavy_check_mark:|
+  |MatMulInteger|**Help wanted**|
   |MaxPool|:heavy_check_mark:|
   |Max|:heavy_check_mark:|
+  |MaxRoiPool|**Help wanted**|
   |MaxUnpool|:heavy_check_mark:|
   |Mean|:heavy_check_mark:|
   |MeanVarianceNormalization|:heavy_check_mark:|
+  |MelWeightMatrix|**Help wanted**|
   |Min|:heavy_check_mark:|
   |Mish|:heavy_check_mark:|
   |Mod|:heavy_check_mark:|
   |Mul|:heavy_check_mark:|
+  |Multinomial|**Help wanted**|
   |Neg|:heavy_check_mark:|
   |NonMaxSuppression|:heavy_check_mark:|
   |NonZero|:heavy_check_mark:|
+  |Optional|**Help wanted**|
+  |OptionalGetElement|**Help wanted**|
+  |OptionalHasElement|**Help wanted**|
   |Not|:heavy_check_mark:|
   |OneHot|:heavy_check_mark:|
   |Or|:heavy_check_mark:|
   |Pad|:heavy_check_mark:|
   |Pow|:heavy_check_mark:|
   |PRelu|:heavy_check_mark:|
+  |QLinearConv|**Help wanted**|
+  |QLinearMatMul|**Help wanted**|
   |QuantizeLinear|:heavy_check_mark:|
   |RandomNormalLike|:heavy_check_mark:|
   |RandomNormal|:heavy_check_mark:|
@@ -515,6 +527,7 @@ Please don't post such low level questions as issues.
   |Reciprocal|:heavy_check_mark:|
   |ReduceL1|:heavy_check_mark:|
   |ReduceL2|:heavy_check_mark:|
+  |ReduceLogSum|**Help wanted**|
   |ReduceLogSumExp|:heavy_check_mark:|
   |ReduceMax|:heavy_check_mark:|
   |ReduceMean|:heavy_check_mark:|
@@ -525,10 +538,20 @@ Please don't post such low level questions as issues.
   |Relu|:heavy_check_mark:|
   |Reshape|:heavy_check_mark:|
   |Resize|:heavy_check_mark:|
+  |ReverseSequence|**Help wanted**|
+  |RNN|**Help wanted**|
+  |RoiAlign|**Help wanted**|
   |Round|:heavy_check_mark:|
   |ScatterElements|:heavy_check_mark:|
   |ScatterND|:heavy_check_mark:|
+  |Scan|**Help wanted**|
   |Selu|:heavy_check_mark:|
+  |SequenceAt|**Help wanted**|
+  |SequenceConstruct|**Help wanted**|
+  |SequenceEmpty|**Help wanted**|
+  |SequenceErase|**Help wanted**|
+  |SequenceInsert|**Help wanted**|
+  |SequenceLength|**Help wanted**|
   |Shape|:heavy_check_mark:|
   |Shrink|:heavy_check_mark:|
   |Sigmoid|:heavy_check_mark:|
@@ -545,14 +568,19 @@ Please don't post such low level questions as issues.
   |SplitToSequence|:heavy_check_mark:|
   |Sqrt|:heavy_check_mark:|
   |Squeeze|:heavy_check_mark:|
+  |STFT|**Help wanted**|
+  |StringNormalizer|**Help wanted**|
   |Sub|:heavy_check_mark:|
   |Sum|:heavy_check_mark:|
   |Tanh|:heavy_check_mark:|
   |Tan|:heavy_check_mark:|
+  |TfIdfVectorizer|**Help wanted**|
   |ThresholdedRelu|:heavy_check_mark:|
   |Tile|:heavy_check_mark:|
   |TopK|:heavy_check_mark:|
   |Transpose|:heavy_check_mark:|
+  |Trilu|**Help wanted**|
+  |Unique|**Help wanted**|
   |Unsqueeze|:heavy_check_mark:|
   |Where|:heavy_check_mark:|
   |Xor|:heavy_check_mark:|
