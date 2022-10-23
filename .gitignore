@@ -11,6 +11,7 @@ package-lock.json
 *.gif
 
 *.onnx
+!make_test_op/ops/*.onnx
 *.tflite
 *.npy
 *.txt
