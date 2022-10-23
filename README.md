@@ -72,7 +72,12 @@ ghcr.io/pinto0309/onnx2tf:1.0.18
 
 or
 
-$ pip install -U onnx2tf
+$ pip install -U onnx \
+&& pip install -U nvidia-pyindex \
+&& pip install -U onnx-graphsurgeon \
+&& pip install -U onnxsim \
+&& pip install -U simple_onnx_processing_tools \
+&& pip install -U onnx2tf
 
 or
 
