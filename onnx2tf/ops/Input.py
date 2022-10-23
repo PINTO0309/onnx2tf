@@ -134,7 +134,7 @@ def make_node(
                         shape[2] if isinstance(shape[2], int) else None,
                         shape[3] if isinstance(shape[3], int) else None,
                         shape[4] if isinstance(shape[4], int) else None,
-                        shape[1] if isinstance(shape[5], int) else None,
+                        shape[1] if isinstance(shape[1], int) else None,
                     ],
                     batch_size=shape[0] if isinstance(shape[0], int) else None,
                     name=graph_input_name,
