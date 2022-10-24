@@ -553,9 +553,9 @@ Please don't post such low level questions as issues.
   |ScatterND|:heavy_check_mark:|
   |Scan|**Help wanted**|
   |Selu|:heavy_check_mark:|
-  |SequenceAt|**Help wanted**|
-  |SequenceConstruct|**Help wanted**|
-  |SequenceEmpty|**Help wanted**|
+  |SequenceAt|:heavy_check_mark:|
+  |SequenceConstruct|:heavy_check_mark:|
+  |SequenceEmpty|:heavy_check_mark:|
   |SequenceErase|**Help wanted**|
   |SequenceInsert|**Help wanted**|
   |SequenceLength|**Help wanted**|
