@@ -455,6 +455,7 @@ Please don't post such low level questions as issues.
   |CumSum|:heavy_check_mark:|
   |DepthToSpace|:heavy_check_mark:|
   |Det|:heavy_check_mark:|
+  |DFT|**Help wanted**|
   |Div|:heavy_check_mark:|
   |Dropout|:heavy_check_mark:|
   |DynamicQuantizeLinear|:heavy_check_mark:|
