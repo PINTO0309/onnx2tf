@@ -69,7 +69,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.19
+ghcr.io/pinto0309/onnx2tf:1.0.20
 
 or
 
@@ -557,9 +557,9 @@ Please don't post such low level questions as issues.
   |SequenceAt|:heavy_check_mark:|
   |SequenceConstruct|:heavy_check_mark:|
   |SequenceEmpty|:heavy_check_mark:|
-  |SequenceErase|**Help wanted**|
-  |SequenceInsert|**Help wanted**|
-  |SequenceLength|**Help wanted**|
+  |SequenceErase|:heavy_check_mark:|
+  |SequenceInsert|:heavy_check_mark:|
+  |SequenceLength|:heavy_check_mark:|
   |Shape|:heavy_check_mark:|
   |Shrink|:heavy_check_mark:|
   |Sigmoid|:heavy_check_mark:|
