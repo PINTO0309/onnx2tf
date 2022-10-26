@@ -126,103 +126,116 @@ def make_node(
 
     # Generation of TF OP
 
-    # first of all, get the input tensor shape
-    is_axes_negative = tf.less(axes, tf.zeros_like(axes))
-    axes = tf.where(is_axes_negative, axes + tf.cast(input_tensor_rank, axes.dtype), axes)
+    if None not in input_tensor_shape:
+        # first of all, get the input tensor shape
+        is_axes_negative = tf.less(axes, tf.zeros_like(axes))
+        axes = tf.where(is_axes_negative, axes + tf.cast(input_tensor_rank, axes.dtype), axes)
 
-    # expand a dimension of 1 at the end
-    sparse_indices = tf.cast(tf.expand_dims(axes, -1), tf.int64)
+        # expand a dimension of 1 at the end
+        sparse_indices = tf.cast(tf.expand_dims(axes, -1), tf.int64)
 
-    # build the indexed dimension sizes as sparse_shape
-    sparse_shape = tf.gather_nd(params=input_tensor_shape, indices=sparse_indices)
-    sparse_shape = tf.cast(sparse_shape, tf.int64)
+        # build the indexed dimension sizes as sparse_shape
+        sparse_shape = tf.gather_nd(
+            params=input_tensor_shape,
+            indices=sparse_indices,
+        )
+        sparse_shape = tf.cast(sparse_shape, tf.int64)
 
-    # take care of starts, ends that are larger than the dim size.
-    starts_min = tf.minimum(starts, sparse_shape)
-    ends_min = tf.minimum(ends, sparse_shape)
+        # take care of starts, ends that are larger than the dim size.
+        starts_min = tf.minimum(starts, sparse_shape)
+        ends_min = tf.minimum(ends, sparse_shape)
 
-    # need to densify everything for the inputs to slice
-    # the output shape is the input_tensor rank
-    output_shape = tf.reshape(input_tensor_rank, [1])
-    output_shape = tf.cast(output_shape, tf.int64)
+        # need to densify everything for the inputs to slice
+        # the output shape is the input_tensor rank
+        output_shape = tf.reshape(input_tensor_rank, [1])
+        output_shape = tf.cast(output_shape, tf.int64)
 
-    def tf_SparseTensor(sparse_indices, pos, sparse_shape, start_or_end):
-        dense = None
-        # take care of starts, ends that are negative
-        if start_or_end == 'start':
-            is_starts_negative = tf.less(pos, tf.zeros_like(pos))
-            final = tf.where(is_starts_negative, pos + sparse_shape, pos)
-            sparse_tensor = tf.sparse.reorder(
+        def tf_SparseTensor(sparse_indices, pos, sparse_shape, start_or_end):
+            dense = None
+            # take care of starts, ends that are negative
+            if start_or_end == 'start':
+                is_starts_negative = tf.less(pos, tf.zeros_like(pos))
+                final = tf.where(is_starts_negative, pos + sparse_shape, pos)
+                sparse_tensor = tf.sparse.reorder(
+                    sp_input=tf.sparse.SparseTensor(
+                        indices=sparse_indices,
+                        values=final,
+                        dense_shape=sparse_shape,
+                    )
+                )
+                dense = tf.sparse.to_dense(sparse_tensor)
+            elif start_or_end == 'end':
+                is_ends_negative = tf.less(pos, tf.zeros_like(pos))
+                final = tf.where(is_ends_negative, pos + sparse_shape, pos)
+                sparse_tensor = tf.sparse.reorder(
+                    sp_input=tf.sparse.SparseTensor(
+                        indices=sparse_indices,
+                        values=final,
+                        dense_shape=sparse_shape,
+                    )
+                )
+                dense_ends = tf.sparse.to_dense(
+                    sparse_tensor,
+                    default_value=tf.constant(-1, dtype=dense_begins.dtype)
+                )
+                dense = tf.where(
+                    tf.equal(dense_ends, tf.constant(-1, dtype=dense_begins.dtype)),
+                    input_tensor_shape,
+                    dense_ends,
+                )
+            return dense
+
+        # create dense tensor, pad 0 as default begins
+        dense_begins = Lambda(
+            tf_SparseTensor,
+            arguments={
+                'pos': starts_min,
+                'sparse_shape': output_shape,
+                'start_or_end': 'start',
+            }
+        )(sparse_indices)
+        # create dense tensor, pad -1 for next step
+        dense_ends = Lambda(
+            tf_SparseTensor,
+            arguments={
+                'pos': ends_min,
+                'sparse_shape': output_shape,
+                'start_or_end': 'end'
+            }
+        )(sparse_indices)
+
+        # create dense tensor for steps if not already so
+        if steps is not None:
+            dense_steps = tf.sparse.reorder(
                 sp_input=tf.sparse.SparseTensor(
-                    indices=sparse_indices,
-                    values=final,
-                    dense_shape=sparse_shape,
+                    sparse_indices,
+                    steps,
+                    output_shape,
                 )
             )
-            dense = tf.sparse.to_dense(sparse_tensor)
-        elif start_or_end == 'end':
-            is_ends_negative = tf.less(pos, tf.zeros_like(pos))
-            final = tf.where(is_ends_negative, pos + sparse_shape, pos)
-            sparse_tensor = tf.sparse.reorder(
-                sp_input=tf.sparse.SparseTensor(
-                    indices=sparse_indices,
-                    values=final,
-                    dense_shape=sparse_shape,
-                )
+            dense_steps = tf.sparse.to_dense(
+                dense_steps,
+                default_value=tf.constant(1, dtype=steps.dtype)
             )
-            dense_ends = tf.sparse.to_dense(
-                sparse_tensor,
-                default_value=tf.constant(-1, dtype=dense_begins.dtype)
-            )
-            dense = tf.where(
-                tf.equal(dense_ends, tf.constant(-1, dtype=dense_begins.dtype)),
-                input_tensor_shape,
-                dense_ends,
-            )
-        return dense
+        else:
+            dense_steps = tf.ones(input_tensor_shape, ends.dtype)
 
-    # create dense tensor, pad 0 as default begins
-    dense_begins = Lambda(
-        tf_SparseTensor,
-        arguments={
-            'pos': starts_min,
-            'sparse_shape': output_shape,
-            'start_or_end': 'start',
-        }
-    )(sparse_indices)
-    # create dense tensor, pad -1 for next step
-    dense_ends = Lambda(
-        tf_SparseTensor,
-        arguments={
-            'pos': ends_min,
-            'sparse_shape': output_shape,
-            'start_or_end': 'end'
-        }
-    )(sparse_indices)
-
-    # create dense tensor for steps if not already so
-    if steps is not None:
-        dense_steps = tf.sparse.reorder(
-            sp_input=tf.sparse.SparseTensor(
-                sparse_indices,
-                steps,
-                output_shape,
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=dense_begins,
+                end=dense_ends,
+                strides=tf.cast(dense_steps, dtype=dense_begins.dtype),
             )
-        )
-        dense_steps = tf.sparse.to_dense(
-            dense_steps,
-            default_value=tf.constant(1, dtype=steps.dtype)
-        )
     else:
-        dense_steps = tf.ones(input_tensor_shape, ends.dtype)
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.strided_slice(
-            input_=input_tensor,
-            begin=dense_begins,
-            end=dense_ends,
-            strides=tf.cast(dense_steps, dtype=dense_begins.dtype),
-        )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=starts,
+                end=ends,
+                strides=steps,
+                name=graph_node.name,
+            )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
