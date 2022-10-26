@@ -10,7 +10,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
