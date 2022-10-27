@@ -68,6 +68,14 @@ def make_node(
         'dtype': dtype,
     }
 
+    # Param replacement
+    axis = replace_parameter(
+        value_before_replacement=axis,
+        param_target='attributes',
+        param_name='axis',
+        **kwargs,
+    )
+
     # Generation of TF OP
     cal_shape = None
     if axis == 0:
@@ -83,12 +91,6 @@ def make_node(
         value_before_replacement=input_tensor,
         param_target='inputs',
         param_name=graph_node.inputs[0].name,
-        **kwargs,
-    )
-    cal_shape = replace_parameter(
-        value_before_replacement=cal_shape,
-        param_target='attributes',
-        param_name='axis',
         **kwargs,
     )
 

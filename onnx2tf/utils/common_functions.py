@@ -57,7 +57,8 @@ def replace_parameter(
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == param_target \
-            and op_rep_param['param_name'] == param_name:
+            and op_rep_param['param_name'] == param_name \
+            and 'values' in op_rep_param:
             replace_value = op_rep_param.get('values', value_before_replacement)
             if isinstance(value_before_replacement, np.ndarray):
                 replace_value = np.asarray(
