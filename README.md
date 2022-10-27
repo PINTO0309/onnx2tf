@@ -606,7 +606,7 @@ Please don't post such low level questions as issues.
   ![model_float32 tflite](https://user-images.githubusercontent.com/33194443/196831377-891dfc49-6cdb-41e0-a723-8f0087817ddf.svg)
 
 - MoveNet MultiPose ONNX to TFLite Float32 (`Cast` and `TrueDiv` standard OP support will be supported in the future)
-  https://github.com/PINTO0309/onnx2tf/releases/download/1.0.15/movenet_multipose_lightning_192x256_p6_nopost.onnx
+  https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
   ![image](https://user-images.githubusercontent.com/33194443/198161008-09ae78d4-066e-4a49-86ac-7d329026c8ef.png)
 
 ## Related tools
