@@ -608,7 +608,7 @@ Please don't post such low level questions as issues.
 
 - MoveNet MultiPose ONNX to TFLite Float32 (`Cast` and `TrueDiv` standard OP support will be supported in the future)
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
-  ![image](https://user-images.githubusercontent.com/33194443/198161008-09ae78d4-066e-4a49-86ac-7d329026c8ef.png)
+  ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
