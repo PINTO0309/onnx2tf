@@ -94,13 +94,18 @@ def make_node(
         const_or_var_2=input_tensor_2,
     )
 
+    # TFLite does not support TrueDiv(INT), so TrueDiv is avoided if possible
+    x_is_integer = input_tensor_1.dtype in target_cast_dtype
+    y_is_integer = input_tensor_2.dtype in target_cast_dtype
+    xy_is_integer = x_is_integer and y_is_integer
+
     divided_tensor = tf.math.divide(
-        x=input_tensor_1,
-        y=input_tensor_2,
+        x=input_tensor_1 if not xy_is_integer else tf.cast(input_tensor_1, dtype=tf.float32),
+        y=input_tensor_2 if not xy_is_integer else tf.cast(input_tensor_2, dtype=tf.float32),
         name=graph_node.name,
     )
 
-    if dtype in target_cast_dtype:
+    if xy_is_integer and dtype in target_cast_dtype:
         divided_tensor = tf.cast(divided_tensor, dtype=dtype)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = divided_tensor

@@ -42,6 +42,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 8. Calculation error due to scaling up or down by specifying a `scale` when resizing images
 
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
+- [x] TFLite does not support `TrueDiv`(INT), so `TrueDiv` is avoided if possible.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
@@ -70,7 +71,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.25
+ghcr.io/pinto0309/onnx2tf:1.0.26
 
 or
 
