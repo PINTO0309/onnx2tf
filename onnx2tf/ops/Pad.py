@@ -95,12 +95,7 @@ def _process_pos_pads(
 
     # tf requires int32 paddings
     paddings = tf.cast(
-        x=tf.transpose(
-            a=tf.reshape(
-                tensor=paddings,
-                shape=[2, tensor_rank],
-            )
-        ),
+        x=paddings,
         dtype=tf.int32,
     )
 
@@ -143,22 +138,26 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    before_op_output_shape_trans_1 = \
-        tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_2 = \
-        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans = \
-        before_op_output_shape_trans_1 \
-        and before_op_output_shape_trans_2
+    before_op_output_shape_trans = True
+    if len(graph_node.inputs) == 1:
+        before_op_output_shape_trans_1 = \
+            tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+        before_op_output_shape_trans = \
+            before_op_output_shape_trans_1
+    elif len(graph_node.inputs) >= 2:
+        before_op_output_shape_trans_1 = \
+            tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
+        before_op_output_shape_trans_2 = \
+            tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+        before_op_output_shape_trans = \
+            before_op_output_shape_trans_1 \
+            and before_op_output_shape_trans_2
 
     input_tensor = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
-    paddings = get_constant_or_variable(
-        graph_node.inputs[1],
-        before_op_output_shape_trans,
-    )
+
     constant_value = 0
     if len(graph_node.inputs) >= 3  and graph_node.inputs[2].name != '':
         constant_value = get_constant_or_variable(
@@ -172,16 +171,25 @@ def make_node(
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
     tensor_rank = len(input_tensor.shape)
-    paddings = tf_layers_dict[paddings.name]['tf_node'] \
-        if isinstance(paddings, gs.Variable) else paddings
 
     constant_value = tf_layers_dict[constant_value.name]['tf_node'] \
         if isinstance(constant_value, gs.Variable) else constant_value
 
     # Transpose pads values
-    paddings = graph_node.inputs[1]
+    paddings = None
+    if len(graph_node.inputs) >= 2:
+        paddings = graph_node.inputs[1]
+    paddings = graph_node.attrs.get('pads', paddings)
+    if isinstance(paddings, list):
+        paddings = np.asarray(paddings)
+
+    values = None
     if hasattr(paddings, 'values'):
         values = paddings.values
+    elif isinstance(paddings, np.ndarray):
+        values = paddings
+
+    if values is not None:
         paddings = values.reshape([2, tensor_rank]).transpose()
         paddings_rank = paddings.shape[0]
         if paddings_rank > 2:
