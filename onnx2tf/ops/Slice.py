@@ -110,8 +110,14 @@ def make_node(
         steps = tf.constant(steps, dtype=NUMPY_DTYPES_TO_TF_DTYPES[steps.dtype])
 
     axes = graph_node.attrs.get('axes', axes)
+    if isinstance(axes, list):
+        axes = np.asarray(axes)
     starts = graph_node.attrs.get('starts', starts)
+    if isinstance(starts, list):
+        starts = np.asarray(starts)
     ends = graph_node.attrs.get('ends', ends)
+    if isinstance(ends, list):
+        ends = np.asarray(ends)
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -128,8 +134,11 @@ def make_node(
 
     if None not in input_tensor_shape:
         # first of all, get the input tensor shape
-        is_axes_negative = tf.less(axes, tf.zeros_like(axes))
-        axes = tf.where(is_axes_negative, axes + tf.cast(input_tensor_rank, axes.dtype), axes)
+        if axes is not None:
+            is_axes_negative = tf.less(axes, tf.zeros_like(axes))
+            axes = tf.where(is_axes_negative, axes + tf.cast(input_tensor_rank, axes.dtype), axes)
+        else:
+            axes = [i for i in range(input_tensor_rank)]
 
         # expand a dimension of 1 at the end
         sparse_indices = tf.cast(tf.expand_dims(axes, -1), tf.int64)
@@ -218,7 +227,7 @@ def make_node(
                 default_value=tf.constant(1, dtype=steps.dtype)
             )
         else:
-            dense_steps = tf.ones(input_tensor_shape, ends.dtype)
+            dense_steps = tf.ones(input_tensor_rank, ends.dtype)
 
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.strided_slice(
