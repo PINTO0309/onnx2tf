@@ -247,12 +247,14 @@ def convert(
                 print('')
                 print(f'{Color.REVERCE}Model optimizing started{Color.RESET}', '=' * 60)
             for _ in range(3):
+                append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
+                    if overwrite_input_shape is not None else []
                 result = subprocess.check_output(
                     [
                         'onnxsim',
                         f'{input_onnx_file_path}',
                         f'{input_onnx_file_path}'
-                    ] + list(['--overwrite-input-shape'] + overwrite_input_shape) if overwrite_input_shape is not None else [],
+                    ] + append_param,
                     stderr=subprocess.PIPE
                 ).decode('utf-8')
                 if not non_verbose:
