@@ -63,7 +63,7 @@ def make_node(
     x_rank = spatial_size + 2
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    is_known_shape = input_tensor.shape.is_fully_defined()
+    is_known_shape = None not in input_tensor.shape
 
     pads = graph_node.attrs.get('auto_pad', 'NOTSET')
     if pads == 'NOTSET':
@@ -76,6 +76,7 @@ def make_node(
                 strides=strides,
                 dilations=dilations,
                 padding='SAME_UPPER',
+                is_known_shape=is_known_shape,
             )
             if pads == same_paddings:
                 pads = 'SAME_UPPER'
