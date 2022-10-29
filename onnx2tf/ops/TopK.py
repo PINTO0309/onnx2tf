@@ -58,6 +58,8 @@ def make_node(
         if isinstance(X, gs.Variable) else X
     k_tensor = tf_layers_dict[K.name]['tf_node'] \
         if isinstance(K, gs.Variable) else K
+    k_tensor = int(k_tensor) \
+        if isinstance(k_tensor, np.ndarray) else tf.cast(k_tensor, dtype=tf.int32)
     tensor_rank = len(input_tensor.shape)
 
     axis = graph_node.attrs.get('axis', -1)
@@ -97,7 +99,7 @@ def make_node(
         topked_values, topked_indices = \
             tf.math.top_k(
                 input=input_tensor,
-                k=int(k_tensor),
+                k=k_tensor,
                 sorted=sorted,
                 name=graph_node.name,
             )
@@ -105,7 +107,7 @@ def make_node(
         topked_values, topked_indices = \
             tf.math.top_k(
                 input=tf.negative(input_tensor),
-                k=int(k_tensor),
+                k=k_tensor,
                 sorted=sorted,
                 name=graph_node.name,
             )
@@ -134,7 +136,7 @@ def make_node(
                 'tf_op_type': tf.math.top_k,
                 'tf_inputs': {
                     'input': input_tensor,
-                    'k': int(k_tensor),
+                    'k': k_tensor,
                     'sorted': sorted,
                 },
                 'tf_outputs': {
@@ -148,7 +150,7 @@ def make_node(
                 'tf_op_type': tf.math.top_k,
                 'tf_inputs': {
                     'input': input_tensor,
-                    'k': int(k_tensor),
+                    'k': k_tensor,
                     'sorted': sorted,
                 },
                 'tf_outputs': {
