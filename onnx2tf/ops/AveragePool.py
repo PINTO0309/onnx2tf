@@ -2,7 +2,6 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-import tensorflow as tf
 import onnx_graphsurgeon as gs
 from tensorflow.python.keras.layers import (
     AveragePooling1D,
