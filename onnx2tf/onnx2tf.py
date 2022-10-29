@@ -2,8 +2,8 @@
 
 import os
 import re
-__path__ = os.path.dirname(__file__)
-with open(os.path.join(__path__, '__init__.py')) as f:
+__path__ = (os.path.dirname(__file__), )
+with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
     __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
 import sys
