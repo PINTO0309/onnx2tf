@@ -48,7 +48,7 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     tensor_rank = len(input_tensor.shape)
 
-    axis = graph_node.attrs.get('axis', tensor_rank)
+    axis = graph_node.attrs.get('axis', tensor_rank - 1)
     axis = convert_axis(
         axis=axis,
         tensor_rank=tensor_rank,

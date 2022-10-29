@@ -78,6 +78,12 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
+    if len(graph_node.outputs) >= 2:
+        tf_layers_dict[graph_node.outputs[1].name] = {
+            'optype': graph_node.op,
+            'shape': shape,
+            'dtype': dtype,
+        }
 
     # Generation of TF OP
     dropout_result = None
