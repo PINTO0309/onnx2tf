@@ -63,7 +63,7 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.add_n(
-            input_tensor=values,
+            inputs=values,
             name=graph_node.name,
         )
 
