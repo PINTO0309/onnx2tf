@@ -71,9 +71,11 @@ def make_node(
 
     # If Reshape's shape contains zeros, get the deformed shape from the output shape
     if isinstance(reshape_shape, list) and reshape_shape.count(0) > 0:
-        reshape_shape = shape
+        new_shape = [-1 if isinstance(s, str) else int(s) for s in shape]
+        reshape_shape = new_shape
     elif isinstance(reshape_shape, np.ndarray) and np.count_nonzero(reshape_shape == 0) > 0:
-        reshape_shape = shape
+        new_shape = [-1 if isinstance(s, str) else int(s) for s in shape]
+        reshape_shape = new_shape
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

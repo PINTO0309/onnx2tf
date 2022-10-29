@@ -97,7 +97,13 @@ def make_node(
         )
         tf_layers_dict[graph_node_output.name]['tf_node'] = dropout_result
     elif opset < 12:
-        tf_layers_dict[graph_node_output.name]['tf_node'] = data
+        return_mask = len(graph_node.outputs) >= 2 # if there are 2 outputs, mask is requested
+        if return_mask:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = data
+            mask = tf.ones(data.shape, dtype=tf.bool)
+            tf_layers_dict[graph_node.outputs[1].name]['tf_node'] = mask
+        else:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = data
         dropout_result = data
     else:
         # ratio and training_mode are optional and passed as inputs
