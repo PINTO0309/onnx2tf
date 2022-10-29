@@ -51,14 +51,15 @@ def make_node(
 
     # the default value is 0, float32
     constant_tensor = None
-    if "value" in graph_node_input.attrs:
-        attr_value = graph_node_input.attrs['value']
-        value = numpy_helper.to_array(attr_value)
+    if "value" in graph_node.attrs:
+        attr_value = graph_node.attrs['value']
+        value = attr_value.values
         constant_tensor = value[0]
     else:
         constant_tensor = 0.
 
-    cons = tf.constant(
+    cons = tf.fill(
+        dims=shape,
         value=constant_tensor,
         name=graph_node.name,
     )
