@@ -58,10 +58,6 @@ def make_node(
     else:
         constant_tensor = 0.
 
-    # cons = tf.constant(
-    #     value=tf.reshape(tensor=constant_tensor, shape=shape),
-    #     name=graph_node.name,
-    # )
     cons = tf.fill(
         dims=shape,
         value=constant_tensor,
