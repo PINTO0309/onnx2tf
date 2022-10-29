@@ -513,6 +513,16 @@ def channel_transpose(
         and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
         and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
         const_or_var_2 = const_or_var_2.squeeze()
+    elif isinstance(const_or_var_2, tf.Tensor) \
+        and len(const_or_var_2.shape) > 1 \
+        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
+        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
+        const_or_var_2 = tf.squeeze(const_or_var_2)
+    elif tf.keras.backend.is_keras_tensor(const_or_var_2) \
+        and len(const_or_var_2.shape) > 1 \
+        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
+        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
+        const_or_var_2 = tf.squeeze(const_or_var_2)
     return const_or_var_2
 
 
