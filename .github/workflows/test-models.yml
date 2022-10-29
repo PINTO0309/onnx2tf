@@ -1,0 +1,24 @@
+name: Model Convert Test
+
+on:
+  push:
+    branches: [ main, test_dev ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  conversion-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout onnx2tf
+      uses: actions/checkout@v3
+    - uses: actions/setup-python@v3
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        pip install onnx==1.12.0 tensorflow==2.10.0 nvidia-pyindex onnx-graphsurgeon onnxsim
+        pip install -e .
+    - name: Run Model Convert Tests
+      run: |
+        python tests/test_modelzoo.py -m models -o wiki -v
