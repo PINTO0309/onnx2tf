@@ -104,7 +104,6 @@ def make_node(
         argmaxed_tensor = tf.math.argmax(
             input=reversed_tensor,
             axis=axis,
-            # output_type=ONNX_DTYPES_TO_TF_DTYPES[dtype],
             output_type=dtype,
             name=f'{graph_node.name}_argmax',
         )
@@ -134,7 +133,6 @@ def make_node(
         final_tensor = alternative_fused_argmax(
             input_tensor=reversed_tensor,
             axis=axis,
-            # output_type=ONNX_DTYPES_TO_TF_DTYPES[dtype],
             output_type=dtype,
             keepdims=keepdims,
             replace_argmax_to_fused_argmax_and_indicies_is_int64=replace_argmax_to_fused_argmax_and_indicies_is_int64,
