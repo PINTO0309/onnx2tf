@@ -71,7 +71,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.36
+ghcr.io/pinto0309/onnx2tf:1.0.37
 
 or
 
@@ -96,7 +96,7 @@ $ onnx2tf -h
 
 usage: onnx2tf
 [-h]
--i INPUT_ONNX_FILE_PATH
+(-i INPUT_ONNX_FILE_PATH | -V)
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-nuo]
@@ -121,6 +121,9 @@ optional arguments:
 
   -i INPUT_ONNX_FILE_PATH, --input_onnx_file_path INPUT_ONNX_FILE_PATH
     Input onnx file path.
+
+  -V, --version
+    Show version and exit.
 
   -o OUTPUT_FOLDER_PATH, --output_folder_path OUTPUT_FOLDER_PATH
     Output folder path. Default: "saved_model"

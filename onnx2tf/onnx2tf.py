@@ -432,12 +432,18 @@ def convert(
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
+    iV_group = parser.add_mutually_exclusive_group(required=True)
+    iV_group.add_argument(
         '-i',
         '--input_onnx_file_path',
         type=str,
-        required=True,
         help='Input onnx file path.'
+    )
+    iV_group.add_argument(
+        '-V',
+        '--version',
+        action='store_true',
+        help='Show version and exit.'
     )
     parser.add_argument(
         '-o',
@@ -587,6 +593,11 @@ def main():
         help='Do not show all information logs. Only error logs are displayed.'
     )
     args = parser.parse_args()
+
+    # Print version
+    if args.version:
+        print(__version__)
+        sys.exit(0)
 
     # Convert
     model = convert(
