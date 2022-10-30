@@ -37,6 +37,7 @@ from argparse import ArgumentParser
 
 import importlib
 from onnx2tf.utils.colors import Color
+from sng4onnx import generate as op_name_auto_generate
 
 
 def convert(
@@ -46,6 +47,7 @@ def convert(
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
     not_use_onnxsim: Optional[bool] = False,
+    not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
@@ -93,6 +95,10 @@ def convert(
     not_use_onnxsim: Optional[bool]
         No optimization by onnx-simplifier is performed.\n
         If this option is used, the probability of a conversion error is very high.
+
+    not_use_opname_auto_generate: Optional[bool]
+        Automatic generation of each OP name in the old format ONNX file\n
+        and assignment of OP name are not performed.
 
     batch_size: Optional[int]
         Fixes the dynamic batch size to the specified numeric batch size.\n
@@ -327,6 +333,19 @@ def convert(
                 import traceback
                 traceback.print_exc()
 
+    # Automatic generation of each OP name - sng4onnx
+    if not not_use_opname_auto_generate:
+        if not non_verbose:
+            print('')
+            print(f'{Color.REVERCE}Automatic generation of each OP name started{Color.RESET}', '=' * 40)
+        op_name_auto_generate(
+            input_onnx_file_path=f'{input_onnx_file_path}',
+            output_onnx_file_path=f'{input_onnx_file_path}',
+            non_verbose=True,
+        )
+        if not non_verbose:
+            print(f'{Color.GREEN}Automatic generation of each OP name complete!{Color.RESET}')
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -546,6 +565,14 @@ def main():
             'If this option is used, the probability of a conversion error is very high.'
     )
     parser.add_argument(
+        '-nuonag',
+        '--not_use_opname_auto_generate',
+        action='store_true',
+        help=\
+            'Automatic generation of each OP name in the old format ONNX file '+
+            'and assignment of OP name are not performed.'
+    )
+    parser.add_argument(
         '-b',
         '--batch_size',
         type=int,
@@ -724,6 +751,7 @@ def main():
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
         not_use_onnxsim=args.not_use_onnxsim,
+        not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,

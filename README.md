@@ -56,6 +56,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
+- [x] Added the ability to automatically generate each OP name and assign OP names to ONNX files in the old format.
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
@@ -73,7 +74,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.39
+ghcr.io/pinto0309/onnx2tf:1.0.40
 
 or
 
@@ -103,6 +104,7 @@ usage: onnx2tf
 [-osd]
 [-oh5]
 [-nuo]
+[-nuonag]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
@@ -143,6 +145,10 @@ optional arguments:
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.
     If this option is used, the probability of a conversion error is very high.
+
+  -nuonag, --not_use_opname_auto_generate
+    Automatic generation of each OP name in the old format ONNX file
+    and assignment of OP name are not performed.
 
   -b BATCH_SIZE, --batch_size BATCH_SIZE
     Fixes the dynamic batch size to the specified numeric batch size.
@@ -258,6 +264,7 @@ convert(
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
   not_use_onnxsim: Optional[bool] = False,
+  not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
@@ -306,6 +313,10 @@ convert(
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
       If this option is used, the probability of a conversion error is very high.
+
+    not_use_opname_auto_generate: Optional[bool]
+      Automatic generation of each OP name in the old format ONNX file
+      and assignment of OP name are not performed.
 
     batch_size: Optional[int]
       Fixes the dynamic batch size to the specified numeric batch size.
