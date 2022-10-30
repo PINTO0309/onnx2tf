@@ -52,6 +52,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
+- [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 
@@ -71,7 +72,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.37
+ghcr.io/pinto0309/onnx2tf:1.0.38
 
 or
 
@@ -103,7 +104,8 @@ usage: onnx2tf
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
-[-rari64 | -rarf32]
+[-rari64 | -rarf32 | -rafi64 | -raff32]
+[-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
 [-racos]
 [-rlr]
@@ -165,12 +167,42 @@ optional arguments:
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
-    and replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+    and replace_argmax_to_reducemax_and_indicies_is_float32
+    and replace_argmax_to_fused_argmax_and_indicies_is_int64
+    and replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
 
   -rarf32, --replace_argmax_to_reducemax_and_indicies_is_float32
     Replace ArgMax with a ReduceMax. The returned indicies are float32.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
-    and replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+    and replace_argmax_to_reducemax_and_indicies_is_float32
+    and replace_argmax_to_fused_argmax_and_indicies_is_int64
+    and replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
+
+  -rafi64, --replace_argmax_to_fused_argmax_and_indicies_is_int64
+    Replace ArgMax with a Fused_ArgMax. The returned indicies are int64.
+    It improves inference speed at the cost of a small sacrifice in accuracy.
+    See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
+    Currently, only 4D tensors are supported.
+    Only one of replace_argmax_to_reducemax_and_indicies_is_int64
+    and replace_argmax_to_reducemax_and_indicies_is_float32
+    and replace_argmax_to_fused_argmax_and_indicies_is_int64
+    and replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
+
+  -raff32, --replace_argmax_to_fused_argmax_and_indicies_is_float32
+    Replace ArgMax with a Fused_ArgMax. The returned indicies are float32.
+    It improves inference speed at the cost of a small sacrifice in accuracy.
+    See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
+    Currently, only 4D tensors are supported.
+    Only one of replace_argmax_to_reducemax_and_indicies_is_int64
+    and replace_argmax_to_reducemax_and_indicies_is_float32
+    and replace_argmax_to_fused_argmax_and_indicies_is_int64
+    and replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
+
+  -fasr FUSED_ARGMAX_SCALE_RATIO, --fused_argmax_scale_ratio FUSED_ARGMAX_SCALE_RATIO
+    For Fused ArgMax.
+    Scale ratio when generating Fused ArgMax.
+    0.0 < fused_argmax_scale_ratio < 1.0
+    Default: 0.5
 
   -rasin, --replace_asin_to_pseudo_asin
     Replace Asin with a pseudo Asin.
@@ -225,6 +257,9 @@ convert(
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
+  replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
+  replace_argmax_to_fused_argmax_and_indicies_is_float32: Union[bool, NoneType] = False,
+  fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
@@ -289,14 +324,46 @@ convert(
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
       Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+      replace_argmax_to_reducemax_and_indicies_is_float32 and
+      replace_argmax_to_fused_argmax_and_indicies_is_int64 and
+      replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
       Default: False
 
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are float32.
       Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
+      replace_argmax_to_reducemax_and_indicies_is_float32 and
+      replace_argmax_to_fused_argmax_and_indicies_is_int64 and
+      replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
       Default: False
+
+    replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool]
+      Replace ArgMax with a ReduceMax. The returned indicies are int64.
+      It improves inference speed at the cost of a small sacrifice in accuracy.
+      See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
+      Currently, only 4D tensors are supported.
+      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
+      replace_argmax_to_reducemax_and_indicies_is_float32 and
+      replace_argmax_to_fused_argmax_and_indicies_is_int64 and
+      replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
+      Default: False
+
+    replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool]
+      Replace ArgMax with a ReduceMax. The returned indicies are float32.
+      It improves inference speed at the cost of a small sacrifice in accuracy.
+      See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
+      Currently, only 4D tensors are supported.
+      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
+      replace_argmax_to_reducemax_and_indicies_is_float32 and
+      replace_argmax_to_fused_argmax_and_indicies_is_int64 and
+      replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.
+      Default: False
+
+    fused_argmax_scale_ratio: Optional[float]
+      For Fused ArgMax.
+      Scale ratio when generating Fused ArgMax.
+      0.0 < fused_argmax_scale_ratio < 1.0
+      Default: 0.5
 
     replace_asin_to_pseudo_asin: Optional[bool]
       Replace Asin with a pseudo Asin.

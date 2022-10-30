@@ -7,11 +7,13 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     convert_axis,
     alternative_argmax,
+    alternative_fused_argmax,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -49,6 +51,12 @@ def make_node(
         kwargs['replace_argmax_to_reducemax_and_indicies_is_int64']
     replace_argmax_to_reducemax_and_indicies_is_float32 = \
         kwargs['replace_argmax_to_reducemax_and_indicies_is_float32']
+    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
+    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    fused_argmax_scale_ratio = \
+        kwargs['fused_argmax_scale_ratio']
 
     axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
@@ -59,7 +67,7 @@ def make_node(
     )
 
     # 0: False, 1: True
-    keepdims = bool(graph_node.attrs.get('keepdims', 0))
+    keepdims = bool(graph_node.attrs.get('keepdims', 1))
 
     # 0: False, 1: True
     select_last_index = bool(graph_node.attrs.get('select_last_index', 0))
@@ -90,7 +98,9 @@ def make_node(
     final_tensor = None
     tf_op_type = None
     if not replace_argmax_to_reducemax_and_indicies_is_int64 \
-        and not replace_argmax_to_reducemax_and_indicies_is_float32:
+        and not replace_argmax_to_reducemax_and_indicies_is_float32 \
+        and not replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        and not replace_argmax_to_fused_argmax_and_indicies_is_float32:
         argmaxed_tensor = tf.math.argmax(
             input=reversed_tensor,
             axis=axis,
@@ -107,7 +117,8 @@ def make_node(
         else:
             final_tensor = argmaxed_tensor
         tf_op_type = tf.math.argmax
-    else:
+    elif replace_argmax_to_reducemax_and_indicies_is_int64 \
+        or replace_argmax_to_reducemax_and_indicies_is_float32:
         final_tensor = alternative_argmax(
             input_tensor=reversed_tensor,
             axis=axis,
@@ -117,6 +128,18 @@ def make_node(
             replace_argmax_to_reducemax_and_indicies_is_float32=replace_argmax_to_reducemax_and_indicies_is_float32,
         )
         tf_op_type = 'alternative_argmax'
+    elif replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indicies_is_float32:
+        final_tensor = alternative_fused_argmax(
+            input_tensor=reversed_tensor,
+            axis=axis,
+            output_type=dtype,
+            keepdims=keepdims,
+            replace_argmax_to_fused_argmax_and_indicies_is_int64=replace_argmax_to_fused_argmax_and_indicies_is_int64,
+            replace_argmax_to_fused_argmax_and_indicies_is_float32=replace_argmax_to_fused_argmax_and_indicies_is_float32,
+            fused_argmax_scale_ratio=fused_argmax_scale_ratio,
+        )
+        tf_op_type = 'alternative_fused_argmax'
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = final_tensor
 

@@ -50,6 +50,9 @@ def convert(
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
+    replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
+    replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool] = False,
+    fused_argmax_scale_ratio: Optional[float] = 0.5,
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
@@ -113,14 +116,46 @@ def convert(
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
         Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
+        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
         Default: False
 
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are float32.\n
         Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
+        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
         Default: False
+
+    replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
+        It improves inference speed at the cost of a small sacrifice in accuracy.\n
+        See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
+        Currently, only 4D tensors are supported.\n
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
+        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+        Default: False
+
+    replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indicies are float32.\n
+        It improves inference speed at the cost of a small sacrifice in accuracy.\n
+        See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
+        Currently, only 4D tensors are supported.\n
+        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
+        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+        Default: False
+
+    fused_argmax_scale_ratio: Optional[float]
+        For Fused ArgMax.\n
+        Scale ratio when generating Fused ArgMax.\n
+        0.0 < fused_argmax_scale_ratio < 1.0\n
+        Default: 0.5
 
     replace_asin_to_pseudo_asin: Optional[bool]
         Replace Asin with a pseudo Asin.
@@ -208,12 +243,30 @@ def convert(
 
     # replace_argmax_to_reducemax_and_indicies_is_int64
     # replace_argmax_to_reducemax_and_indicies_is_float32
-    if replace_argmax_to_reducemax_and_indicies_is_int64 \
-        and replace_argmax_to_reducemax_and_indicies_is_float32:
+    # replace_argmax_to_fused_argmax_and_indicies_is_int64
+    # replace_argmax_to_fused_argmax_and_indicies_is_float32
+    ra_option_list = [
+        replace_argmax_to_reducemax_and_indicies_is_int64,
+        replace_argmax_to_reducemax_and_indicies_is_float32,
+        replace_argmax_to_fused_argmax_and_indicies_is_int64,
+        replace_argmax_to_fused_argmax_and_indicies_is_float32,
+    ]
+    if ra_option_list.count(True) > 1:
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
             f'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and ' +
-            f'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+            f'replace_argmax_to_reducemax_and_indicies_is_float32 and ' +
+            f'replace_argmax_to_fused_argmax_and_indicies_is_int64 and ' +
+            f'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+        )
+        sys.exit(1)
+
+    # fused_argmax_scale_ratio
+    if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio < 1.0):
+        print(
+            f'fused_argmax_scale_ratio must be specified in the range '+
+            f'0.0 < fused_argmax_scale_ratio < 1.0. '+
+            f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
         )
         sys.exit(1)
 
@@ -291,6 +344,9 @@ def convert(
         'non_verbose': non_verbose,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
+        'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
+        'replace_argmax_to_fused_argmax_and_indicies_is_float32': replace_argmax_to_fused_argmax_and_indicies_is_float32,
+        'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
@@ -515,7 +571,9 @@ def main():
         help=\
             'Replace ArgMax with a ReduceMax. The returned indicies are int64. \n' +
             'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
     )
     rar_group.add_argument(
         '-rarf32',
@@ -524,7 +582,48 @@ def main():
         help=\
             'Replace ArgMax with a ReduceMax. The returned indicies are float32. \n' +
             'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.'
+            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+    )
+    rar_group.add_argument(
+        '-rafi64',
+        '--replace_argmax_to_fused_argmax_and_indicies_is_int64',
+        action='store_true',
+        help=\
+            'Replace ArgMax with a Fused_ArgMax. The returned indicies are int64. \n' +
+            'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
+            'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
+            'Currently, only 4D tensors are supported. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+    )
+    rar_group.add_argument(
+        '-raff32',
+        '--replace_argmax_to_fused_argmax_and_indicies_is_float32',
+        action='store_true',
+        help=\
+            'Replace ArgMax with a Fused_ArgMax. The returned indicies are float32. \n' +
+            'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
+            'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
+            'Currently, only 4D tensors are supported. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+    )
+    parser.add_argument(
+        '-fasr',
+        '--fused_argmax_scale_ratio',
+        type=float,
+        default=0.5,
+        help=\
+            'For Fused ArgMax. \n' +
+            'Scale ratio when generating Fused ArgMax. \n' +
+            '0.0 < fused_argmax_scale_ratio < 1.0 \n' +
+            'Default: 0.5'
     )
     parser.add_argument(
         '-rasin',
@@ -610,6 +709,9 @@ def main():
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
+        replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
+        replace_argmax_to_fused_argmax_and_indicies_is_float32=args.replace_argmax_to_fused_argmax_and_indicies_is_float32,
+        fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,

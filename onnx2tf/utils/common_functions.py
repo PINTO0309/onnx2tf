@@ -6,6 +6,7 @@ import traceback
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
 from typing import Any, List, Optional
@@ -556,6 +557,173 @@ def tf_shape(
         return tf.shape(input_tensor, out_type=dtype)
 
 
+def upsampling2d_bilinear(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    return tf.compat.v1.image.resize_bilinear(
+        images=input_tensor,
+        size=new_size,
+        align_corners=align_corners,
+        half_pixel_centers=half_pixel_centers,
+        name=name,
+    )
+
+def upsampling2d_bicubic(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    return tf.compat.v1.image.resize_bicubic(
+        images=input_tensor,
+        size=new_size,
+        align_corners=align_corners,
+        half_pixel_centers=half_pixel_centers,
+        name=name,
+    )
+
+def upsampling2d_nearest(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    return tf.compat.v1.image.resize_nearest_neighbor(
+        images=input_tensor,
+        size=new_size,
+        align_corners=align_corners,
+        half_pixel_centers=half_pixel_centers,
+        name=name,
+    )
+
+
+def upsampling3d_bilinear(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    d = new_size.shape[0]
+    h = new_size.shape[1]
+    w = new_size.shape[2]
+    # Dpeth (height x width)
+    resized_list = []
+    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_bilinear(
+                images=input_tensor,
+                size=[h, w],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+        )
+    stack_img_hw = tf.stack(resized_list, axis=1)
+    # Width (depth x Height)
+    resized_list = []
+    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_bilinear(
+                images=input_tensor,
+                size=[d, h],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+            )
+    stack_img_dh = tf.stack(resized_list, axis=3)
+    return stack_img_dh
+
+def upsampling3d_bicubic(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    d = new_size.shape[0]
+    h = new_size.shape[1]
+    w = new_size.shape[2]
+    # Dpeth (height x width)
+    resized_list = []
+    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_bicubic(
+                images=input_tensor,
+                size=[h, w],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+        )
+    stack_img_hw = tf.stack(resized_list, axis=1)
+    # Width (depth x Height)
+    resized_list = []
+    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_bicubic(
+                images=input_tensor,
+                size=[d, h],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+            )
+    stack_img_dh = tf.stack(resized_list, axis=3)
+    return stack_img_dh
+
+def upsampling3d_nearest(
+    input_tensor,
+    new_size,
+    align_corners,
+    half_pixel_centers,
+    name,
+):
+    d = new_size.shape[0]
+    h = new_size.shape[1]
+    w = new_size.shape[2]
+    # Dpeth (height x width)
+    resized_list = []
+    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_nearest_neighbor(
+                images=input_tensor,
+                size=[h, w],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+        )
+    stack_img_hw = tf.stack(resized_list, axis=1)
+    # Width (depth x Height)
+    resized_list = []
+    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    for i in unstack_img_list:
+        resized_list.append(
+            tf.compat.v1.image.resize_nearest_neighbor(
+                images=input_tensor,
+                size=[d, h],
+                align_corners=align_corners,
+                half_pixel_centers=half_pixel_centers,
+                name=name,
+            )
+            )
+    stack_img_dh = tf.stack(resized_list, axis=3)
+    return stack_img_dh
+
+
 def _nnapi_scalar(
     value,
     dtype: tf.dtypes,
@@ -633,9 +801,11 @@ def alternative_argmax(
         Converted ArgMax
     """
     safe_axis = axis
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
 
     if safe_axis < 0:
-        safe_axis = len(input_tensor.shape) + safe_axis
+        safe_axis = input_tensor_rank + safe_axis
     reduction_size = input_tensor.shape[axis]
     axis_max = tf.math.reduce_max(
         input_tensor,
@@ -722,6 +892,160 @@ def alternative_argmax(
             reverse_argmax,
             name=name,
         )
+
+
+def alternative_fused_argmax(
+    *,
+    input_tensor,
+    axis: int = -1,
+    output_type: tf.dtypes = tf.dtypes.float32,
+    name: str = None,
+    keepdims: bool = True,
+    replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
+    replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
+    fused_argmax_scale_ratio: float = 0.5,
+) -> Any:
+    """Replace ArgMax with a ReduceMax.
+
+    Parameters
+    ----------
+    input_tensor: Tensor
+        Tensor to be processed
+
+    axis: int
+        The axis to reduce across
+        Default: -1
+
+    output_type: tf.dtypes
+        Data type of the final OP
+        Default: tf.dtypes.float32
+
+    name: str
+        OP name to be assigned to the final OP
+        Default: None
+
+    keepdims: bool
+        True: Array dimensionality is preserved after ArgMax
+        False: Number of array dimensions not maintained after ArgMax
+        Default: True
+
+    replace_argmax_to_fused_argmax_and_indicies_is_int64: bool
+        True: Convert final output to int64
+        False: Do not convert final output to int64
+        Default: False
+
+    replace_argmax_to_fused_argmax_and_indicies_is_float32: bool
+        True: Convert final output to float32
+        False: Do not convert final output to float32
+        Default: False
+
+    fused_argmax_scale_ratio: float
+        Scale ratio when generating Fused ArgMax
+        Default: 0.5
+
+    Returns
+    ----------
+    pseudo_fused_argmax: Tensor
+        Converted ArgMax
+    """
+    safe_axis = axis
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
+
+    final_tensor = None
+
+    if safe_axis < 0:
+        safe_axis = input_tensor_rank + safe_axis
+
+    # Currently, only 4D tensors are supported
+    if input_tensor_rank != 4:
+        # Not 4D Tensor
+        argmaxed_tensor = tf.math.argmax(
+            input=input_tensor,
+            axis=axis,
+            output_type=output_type,
+            name=f'{name}_fused_argmax',
+        )
+        if keepdims:
+            final_tensor = \
+                tf.expand_dims(
+                    input=argmaxed_tensor,
+                    axis=axis,
+                    name=f'{name}_expand_dims',
+                )
+        else:
+            final_tensor = argmaxed_tensor
+        return final_tensor
+
+    else:
+        # 4D Tensor
+        input_height, input_width = input_tensor_shape[1:3]
+        new_size = np.ceil(
+            np.asarray(input_tensor_shape[1:3]) * fused_argmax_scale_ratio
+        ).astype(np.int32)
+
+        align_corners = True
+        half_pixel_centers = False
+        downscaled_tensor = Lambda(
+            upsampling2d_bilinear,
+            arguments={
+                'new_size': new_size,
+                'align_corners': align_corners,
+                'half_pixel_centers': half_pixel_centers,
+                'name': f'{name}_resize_bilinear',
+            }
+        )(input_tensor)
+        argmaxed_tensor = tf.math.argmax(
+            input=downscaled_tensor,
+            axis=axis,
+            output_type=output_type,
+            name=f'{name}_fused_argmax',
+        )
+        expanded_tensor = \
+            tf.expand_dims(
+                input=argmaxed_tensor,
+                axis=axis,
+                name=f'{name}_expand_dims',
+            )
+        expanded_tensor_dtype = expanded_tensor.dtype
+        casted_tensor = tf.cast(
+            x=expanded_tensor,
+            dtype=tf.float32,
+        )
+        align_corners = True
+        half_pixel_centers = False
+        upscaled_tensor = Lambda(
+            upsampling2d_nearest,
+            arguments={
+                'new_size': np.asarray([input_height, input_width], dtype=np.int32),
+                'align_corners': align_corners,
+                'half_pixel_centers': half_pixel_centers,
+                'name': f'{name}_resize_nearest',
+            }
+        )(casted_tensor)
+        recasted_tensor = tf.cast(upscaled_tensor, dtype=expanded_tensor_dtype)
+        if keepdims:
+            final_tensor = recasted_tensor
+        else:
+            final_tensor = \
+                tf.squeeze(
+                    input=recasted_tensor,
+                    axis=axis,
+                    name=f'{name}_squeeze',
+                )
+        if replace_argmax_to_fused_argmax_and_indicies_is_int64:
+            final_tensor = tf.cast(
+                x=final_tensor,
+                dtype=tf.int64,
+                name=f'{name}_cast',
+            )
+        elif replace_argmax_to_fused_argmax_and_indicies_is_float32:
+            final_tensor = tf.cast(
+                x=final_tensor,
+                dtype=tf.float32,
+                name=f'{name}_cast',
+            )
+        return final_tensor
 
 
 # https://zenn.dev/pinto0309/articles/8f6df1d2304395

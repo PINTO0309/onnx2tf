@@ -13,6 +13,12 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    upsampling2d_bilinear,
+    upsampling2d_bicubic,
+    upsampling2d_nearest,
+    upsampling3d_bilinear,
+    upsampling3d_bicubic,
+    upsampling3d_nearest,
 )
 from onnx2tf.utils.colors import Color
 
@@ -88,138 +94,6 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
-
-
-    def upsampling2d_bilinear(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        return tf.compat.v1.image.resize_bilinear(
-            images=input_tensor,
-            size=new_size,
-            align_corners=align_corners,
-            half_pixel_centers=half_pixel_centers,
-            name=name,
-        )
-
-    def upsampling2d_bicubic(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        return tf.compat.v1.image.resize_bicubic(
-            images=input_tensor,
-            size=new_size,
-            align_corners=align_corners,
-            half_pixel_centers=half_pixel_centers,
-            name=name,
-        )
-
-    def upsampling2d_nearest(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        return tf.compat.v1.image.resize_nearest_neighbor(
-            images=input_tensor,
-            size=new_size,
-            align_corners=align_corners,
-            half_pixel_centers=half_pixel_centers,
-            name=name,
-        )
-
-
-    def upsampling3d_bilinear(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        d = new_size.shape[0]
-        h = new_size.shape[1]
-        w = new_size.shape[2]
-        # Dpeth (height x width)
-        resized_list = []
-        unstack_img_list = tf.unstack(input_tensor, axis=1)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_bilinear(
-                    images=input_tensor,
-                    size=[h, w],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-            )
-        stack_img_hw = tf.stack(resized_list, axis=1)
-        # Width (depth x Height)
-        resized_list = []
-        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_bilinear(
-                    images=input_tensor,
-                    size=[d, h],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-                )
-        stack_img_dh = tf.stack(resized_list, axis=3)
-        return stack_img_dh
-
-    def upsampling3d_bicubic(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        d = new_size.shape[0]
-        h = new_size.shape[1]
-        w = new_size.shape[2]
-        # Dpeth (height x width)
-        resized_list = []
-        unstack_img_list = tf.unstack(input_tensor, axis=1)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_bicubic(
-                    images=input_tensor,
-                    size=[h, w],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-            )
-        stack_img_hw = tf.stack(resized_list, axis=1)
-        # Width (depth x Height)
-        resized_list = []
-        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_bicubic(
-                    images=input_tensor,
-                    size=[d, h],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-                )
-        stack_img_dh = tf.stack(resized_list, axis=3)
-        return stack_img_dh
-
-    def upsampling3d_nearest(input_tensor, new_size, align_corners, half_pixel_centers, name):
-        d = new_size.shape[0]
-        h = new_size.shape[1]
-        w = new_size.shape[2]
-        # Dpeth (height x width)
-        resized_list = []
-        unstack_img_list = tf.unstack(input_tensor, axis=1)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_nearest_neighbor(
-                    images=input_tensor,
-                    size=[h, w],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-            )
-        stack_img_hw = tf.stack(resized_list, axis=1)
-        # Width (depth x Height)
-        resized_list = []
-        unstack_img_list = tf.unstack(stack_img_hw, axis=3)
-        for i in unstack_img_list:
-            resized_list.append(
-                tf.compat.v1.image.resize_nearest_neighbor(
-                    images=input_tensor,
-                    size=[d, h],
-                    align_corners=align_corners,
-                    half_pixel_centers=half_pixel_centers,
-                    name=name,
-                )
-                )
-        stack_img_dh = tf.stack(resized_list, axis=3)
-        return stack_img_dh
-
 
     # Generation of TF OP
     if mode.lower() == "linear":
