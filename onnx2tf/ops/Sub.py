@@ -80,10 +80,16 @@ def make_node(
         **kwargs,
     )
 
-    input_tensor_2 = channel_transpose(
-        const_or_var_1=input_tensor_1,
-        const_or_var_2=input_tensor_2,
-    )
+    if not isinstance(input_tensor_1, np.ndarray):
+        input_tensor_2 = channel_transpose(
+            const_or_var_1=input_tensor_1,
+            const_or_var_2=input_tensor_2,
+        )
+    else:
+        input_tensor_1 = channel_transpose(
+            const_or_var_1=input_tensor_2,
+            const_or_var_2=input_tensor_1,
+        )
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
