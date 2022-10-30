@@ -300,6 +300,7 @@ def print_node_info(func):
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
+            print(f'{Color.RED}ERROR:{Color.RESET} Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement')
             sys.exit(1)
     return print_wrapper_func
 

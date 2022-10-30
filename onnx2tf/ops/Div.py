@@ -88,11 +88,16 @@ def make_node(
         np.int64,
     ]
 
-
-    input_tensor_2 = channel_transpose(
-        const_or_var_1=input_tensor_1,
-        const_or_var_2=input_tensor_2,
-    )
+    if not isinstance(input_tensor_1, np.ndarray):
+        input_tensor_2 = channel_transpose(
+            const_or_var_1=input_tensor_1,
+            const_or_var_2=input_tensor_2,
+        )
+    else:
+        input_tensor_1 = channel_transpose(
+            const_or_var_1=input_tensor_2,
+            const_or_var_2=input_tensor_1,
+        )
 
     # TFLite does not support TrueDiv(INT), so TrueDiv is avoided if possible
     x_is_integer = input_tensor_1.dtype in target_cast_dtype
