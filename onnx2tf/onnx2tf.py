@@ -44,6 +44,7 @@ def convert(
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
+    output_h5: Optional[bool] = False,
     not_use_onnxsim: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
@@ -85,6 +86,9 @@ def convert(
         Signature is added to the output for serving or for conversion\n
         to other model formats. However, this can significantly reduce the speed\n
         of model conversion and significant increase the size of the model.
+
+    output_h5: Optional[bool]
+        Output in Keras H5 format.
 
     not_use_onnxsim: Optional[bool]
         No optimization by onnx-simplifier is performed.\n
@@ -429,6 +433,14 @@ def convert(
             model.summary(line_length=140)
             print('')
 
+        # Output in Keras H5 format
+        if output_h5:
+            if not non_verbose:
+                print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
+            model.save(f'{output_folder_path}/model_float32.h5')
+            if not non_verbose:
+                print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
         concrete_func = run_model.get_concrete_function(
@@ -517,6 +529,13 @@ def main():
             'Signature is added to the output for serving or for conversion \n' +
             'to other model formats. However, this can significantly reduce the speed \n' +
             'of model conversion and significant increase the size of the model.'
+    )
+    parser.add_argument(
+        '-oh5',
+        '--output_h5',
+        action='store_true',
+        help=\
+            'Output in Keras H5 format.'
     )
     parser.add_argument(
         '-nuo',
@@ -703,6 +722,7 @@ def main():
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
+        output_h5=args.output_h5,
         not_use_onnxsim=args.not_use_onnxsim,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,

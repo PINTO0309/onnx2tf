@@ -54,6 +54,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
+- [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 
 ## Demo
@@ -72,7 +73,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.38
+ghcr.io/pinto0309/onnx2tf:1.0.39
 
 or
 
@@ -100,6 +101,7 @@ usage: onnx2tf
 (-i INPUT_ONNX_FILE_PATH | -V)
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
+[-oh5]
 [-nuo]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
@@ -134,6 +136,9 @@ optional arguments:
     Signature is added to the output for serving or for conversion
     to other model formats. However, this can significantly reduce the speed
     of model conversion and significant increase the size of the model.
+
+  -oh5, --output_h5
+    Output in Keras H5 format.
 
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.
@@ -251,6 +256,7 @@ convert(
   onnx_graph: Union[onnx.onnx_ml_pb2.ModelProto, NoneType] = None,
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
+  output_h5: Optional[bool] = False,
   not_use_onnxsim: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
@@ -293,6 +299,9 @@ convert(
       Signature is added to the output for serving or for conversion
       to other model formats. However, this can significantly reduce the speed
       of model conversion and significant increase the size of the model.
+
+    output_h5: Optional[bool]
+      Output in Keras H5 format.
 
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
