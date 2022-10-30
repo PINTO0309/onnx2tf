@@ -52,6 +52,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
+- [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 
