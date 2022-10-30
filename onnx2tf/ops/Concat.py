@@ -70,6 +70,12 @@ def make_node(
     }
 
     # Generation of TF OP
+
+    # TensorFlow does not support Concat for scalar values, so convert to tensor
+    values = [
+        value if len(value.shape) > 0 else tf.reshape(value, [1]) for value in values
+    ]
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.concat(
             values=values,
