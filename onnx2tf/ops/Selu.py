@@ -71,7 +71,7 @@ def make_node(
                             0
                         )
                     ) - 1
-                ) * alpha * gamma
+                ) * (alpha * gamma)
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
