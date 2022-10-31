@@ -59,7 +59,7 @@ def make_node(
 
     if np.count_nonzero(input_mean.values) > 0:
         tf_layers_dict[Y.name]['tf_node'] = \
-            (tf_layers_dict[X.name]['tf_node'] - input_mean.values) * mul_values + B.values
+            (tf_layers_dict[X.name]['tf_node'] - input_mean.values) + (B.values / mul_values)
     else:
         tf_layers_dict[Y.name]['tf_node'] = \
             tf_layers_dict[X.name]['tf_node'] * mul_values + B.values
