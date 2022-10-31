@@ -84,7 +84,7 @@ def make_node(
 
     # Generation of TF OP
     pos = tf.nn.relu(input_tensor)
-    neg = slope * (input_tensor - abs(input_tensor)) * 0.5
+    neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
     tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
 
     # Generation of Debug Info
