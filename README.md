@@ -531,6 +531,7 @@ Please don't post such low level questions as issues.
   |Atan|:heavy_check_mark:|
   |AveragePool|:heavy_check_mark:|
   |BatchNormalization|:heavy_check_mark:|
+  |Bernoulli|:heavy_check_mark:|
   |BitShift|:heavy_check_mark:|
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
@@ -641,7 +642,7 @@ Please don't post such low level questions as issues.
   |Resize|:heavy_check_mark:|
   |ReverseSequence|:heavy_check_mark:|
   |RNN|**Help wanted**|
-  |RoiAlign|**Help wanted**|
+  |RoiAlign|:heavy_check_mark:|
   |Round|:heavy_check_mark:|
   |ScatterElements|:heavy_check_mark:|
   |ScatterND|:heavy_check_mark:|
