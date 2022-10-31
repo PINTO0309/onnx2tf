@@ -35,12 +35,6 @@ def make_node(
     for graph_node_input in graph_node.inputs:
         before_op_output_shape_trans_n = \
             tf_layers_dict.get(graph_node_input.name, {}).get('before_op_output_shape_trans', True)
-        if len(graph_node_input.shape) >= 3:
-            base_shape = graph_node_input.shape[1]
-            if len(graph_node_input.shape)-1 == sum([1 if base_shape == s else 0 for s in graph_node_input.shape[1:]]) \
-                and before_op_output_shape_trans == True \
-                and before_op_output_shape_trans_n == False:
-                before_op_output_shape_trans_n = not before_op_output_shape_trans_n
         before_op_output_shape_trans = \
             before_op_output_shape_trans and before_op_output_shape_trans_n
 

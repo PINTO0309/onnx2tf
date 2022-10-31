@@ -334,8 +334,19 @@ def inverted_operation_enable_disable(func):
                 and batch_size is not None:
                 onnx_node_output_shape[0] = batch_size
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
-            output_shape_trans = output_shape_trans or (onnx_node_output_shape != tf_node_output_shape)
+
+            trans_judge = (onnx_node_output_shape != tf_node_output_shape)
+            # Avoiding patterns of misjudgment when the second and subsequent dimensions are all the same value
+            if len(tf_node_output_shape) >= 3:
+                base_shape = tf_node_output_shape[1]
+                if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
+                    and (onnx_node_output_shape == tf_node_output_shape):
+                    trans_judge = True
+
+            output_shape_trans = output_shape_trans or trans_judge
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
+
+
         return result
     return inverted_operation_enable_disable_wrapper_func
 
