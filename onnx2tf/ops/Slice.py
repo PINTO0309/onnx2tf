@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    convert_axis,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
@@ -93,8 +94,9 @@ def make_node(
     axes = tf_layers_dict[axes.name]['tf_node'] \
         if isinstance(axes, gs.Variable) else axes
     if isinstance(axes, np.ndarray):
-        axes = tf.constant(axes, dtype=NUMPY_DTYPES_TO_TF_DTYPES[axes.dtype]) \
-            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
+        axes = axes if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
+    elif isinstance(axes, list):
+        axes = np.asarray(axes, dtype=ends.dtype) if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
     elif axes is not None:
         axes = axes if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
 
@@ -110,8 +112,24 @@ def make_node(
         steps = tf.constant(steps, dtype=NUMPY_DTYPES_TO_TF_DTYPES[steps.dtype])
 
     axes = graph_node.attrs.get('axes', axes)
+
+    if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
+        axes = [
+            convert_axis(
+                axis=idx,
+                tensor_rank=input_tensor_rank,
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            ) for idx in axes
+        ]
+    elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
+        axes = convert_axis(
+            axis=axes,
+            tensor_rank=input_tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
     if isinstance(axes, list):
         axes = np.asarray(axes)
+
     starts = graph_node.attrs.get('starts', starts)
     if isinstance(starts, list):
         starts = np.asarray(starts)
@@ -131,7 +149,6 @@ def make_node(
     }
 
     # Generation of TF OP
-
     if None not in input_tensor_shape:
         # first of all, get the input tensor shape
         if axes is not None:
