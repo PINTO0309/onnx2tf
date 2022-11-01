@@ -102,9 +102,9 @@ or
   !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
   !sudo apt-get -y install python3.9-distutils
-  !python3.9 -m pip install -U setuptools
-  !python3.9 -m pip install -U pip
-  !python3.9 -m pip install -U distlib
+  !python3.9 -m pip install -U setuptools \
+    && python3.9 -m pip install -U pip \
+    && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
   !python3.9 -m pip install tensorflow==2.10.0 \
