@@ -90,7 +90,27 @@ or
 
 $ pip install -e .
 ```
-```
+
+or
+
+- Google Colaboratory Python3.8+
+  ```
+  !sudo add-apt-repository -y ppa:deadsnakes/ppa
+  !sudo apt-get -y update
+  !sudo apt-get -y install python3.9
+  !sudo apt-get -y install python3.9-dev
+  !sudo apt-get -y install python3-pip
+  !sudo apt-get -y install python3.9-distutils
+  !python3.9 -m pip install --upgrade setuptools
+  !python3.9 -m pip install --upgrade pip
+  !python3.9 -m pip install --upgrade distlib
+  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
+  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
+  !python -V
+  ```
+
+Run test.
+```bash
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -o saved_model
 ```
