@@ -54,6 +54,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
+- [x] Added option to overwrite dynamic shape input OPs with static shape. `--overwrite_input_shape`
 - [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 - [x] Added the ability to automatically generate each OP name and assign OP names to ONNX files in the old format.
@@ -74,7 +75,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 $ docker run --rm -it \
 -v `pwd`:/workdir \
 -w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.47
+ghcr.io/pinto0309/onnx2tf:1.0.48
 
 or
 
@@ -212,7 +213,7 @@ optional arguments:
   -fasr FUSED_ARGMAX_SCALE_RATIO, --fused_argmax_scale_ratio FUSED_ARGMAX_SCALE_RATIO
     For Fused ArgMax.
     Scale ratio when generating Fused ArgMax.
-    0.0 < fused_argmax_scale_ratio < 1.0
+    0.0 < fused_argmax_scale_ratio <= 1.0
     Default: 0.5
 
   -rasin, --replace_asin_to_pseudo_asin
@@ -382,7 +383,7 @@ convert(
     fused_argmax_scale_ratio: Optional[float]
       For Fused ArgMax.
       Scale ratio when generating Fused ArgMax.
-      0.0 < fused_argmax_scale_ratio < 1.0
+      0.0 < fused_argmax_scale_ratio <= 1.0
       Default: 0.5
 
     replace_asin_to_pseudo_asin: Optional[bool]

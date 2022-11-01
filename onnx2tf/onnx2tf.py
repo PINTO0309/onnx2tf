@@ -164,7 +164,7 @@ def convert(
     fused_argmax_scale_ratio: Optional[float]
         For Fused ArgMax.\n
         Scale ratio when generating Fused ArgMax.\n
-        0.0 < fused_argmax_scale_ratio < 1.0\n
+        0.0 < fused_argmax_scale_ratio <= 1.0\n
         Default: 0.5
 
     replace_asin_to_pseudo_asin: Optional[bool]
@@ -272,10 +272,10 @@ def convert(
         sys.exit(1)
 
     # fused_argmax_scale_ratio
-    if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio < 1.0):
+    if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
         print(
             f'fused_argmax_scale_ratio must be specified in the range '+
-            f'0.0 < fused_argmax_scale_ratio < 1.0. '+
+            f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
             f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
         )
         sys.exit(1)
@@ -668,7 +668,7 @@ def main():
         help=\
             'For Fused ArgMax. \n' +
             'Scale ratio when generating Fused ArgMax. \n' +
-            '0.0 < fused_argmax_scale_ratio < 1.0 \n' +
+            '0.0 < fused_argmax_scale_ratio <= 1.0 \n' +
             'Default: 0.5'
     )
     parser.add_argument(
