@@ -102,12 +102,19 @@ or
   !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
   !sudo apt-get -y install python3.9-distutils
-  !python3.9 -m pip install --upgrade setuptools
-  !python3.9 -m pip install --upgrade pip
-  !python3.9 -m pip install --upgrade distlib
+  !python3.9 -m pip install -U setuptools
+  !python3.9 -m pip install -U pip
+  !python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
   !python -V
+  !python3.9 -m pip install tensorflow==2.10.0 \
+    && python3.9 -m pip install -U onnx \
+    && python3.9 -m pip install -U nvidia-pyindex \
+    && python3.9 -m pip install -U onnx-graphsurgeon \
+    && python3.9 -m pip install -U onnxsim \
+    && python3.9 -m pip install -U simple_onnx_processing_tools \
+    && python3.9 -m pip install -U onnx2tf
   ```
 
 Run test.
