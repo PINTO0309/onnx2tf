@@ -71,25 +71,26 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - tensorflow>=2.10.0
 
 ## Sample Usage
-```
-$ docker run --rm -it \
--v `pwd`:/workdir \
--w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.48
+- HostPC
+  ```
+  $ docker run --rm -it \
+  -v `pwd`:/workdir \
+  -w /workdir \
+  ghcr.io/pinto0309/onnx2tf:1.0.48
 
-or
+  or
 
-$ pip install -U onnx \
-&& pip install -U nvidia-pyindex \
-&& pip install -U onnx-graphsurgeon \
-&& pip install -U onnxsim \
-&& pip install -U simple_onnx_processing_tools \
-&& pip install -U onnx2tf
+  $ pip install -U onnx \
+  && pip install -U nvidia-pyindex \
+  && pip install -U onnx-graphsurgeon \
+  && pip install -U onnxsim \
+  && pip install -U simple_onnx_processing_tools \
+  && pip install -U onnx2tf
 
-or
+  or
 
-$ pip install -e .
-```
+  $ pip install -e .
+  ```
 
 or
 
