@@ -6,9 +6,12 @@ __path__ = (os.path.dirname(__file__), )
 with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
     __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
+import io
 import sys
+import ast
 import json
 import logging
+import requests
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
@@ -46,6 +49,10 @@ def convert(
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
+    output_integer_quantized_tflite: Optional[bool] = False,
+    quant_type: Optional[str] = 'per-channel',
+    quant_calib_input_op_name_np_data_path: Optional[List] = None,
+    input_output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
@@ -91,6 +98,69 @@ def convert(
 
     output_h5: Optional[bool]
         Output in Keras H5 format.
+
+    output_integer_quantized_tflite: Optional[bool]
+        Output of integer quantized tflite.
+
+    quant_type: Optional[str]
+        Selects whether "per-channel" or "per-tensor" quantization is used.\n
+        Default: "per-channel"
+
+    quant_calib_input_op_name_np_data_path: Optional[List]
+        INPUT Name of OP and path of calibration data file (Numpy) for quantization\n
+        and mean and std.\n
+        The specification can be omitted only when the input OP is a single 4D tensor image data.\n
+        If omitted, it is automatically calibrated using 20 normalized MS-COCO images.\n
+        The type of the input OP must be Float32.\n
+        Data for calibration must be pre-normalized to a range of 0 to 1.\n
+        [\n
+            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
+            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
+            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
+            :\n
+        ]\n
+        Numpy file paths must be specified the same number of times as the number of input OPs.\n
+        Normalize the value of the input OP based on the tensor specified in mean and std.\n
+        (input_value - mean) / std\n
+        Tensors in Numpy file format must be in dimension order after conversion to TF.\n
+        Note that this is intended for deployment on low-resource devices,\n
+        so the batch size is limited to 1 only.\n\n
+        e.g.\n
+        The example below shows a case where there are three input OPs.\n
+        Assume input0 is 128x128 RGB image data.\n
+        In addition, input0 should be a value that has been divided by 255\n
+        in the preprocessing and normalized to a range between 0 and 1.\n
+        input1 and input2 assume the input of something that is not an image.\n
+        Because input1 and input2 assume something that is not an image,\n
+        the divisor is not 255 when normalizing from 0 to 1.\n
+        "n" is the number of calibration data.\n\n
+        ONNX INPUT shapes:\n
+            input0: [n,3,128,128]\n
+                mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]\n
+                std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]\n
+            input1: [n,64,64]\n
+                mean: [1,64] -> [0.1, ..., 0.64]\n
+                std:  [1,64] -> [0.05, ..., 0.08]\n
+            input2: [n,5]\n
+                mean: [1] -> [0.3]\n
+                std:  [1] -> [0.07]\n
+        TensorFlow INPUT shapes (Numpy file ndarray shapes):\n
+            input0: [n,128,128,3]\n
+                mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]\n
+                std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]\n
+            input1: [n,64,64]\n
+                mean: [1,64] -> [0.1, ..., 0.64]\n
+                std:  [1,64] -> [0.05, ..., 0.08]\n
+            input2: [n,5]\n
+                mean: [1] -> [0.3]\n
+                std:  [1] -> [0.07]\n
+        -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]\n
+        -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]\n
+        -qcind "input2" "input2.npy" [0.3] [0.07]
+
+    input_output_quant_dtype: Optional[str]
+        Input and Output dtypes when doing Full INT8 Quantization.\n
+        "int8"(default) or "uint8"
 
     not_use_onnxsim: Optional[bool]
         No optimization by onnx-simplifier is performed.\n
@@ -346,6 +416,10 @@ def convert(
         if not non_verbose:
             print(f'{Color.GREEN}Automatic generation of each OP name complete!{Color.RESET}')
 
+    # quantization_type
+    disable_per_channel = False \
+        if quant_type is not None and quant_type == 'per-channel' else True
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -403,6 +477,20 @@ def convert(
             graph_input.dtype: dtype('float32')
             graph_input.name: 'input'
             """
+            # AUTO calib 4D check
+            if output_integer_quantized_tflite \
+                and quant_calib_input_op_name_np_data_path is None \
+                and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'For INT8 quantization, the input data type must be Float32. ' +
+                    f'Also, if --quant_calib_input_op_name_np_data_path is not specified, ' +
+                    f'all input OPs must assume 4D tensor image data. ' +
+                    f'INPUT Name: {graph_input.name} INPUT Shape: {graph_input.shape} INPUT dtype: {graph_input.dtype}'
+                )
+                sys.exit(1)
+
+            # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
             op.make_node(
                 graph_input=graph_input,
@@ -514,6 +602,118 @@ def convert(
         if not non_verbose:
             print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
 
+        # Quantized TFLite
+        if output_integer_quantized_tflite:
+            # Dynamic Range Quantization
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_types = []
+            converter.target_spec.supported_ops = [
+                tf.lite.OpsSet.TFLITE_BUILTINS,
+                tf.lite.OpsSet.SELECT_TF_OPS,
+            ]
+            converter._experimental_disable_per_channel = disable_per_channel
+            tflite_model = converter.convert()
+            with open(f'{output_folder_path}/model_dynamic_range_quant.tflite', 'wb') as w:
+                w.write(tflite_model)
+            if not non_verbose:
+                print(f'{Color.GREEN}Dynamic Range Quantization tflite output complete!{Color.RESET}')
+
+            # Download sample calibration data - MS-COCO x20 images
+            # Used only when there is only one input OP, a 4D tensor image,
+            # and --quant_calib_input_op_name_np_data_path is not specified.
+            # Otherwise, calibrate using the data specified in --quant_calib_input_op_name_np_data_path.
+            calib_data_dict = {}
+            model_input_name_list = [
+                model_input.name for model_input in model.inputs
+            ]
+            data_count = 0
+            if output_integer_quantized_tflite \
+                and quant_calib_input_op_name_np_data_path is None \
+                and model.inputs[0].dtype == tf.float32 \
+                and len(model.inputs[0].shape) == 4:
+
+                # AUTO calib 4D images
+                FILE_NAME = 'calibration_image_sample_data_20x128x128x3_float32.npy'
+                DOWNLOAD_VER = '1.0.49'
+                URL = f'https://github.com/PINTO0309/onnx2tf/releases/download/{DOWNLOAD_VER}/{FILE_NAME}'
+                MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
+                STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
+                calib_sample_images_npy = requests.get(URL).content
+                with io.BytesIO(calib_sample_images_npy) as f:
+                    calib_data: np.ndarray = np.load(f)
+                    data_count = calib_data.shape[0]
+                    for model_input in model.inputs:
+                        calib_data_dict[model_input.name] = \
+                            [
+                                calib_data.copy(),
+                                MEAN,
+                                STD,
+                            ]
+            else:
+                if output_integer_quantized_tflite \
+                    and quant_calib_input_op_name_np_data_path is not None:
+                    for param in quant_calib_input_op_name_np_data_path:
+                        input_op_name = str(param[0])
+                        numpy_file_path = str(param[1])
+                        calib_data = np.load(numpy_file_path)
+                        if data_count == 0:
+                            data_count = calib_data.shape[0]
+                        mean = param[2]
+                        std = param[3]
+                        calib_data_dict[input_op_name] = \
+                            [
+                                calib_data.copy(),
+                                mean,
+                                std,
+                            ]
+
+            # representative_dataset_gen
+            def representative_dataset_gen():
+                for idx in range(data_count):
+                    calib_data_list = []
+                    for model_input_name in model_input_name_list:
+                        calib_data, mean, std = calib_data_dict[model_input_name]
+                        normalized_calib_data = (calib_data[idx] - mean) / std
+                        calib_data_list.append(normalized_calib_data)
+                    yield calib_data_list
+
+            # INT8 Quantization
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_ops = [
+                tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
+                tf.lite.OpsSet.SELECT_TF_OPS,
+            ]
+            converter._experimental_disable_per_channel = disable_per_channel
+            converter.representative_dataset = representative_dataset_gen
+            tflite_model = converter.convert()
+            with open(f'{output_folder_path}/model_integer_quant.tflite', 'wb') as w:
+                w.write(tflite_model)
+            if not non_verbose:
+                print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
+
+            # Full Integer Quantization
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_ops = [
+                tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
+                tf.lite.OpsSet.SELECT_TF_OPS,
+            ]
+            converter._experimental_disable_per_channel = disable_per_channel
+            converter.representative_dataset = representative_dataset_gen
+            inf_type = None
+            if input_output_quant_dtype == 'int8':
+                inf_type = tf.int8
+            elif input_output_quant_dtype == 'uint8':
+                inf_type = tf.uint8
+            else:
+                inf_type = tf.int8
+            converter.inference_input_type = inf_type
+            converter.inference_output_type = inf_type
+            tflite_model = converter.convert()
+            with open(f'{output_folder_path}/model_full_integer_quant.tflite', 'wb') as w:
+                w.write(tflite_model)
+            if not non_verbose:
+                print(f'{Color.GREEN}Full INT8 Quantization tflite output complete!{Color.RESET}')
+
         return model
 
 
@@ -555,6 +755,86 @@ def main():
         action='store_true',
         help=\
             'Output in Keras H5 format.'
+    )
+    parser.add_argument(
+        '-oiqt',
+        '--output_integer_quantized_tflite',
+        action='store_true',
+        help=\
+            'Output of integer quantized tflite.'
+    )
+    parser.add_argument(
+        '-qt',
+        '--quant_type',
+        type=str,
+        choices=['per-channel', 'per-tensor'],
+        default='per-channel',
+        help=\
+            'Selects whether "per-channel" or "per-tensor" quantization is used. \n' +
+            'Default: "per-channel"'
+    )
+    parser.add_argument(
+        '-qcind',
+        '--quant_calib_input_op_name_np_data_path',
+        type=str,
+        action='append',
+        nargs=4,
+        help=\
+            'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
+            'and mean and std. \n' +
+            'The specification can be omitted only when the input OP is a single 4D tensor image data. \n' +
+            'If omitted, it is automatically calibrated using 20 normalized MS-COCO images. \n' +
+            'The type of the input OP must be Float32. \n' +
+            'Data for calibration must be pre-normalized to a range of 0 to 1. \n' +
+            '-qcind {input_op_name} {numpy_file_path} {mean} {std} \n' +
+            'Numpy file paths must be specified the same number of times as the number of input OPs. \n' +
+            'Normalize the value of the input OP based on the tensor specified in mean and std. \n' +
+            '(input_value - mean) / std \n' +
+            'Tensors in Numpy file format must be in dimension order after conversion to TF. \n' +
+            'Note that this is intended for deployment on low-resource devices, \n' +
+            'so the batch size is limited to 1 only. \n\n' +
+            'e.g. \n' +
+            'The example below shows a case where there are three input OPs. \n' +
+            'Assume input0 is 128x128 RGB image data. \n' +
+            'In addition, input0 should be a value that has been divided by 255 \n' +
+            'in the preprocessing and normalized to a range between 0 and 1. \n' +
+            'input1 and input2 assume the input of something that is not an image. \n' +
+            'Because input1 and input2 assume something that is not an image, \n' +
+            'the divisor is not 255 when normalizing from 0 to 1. \n' +
+            '"n" is the number of calibration data. \n\n' +
+            'ONNX INPUT shapes: \n' +
+            '   input0: [n,3,128,128] \n' +
+            '       mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]] \n' +
+            '       std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]] \n' +
+            '   input1: [n,64,64] \n' +
+            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
+            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
+            '   input2: [n,5] \n' +
+            '       mean: [1] -> [0.3] \n' +
+            '       std:  [1] -> [0.07] \n' +
+            'TensorFlow INPUT shapes (Numpy file ndarray shapes): \n' +
+            '   input0: [n,128,128,3] \n' +
+            '       mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]] \n' +
+            '       std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]] \n' +
+            '   input1: [n,64,64] \n' +
+            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
+            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
+            '   input2: [n,5] \n' +
+            '       mean: [1] -> [0.3] \n' +
+            '       std:  [1] -> [0.07] \n' +
+            '-qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
+            '-qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
+            '-qcind "input2" "input2.npy" [0.3] [0.07]'
+    )
+    parser.add_argument(
+        '-ioqd',
+        '--input_output_quant_dtype',
+        type=str,
+        choices=['int8', 'uint8'],
+        default='int8',
+        help=\
+            'Input and Output dtypes when doing Full INT8 Quantization. \n' +
+            '"int8"(default) or "uint8"'
     )
     parser.add_argument(
         '-nuo',
@@ -744,12 +1024,35 @@ def main():
         print(__version__)
         sys.exit(0)
 
+    # convert quant_calib_input_op_name_np_data_path
+    # [
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    # ]
+    calib_params = []
+    if args.quant_calib_input_op_name_np_data_path is not None:
+        for param in args.quant_calib_input_op_name_np_data_path:
+            input_op_name = str(param[0])
+            numpy_file_path = str(param[1])
+            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
+            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
+            calib_params.append(
+                [input_op_name, numpy_file_path, mean, std]
+            )
+    if len(calib_params) == 0:
+        calib_params = None
+
     # Convert
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
+        output_integer_quantized_tflite=args.output_integer_quantized_tflite,
+        quant_type=args.quant_type,
+        quant_calib_input_op_name_np_data_path=calib_params,
+        input_output_quant_dtype=args.input_output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,

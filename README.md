@@ -76,7 +76,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.0.49
+  ghcr.io/pinto0309/onnx2tf:1.1.0
 
   or
 
@@ -131,6 +131,10 @@ usage: onnx2tf
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-oh5]
+[-oiqt]
+[-qt {per-channel,per-tensor}]
+[-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
+[-ioqd {int8,uint8}]
 [-nuo]
 [-nuonag]
 [-b BATCH_SIZE]
@@ -169,6 +173,68 @@ optional arguments:
 
   -oh5, --output_h5
     Output in Keras H5 format.
+
+  -oiqt, --output_integer_quantized_tflite
+    Output of integer quantized tflite.
+
+  -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
+    Selects whether "per-channel" or "per-tensor" quantization is used.
+    Default: "per-channel"
+
+  -qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
+    --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+    INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
+    The specification can be omitted only when the input OP is a single 4D tensor image data.
+    If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+    The type of the input OP must be Float32.
+    Data for calibration must be pre-normalized to a range of 0 to 1.
+    -qcind {input_op_name} {numpy_file_path} {mean} {std}
+    Numpy file paths must be specified the same number of times as the number of input OPs.
+    Normalize the value of the input OP based on the tensor specified in mean and std.
+    `(input_value - mean) / std`
+    Tensors in Numpy file format must be in dimension order after conversion to TF.
+    Note that this is intended for deployment on low-resource devices,
+    so the batch size is limited to 1 only.
+
+    e.g.
+    The example below shows a case where there are three input OPs.
+    Assume input0 is 128x128 RGB image data.
+    In addition, input0 should be a value that has been divided by 255
+    in the preprocessing and normalized to a range between 0 and 1.
+    input1 and input2 assume the input of something that is not an image.
+    Because input1 and input2 assume something that is not an image,
+    the divisor is not 255 when normalizing from 0 to 1.
+    "n" is the number of calibration data.
+
+    ONNX INPUT shapes:
+      input0: [n,3,128,128]
+        mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+        std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+      input1: [n,64,64]
+        mean: [1,64] -> [0.1, ..., 0.64]
+        std : [1,64] -> [0.05, ..., 0.08]
+      input2: [n,5]
+        mean: [1] -> [0.3]
+        std : [1] -> [0.07]
+
+    TensorFlow INPUT shapes (Numpy file ndarray shapes):
+      input0: [n,128,128,3]
+        mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+        std: [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+      input1: [n,64,64]
+        mean: [1,64] -> [0.1, ..., 0.64]
+        std: [1,64] -> [0.05, ..., 0.08]
+      input2: [n,5]
+        mean: [1] -> [0.3]
+        std: [1] -> [0.07]
+
+    -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+    -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+    -qcind "input2" "input2.npy" [0.3] [0.07]
+
+  -ioqd {int8,uint8}, --input_output_quant_dtype {int8,uint8}
+    Input and Output dtypes when doing Full INT8 Quantization.
+    "int8"(default) or "uint8"
 
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.
@@ -291,6 +357,10 @@ convert(
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
+  output_integer_quantized_tflite: Optional[bool] = False,
+  quant_type: Optional[str] = 'per-channel',
+  quant_calib_input_op_name_np_data_path: Optional[List] = None,
+  input_output_quant_dtype: Optional[str] = 'int8',
   not_use_onnxsim: Optional[bool] = False,
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
@@ -337,6 +407,68 @@ convert(
 
     output_h5: Optional[bool]
       Output in Keras H5 format.
+
+    output_integer_quantized_tflite: Optional[bool]
+      Output of integer quantized tflite.
+
+    quant_type: Optional[str]
+      Selects whether "per-channel" or "per-tensor" quantization is used.
+      Default: "per-channel"
+
+    quant_calib_input_op_name_np_data_path: Optional[List]
+      --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+      INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
+      The specification can be omitted only when the input OP is a single 4D tensor image data.
+      If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+      The type of the input OP must be Float32.
+      Data for calibration must be pre-normalized to a range of 0 to 1.
+      -qcind {input_op_name} {numpy_file_path} {mean} {std}
+      Numpy file paths must be specified the same number of times as the number of input OPs.
+      Normalize the value of the input OP based on the tensor specified in mean and std.
+      `(input_value - mean) / std`
+      Tensors in Numpy file format must be in dimension order after conversion to TF.
+      Note that this is intended for deployment on low-resource devices,
+      so the batch size is limited to 1 only.
+
+      e.g.
+      The example below shows a case where there are three input OPs.
+      Assume input0 is 128x128 RGB image data.
+      In addition, input0 should be a value that has been divided by 255
+      in the preprocessing and normalized to a range between 0 and 1.
+      input1 and input2 assume the input of something that is not an image.
+      Because input1 and input2 assume something that is not an image,
+      the divisor is not 255 when normalizing from 0 to 1.
+      "n" is the number of calibration data.
+
+      ONNX INPUT shapes:
+        input0: [n,3,128,128]
+          mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+          std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+        input1: [n,64,64]
+          mean: [1,64] -> [0.1, ..., 0.64]
+          std : [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+          mean: [1] -> [0.3]
+          std : [1] -> [0.07]
+
+      TensorFlow INPUT shapes (Numpy file ndarray shapes):
+        input0: [n,128,128,3]
+          mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+          std: [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+        input1: [n,64,64]
+          mean: [1,64] -> [0.1, ..., 0.64]
+          std: [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+          mean: [1] -> [0.3]
+          std: [1] -> [0.07]
+
+      -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+      -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+      -qcind "input2" "input2.npy" [0.3] [0.07]
+
+    input_output_quant_dtype: Optional[str]
+      Input and Output dtypes when doing Full INT8 Quantization.
+      "int8"(default) or "uint8"
 
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
