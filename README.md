@@ -190,7 +190,7 @@ optional arguments:
     -qcind {input_op_name} {numpy_file_path} {mean} {std}
     Numpy file paths must be specified the same number of times as the number of input OPs.
     Normalize the value of the input OP based on the tensor specified in mean and std.
-    `(input_value - mean) / std`
+    (input_value - mean) / std
     Tensors in Numpy file format must be in dimension order after conversion to TF.
     Note that this is intended for deployment on low-resource devices,
     so the batch size is limited to 1 only.
