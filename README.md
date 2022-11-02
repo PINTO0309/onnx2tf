@@ -41,7 +41,8 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 8. Calculation error due to scaling up or down by specifying a `scale` when resizing images
 
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
-- [x] Support for INT8 Quantization and Full INT8 Quantization.
+- [x] Support for `INT8 Quantization`, `Full INT8 Quantization` and `Dynamic Range Quantization`.
+- [x] Support for `Per-Channel Quantization` and `Per-Tensor Quantization`.
 - [x] TFLite does not support `TrueDiv`(INT), so `TrueDiv` is avoided if possible.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
