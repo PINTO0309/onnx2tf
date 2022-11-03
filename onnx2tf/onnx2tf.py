@@ -577,6 +577,19 @@ def convert(
             traceback.print_exc()
 
         # TFLite
+        """
+        TypeError: EndVector() missing 1 required positional argument: 'vectorNumElems'
+        https://stackoverflow.com/questions/73442005/tflite-model-maker-in-colab-typeerror-endvector-missing-1-required-positional
+
+        pip show flatbuffers
+        Name: flatbuffers
+        Version: 1.12
+
+        pip install -U flatbuffers
+        pip show flatbuffers
+        Name: flatbuffers
+        Version: 22.10.26
+        """
         converter = tf.lite.TFLiteConverter.from_concrete_functions(
             [concrete_func]
         )

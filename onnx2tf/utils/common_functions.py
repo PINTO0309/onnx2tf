@@ -428,6 +428,27 @@ def get_weights_constant_or_variable(
         convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
         values = values.transpose(convertion_table)
         return values
+    elif isinstance(const_or_var.i(), gs.Constant) and hasattr(const_or_var.i(), 'values'):
+        values = const_or_var.i().values
+        """
+        e.g.
+        Conv1D
+            ONNX: [C_OUT, C_IN,     X] = [8,1,3]
+            tf  : [    X, C_IN, C_OUT] = [3,1,8]
+
+        Conv2D
+            ONNX: [C_OUT, C_IN,     Y,     X] = [8,1,3,3]
+            tf  : [    Y,    X,  C_IN, C_OUT] = [3,3,1,8]
+
+        Conv3D
+            ONNX: [C_OUT, C_IN, Z,    Y,     X] = [8,1,3,3,3]
+            tf  : [    Z,    Y, X, C_IN, C_OUT] = [3,3,3,1,8]
+        """
+        convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
+        values = values.transpose(convertion_table).astype(np.float32)
+        if isinstance(values, np.ndarray) and values.dtype in (tf.int8, tf.uint8):
+            values = values.astype(np.float32)
+        return values
     else:
         return const_or_var
 
