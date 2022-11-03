@@ -77,7 +77,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.1
+  ghcr.io/pinto0309/onnx2tf:1.1.2
 
   or
 
@@ -124,11 +124,13 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-
 # Float32, Float16
 $ onnx2tf -i resnet18-v1-7.onnx -o saved_model
 
+
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferplus-8.onnx
 # INT8 Quantization (per-channel)
-$ onnx2tf -i resnet18-v1-7.onnx -o saved_model -oiqt
+$ onnx2tf -i emotion-ferplus-8.onnx -o saved_model -oiqt
 
 # INT8 Quantization (per-tensor)
-$ onnx2tf -i resnet18-v1-7.onnx -o saved_model -oiqt -qt per-tensor
+$ onnx2tf -i emotion-ferplus-8.onnx -o saved_model -oiqt -qt per-tensor
 ```
 ## CLI Parameter
 ```

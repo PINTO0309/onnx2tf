@@ -645,7 +645,10 @@ def convert(
                     for model_input in model.inputs:
                         calib_data_dict[model_input.name] = \
                             [
-                                calib_data.copy(),
+                                tf.image.resize(
+                                    calib_data.copy(),
+                                    (model_input.shape[1], model_input.shape[2])
+                                ),
                                 MEAN,
                                 STD,
                             ]
