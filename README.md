@@ -120,7 +120,15 @@ or
 Run test.
 ```bash
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+
+# Float32, Float16
 $ onnx2tf -i resnet18-v1-7.onnx -o saved_model
+
+# INT8 Quantization (per-channel)
+$ onnx2tf -i resnet18-v1-7.onnx -o saved_model -oiqt
+
+# INT8 Quantization (per-tensor)
+$ onnx2tf -i resnet18-v1-7.onnx -o saved_model -oiqt -qt per-tensor
 ```
 ## CLI Parameter
 ```
