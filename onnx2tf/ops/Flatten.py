@@ -49,7 +49,8 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    input_tensor_shape = tf.shape(input_tensor)
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
 
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -100,6 +101,18 @@ def make_node(
         param_target='inputs',
         param_name=graph_node.inputs[0].name,
         **kwargs,
+    )
+
+    perm = [
+        convert_axis(
+            axis=idx,
+            tensor_rank=input_tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        ) for idx in range(input_tensor_rank)
+    ]
+    input_tensor = tf.transpose(
+        a=input_tensor,
+        perm=list(perm) if perm is not None else None,
     )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
