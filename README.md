@@ -791,7 +791,7 @@ Please don't post such low level questions as issues.
   |Pow|:heavy_check_mark:|
   |PRelu|:heavy_check_mark:|
   |QLinearConv|**Help wanted**|
-  |QLinearMatMul|**Help wanted**|
+  |QLinearMatMul|:heavy_check_mark:|
   |QuantizeLinear|:heavy_check_mark:|
   |RandomNormalLike|:heavy_check_mark:|
   |RandomNormal|:heavy_check_mark:|
