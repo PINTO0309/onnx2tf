@@ -88,6 +88,13 @@ def make_node(
     extrapolation_value = graph_node.attrs.get('extrapolation_value', 0.0)
     mode = graph_node.attrs.get('mode', 'nearest')
 
+    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
+    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    fused_argmax_scale_ratio = \
+        kwargs['fused_argmax_scale_ratio']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -162,6 +169,16 @@ def make_node(
     # "new_size" should always contain [h, w], therefore the shape must be 2.
     if hasattr(new_size, 'set_shape'):
         new_size.set_shape([2])
+
+
+    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+        and graph_node.o().op == 'ArgMax' \
+        and input_tensor_rank == 4:
+        new_size = tf.cast(
+            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
+            dtype=tf.int32,
+        )
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value

@@ -909,6 +909,7 @@ def alternative_argmax(
 def alternative_fused_argmax(
     *,
     input_tensor,
+    original_shape,
     axis: int = -1,
     output_type: tf.dtypes = tf.dtypes.float32,
     name: str = None,
@@ -923,6 +924,9 @@ def alternative_fused_argmax(
     ----------
     input_tensor: Tensor
         Tensor to be processed
+
+    original_shape: list
+        Input shape of ONNX graph before machining
 
     axis: int
         The axis to reduce across
@@ -991,24 +995,11 @@ def alternative_fused_argmax(
 
     else:
         # 4D Tensor
-        input_height, input_width = input_tensor_shape[1:3]
-        new_size = np.ceil(
-            np.asarray(input_tensor_shape[1:3]) * fused_argmax_scale_ratio
-        ).astype(np.int32)
-
+        input_height, input_width = original_shape[2], original_shape[3]
         align_corners = True
         half_pixel_centers = False
-        downscaled_tensor = Lambda(
-            upsampling2d_bilinear,
-            arguments={
-                'new_size': new_size,
-                'align_corners': align_corners,
-                'half_pixel_centers': half_pixel_centers,
-                'name': f'{name}_resize_bilinear',
-            }
-        )(input_tensor)
         argmaxed_tensor = tf.math.argmax(
-            input=downscaled_tensor,
+            input=input_tensor,
             axis=axis,
             output_type=output_type,
             name=f'{name}_fused_argmax',
