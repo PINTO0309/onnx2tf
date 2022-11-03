@@ -714,6 +714,40 @@ def convert(
             if not non_verbose:
                 print(f'{Color.GREEN}Full INT8 Quantization tflite output complete!{Color.RESET}')
 
+            # Integer quantization with int16 activations
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_types = []
+            converter.target_spec.supported_ops = [
+                tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
+                tf.lite.OpsSet.SELECT_TF_OPS,
+            ]
+            converter._experimental_disable_per_channel = disable_per_channel
+            converter.representative_dataset = representative_dataset_gen
+            converter.inference_input_type = tf.float32
+            converter.inference_output_type = tf.float32
+            tflite_model = converter.convert()
+            with open(f'{output_folder_path}/model_integer_quant_with_int16_act.tflite', 'wb') as w:
+                w.write(tflite_model)
+            if not non_verbose:
+                print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+
+            # Full Integer quantization with int16 activations
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_types = []
+            converter.target_spec.supported_ops = [
+                tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
+                tf.lite.OpsSet.SELECT_TF_OPS,
+            ]
+            converter._experimental_disable_per_channel = disable_per_channel
+            converter.representative_dataset = representative_dataset_gen
+            converter.inference_input_type = tf.int16
+            converter.inference_output_type = tf.int16
+            tflite_model = converter.convert()
+            with open(f'{output_folder_path}/model_full_integer_quant_with_int16_act.tflite', 'wb') as w:
+                w.write(tflite_model)
+            if not non_verbose:
+                print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+
         return model
 
 
