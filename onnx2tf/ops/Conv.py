@@ -63,7 +63,7 @@ def make_node(
         if isinstance(input_tensor, gs.Variable) else input_tensor
     input_weights = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_weights, gs.Variable) else input_weights
-    input_bias = tf_layers_dict[input_weights.name]['tf_node'] \
+    input_bias = tf_layers_dict[input_bias.name]['tf_node'] \
         if isinstance(input_bias, gs.Variable) else input_bias
 
     input_tensor_shape = input_tensor.shape
