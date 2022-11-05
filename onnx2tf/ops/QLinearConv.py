@@ -142,7 +142,7 @@ def make_node(
         if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
     input_bias = tf_layers_dict[graph_node_input_9.name]['tf_node'] \
         if isinstance(graph_node_input_9, gs.Variable) else graph_node_input_9
-    output_dtype = input_tensor.dtype if input_tensor.dtype != tf.int8 else tf.float32
+    output_dtype = input_tensor.dtype if input_tensor.dtype not in [tf.int8, tf.uint8] else tf.float32
 
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)

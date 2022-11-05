@@ -111,7 +111,7 @@ def make_node(
     y = tf.round(y)
 
     if y_zero_point is not None:
-        y_dtype = y_zero_point.dtype if y_zero_point.dtype != tf.int8 else tf.float32
+        y_dtype = y_zero_point.dtype if y_zero_point.dtype not in [tf.int8, tf.uint8] else tf.float32
         y_zero_point = tf.cast(
             x=y_zero_point,
             dtype=tf.float32,

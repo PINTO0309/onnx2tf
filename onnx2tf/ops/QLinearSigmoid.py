@@ -69,7 +69,7 @@ def make_node(
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
     y_zero_point = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
-    output_dtype = y_zero_point.dtype if y_zero_point.dtype != tf.int8 else tf.float32
+    output_dtype = y_zero_point.dtype if y_zero_point.dtype not in [tf.int8, tf.uint8] else tf.float32
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
