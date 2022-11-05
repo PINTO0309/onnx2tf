@@ -20,7 +20,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """QLinearAdd
+    """QLinearSigmoid
 
     Parameters
     ----------
@@ -32,11 +32,8 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_2 = \
-        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans = \
-        before_op_output_shape_trans_1 \
-        and before_op_output_shape_trans_2
+        before_op_output_shape_trans_1
 
     graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
@@ -58,39 +55,21 @@ def make_node(
         graph_node.inputs[4],
         before_op_output_shape_trans,
     )
-    graph_node_input_6 = get_constant_or_variable(
-        graph_node.inputs[5],
-        before_op_output_shape_trans,
-    )
-    graph_node_input_7 = get_constant_or_variable(
-        graph_node.inputs[6],
-        before_op_output_shape_trans,
-    )
-    graph_node_input_8 = get_constant_or_variable(
-        graph_node.inputs[7],
-        before_op_output_shape_trans,
-    )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    a = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+    x = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    a_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+    x_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    a_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
+    x_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
-    b = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
+    y_scale = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
-    b_scale = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
+    y_zero_point = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
-    b_zero_point = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
-        if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
-    c_scale = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
-        if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
-    c_zero_point = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
-        if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
-    output_dtype = c_zero_point.dtype if c_zero_point.dtype != tf.int8 else tf.float32
+    output_dtype = y_zero_point.dtype if y_zero_point.dtype != tf.int8 else tf.float32
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -102,36 +81,43 @@ def make_node(
     # Generation of TF OP
 
     # cast all inputs to float32
-    a = tf.cast(a, tf.float32)
-    a_zero_point = tf.cast(a_zero_point, tf.float32)
-    b = tf.cast(b, tf.float32)
-    b_zero_point = tf.cast(b_zero_point, tf.float32)
-    c_zero_point = tf.cast(c_zero_point, tf.float32)
+    x = tf.cast(x, tf.float32)
+    x_zero_point = tf.cast(x_zero_point, tf.float32)
+    y_zero_point = tf.cast(y_zero_point, tf.float32)
 
-    # dequantize a and b
-    dequantized_a = tf.multiply(a_scale, tf.subtract(a, a_zero_point))
-    dequantized_b = tf.multiply(b_scale, tf.subtract(b, b_zero_point))
-    dequantized_ab = tf.add(dequantized_a, dequantized_b)
-    dequantized_abc = tf.add(tf.divide(dequantized_ab, c_scale), c_zero_point)
 
-    casted_add = tf.cast(dequantized_abc, output_dtype)
+    # dequantize x
+    dequantized_x = tf.multiply(
+        x=x_scale,
+        y=tf.subtract(x, x_zero_point),
+    )
+    dequantized_sigmoid = tf.nn.sigmoid(
+            x=dequantized_x,
+            name=graph_node.name,
+        )
+    dequantized_sigmoid = tf.add(
+        x=tf.divide(
+            x=dequantized_sigmoid,
+            y=y_scale,
+        ),
+        y=y_zero_point,
+    )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = casted_add
+    casted_sigmoid = tf.cast(dequantized_sigmoid, output_dtype)
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = casted_sigmoid
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': 'QLinearAdd',
+                'tf_op_type': 'QLinearSigmoid',
                 'tf_inputs': {
-                    'a': a,
-                    'a_scale': a_scale,
-                    'a_zero_point': a_zero_point,
-                    'b': b,
-                    'b_scale': b_scale,
-                    'b_zero_point': b_zero_point,
-                    'c_scale': c_scale,
-                    'c_zero_point': c_zero_point,
+                    'x': x,
+                    'x_scale': x_scale,
+                    'x_zero_point': x_zero_point,
+                    'y_scale': y_scale,
+                    'y_zero_point': y_zero_point,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],

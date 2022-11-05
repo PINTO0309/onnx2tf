@@ -40,7 +40,6 @@ def make_node(
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 

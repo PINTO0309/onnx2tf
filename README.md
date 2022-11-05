@@ -78,7 +78,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.7
+  ghcr.io/pinto0309/onnx2tf:1.1.8
 
   or
 
@@ -793,8 +793,11 @@ Please don't post such low level questions as issues.
   |PRelu|:heavy_check_mark:|
   |QLinearAdd|:heavy_check_mark:|
   |QLinearConv|:heavy_check_mark:|
+  |QLinearLeakyRelu|:heavy_check_mark:|
   |QLinearMatMul|:heavy_check_mark:|
   |QLinearMul|:heavy_check_mark:|
+  |QLinearSigmoid|:heavy_check_mark:|
+  |QLinearSoftmax|:heavy_check_mark:|
   |QuantizeLinear|:heavy_check_mark:|
   |RandomNormalLike|:heavy_check_mark:|
   |RandomNormal|:heavy_check_mark:|
