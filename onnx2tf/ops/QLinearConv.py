@@ -33,27 +33,32 @@ def _dequantize_weights(
     base,
     zero_point,
     scale,
+    is_bias=False,
 ):
     # Do computation in float32
     casted_base = tf.cast(base, tf.float32)
     casted_zero_point = tf.cast(zero_point, tf.float32)
     spartial_shape_len = len(casted_base.shape) - 2
     casted_zero_point_shape = casted_zero_point.shape[0]
-    reshaped_zero_point = tf.reshape(
-        tensor=casted_zero_point,
-        shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
-    )
-    reshaped_scale = tf.reshape(
-        tensor=scale,
-        shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
-    )
-    tensor_list = [
-        (casted_base[..., i:i+1] - reshaped_zero_point) * reshaped_scale
-        for i in range(base.shape[-1])
-    ]
-
-    out_tensor = tf.concat(tensor_list, axis=-1)
-    return tf.reshape(out_tensor, base.shape)
+    if casted_zero_point_shape == base.shape[-2]:
+        reshaped_zero_point = tf.reshape(
+            tensor=casted_zero_point,
+            shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
+        )
+        reshaped_scale = tf.reshape(
+            tensor=scale,
+            shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
+        )
+        tensor_list = [
+            (casted_base[..., i:i+1] - reshaped_zero_point) * reshaped_scale
+            for i in range(base.shape[-1])
+        ]
+        out_tensor = tf.concat(tensor_list, axis=-1)
+        return tf.reshape(out_tensor, base.shape)
+    else:
+        reshaped_zero_point = casted_zero_point
+        reshaped_scale = scale
+        return (casted_base - reshaped_zero_point) * reshaped_scale
 
 
 @print_node_info
