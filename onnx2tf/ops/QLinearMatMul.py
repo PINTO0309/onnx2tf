@@ -6,7 +6,6 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
-    convert_axis,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
@@ -87,7 +86,7 @@ def make_node(
         if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
     b_zero_point = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
         if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
-    y = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
+    y_scale = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
         if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
     y_zero_point = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
@@ -105,11 +104,11 @@ def make_node(
     # reshape 1-D a_scale, a_zero_point, y_scale and
     # y_zero_point so it can broadcast in arithmetic
     # operations later
-    a_scale_shape = a_scale.get_shape().as_list()
+    a_scale_shape = a_scale.shape
     if a_scale_shape and a_scale_shape[0] > 1:
         a_scale = tf.reshape(a_scale, [a_scale_shape[0], 1])
         a_zero_point = tf.reshape(a_zero_point, [a_scale_shape[0], 1])
-    y_scale_shape = y_scale.get_shape().as_list()
+    y_scale_shape = y_scale.shape
     if y_scale_shape and y_scale_shape[0] > 1:
         y_scale = tf.reshape(y_scale, [y_scale_shape[0], 1])
         y_zero_point = tf.reshape(y_zero_point, [y_scale_shape[0], 1])

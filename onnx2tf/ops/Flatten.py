@@ -81,6 +81,8 @@ def make_node(
     cal_shape = None
     if axis == 0:
         cal_shape = (1, -1)
+    elif axis == input_tensor_rank - 1:
+        cal_shape = (1, -1)
     else:
         cal_shape = (
             tf.reduce_prod(input_tensor_shape[0:axis]),
