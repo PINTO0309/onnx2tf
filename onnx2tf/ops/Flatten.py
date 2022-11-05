@@ -81,7 +81,7 @@ def make_node(
     cal_shape = None
     if axis == 0:
         cal_shape = (1, -1)
-    elif axis == input_tensor_rank - 1:
+    elif len(graph_node_output.shape) == 2 and axis == input_tensor_rank - 1:
         cal_shape = (1, -1)
     else:
         cal_shape = (
