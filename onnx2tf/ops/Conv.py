@@ -94,7 +94,7 @@ def make_node(
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
     if auto_pad == 'NOTSET':
-        if len(graph_node.inputs[0].shape) >=2 \
+        if input_tensor_rank >=2 \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:
