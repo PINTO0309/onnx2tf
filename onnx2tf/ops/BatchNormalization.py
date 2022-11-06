@@ -40,6 +40,30 @@ def make_node(
     # running_mean: gs.Variable = graph_node.outputs[1] # disuse
     # running_var: gs.Variable = graph_node.outputs[2] # disuse
 
+    if hasattr(scale, 'inputs') \
+        and hasattr(scale.inputs[0], 'attrs') \
+        and 'value' in scale.inputs[0].attrs \
+        and hasattr(scale.inputs[0].attrs['value'], 'values'):
+        scale = scale.inputs[0].attrs['value']
+
+    if hasattr(B, 'inputs') \
+        and hasattr(B.inputs[0], 'attrs') \
+        and 'value' in B.inputs[0].attrs \
+        and hasattr(B.inputs[0].attrs['value'], 'values'):
+        B = B.inputs[0].attrs['value']
+
+    if hasattr(input_mean, 'inputs') \
+        and hasattr(input_mean.inputs[0], 'attrs') \
+        and 'value' in input_mean.inputs[0].attrs \
+        and hasattr(input_mean.inputs[0].attrs['value'], 'values'):
+        input_mean = input_mean.inputs[0].attrs['value']
+
+    if hasattr(input_var, 'inputs') \
+        and hasattr(input_var.inputs[0], 'attrs') \
+        and 'value' in input_var.inputs[0].attrs \
+        and hasattr(input_var.inputs[0].attrs['value'], 'values'):
+        input_var = input_var.inputs[0].attrs['value']
+
     shape = Y.shape
     dtype = Y.dtype
 

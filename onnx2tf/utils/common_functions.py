@@ -333,6 +333,7 @@ def inverted_operation_enable_disable(func):
                 and onnx_node_output_shape.count(None) != len(onnx_node_output_shape) \
                 and batch_size is not None:
                 onnx_node_output_shape[0] = batch_size
+            onnx_node_output_shape = [None if s is not None and not isinstance(s, str) and s < 1 else s for s in onnx_node_output_shape]
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
 
             trans_judge = (onnx_node_output_shape != tf_node_output_shape)
@@ -342,7 +343,6 @@ def inverted_operation_enable_disable(func):
                 if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
                     and (onnx_node_output_shape == tf_node_output_shape):
                     trans_judge = True
-
             output_shape_trans = output_shape_trans or trans_judge
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
 
@@ -428,7 +428,32 @@ def get_weights_constant_or_variable(
         convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
         values = values.transpose(convertion_table)
         return values
-    elif isinstance(const_or_var.i(), gs.Constant) and hasattr(const_or_var.i(), 'values'):
+    elif hasattr(const_or_var, 'inputs') \
+        and hasattr(const_or_var.inputs[0], 'attrs') \
+        and 'value' in const_or_var.inputs[0].attrs \
+        and hasattr(const_or_var.inputs[0].attrs['value'], 'values'):
+        values = const_or_var.inputs[0].attrs['value'].values
+        """
+        e.g.
+        Conv1D
+            ONNX: [C_OUT, C_IN,     X] = [8,1,3]
+            tf  : [    X, C_IN, C_OUT] = [3,1,8]
+
+        Conv2D
+            ONNX: [C_OUT, C_IN,     Y,     X] = [8,1,3,3]
+            tf  : [    Y,    X,  C_IN, C_OUT] = [3,3,1,8]
+
+        Conv3D
+            ONNX: [C_OUT, C_IN, Z,    Y,     X] = [8,1,3,3,3]
+            tf  : [    Z,    Y, X, C_IN, C_OUT] = [3,3,3,1,8]
+        """
+        convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
+        values = values.transpose(convertion_table).astype(np.float32)
+        if isinstance(values, np.ndarray) and values.dtype in (tf.int8, tf.uint8):
+            values = values.astype(np.float32)
+        return values
+    elif isinstance(const_or_var.i(), gs.Constant) \
+        and hasattr(const_or_var.i(), 'values'):
         values = const_or_var.i().values
         """
         e.g.

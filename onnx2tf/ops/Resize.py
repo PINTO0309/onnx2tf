@@ -149,8 +149,13 @@ def make_node(
     if sizes is not None:
         # sizes is defined
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
-        sizes = sizes.set_shape(input_tensor_shape.shape) if isinstance(sizes, gs.Variable) else sizes
-        new_size = tf.cast(sizes[1:3], tf.int32)
+        if isinstance(sizes, gs.Variable):
+            sizes = sizes.set_shape(input_tensor_shape.shape)
+            new_size = tf.cast(sizes[1:3], tf.int32)
+        elif isinstance(sizes, np.ndarray):
+            new_size = tf.cast(sizes[1:3], tf.int32)
+        elif tf.keras.backend.is_keras_tensor(sizes):
+            new_size = tf.cast(tf.slice(sizes, [1], [2]), tf.int32)
     elif scales is not None:
         # only scales is defined
         if hasattr(graph_node.outputs[0], 'shape') \
@@ -182,7 +187,7 @@ def make_node(
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
-        if new_size_values.count(None) == len(new_size_values):
+        if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:3]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             new_values = [0] * tensor_rank

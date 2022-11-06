@@ -5,7 +5,10 @@ np.random.seed(0)
 import tensorflow as tf
 from onnx import numpy_helper
 import onnx_graphsurgeon as gs
-from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
+from onnx2tf.utils.enums import (
+    ONNX_DTYPES_TO_TF_DTYPES,
+    NUMPY_DTYPES_TO_TF_DTYPES,
+)
 from onnx2tf.utils.common_functions import (
     print_node_info,
     make_tf_node_info,
@@ -130,8 +133,10 @@ def make_node(
         # either value or sparse_value
         if "value" in graph_node.attrs:
             attr_value = graph_node.attrs["value"]
-            const_dtype = ONNX_DTYPES_TO_TF_DTYPES[attr_value.data_type]
-            value = numpy_helper.to_array(attr_value)
+            value = attr_value.values \
+                if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(attr_value)
+            const_dtype = NUMPY_DTYPES_TO_TF_DTYPES[attr_value.dtype] \
+                if attr_value.dtype in NUMPY_DTYPES_TO_TF_DTYPES else attr_value.dtype
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 _make_tf_constant(
                     value=value,
@@ -190,8 +195,10 @@ def make_node(
             # either value or sparse_value
             if "value" in graph_node.attrs:
                 attr_value = graph_node.attrs["value"]
-                const_dtype = ONNX_DTYPES_TO_TF_DTYPES[attr_value.data_type]
-                value = numpy_helper.to_array(attr_value)
+                value = attr_value.values \
+                    if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(attr_value)
+                const_dtype = NUMPY_DTYPES_TO_TF_DTYPES[attr_value.dtype] \
+                    if attr_value.dtype in NUMPY_DTYPES_TO_TF_DTYPES else attr_value.dtype
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     _make_tf_constant(
                         value=value,
