@@ -89,7 +89,7 @@
       "op_name": "Softmax_0",
       "param_target": "attributes",
       "param_name": "axis",
-      "values": 2
+      "values": 3
     }
   ]
 }
