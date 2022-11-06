@@ -51,6 +51,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
+- [x] Add process to replace `PRelu` with `pseudo-PRelu`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
