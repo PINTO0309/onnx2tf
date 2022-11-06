@@ -443,7 +443,7 @@ convert(
       -qcind {input_op_name} {numpy_file_path} {mean} {std}
       Numpy file paths must be specified the same number of times as the number of input OPs.
       Normalize the value of the input OP based on the tensor specified in mean and std.
-      `(input_value - mean) / std`
+      (input_value - mean) / std
       Tensors in Numpy file format must be in dimension order after conversion to TF.
       Note that this is intended for deployment on low-resource devices,
       so the batch size is limited to 1 only.
@@ -472,13 +472,13 @@ convert(
       TensorFlow INPUT shapes (Numpy file ndarray shapes):
         input0: [n,128,128,3]
           mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
-          std: [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+          std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
         input1: [n,64,64]
           mean: [1,64] -> [0.1, ..., 0.64]
-          std: [1,64] -> [0.05, ..., 0.08]
+          std : [1,64] -> [0.05, ..., 0.08]
         input2: [n,5]
           mean: [1] -> [0.3]
-          std: [1] -> [0.07]
+          std : [1] -> [0.07]
 
       -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
       -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
