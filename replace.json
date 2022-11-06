@@ -86,6 +86,18 @@
       "values": [192,192]
     },
     {
+      "op_name": "Transpose_0",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2,3]
+    },
+    {
+      "op_name": "Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2,3]
+    },
+    {
       "op_name": "Softmax_0",
       "param_target": "attributes",
       "param_name": "axis",
