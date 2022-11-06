@@ -121,18 +121,21 @@ or
 
 Run test.
 ```bash
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-
 # Float32, Float16
-$ onnx2tf -i resnet18-v1-7.onnx -o saved_model
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx
 
-
+# INT8 Quantization
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferplus-8.onnx
 # INT8 Quantization (per-channel)
-$ onnx2tf -i emotion-ferplus-8.onnx -o saved_model -oiqt
-
+$ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 # INT8 Quantization (per-tensor)
-$ onnx2tf -i emotion-ferplus-8.onnx -o saved_model -oiqt -qt per-tensor
+$ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
+
+# Parameter replacement (Resize,Transpose,Softmax)
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/human_segmentation_pphumanseg_2021oct.onnx
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/replace.json
+$ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 ## CLI Parameter
 ```
@@ -688,7 +691,7 @@ Please don't post such low level questions as issues.
   |5|Mul||
   |6|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
   |7|Resize||
-  |8|Softmax||
+  |8|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
   |9|Sub||
   |10|Tile||
   |11|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
@@ -714,10 +717,16 @@ Please don't post such low level questions as issues.
   |BatchNormalization|:heavy_check_mark:|
   |Bernoulli|:heavy_check_mark:|
   |BitShift|:heavy_check_mark:|
+  |BitwiseAnd|**Help wanted**|
+  |BitwiseNot|**Help wanted**|
+  |BitwiseOr|**Help wanted**|
+  |BitwiseXor|**Help wanted**|
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
   |Celu|:heavy_check_mark:|
+  |CenterCropPad|**Help wanted**|
   |Clip|:heavy_check_mark:|
+  |Col2Im|**Help wanted**|
   |Compress|:heavy_check_mark:|
   |ConcatFromSequence|:heavy_check_mark:|
   |Concat|:heavy_check_mark:|
@@ -754,6 +763,7 @@ Please don't post such low level questions as issues.
   |GreaterOrEqual|:heavy_check_mark:|
   |Greater|:heavy_check_mark:|
   |GridSample|:heavy_check_mark:|
+  |GroupNormalization|**Help wanted**|
   |GRU|**Help wanted**|
   |Hardmax|**Help wanted**|
   |HardSigmoid|:heavy_check_mark:|
