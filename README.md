@@ -78,7 +78,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.9
+  ghcr.io/pinto0309/onnx2tf:1.1.10
 
   or
 
@@ -156,6 +156,7 @@ usage: onnx2tf
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
 [-racos]
+[-rpr]
 [-rlr]
 [-rpw]
 [-rgn]
@@ -327,6 +328,9 @@ optional arguments:
   -racos, --replace_acos_to_pseudo_acos
     Replace Acos with a pseudo Acos.
 
+  -rpr, --replace_prelu_to_pseudo_prelu
+    Replace PReLU with a pseudo PReLU.
+
   -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
     Replace LeakyReLU with a pseudo LeakyReLU.
 
@@ -385,6 +389,7 @@ convert(
   fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
+  replace_prelu_to_pseudo_prelu: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
   replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
@@ -562,6 +567,9 @@ convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
       Replace Acos with a pseudo Acos.
+
+    replace_prelu_to_pseudo_prelu: Optional[bool]
+      Replace PReLU with a pseudo PReLU.
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
       Replace LeakyReLU with a pseudo LeakyReLU.
