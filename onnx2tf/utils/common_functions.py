@@ -334,7 +334,10 @@ def inverted_operation_enable_disable(func):
                 and batch_size is not None:
                 onnx_node_output_shape[0] = batch_size
             if onnx_node_output_shape is not None:
-                onnx_node_output_shape = [None if s is not None and not isinstance(s, str) and s < 1 else s for s in onnx_node_output_shape]
+                onnx_node_output_shape = [
+                    None if s is not None and not isinstance(s, str) and s < 1 else s \
+                        for s in onnx_node_output_shape
+                ]
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
 
             trans_judge = (onnx_node_output_shape != tf_node_output_shape)
