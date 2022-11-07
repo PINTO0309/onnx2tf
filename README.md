@@ -79,7 +79,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.13
+  ghcr.io/pinto0309/onnx2tf:1.1.14
 
   or
 
@@ -156,6 +156,7 @@ usage: onnx2tf
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
+[-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
@@ -286,6 +287,16 @@ optional arguments:
     Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"
 
+  -kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...], \
+      --keep_nwc_or_nhwc_or_ndhwc_input_names KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES \
+          [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]
+    Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+    If a nonexistent INPUT OP name is specified, it is ignored.
+    If the input OP name is the same as the input OP name specified
+    in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
+    Valid only for 3D, 4D and 5D input tensors.
+    e.g. --keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"
+
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
@@ -386,6 +397,7 @@ convert(
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
+  keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -521,6 +533,15 @@ convert(
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
       --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
+      Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
+      If a nonexistent INPUT OP name is specified, it is ignored.
+      If the input OP name is the same as the input OP name specified
+      in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
+      Valid only for 3D, 4D and 5D input tensors.
+      e.g.
+      --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.

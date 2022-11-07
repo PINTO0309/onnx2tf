@@ -58,6 +58,7 @@ def convert(
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -193,6 +194,15 @@ def convert(
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
         --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
+        Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.\n
+        If a nonexistent INPUT OP name is specified, it is ignored.\n
+        If the input OP name is the same as the input OP name specified\n
+        in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.\n
+        Valid only for 3D, 4D and 5D input tensors.\n\n
+        e.g. \n
+        --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -501,6 +511,7 @@ def convert(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                 **additional_parameters,
             )
 
@@ -944,6 +955,20 @@ def main():
             'e.g. \n' +
             '--keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"'
     )
+    parser.add_argument(
+        '-kt',
+        '--keep_nwc_or_nhwc_or_ndhwc_input_names',
+        type=str,
+        nargs='+',
+        help=\
+            'Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names. \n' +
+            'If a nonexistent INPUT OP name is specified, it is ignored. \n' +
+            'If the input OP name is the same as the input OP name specified \n' +
+            'in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored. \n' +
+            'Valid only for 3D, 4D and 5D input tensors. \n\n' +
+            'e.g. \n' +
+            '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1119,6 +1144,7 @@ def main():
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
+        keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,

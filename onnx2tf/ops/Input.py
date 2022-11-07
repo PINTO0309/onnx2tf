@@ -17,6 +17,7 @@ def make_node(
     graph_input: gs.Variable,
     tf_layers_dict: dict,
     keep_ncw_or_nchw_or_ncdhw_input_names: List[str],
+    keep_nwc_or_nhwc_or_ndhwc_input_names: List[str],
     **kwargs: dict,
 ):
     """
@@ -35,8 +36,16 @@ def make_node(
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
         --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
+        Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.\n
+        If a nonexistent INPUT OP name is specified, it is ignored.\n
+        Valid only for 3D, 4D and 5D input tensors.\n\n
+        e.g. \n
+        --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
     """
     ncw_nchw_ncdhw_keep = False
+    nwc_nhwc_ndhwc_keep = False
     batch_size = kwargs.get('batch_size', None)
     graph_input_name = kwargs.get('subgraph_input_name', graph_input.name)
 
@@ -69,10 +78,25 @@ def make_node(
         ncw_nchw_ncdhw_keep = True
     tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_keep'] = ncw_nchw_ncdhw_keep
 
+    if graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        and keep_nwc_or_nhwc_or_ndhwc_input_names:
+        if graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
+            nwc_nhwc_ndhwc_keep = True
+        else:
+            nwc_nhwc_ndhwc_keep = False
+    elif graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        and not keep_nwc_or_nhwc_or_ndhwc_input_names:
+        nwc_nhwc_ndhwc_keep = False
+    else:
+        nwc_nhwc_ndhwc_keep = True
+    if ncw_nchw_ncdhw_keep and nwc_nhwc_ndhwc_keep:
+        nwc_nhwc_ndhwc_keep = False
+    tf_layers_dict[graph_input_name]['nwc_nhwc_ndhwc_keep'] = nwc_nhwc_ndhwc_keep
+
     # Generation of TF OP
     if graph_input.shape != tf.TensorShape(None) and len(shape) == 3:
         # 3D
-        if not ncw_nchw_ncdhw_keep:
+        if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
@@ -99,7 +123,7 @@ def make_node(
 
     elif graph_input.shape != tf.TensorShape(None) and len(shape) == 4:
         # 4D
-        if not ncw_nchw_ncdhw_keep:
+        if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
@@ -127,7 +151,7 @@ def make_node(
 
     elif graph_input.shape != tf.TensorShape(None) and len(shape) == 5:
         # 5D
-        if not ncw_nchw_ncdhw_keep:
+        if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
                 tf.keras.Input(
                     shape=[
@@ -166,6 +190,16 @@ def make_node(
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
 
+        if nwc_nhwc_ndhwc_keep \
+            and keep_nwc_or_nhwc_or_ndhwc_input_names \
+            and graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
+            error_msg = f'' +\
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
+                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+            print(error_msg)
+            assert not nwc_nhwc_ndhwc_keep, error_msg
+
         tf_layers_dict[graph_input_name]['tf_node'] = \
             tf.keras.Input(
                 shape=[
@@ -188,6 +222,16 @@ def make_node(
                 f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
+
+        if nwc_nhwc_ndhwc_keep \
+            and keep_nwc_or_nhwc_or_ndhwc_input_names \
+            and graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
+            error_msg = f'' +\
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
+                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+            print(error_msg)
+            assert not nwc_nhwc_ndhwc_keep, error_msg
 
         tf_layers_dict[graph_input_name]['tf_node'] = \
             tf.keras.Input(

@@ -309,6 +309,10 @@ def print_node_info(func):
                 f'Alternatively, if the input OP has a dynamic dimension, ' +
                 f'use the -b or -ois option to rewrite it to a static shape and try again.'
             )
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'If the input OP of ONNX before conversion is NHWC, use the -kt option.'
+            )
             sys.exit(1)
     return print_wrapper_func
 
