@@ -187,7 +187,8 @@ def make_node(
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
-        if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:3]]) == 0:
+        if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:3]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             new_values = [0] * tensor_rank
