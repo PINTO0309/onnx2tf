@@ -300,7 +300,15 @@ def print_node_info(func):
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
-            print(f'{Color.RED}ERROR:{Color.RESET} Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement')
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
+            )
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'Alternatively, if the input OP has a dynamic dimension, ' +
+                f'use the -b or -ois option to rewrite it to a static shape and try again.'
+            )
             sys.exit(1)
     return print_wrapper_func
 
