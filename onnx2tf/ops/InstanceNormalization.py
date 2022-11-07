@@ -82,7 +82,10 @@ def make_node(
         if input_tensor_shape[-1] is not None else scale.shape[0]
     params_shape_broadcast = \
         list([1] + [1 for _ in range(2, input_tensor_rank)] + [channel_size])
-
+    if input_tensor_rank == 3 and graph_node.i().op == 'Reshape':
+        params_shape_broadcast = [1, len(B), 1]
+        B = tf.reshape(tensor=B, shape=[1] + [len(B)] + [1])
+        scale = tf.reshape(tensor=scale, shape=[1] + [len(scale)] + [1])
     beta = tf.reshape(B, params_shape_broadcast)
     gamma = tf.reshape(scale, params_shape_broadcast)
 
@@ -104,6 +107,9 @@ def make_node(
             variance_epsilon=epsilon,
             name=graph_node.name,
         )
+
+    if len(shape) == 3 and graph_node.o().op == 'Reshape':
+        tf_layers_dict[graph_node_output.name]['is_instance_norm_3d'] = True
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
