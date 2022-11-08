@@ -61,6 +61,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 - [x] Added the ability to automatically generate each OP name and assign OP names to ONNX files in the old format.
+- [x] Supports model splitting. Interrupts model transformation at the specified output name and outputs the model partitioned into subgraphs.
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
@@ -79,7 +80,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.15
+  ghcr.io/pinto0309/onnx2tf:1.1.16
 
   or
 
@@ -157,6 +158,7 @@ usage: onnx2tf
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
+[-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
@@ -297,6 +299,13 @@ optional arguments:
     Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"
 
+  -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
+      --output_names_to_interrupt_model_conversion OUTPUT_NAMES [OUTPUT_NAMES ...]
+    Output names that interrupt model conversion.
+    Interrupts model transformation at the specified output name and outputs the
+    model partitioned into subgraphs.
+    e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
@@ -398,6 +407,7 @@ convert(
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
+  output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -542,6 +552,13 @@ convert(
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
       --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+
+    output_names_to_interrupt_model_conversion: Optional[List[str]]
+      Output names that interrupt model conversion.
+      Interrupts model transformation at the specified output name
+      and outputs the model partitioned into subgraphs.
+      e.g.
+      --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.

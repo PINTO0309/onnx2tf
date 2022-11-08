@@ -59,6 +59,7 @@ def convert(
     overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
+    output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -203,6 +204,13 @@ def convert(
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
         --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+
+    output_names_to_interrupt_model_conversion: Optional[List[str]]
+        Output names that interrupt model conversion.\n
+        Interrupts model transformation at the specified output name\n
+        and outputs the model partitioned into subgraphs.\n\n
+        e.g.\n
+        --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -541,9 +549,14 @@ def convert(
         ]
 
         # List Output
-        output_names = [
-            graph_output.name for graph_output in graph.outputs
-        ]
+        if not output_names_to_interrupt_model_conversion:
+            output_names = [
+                graph_output.name for graph_output in graph.outputs
+            ]
+        else:
+            output_names = [
+                output_op_name for output_op_name in output_names_to_interrupt_model_conversion
+            ]
         outputs = [
             layer_info['tf_node'] \
                 for opname, layer_info in tf_layers_dict.items() \
@@ -969,6 +982,18 @@ def main():
             'e.g. \n' +
             '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"'
     )
+    parser.add_argument(
+        '-onimc',
+        '--output_names_to_interrupt_model_conversion',
+        type=str,
+        nargs='+',
+        help=\
+            'Output names that interrupt model conversion. \n' +
+            'Interrupts model transformation at the specified output name \n' +
+            'and outputs the model partitioned into subgraphs. \n\n' +
+            'e.g. \n' +
+            '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1145,6 +1170,7 @@ def main():
         overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
+        output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
