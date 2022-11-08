@@ -43,6 +43,9 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -50,15 +53,25 @@ def make_node(
         'dtype': dtype,
     }
 
-    # Generation of TF OP
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+    replace_abs_to_pseudo_abs = kwargs['replace_abs_to_pseudo_abs']
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.abs(
+    # Generation of TF OP
+    if not replace_abs_to_pseudo_abs:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.abs(
+                x=input_tensor,
+                name=graph_node.name,
+            )
+    else:
+        squared_tensor = tf.math.square(
             x=input_tensor,
             name=graph_node.name,
         )
+        sqrted_tensor = tf.math.sqrt(
+            x=squared_tensor,
+            name=graph_node.name,
+        )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = sqrted_tensor
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

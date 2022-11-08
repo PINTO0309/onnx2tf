@@ -67,6 +67,7 @@ def convert(
     fused_argmax_scale_ratio: Optional[float] = 0.5,
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
+    replace_abs_to_pseudo_abs: Optional[bool] = False,
     replace_prelu_to_pseudo_prelu: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     replace_power_to_pseudo_power: Optional[bool] = False,
@@ -261,6 +262,9 @@ def convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
         Replace Acos with a pseudo Acos.
+
+    replace_abs_to_pseudo_abs: Optional[bool]
+        Replace Abs with a pseudo Abs.
 
     replace_prelu_to_pseudo_prelu: Optional[bool]
         Replace PReLU with a pseudo PReLU.
@@ -468,6 +472,7 @@ def convert(
         'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
+        'replace_abs_to_pseudo_abs': replace_abs_to_pseudo_abs,
         'replace_prelu_to_pseudo_prelu': replace_prelu_to_pseudo_prelu,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
         'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
@@ -1069,6 +1074,12 @@ def main():
         help='Replace Acos with a pseudo Acos.'
     )
     parser.add_argument(
+        '-rabs',
+        '--replace_abs_to_pseudo_abs',
+        action='store_true',
+        help='Replace Abs with a pseudo Abs.'
+    )
+    parser.add_argument(
         '-rpr',
         '--replace_prelu_to_pseudo_prelu',
         action='store_true',
@@ -1178,6 +1189,7 @@ def main():
         fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
+        replace_abs_to_pseudo_abs=args.replace_abs_to_pseudo_abs,
         replace_prelu_to_pseudo_prelu=args.replace_prelu_to_pseudo_prelu,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,

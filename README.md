@@ -10,6 +10,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
 - [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
+- [x] I have incorporated all my knowledge of model optimization to other models such as TFLite, EdgeTPU, TensorFlow.js and Myriad based on my years of experience implementing [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow) and [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow). It probably has the best model optimization performance and conversion efficiency of any tool I have created in the past, and the lowest rate of conversion errors.
 - [x] Supported layers list. [Supported layers](#supported-layers)
 - [x] Contributors to this repository should first read **[Contribution Guide](https://github.com/PINTO0309/onnx2tf/blob/main/CONTRIBUTING.md)**.
 
@@ -48,6 +49,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
+- [x] Add process to replace `Abs` with `pseudo-Abs`.
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
@@ -80,7 +82,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.16
+  ghcr.io/pinto0309/onnx2tf:1.1.17
 
   or
 
@@ -352,6 +354,9 @@ optional arguments:
   -racos, --replace_acos_to_pseudo_acos
     Replace Acos with a pseudo Acos.
 
+  -rabs, --replace_abs_to_pseudo_abs
+    Replace Abs with a pseudo Abs.
+
   -rpr, --replace_prelu_to_pseudo_prelu
     Replace PReLU with a pseudo PReLU.
 
@@ -415,6 +420,7 @@ convert(
   fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
+  replace_abs_to_pseudo_abs: Union[bool, NoneType] = False,
   replace_prelu_to_pseudo_prelu: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
@@ -609,6 +615,9 @@ convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
       Replace Acos with a pseudo Acos.
+
+    replace_acbs_to_pseudo_abs: Optional[bool]
+      Replace Abs with a pseudo Abs.
 
     replace_prelu_to_pseudo_prelu: Optional[bool]
       Replace PReLU with a pseudo PReLU.
