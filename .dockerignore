@@ -13,3 +13,4 @@ saved_model/
 .github/
 make_test_op/
 tests/
+*.npy

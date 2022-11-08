@@ -88,6 +88,13 @@ def make_node(
     extrapolation_value = graph_node.attrs.get('extrapolation_value', 0.0)
     mode = graph_node.attrs.get('mode', 'nearest')
 
+    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
+    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    fused_argmax_scale_ratio = \
+        kwargs['fused_argmax_scale_ratio']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -142,8 +149,13 @@ def make_node(
     if sizes is not None:
         # sizes is defined
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
-        sizes = sizes.set_shape(input_tensor_shape.shape) if isinstance(sizes, gs.Variable) else sizes
-        new_size = tf.cast(sizes[1:3], tf.int32)
+        if isinstance(sizes, gs.Variable):
+            sizes = sizes.set_shape(input_tensor_shape.shape)
+            new_size = tf.cast(sizes[1:3], tf.int32)
+        elif isinstance(sizes, np.ndarray):
+            new_size = tf.cast(sizes[1:3], tf.int32)
+        elif tf.keras.backend.is_keras_tensor(sizes):
+            new_size = tf.cast(tf.slice(sizes, [1], [2]), tf.int32)
     elif scales is not None:
         # only scales is defined
         if hasattr(graph_node.outputs[0], 'shape') \
@@ -163,9 +175,20 @@ def make_node(
     if hasattr(new_size, 'set_shape'):
         new_size.set_shape([2])
 
+
+    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+        and graph_node.o().op == 'ArgMax' \
+        and input_tensor_rank == 4:
+        new_size = tf.cast(
+            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
+            dtype=tf.int32,
+        )
+
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
-        if new_size_values.count(None) == len(new_size_values):
+        if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:3]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             new_values = [0] * tensor_rank

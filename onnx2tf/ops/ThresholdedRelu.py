@@ -60,7 +60,7 @@ def make_node(
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.relu(input_tensor) - \
-            tf.nn.relu(tf.sign(alpha - input_tensor + epsilon) * input_tensor)
+            tf.nn.relu(tf.sign((alpha + epsilon) - input_tensor) * input_tensor)
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

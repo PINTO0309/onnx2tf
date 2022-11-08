@@ -128,10 +128,13 @@ def make_node(
             replace_argmax_to_reducemax_and_indicies_is_float32=replace_argmax_to_reducemax_and_indicies_is_float32,
         )
         tf_op_type = 'alternative_argmax'
-    elif replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32:
+    elif (
+            replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+            or replace_argmax_to_fused_argmax_and_indicies_is_float32
+        ) and graph_node.i().op == 'Resize':
         final_tensor = alternative_fused_argmax(
             input_tensor=reversed_tensor,
+            original_shape=graph_node.inputs[0].shape,
             axis=axis,
             output_type=dtype,
             keepdims=keepdims,
@@ -140,6 +143,23 @@ def make_node(
             fused_argmax_scale_ratio=fused_argmax_scale_ratio,
         )
         tf_op_type = 'alternative_fused_argmax'
+    else:
+        argmaxed_tensor = tf.math.argmax(
+            input=reversed_tensor,
+            axis=axis,
+            output_type=dtype,
+            name=f'{graph_node.name}_argmax',
+        )
+        if keepdims:
+            final_tensor = \
+                tf.expand_dims(
+                    input=argmaxed_tensor,
+                    axis=axis,
+                    name=f'{graph_node.name}_expand_dims',
+                )
+        else:
+            final_tensor = argmaxed_tensor
+        tf_op_type = tf.math.argmax
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = final_tensor
 

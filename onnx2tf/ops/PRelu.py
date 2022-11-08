@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+from tensorflow.python.keras.layers import PReLU
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -54,6 +55,8 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     slope_rank = len(slope.shape)
 
+    replace_prelu_to_pseudo_prelu = kwargs['replace_prelu_to_pseudo_prelu']
+
     if slope_rank == 1:
         pass
     elif slope_rank == 3:
@@ -66,10 +69,11 @@ def make_node(
         y=slope,
     )
 
-    slope = channel_transpose(
-        const_or_var_1=input_tensor,
-        const_or_var_2=slope,
-    )
+    if replace_prelu_to_pseudo_prelu:
+        slope = channel_transpose(
+            const_or_var_1=input_tensor,
+            const_or_var_2=slope,
+        )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -83,9 +87,24 @@ def make_node(
     }
 
     # Generation of TF OP
-    pos = tf.nn.relu(input_tensor)
-    neg = slope * (input_tensor - abs(input_tensor)) * 0.5
-    tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+    if replace_prelu_to_pseudo_prelu:
+        pos = tf.nn.relu(input_tensor)
+        neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
+        tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+    else:
+        shared_axes = []
+        if slope_rank < 4:
+            if input_tensor.shape[-1] == slope.shape[-1]:
+                shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
+            else:
+                shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 1)]
+        else:
+            shared_axes = None
+
+        tf_layers_dict[graph_node_output.name]['tf_node'] = PReLU(
+            weights=[slope],
+            shared_axes=shared_axes,
+        )(input_tensor)
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

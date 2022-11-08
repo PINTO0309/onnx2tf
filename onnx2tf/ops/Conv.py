@@ -63,7 +63,7 @@ def make_node(
         if isinstance(input_tensor, gs.Variable) else input_tensor
     input_weights = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_weights, gs.Variable) else input_weights
-    input_bias = tf_layers_dict[input_weights.name]['tf_node'] \
+    input_bias = tf_layers_dict[input_bias.name]['tf_node'] \
         if isinstance(input_bias, gs.Variable) else input_bias
 
     input_tensor_shape = input_tensor.shape
@@ -94,7 +94,7 @@ def make_node(
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
     if auto_pad == 'NOTSET':
-        if len(graph_node.inputs[0].shape) >=2 \
+        if input_tensor_rank >=2 \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:

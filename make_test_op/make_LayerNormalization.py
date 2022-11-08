@@ -36,13 +36,12 @@ if __name__ == "__main__":
     OPSET=[11, 17]
 
     for opset in OPSET:
-        MODEL = f'LayerNormalization2D'
-        N, C, H, W = 20, 5, 10, 10
-        embedding_dim = [C, H, W]
-        embedding_dim_tensor = torch.zeros([C, H, W])
-        input = torch.randn(N, C, H, W)
+        MODEL = f'LayerNormalization1D'
+        batch, sentence_length, embedding_dim = 20, 5, 10
+        input = torch.randn(batch, sentence_length, embedding_dim)
+        embedding_dim_tensor = torch.zeros(embedding_dim)
         model = LayerNormalization(
-            embedding_dim=embedding_dim,
+            embedding_dim=[embedding_dim],
             weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
             bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
         )
@@ -66,12 +65,13 @@ if __name__ == "__main__":
         model_simp, check = simplify(model_onnx2)
         onnx.save(model_simp, onnx_file)
 
-        MODEL = f'LayerNormalization1D'
-        batch, sentence_length, embedding_dim = 20, 5, 10
-        input = torch.randn(batch, sentence_length, embedding_dim)
-        embedding_dim_tensor = torch.zeros(embedding_dim)
+        MODEL = f'LayerNormalization2D'
+        N, C, H, W = 20, 5, 10, 10
+        embedding_dim = [C, H, W]
+        embedding_dim_tensor = torch.zeros([C, H, W])
+        input = torch.randn(N, C, H, W)
         model = LayerNormalization(
-            embedding_dim=[embedding_dim],
+            embedding_dim=embedding_dim,
             weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
             bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
         )

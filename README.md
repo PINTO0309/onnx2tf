@@ -5,7 +5,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
   <img src="https://user-images.githubusercontent.com/33194443/193840307-fa69eace-05a9-4d93-9c5d-999cf88af28e.png" />
 </p>
 
-[![Downloads](https://static.pepy.tech/personalized-badge/onnx2tf?period=total&units=none&left_color=grey&right_color=brightgreen&left_text=Downloads)](https://pepy.tech/project/onnx2tf) ![GitHub](https://img.shields.io/github/license/PINTO0309/onnx2tf?color=2BAF2B) [![PyPI](https://img.shields.io/pypi/v/onnx2tf?color=2BAF2B)](https://pypi.org/project/onnx2tf/) [![CodeQL](https://github.com/PINTO0309/onnx2tf/workflows/CodeQL/badge.svg)](https://github.com/PINTO0309/onnx2tf/actions?query=workflow%3ACodeQL) [![DOI](https://zenodo.org/badge/541831874.svg)](https://zenodo.org/badge/latestdoi/541831874)
+[![Downloads](https://static.pepy.tech/personalized-badge/onnx2tf?period=total&units=none&left_color=grey&right_color=brightgreen&left_text=Downloads)](https://pepy.tech/project/onnx2tf) ![GitHub](https://img.shields.io/github/license/PINTO0309/onnx2tf?color=2BAF2B) [![Python](https://img.shields.io/badge/Python-3.8-2BAF2B)](https://img.shields.io/badge/Python-3.8-2BAF2B) [![PyPI](https://img.shields.io/pypi/v/onnx2tf?color=2BAF2B)](https://pypi.org/project/onnx2tf/) [![CodeQL](https://github.com/PINTO0309/onnx2tf/workflows/CodeQL/badge.svg)](https://github.com/PINTO0309/onnx2tf/actions?query=workflow%3ACodeQL) [![DOI](https://zenodo.org/badge/541831874.svg)](https://zenodo.org/badge/latestdoi/541831874)
 
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
@@ -15,12 +15,12 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 
   https://user-images.githubusercontent.com/33194443/197319770-e7ef7174-66cd-4bc2-84be-59e1a251151d.mp4
 
+- [x] All OPs are decomposed into primitive operations as much as possible. This is beneficial for lateral deployment of models to frameworks other than TFLite. Therefore, OPs belonging to `tf.keras.layers` are almost never used, and the tool consists only of `tf.xxx`. (except for a very few OPs)
 - [x] Not only does it handle conversions of 4-dimensional inputs, such as `NCHW` to `NHWC`, but also the number of input dimensions in 3, 5, or even more dimensions. For example, `NCDHW` to `NDHWC`, etc. However, since 1-D, 2-D, 3-D and 6-D input may produce patterns that are mechanically difficult to convert, it should be possible to give parameters to externally modify the tool's behavior. See [Parameter replacement](#parameter-replacement)
 - [x] If there are undefined dimensions in the input OP, the model structure is not fully optimized and conversion errors are very likely to occur.
 - [x] Immediately following a `Reshape` OP with dimensional compression and dimensional decompression, there is a 95% probability that the model transformation operation will be disrupted and errors will occur. For example, patterns such as `[1,200,200,5]` -> `[1,200,-1]` or `[10,20,30,40,50]` -> `[10,2,10,30,10,4,50]` or `Flatten`. See [#8 Not able to reshape input in replace.json](https://github.com/PINTO0309/onnx2tf/issues/8)
 - [x] TensorFlow's Convolution does not have an equivalent operation to ONNX's Padding operation. Therefore, a `Pad` OP is inserted immediately before a Convolution with Padding of size greater than 1.
-- [x] Support conversion to TensorFlow saved model and TFLite (Float32/Float16).
-- [x] Does not support quantization to INT8. For quantization, use the official TensorFlow converter to convert from saved_model to your own.
+- [x] Support conversion to TensorFlow saved model and TFLite (Float32/Float16/INT8).
 - [ ] Files exceeding the Protocol Buffers file size limit of 2GB are not supported. Therefore, the external format is not supported at the initial stage of tool creation.
 - [x] If there are ONNX OPs that are not supported by TensorFlow, use [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools) to replace them with harmless OPs in advance and then use this tool to convert them. In other words, you can convert any model with your efforts.
 - [x] ONNX splitting, merging, generating OPs, rewriting OP attributes, BGR<->RGB conversion, converting to JSON and editing in the IDE, batch size changes for undefined dimensions, and various other processing can be done with the [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools). Therefore, it is recommended that models with very complex structures be converted to TFLite after modifying the structure beforehand.
@@ -42,6 +42,8 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 8. Calculation error due to scaling up or down by specifying a `scale` when resizing images
 
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
+- [x] Support for `INT8 Quantization`, `Full INT8 Quantization`, `INT8 Quantization with INT16 activation`, `Full INT8 Quantization with INT16 activation` and `Dynamic Range Quantization`.
+- [x] Support for `Per-Channel Quantization` and `Per-Tensor Quantization`.
 - [x] TFLite does not support `TrueDiv`(INT), so `TrueDiv` is avoided if possible.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
@@ -49,11 +51,13 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
+- [x] Add process to replace `PRelu` with `pseudo-PRelu`.
 - [x] Add process to replace `LeakyRelu` with `pseudo-LeakyRelu`.
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
+- [x] Added option to overwrite dynamic shape input OPs with static shape. `--overwrite_input_shape`
 - [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 - [x] Added the ability to automatically generate each OP name and assign OP names to ONNX files in the old format.
@@ -70,28 +74,68 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - tensorflow>=2.10.0
 
 ## Sample Usage
-```
-$ docker run --rm -it \
--v `pwd`:/workdir \
--w /workdir \
-ghcr.io/pinto0309/onnx2tf:1.0.43
+- HostPC
+  ```
+  $ docker run --rm -it \
+  -v `pwd`:/workdir \
+  -w /workdir \
+  ghcr.io/pinto0309/onnx2tf:1.1.15
+
+  or
+
+  $ pip install -U onnx \
+  && pip install -U nvidia-pyindex \
+  && pip install -U onnx-graphsurgeon \
+  && pip install -U onnxsim \
+  && pip install -U simple_onnx_processing_tools \
+  && pip install -U onnx2tf
+
+  or
+
+  $ pip install -e .
+  ```
 
 or
 
-$ pip install -U onnx \
-&& pip install -U nvidia-pyindex \
-&& pip install -U onnx-graphsurgeon \
-&& pip install -U onnxsim \
-&& pip install -U simple_onnx_processing_tools \
-&& pip install -U onnx2tf
+- Google Colaboratory Python3.8+
+  ```
+  !sudo add-apt-repository -y ppa:deadsnakes/ppa
+  !sudo apt-get -y update
+  !sudo apt-get -y install python3.9
+  !sudo apt-get -y install python3.9-dev
+  !sudo apt-get -y install python3-pip
+  !sudo apt-get -y install python3.9-distutils
+  !python3.9 -m pip install -U setuptools \
+    && python3.9 -m pip install -U pip \
+    && python3.9 -m pip install -U distlib
+  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
+  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
+  !python3.9 -m pip install tensorflow==2.10.0 \
+    && python3.9 -m pip install -U onnx \
+    && python3.9 -m pip install -U nvidia-pyindex \
+    && python3.9 -m pip install -U onnx-graphsurgeon \
+    && python3.9 -m pip install -U onnxsim \
+    && python3.9 -m pip install -U simple_onnx_processing_tools \
+    && python3.9 -m pip install -U onnx2tf
+  ```
 
-or
-
-$ pip install -e .
-```
-```
+Run test.
+```bash
+# Float32, Float16
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -o saved_model
+$ onnx2tf -i resnet18-v1-7.onnx
+
+# INT8 Quantization
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferplus-8.onnx
+# INT8 Quantization (per-channel)
+$ onnx2tf -i emotion-ferplus-8.onnx -oiqt
+# INT8 Quantization (per-tensor)
+$ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
+
+# Parameter replacement (Resize,Transpose,Softmax)
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/human_segmentation_pphumanseg_2021oct.onnx
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/replace.json
+$ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 ## CLI Parameter
 ```
@@ -103,15 +147,21 @@ usage: onnx2tf
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-oh5]
+[-oiqt]
+[-qt {per-channel,per-tensor}]
+[-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
+[-ioqd {int8,uint8}]
 [-nuo]
 [-nuonag]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
+[-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
 [-racos]
+[-rpr]
 [-rlr]
 [-rpw]
 [-rgn]
@@ -141,6 +191,68 @@ optional arguments:
 
   -oh5, --output_h5
     Output in Keras H5 format.
+
+  -oiqt, --output_integer_quantized_tflite
+    Output of integer quantized tflite.
+
+  -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
+    Selects whether "per-channel" or "per-tensor" quantization is used.
+    Default: "per-channel"
+
+  -qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
+    --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+    INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
+    The specification can be omitted only when the input OP is a single 4D tensor image data.
+    If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+    The type of the input OP must be Float32.
+    Data for calibration must be pre-normalized to a range of 0 to 1.
+    -qcind {input_op_name} {numpy_file_path} {mean} {std}
+    Numpy file paths must be specified the same number of times as the number of input OPs.
+    Normalize the value of the input OP based on the tensor specified in mean and std.
+    (input_value - mean) / std
+    Tensors in Numpy file format must be in dimension order after conversion to TF.
+    Note that this is intended for deployment on low-resource devices,
+    so the batch size is limited to 1 only.
+
+    e.g.
+    The example below shows a case where there are three input OPs.
+    Assume input0 is 128x128 RGB image data.
+    In addition, input0 should be a value that has been divided by 255
+    in the preprocessing and normalized to a range between 0 and 1.
+    input1 and input2 assume the input of something that is not an image.
+    Because input1 and input2 assume something that is not an image,
+    the divisor is not 255 when normalizing from 0 to 1.
+    "n" is the number of calibration data.
+
+    ONNX INPUT shapes:
+      input0: [n,3,128,128]
+        mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+        std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+      input1: [n,64,64]
+        mean: [1,64] -> [[0.1, ..., 0.64]]
+        std : [1,64] -> [[0.05, ..., 0.08]]
+      input2: [n,5]
+        mean: [1] -> [0.3]
+        std : [1] -> [0.07]
+
+    TensorFlow INPUT shapes (Numpy file ndarray shapes):
+      input0: [n,128,128,3]
+        mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+        std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+      input1: [n,64,64]
+        mean: [1,64] -> [[0.1, ..., 0.64]]
+        std : [1,64] -> [[0.05, ..., 0.08]]
+      input2: [n,5]
+        mean: [1] -> [0.3]
+        std : [1] -> [0.07]
+
+    -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+    -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+    -qcind "input2" "input2.npy" [0.3] [0.07]
+
+  -ioqd {int8,uint8}, --input_output_quant_dtype {int8,uint8}
+    Input and Output dtypes when doing Full INT8 Quantization.
+    "int8"(default) or "uint8"
 
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.
@@ -174,6 +286,16 @@ optional arguments:
     If a nonexistent INPUT OP name is specified, it is ignored.
     Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"
+
+  -kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...], \
+      --keep_nwc_or_nhwc_or_ndhwc_input_names KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES \
+          [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]
+    Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+    If a nonexistent INPUT OP name is specified, it is ignored.
+    If the input OP name is the same as the input OP name specified
+    in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
+    Valid only for 3D, 4D and 5D input tensors.
+    e.g. --keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"
 
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
@@ -212,7 +334,7 @@ optional arguments:
   -fasr FUSED_ARGMAX_SCALE_RATIO, --fused_argmax_scale_ratio FUSED_ARGMAX_SCALE_RATIO
     For Fused ArgMax.
     Scale ratio when generating Fused ArgMax.
-    0.0 < fused_argmax_scale_ratio < 1.0
+    0.0 < fused_argmax_scale_ratio <= 1.0
     Default: 0.5
 
   -rasin, --replace_asin_to_pseudo_asin
@@ -220,6 +342,9 @@ optional arguments:
 
   -racos, --replace_acos_to_pseudo_acos
     Replace Acos with a pseudo Acos.
+
+  -rpr, --replace_prelu_to_pseudo_prelu
+    Replace PReLU with a pseudo PReLU.
 
   -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
     Replace LeakyReLU with a pseudo LeakyReLU.
@@ -263,11 +388,16 @@ convert(
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
+  output_integer_quantized_tflite: Optional[bool] = False,
+  quant_type: Optional[str] = 'per-channel',
+  quant_calib_input_op_name_np_data_path: Optional[List] = None,
+  input_output_quant_dtype: Optional[str] = 'int8',
   not_use_onnxsim: Optional[bool] = False,
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
+  keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -275,6 +405,7 @@ convert(
   fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
+  replace_prelu_to_pseudo_prelu: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
   replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
@@ -310,6 +441,68 @@ convert(
     output_h5: Optional[bool]
       Output in Keras H5 format.
 
+    output_integer_quantized_tflite: Optional[bool]
+      Output of integer quantized tflite.
+
+    quant_type: Optional[str]
+      Selects whether "per-channel" or "per-tensor" quantization is used.
+      Default: "per-channel"
+
+    quant_calib_input_op_name_np_data_path: Optional[List]
+      --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+      INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
+      The specification can be omitted only when the input OP is a single 4D tensor image data.
+      If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+      The type of the input OP must be Float32.
+      Data for calibration must be pre-normalized to a range of 0 to 1.
+      -qcind {input_op_name} {numpy_file_path} {mean} {std}
+      Numpy file paths must be specified the same number of times as the number of input OPs.
+      Normalize the value of the input OP based on the tensor specified in mean and std.
+      (input_value - mean) / std
+      Tensors in Numpy file format must be in dimension order after conversion to TF.
+      Note that this is intended for deployment on low-resource devices,
+      so the batch size is limited to 1 only.
+
+      e.g.
+      The example below shows a case where there are three input OPs.
+      Assume input0 is 128x128 RGB image data.
+      In addition, input0 should be a value that has been divided by 255
+      in the preprocessing and normalized to a range between 0 and 1.
+      input1 and input2 assume the input of something that is not an image.
+      Because input1 and input2 assume something that is not an image,
+      the divisor is not 255 when normalizing from 0 to 1.
+      "n" is the number of calibration data.
+
+      ONNX INPUT shapes:
+        input0: [n,3,128,128]
+          mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+          std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+        input1: [n,64,64]
+          mean: [1,64] -> [0.1, ..., 0.64]
+          std : [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+          mean: [1] -> [0.3]
+          std : [1] -> [0.07]
+
+      TensorFlow INPUT shapes (Numpy file ndarray shapes):
+        input0: [n,128,128,3]
+          mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+          std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+        input1: [n,64,64]
+          mean: [1,64] -> [0.1, ..., 0.64]
+          std : [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+          mean: [1] -> [0.3]
+          std : [1] -> [0.07]
+
+      -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+      -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+      -qcind "input2" "input2.npy" [0.3] [0.07]
+
+    input_output_quant_dtype: Optional[str]
+      Input and Output dtypes when doing Full INT8 Quantization.
+      "int8"(default) or "uint8"
+
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
       If this option is used, the probability of a conversion error is very high.
@@ -340,6 +533,15 @@ convert(
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
       --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
+      Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
+      If a nonexistent INPUT OP name is specified, it is ignored.
+      If the input OP name is the same as the input OP name specified
+      in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
+      Valid only for 3D, 4D and 5D input tensors.
+      e.g.
+      --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
@@ -382,7 +584,7 @@ convert(
     fused_argmax_scale_ratio: Optional[float]
       For Fused ArgMax.
       Scale ratio when generating Fused ArgMax.
-      0.0 < fused_argmax_scale_ratio < 1.0
+      0.0 < fused_argmax_scale_ratio <= 1.0
       Default: 0.5
 
     replace_asin_to_pseudo_asin: Optional[bool]
@@ -390,6 +592,9 @@ convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
       Replace Acos with a pseudo Acos.
+
+    replace_prelu_to_pseudo_prelu: Optional[bool]
+      Replace PReLU with a pseudo PReLU.
 
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
       Replace LeakyReLU with a pseudo LeakyReLU.
@@ -507,7 +712,7 @@ Please don't post such low level questions as issues.
   |5|Mul||
   |6|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
   |7|Resize||
-  |8|Softmax||
+  |8|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
   |9|Sub||
   |10|Tile||
   |11|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
@@ -533,10 +738,16 @@ Please don't post such low level questions as issues.
   |BatchNormalization|:heavy_check_mark:|
   |Bernoulli|:heavy_check_mark:|
   |BitShift|:heavy_check_mark:|
+  |BitwiseAnd|**Help wanted**|
+  |BitwiseNot|**Help wanted**|
+  |BitwiseOr|**Help wanted**|
+  |BitwiseXor|**Help wanted**|
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
   |Celu|:heavy_check_mark:|
+  |CenterCropPad|**Help wanted**|
   |Clip|:heavy_check_mark:|
+  |Col2Im|**Help wanted**|
   |Compress|:heavy_check_mark:|
   |ConcatFromSequence|:heavy_check_mark:|
   |Concat|:heavy_check_mark:|
@@ -549,6 +760,7 @@ Please don't post such low level questions as issues.
   |CumSum|:heavy_check_mark:|
   |DepthToSpace|:heavy_check_mark:|
   |Det|:heavy_check_mark:|
+  |DequantizeLinear|:heavy_check_mark:|
   |DFT|**Help wanted**|
   |Div|:heavy_check_mark:|
   |Dropout|:heavy_check_mark:|
@@ -572,6 +784,7 @@ Please don't post such low level questions as issues.
   |GreaterOrEqual|:heavy_check_mark:|
   |Greater|:heavy_check_mark:|
   |GridSample|:heavy_check_mark:|
+  |GroupNormalization|**Help wanted**|
   |GRU|**Help wanted**|
   |Hardmax|**Help wanted**|
   |HardSigmoid|:heavy_check_mark:|
@@ -593,7 +806,7 @@ Please don't post such low level questions as issues.
   |LRN|:heavy_check_mark:|
   |LSTM|**Help wanted**|
   |MatMul|:heavy_check_mark:|
-  |MatMulInteger|**Help wanted**|
+  |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
   |Max|:heavy_check_mark:|
   |MaxRoiPool|**Help wanted**|
@@ -618,8 +831,14 @@ Please don't post such low level questions as issues.
   |Pad|:heavy_check_mark:|
   |Pow|:heavy_check_mark:|
   |PRelu|:heavy_check_mark:|
-  |QLinearConv|**Help wanted**|
-  |QLinearMatMul|**Help wanted**|
+  |QLinearAdd|:heavy_check_mark:|
+  |QLinearConcat|:heavy_check_mark:|
+  |QLinearConv|:heavy_check_mark:|
+  |QLinearLeakyRelu|:heavy_check_mark:|
+  |QLinearMatMul|:heavy_check_mark:|
+  |QLinearMul|:heavy_check_mark:|
+  |QLinearSigmoid|:heavy_check_mark:|
+  |QLinearSoftmax|:heavy_check_mark:|
   |QuantizeLinear|:heavy_check_mark:|
   |RandomNormalLike|:heavy_check_mark:|
   |RandomNormal|:heavy_check_mark:|

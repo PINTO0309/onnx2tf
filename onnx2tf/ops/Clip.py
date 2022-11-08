@@ -32,10 +32,14 @@ def make_node(
     """
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_2 = \
-        tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
-    before_op_output_shape_trans_3 = \
-        tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_2 = True
+    if len(graph_node.inputs) >= 2:
+        before_op_output_shape_trans_2 = \
+            tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    before_op_output_shape_trans_3 = True
+    if len(graph_node.inputs) >= 3:
+        before_op_output_shape_trans_3 = \
+            tf_layers_dict.get(graph_node.inputs[2].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1 \
         and before_op_output_shape_trans_2 \
@@ -45,14 +49,18 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
-    min_value_node = get_constant_or_variable(
-        graph_node.inputs[1],
-        before_op_output_shape_trans,
-    )
-    max_value_node = get_constant_or_variable(
-        graph_node.inputs[2],
-        before_op_output_shape_trans,
-    )
+    min_value_node = None
+    if len(graph_node.inputs) >= 2:
+        min_value_node = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
+    max_value_node = None
+    if len(graph_node.inputs) >= 3:
+        max_value_node = get_constant_or_variable(
+            graph_node.inputs[2],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape
@@ -93,12 +101,13 @@ def make_node(
             tf.nn.relu6(features=features)
         tf_op_type = tf.nn.relu6
     elif isinstance(min_value, np.ndarray) and min_value == 0.0 \
-        and max_value.shape is None:
+        and (max_value is None or max_value.shape is None):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu(features=features)
         tf_op_type = tf.nn.relu
     else:
-        if min_value.shape is not None and max_value.shape is not None:
+        if (min_value is not None and min_value.shape is not None) \
+            and (max_value is not None and max_value.shape is not None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.clip_by_value(
                     t=features,
@@ -106,14 +115,16 @@ def make_node(
                     clip_value_max=max_value,
                 )
             tf_op_type = tf.clip_by_value
-        elif min_value.shape is not None and max_value.shape is None:
+        elif (min_value is not None and min_value.shape is not None) \
+            and (max_value is None or max_value.shape is None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(
                     x=features,
                     y=min_value,
                 )
             tf_op_type = tf.maximum
-        elif min_value.shape is None and max_value.shape is not None:
+        elif (min_value is None or min_value.shape is None) \
+            and (max_value is not None and max_value.shape is not None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.minimum(
                     x=features,

@@ -143,6 +143,16 @@ def make_node(
             name=graph_node.name,
         )
 
+    # Reshape of the GroupNormalization (InstanceNormalization) process,
+    # if applicable, is re-transposed to NHWC.
+    if 'is_instance_norm_3d' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['is_instance_norm_3d'] == True:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.transpose(
+                a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                perm=[0,2,3,1],
+            )
+
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
