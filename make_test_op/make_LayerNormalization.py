@@ -31,19 +31,36 @@ class LayerNormalization(nn.Module):
         )
         return layernormed
 
-
 if __name__ == "__main__":
     OPSET=[11, 17]
 
     for opset in OPSET:
         MODEL = f'LayerNormalization1D'
         batch, sentence_length, embedding_dim = 20, 5, 10
-        input = torch.randn(batch, sentence_length, embedding_dim)
-        embedding_dim_tensor = torch.zeros(embedding_dim)
+        input = torch.randn(
+            size=batch,
+            generator=sentence_length,
+            out=embedding_dim,
+        )
+        embedding_dim_tensor = torch.zeros(
+            size=embedding_dim,
+        )
         model = LayerNormalization(
             embedding_dim=[embedding_dim],
-            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+            weight=torch.tensor(
+                data=torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.1
+                ),
+                dtype=torch.float32,
+            ),
+            bias=torch.tensor(
+                torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.2,
+                ),
+                dtype=torch.float32,
+            ),
         )
         onnx_file = f"{MODEL}_{opset}.onnx"
         torch.onnx.export(
@@ -68,12 +85,26 @@ if __name__ == "__main__":
         MODEL = f'LayerNormalization2D'
         N, C, H, W = 20, 5, 10, 10
         embedding_dim = [C, H, W]
-        embedding_dim_tensor = torch.zeros([C, H, W])
+        embedding_dim_tensor = torch.zeros(
+            size=[C, H, W],
+        )
         input = torch.randn(N, C, H, W)
         model = LayerNormalization(
             embedding_dim=embedding_dim,
-            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+            weight=torch.tensor(
+                data=torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.1,
+                ),
+                dtype=torch.float32,
+            ),
+            bias=torch.tensor(
+                data=torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.2,
+                ),
+                dtype=torch.float32,
+            ),
         )
         onnx_file = f"{MODEL}_{opset}.onnx"
         torch.onnx.export(
@@ -98,12 +129,26 @@ if __name__ == "__main__":
         MODEL = f'LayerNormalization3D'
         N, C, D, H, W = 20, 5, 10, 10, 10
         embedding_dim = [C, D, H, W]
-        embedding_dim_tensor = torch.zeros([C, D, H, W])
+        embedding_dim_tensor = torch.zeros(
+            size=[C, D, H, W],
+        )
         input = torch.randn(N, C, D, H, W)
         model = LayerNormalization(
             embedding_dim=embedding_dim,
-            weight=torch.tensor(torch.full_like(embedding_dim_tensor, 0.1), dtype=torch.float32),
-            bias=torch.tensor(torch.full_like(embedding_dim_tensor, 0.2), dtype=torch.float32),
+            weight=torch.tensor(
+                data=torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.1,
+                ),
+                dtype=torch.float32,
+            ),
+            bias=torch.tensor(
+                data=torch.full_like(
+                    input=embedding_dim_tensor,
+                    fill_value=0.2,
+                ),
+                dtype=torch.float32,
+            ),
         )
         onnx_file = f"{MODEL}_{opset}.onnx"
         torch.onnx.export(
