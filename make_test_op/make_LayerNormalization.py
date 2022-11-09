@@ -23,7 +23,7 @@ class LayerNormalization(nn.Module):
 
     def forward(self, x):
         layernormed = nn.functional.layer_norm(
-            x,
+            input=x,
             normalized_shape=self.embedding_dim,
             weight=self.weight,
             bias=self.bias,
