@@ -12,6 +12,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 - [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
 - [x] I have incorporated all my knowledge of model optimization to other models such as TFLite, EdgeTPU, TensorFlow.js and Myriad based on my years of experience implementing [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow) and [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow). It probably has the best model optimization performance and conversion efficiency of any tool I have created in the past, and the lowest rate of conversion errors.
 - [x] Supported layers list. [Supported layers](#supported-layers)
+- [x] If you are having trouble with conversion errors, searching for [resolved or open issues](https://github.com/PINTO0309/onnx2tf/issues) will almost always solve your problems. Issues are knowledge for engineers around the world.
 - [x] Contributors to this repository should first read **[Contribution Guide](https://github.com/PINTO0309/onnx2tf/blob/main/CONTRIBUTING.md)**.
 
   https://user-images.githubusercontent.com/33194443/197319770-e7ef7174-66cd-4bc2-84be-59e1a251151d.mp4
