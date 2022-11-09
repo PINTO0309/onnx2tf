@@ -295,7 +295,7 @@ optional arguments:
   -kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...], \
       --keep_nwc_or_nhwc_or_ndhwc_input_names KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES \
           [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]
-    Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+    Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
     If a nonexistent INPUT OP name is specified, it is ignored.
     If the input OP name is the same as the input OP name specified
     in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
