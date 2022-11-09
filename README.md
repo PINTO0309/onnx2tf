@@ -165,6 +165,7 @@ usage: onnx2tf
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
 [-racos]
+[-rabs]
 [-rpr]
 [-rlr]
 [-rpw]
