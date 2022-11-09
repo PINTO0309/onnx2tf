@@ -960,5 +960,4 @@ Please don't post such low level questions as issues.
 8. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
 9. [onnx](https://github.com/onnx/onnx)
 10. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-11. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
-12. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
+11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
