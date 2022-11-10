@@ -33,6 +33,21 @@ class Model2(nn.Module):
         else:
             return [x+1,y+2]
 
+class Model3(nn.Module):
+    def __init__(
+        self,
+    ):
+        super(Model3, self).__init__()
+
+    def forward(self, x, y):
+        if sum(x) > sum(y):
+            return x
+        else:
+            if torch.min(x) > torch.min(y):
+                return x
+            else:
+                return y
+
 
 if __name__ == "__main__":
     OPSET=11
@@ -67,6 +82,29 @@ if __name__ == "__main__":
     onnx_file = f"{MODEL}_{OPSET}.onnx"
     x = torch.randn(1,100, dtype=torch.float32)
     y = torch.randn(2,100, dtype=torch.float32)
+    torch.onnx.export(
+        torch.jit.script(model),
+        args=(x,y),
+        f=onnx_file,
+        opset_version=OPSET,
+        input_names=[
+            f'{MODEL}_input1',
+            f'{MODEL}_input2',
+        ],
+        output_names=[
+            f'{MODEL}_output',
+        ],
+        do_constant_folding=False,
+    )
+    model_onnx1 = onnx.load(onnx_file)
+    model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+    onnx.save(model_onnx1, onnx_file)
+
+    MODEL = f'If_p3'
+    model = Model3()
+    onnx_file = f"{MODEL}_{OPSET}.onnx"
+    x = torch.randn(100)
+    y = torch.randn(100)
     torch.onnx.export(
         torch.jit.script(model),
         args=(x,y),
