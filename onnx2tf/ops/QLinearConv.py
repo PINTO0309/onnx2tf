@@ -126,7 +126,10 @@ def make_node(
         )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    output_tensor_shape = graph_node.o().outputs[0].shape
+    try:
+        output_tensor_shape = graph_node.o().outputs[0].shape
+    except:
+        output_tensor_shape = graph_node.outputs[0].shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
