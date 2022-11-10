@@ -41,12 +41,12 @@ class Model3(nn.Module):
 
     def forward(self, x, y):
         if sum(x) > sum(y):
-            return x
+            return x+1
         else:
             if torch.min(x) > torch.min(y):
-                return x
+                return x+2
             else:
-                return y
+                return y+3
 
 
 if __name__ == "__main__":
