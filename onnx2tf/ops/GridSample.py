@@ -168,7 +168,8 @@ def make_node(
         dtype=tf.int64,
     )
 
-    ind = tf.range(limit=Nt)
+    # ind = tf.range(Nt)
+    ind = np.arange(Nt)
     ind = tf.reshape(tensor=ind, shape=[Nt, 1])
     ind = tf.tile(input=ind, multiples=[1, grid_H])
     ind = tf.reshape(tensor=ind, shape=[Nt, grid_H, 1])
@@ -179,6 +180,15 @@ def make_node(
         a=image,
         perm=[3,0,1,2],
     )
+    """
+    image = TensorShape([256, 3, 128, 128])
+    grid = TensorShape([3, 5000, 1, 2])
+
+    ind = TensorShape([3, 5000, 1])
+    y0 = TensorShape([3, 5000, 1])
+    x0 = TensorShape([3, 5000, 1])
+    wa = TensorShape([1, 3, 5000, 1])
+    """
     output_tensor = \
         image[:, ind, y0, x0] * wa \
         + image[:, ind, y1, x0] * wb \
