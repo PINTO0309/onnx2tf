@@ -17,7 +17,7 @@ setup(
     name=package_name,
     version=version,
     description=\
-        "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). "+
+        "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). "+
         "The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf).",
     long_description=long_description,
     long_description_content_type="text/markdown",
