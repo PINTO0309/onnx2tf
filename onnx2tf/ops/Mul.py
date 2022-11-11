@@ -12,6 +12,8 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     channel_transpose,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
@@ -91,6 +93,20 @@ def make_node(
             const_or_var_2=input_tensor_1,
         )
 
+    # Pre-process transpose
+    input_tensor_1 = pre_process_transpose(
+        value_before_transpose=input_tensor_1,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    input_tensor_2 = pre_process_transpose(
+        value_before_transpose=input_tensor_2,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.multiply(
@@ -98,6 +114,14 @@ def make_node(
             y=input_tensor_2,
             name=graph_node.name,
         )
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

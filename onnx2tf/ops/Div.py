@@ -12,6 +12,8 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     channel_transpose,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
@@ -99,6 +101,20 @@ def make_node(
             const_or_var_2=input_tensor_1,
         )
 
+    # Pre-process transpose
+    input_tensor_1 = pre_process_transpose(
+        value_before_transpose=input_tensor_1,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    input_tensor_2 = pre_process_transpose(
+        value_before_transpose=input_tensor_2,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
     # TFLite does not support TrueDiv(INT), so TrueDiv is avoided if possible
     x_is_integer = input_tensor_1.dtype in target_cast_dtype
     y_is_integer = input_tensor_2.dtype in target_cast_dtype
@@ -108,6 +124,14 @@ def make_node(
         x=input_tensor_1 if not xy_is_integer else tf.cast(input_tensor_1, dtype=tf.float32),
         y=input_tensor_2 if not xy_is_integer else tf.cast(input_tensor_2, dtype=tf.float32),
         name=graph_node.name,
+    )
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=divided_tensor,
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
     )
 
     if xy_is_integer and dtype in target_cast_dtype:

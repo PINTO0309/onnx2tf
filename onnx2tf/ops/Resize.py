@@ -78,9 +78,9 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     roi = tf_layers_dict[roi.name]['tf_node'] \
-        if isinstance(roi, gs.Variable) else roi
+        if (isinstance(roi, gs.Variable) and roi.name != '') else roi
     scales = tf_layers_dict[scales.name]['tf_node'] \
-        if isinstance(scales, gs.Variable) else scales
+        if (isinstance(scales, gs.Variable) and scales.name != '') else scales
     sizes = tf_layers_dict[sizes.name]['tf_node'] \
         if isinstance(sizes, gs.Variable) else sizes
 
