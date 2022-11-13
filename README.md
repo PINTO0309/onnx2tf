@@ -946,7 +946,7 @@ Please don't post such low level questions as issues.
 
 - YOLACT-Edge MobileNetV2 with Post-Process (MultiClass-NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.11/yolact_edge_mobilenetv2_550x550.onnx
-  ![model_float32 tflite](https://user-images.githubusercontent.com/33194443/196831377-891dfc49-6cdb-41e0-a723-8f0087817ddf.svg)
+  ![image](https://user-images.githubusercontent.com/33194443/201506248-6ee1e04d-3b5a-4afb-a05c-bf8d5119297b.png)
 
 - MoveNet MultiPose ONNX to TFLite Float32 (`Cast` and `TrueDiv` standard OP support)
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
