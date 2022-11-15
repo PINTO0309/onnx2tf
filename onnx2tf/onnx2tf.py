@@ -60,6 +60,7 @@ def convert(
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
+    disable_group_convolution: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -212,6 +213,10 @@ def convert(
         and outputs the model partitioned into subgraphs.\n\n
         e.g.\n
         --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+
+    disable_group_convolution: Optional[bool]
+        Disable GroupConvolution and replace it with SeparableConvolution\n
+        for output to saved_model format.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -465,6 +470,7 @@ def convert(
         'opset': graph.opset,
         'batch_size': batch_size,
         'non_verbose': non_verbose,
+        'disable_group_convolution': disable_group_convolution,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -605,6 +611,22 @@ def convert(
                 print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
             output_pb = True
             flag_for_output_switching_from_saved_model_to_pb_due_to_error = True
+        except KeyError as e:
+            msg_list = [s for s in e.args if isinstance(s, str)]
+            if len(msg_list) > 0:
+                for s in msg_list:
+                    if 'Failed to add concrete function' in s:
+                        print(
+                            f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                            f'This model contains GroupConvolution and is automatically optimized for TFLite,' +
+                            f'but is not output because saved_model does not support GroupConvolution. ' +
+                            f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
+                        )
+                        break
+            else:
+                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                import traceback
+                traceback.print_exc()
         except Exception as e:
             print(f'{Color.RED}ERROR:{Color.RESET}', e)
             import traceback
@@ -999,6 +1021,14 @@ def main():
             'e.g. \n' +
             '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
     )
+    parser.add_argument(
+        '-dgc',
+        '--disable_group_convolution',
+        action='store_true',
+        help=\
+            'Disable GroupConvolution and replace it with SeparableConvolution \n' +
+            'for output to saved_model format.'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1182,6 +1212,7 @@ def main():
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
+        disable_group_convolution=args.disable_group_convolution,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,

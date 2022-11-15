@@ -46,6 +46,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
 - [x] Support for `INT8 Quantization`, `Full INT8 Quantization`, `INT8 Quantization with INT16 activation`, `Full INT8 Quantization with INT16 activation` and `Dynamic Range Quantization`.
 - [x] Support for `Per-Channel Quantization` and `Per-Tensor Quantization`.
+- [x] Support for `GroupConvolution`
 - [x] TFLite does not support `TrueDiv`(INT), so `TrueDiv` is avoided if possible.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
@@ -83,7 +84,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.21
+  ghcr.io/pinto0309/onnx2tf:1.1.22
 
   or
 
@@ -162,6 +163,7 @@ usage: onnx2tf
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
+[-dgc]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
@@ -310,6 +312,10 @@ optional arguments:
     model partitioned into subgraphs.
     e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
 
+  -dgc, --disable_group_convolution
+    Disable GroupConvolution and replace it with SeparableConvolution for
+    output to saved_model format.
+
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
@@ -415,6 +421,7 @@ convert(
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
+  disable_group_convolution: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -567,6 +574,10 @@ convert(
       and outputs the model partitioned into subgraphs.
       e.g.
       --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+
+    disable_group_convolution: Optional[bool]
+      Disable GroupConvolution and replace it with SeparableConvolution for
+      output to saved_model format.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
