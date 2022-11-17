@@ -246,14 +246,14 @@ def print_node_info(func):
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN}input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
+                        f'{Color.CYAN} input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
                         f'{Color.CYAN}shape{Color.RESET}: {graph_node_input.shape} '+
                         f'{Color.CYAN}dtype{Color.RESET}: {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                        f'{Color.CYAN} output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
                         f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
                         f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
                     )
@@ -278,7 +278,7 @@ def print_node_info(func):
                                     for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
                                         input_info_text = \
                                             f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE}input.{input_idx+1}.{input_key}{Color.RESET}: '
+                                            f'{Color.BLUE} input.{input_idx+1}.{input_key}{Color.RESET}: '
                                         for input_attr_name, input_attr_value in input_values.items():
                                             input_info_text += \
                                                 f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
@@ -290,7 +290,7 @@ def print_node_info(func):
                                     for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
                                         output_info_text = \
                                             f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE}output.{output_idx+1}.{output_key}{Color.RESET}: '
+                                            f'{Color.BLUE} output.{output_idx+1}.{output_key}{Color.RESET}: '
                                         for output_attr_name, output_attr_value in output_values.items():
                                             output_info_text += \
                                                 f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
