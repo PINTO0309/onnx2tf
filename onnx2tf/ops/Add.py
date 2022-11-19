@@ -69,6 +69,8 @@ def make_node(
     input_tensor_1, input_tensor_2 = explicit_broadcast(
         const_or_var_1=input_tensor_1,
         const_or_var_2=input_tensor_2,
+        graph_node=graph_node,
+        tf_layers_dict= tf_layers_dict,
     )
 
     # Pre-process transpose

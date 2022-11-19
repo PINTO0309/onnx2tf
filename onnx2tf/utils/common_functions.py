@@ -2,6 +2,7 @@ import sys
 import copy
 import random
 random.seed(0)
+import itertools
 import traceback
 import numpy as np
 np.random.seed(0)
@@ -578,38 +579,69 @@ def convert_reverse_axis(
     return converted_axis
 
 
-def channel_transpose(
+def simple_arithmetic_validity_check(
     *,
-    const_or_var_1: Any,
-    const_or_var_2: Any,
+    op_type: str,
+    onnx_x: np.ndarray,
+    onnx_y: np.ndarray,
+    tf_x: np.ndarray,
+    tf_y: np.ndarray,
 ):
-    if isinstance(const_or_var_2, np.ndarray) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = const_or_var_2.squeeze()
-    elif isinstance(const_or_var_2, tf.Tensor) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = tf.squeeze(const_or_var_2)
-    elif not isinstance(const_or_var_2, np.ndarray) \
-        and tf.keras.backend.is_keras_tensor(const_or_var_2) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = tf.squeeze(const_or_var_2)
-    return const_or_var_2
+    copy_onnx_x = onnx_x.copy()
+    copy_onnx_y = onnx_y.copy()
+    copy_tf_x = tf_x.copy()
+    copy_tf_y = tf_y.copy()
+
+    tf_y_shape = copy_tf_y.shape
+    tf_y_rank = len(tf_y_shape)
+    # All permutations of inverted patterns used for brute force checks
+    # Transpose and compute tf_y repeatedly in the pattern of all permutations,
+    # and repeat until the results match the results of onnx_x and onnx_y operations
+    test_perm_list = list(itertools.permutations(range(tf_y_rank)))
+
+    NP_CALC_FUNCS = {
+        'Add': np.add,
+        'Sub': np.subtract,
+        'Mul': np.multiply,
+        'Div': np.divide,
+    }
+
+    matched_perm = None
+    for perm in test_perm_list:
+        trans_copy_tf_y = copy_tf_y.transpose(perm)
+        onnx_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_onnx_x, copy_onnx_y)
+        try:
+            tf_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_tf_x, trans_copy_tf_y)
+            flat_onnx_result = np.sort(onnx_result.flatten())
+            flat_tf_result = np.sort(tf_result.flatten())
+            if flat_onnx_result.shape[0] == flat_tf_result.shape[0] \
+                and np.isclose(flat_onnx_result, flat_tf_result, equal_nan=True).all():
+                matched_perm = perm
+                break
+        except:
+            pass
+    if matched_perm is None:
+        # Exception throw
+        pass
 
 
 def explicit_broadcast(
     *,
     const_or_var_1: Any,
-    const_or_var_2: Any
+    const_or_var_2: Any,
+    graph_node: Optional[gs.Node] = None,
+    tf_layers_dict: dict = None,
 ):
+    graph_node_input_name1 = None
+    graph_node_input_name2 = None
+    if graph_node is not None:
+        graph_node_input_name1 = graph_node.inputs[0].name
+        graph_node_input_name2 = graph_node.inputs[1].name
+
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
     if len(const_or_var_1.shape) < len(const_or_var_2.shape):
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
 
     # If const_or_var_2.shape is all 1's, do not broadcast and return as is
     if np.prod(const_or_var_2.shape) == 1:
@@ -620,20 +652,22 @@ def explicit_broadcast(
     const_or_var_2_shape = const_or_var_2.shape
     const_or_var_2_rank = len(const_or_var_2_shape)
 
-    # UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1_shape
-    # and const_or_var_2_shape have the same rank
-    # e.g.
-    #   const_or_var_1_shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
-    #   const_or_var_2_shape (ONNX const pettern): [3,64,128,128]
-    #   new_const_or_var_2_shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
+    """
+    UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1_shape
+    and const_or_var_2_shape have the same rank
+    e.g.
+        const_or_var_1_shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
+        const_or_var_2_shape (ONNX const pettern): [3,64,128,128]
+        new_const_or_var_2_shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
 
-    #   const_or_var_1_shape (TF)  : [1,64,128,128,3]
-    #   const_or_var_2_shape (TF ver pettern): [128,128,3]
-    #   new_const_or_var_2_shape (ONNX): [1,1,128,128,3]
+        const_or_var_1_shape (TF)  : [1,64,128,128,3]
+        const_or_var_2_shape (TF ver pettern): [128,128,3]
+        new_const_or_var_2_shape (ONNX): [1,1,128,128,3]
 
-    #   const_or_var_1_shape (TF)  : [1,128,3], onnx[1,3,128]
-    #   const_or_var_2_shape (ONNX const pettern): [3,128]
-    #   new_const_or_var_2_shape (ONNX): [1,3,128] -> [1,128,3]
+        const_or_var_1_shape (TF)  : [1,128,3], onnx[1,3,128]
+        const_or_var_2_shape (ONNX const pettern): [3,128]
+        new_const_or_var_2_shape (ONNX): [1,3,128] -> [1,128,3]
+    """
     for _ in range(const_or_var_1_rank - const_or_var_2_rank):
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2 = const_or_var_2[np.newaxis, ...]
@@ -650,12 +684,40 @@ def explicit_broadcast(
             )
     transpose_perm = [0] + [i+2 for i in range(const_or_var_1_rank-2)] + [1]
     if isinstance(const_or_var_2, np.ndarray):
-        const_or_var_2 = const_or_var_2.transpose(transpose_perm)
-    elif isinstance(const_or_var_2, tf.Tensor):
-        pass
-    elif not isinstance(const_or_var_2, np.ndarray) \
-        and tf.keras.backend.is_keras_tensor(const_or_var_2):
-        pass
+        const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
+        # # Check output values by brute force only if the shape of const_or_var_2
+        # # is different between const_or_var_1 and const_or_var_2 in dimensions other than 1
+        # const_or_var_1_shape_not_none = [
+        #     i if not isinstance(i, str) else 1 for i in const_or_var_1_shape
+        # ]
+        # for var1_shape, var2_shape in zip(const_or_var_1_shape_not_none, const_or_var_2.shape):
+        #     if var2_shape != 1 and var1_shape != 1 and var1_shape != var2_shape:
+        #         dummy_data_onnx = np.random.random_sample(graph_node.inputs[0].shape)
+        #         dummy_data_onnx = dummy_data_onnx.astype(graph_node.inputs[0].dtype)
+        #         dummy_data_tf = dummy_data_onnx.copy()
+        #         dummy_data_tf = dummy_data_tf.reshape(const_or_var_1_shape).astype(graph_node.inputs[0].dtype)
+        #         simple_arithmetic_validity_check(
+        #             op_type=graph_node.op,
+        #             onnx_x=dummy_data_onnx,
+        #             onnx_y=graph_node.inputs[1].values,
+        #             tf_x=dummy_data_tf,
+        #             tf_y=const_or_var_2,
+        #         )
+        #         break
+
+    elif isinstance(const_or_var_2, tf.Tensor) \
+        or (
+            not isinstance(const_or_var_2, np.ndarray) \
+            and tf.keras.backend.is_keras_tensor(const_or_var_2)
+        ):
+        if graph_node_input_name2 is not None \
+            and tf_layers_dict is not None \
+            and graph_node_input_name2 in tf_layers_dict \
+            and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
+            const_or_var_2: np.ndarray = tf.transpose(
+                a=const_or_var_2,
+                perm=transpose_perm
+            )
     else:
         pass
     return const_or_var_1, const_or_var_2
