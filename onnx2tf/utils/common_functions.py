@@ -648,7 +648,7 @@ def explicit_broadcast(
                 input=const_or_var_2,
                 axis=0,
             )
-    transpose_perm = [0] + [i+1 for i in range(const_or_var_1_rank-2)] + [1]
+    transpose_perm = [0] + [i+2 for i in range(const_or_var_1_rank-2)] + [1]
     if isinstance(const_or_var_2, np.ndarray):
         const_or_var_2 = const_or_var_2.transpose(transpose_perm)
     elif isinstance(const_or_var_2, tf.Tensor):
