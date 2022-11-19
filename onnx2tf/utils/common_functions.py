@@ -602,6 +602,65 @@ def channel_transpose(
     return const_or_var_2
 
 
+def explicit_broadcast(
+    *,
+    const_or_var_1: Any,
+    const_or_var_2: Any
+):
+    # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
+    if len(const_or_var_1.shape) < len(const_or_var_2.shape):
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+
+    # If const_or_var_2.shape is all 1's, do not broadcast and return as is
+    if np.prod(const_or_var_2.shape) == 1:
+        return const_or_var_1, const_or_var_2
+
+    const_or_var_1_shape = const_or_var_1.shape
+    const_or_var_1_rank = len(const_or_var_1_shape)
+    const_or_var_2_shape = const_or_var_2.shape
+    const_or_var_2_rank = len(const_or_var_2_shape)
+
+    # UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1_shape
+    # and const_or_var_2_shape have the same rank
+    # e.g.
+    #   const_or_var_1_shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
+    #   const_or_var_2_shape (ONNX const pettern): [3,64,128,128]
+    #   new_const_or_var_2_shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
+
+    #   const_or_var_1_shape (TF)  : [1,64,128,128,3]
+    #   const_or_var_2_shape (TF ver pettern): [128,128,3]
+    #   new_const_or_var_2_shape (ONNX): [1,1,128,128,3]
+
+    #   const_or_var_1_shape (TF)  : [1,128,3], onnx[1,3,128]
+    #   const_or_var_2_shape (ONNX const pettern): [3,128]
+    #   new_const_or_var_2_shape (ONNX): [1,3,128] -> [1,128,3]
+    for _ in range(const_or_var_1_rank - const_or_var_2_rank):
+        if isinstance(const_or_var_2, np.ndarray):
+            const_or_var_2 = const_or_var_2[np.newaxis, ...]
+        elif isinstance(const_or_var_2, tf.Tensor):
+            const_or_var_2 = tf.expand_dims(
+                input=const_or_var_2,
+                axis=0,
+            )
+        elif not isinstance(const_or_var_2, np.ndarray) \
+            and tf.keras.backend.is_keras_tensor(const_or_var_2):
+            const_or_var_2 = tf.expand_dims(
+                input=const_or_var_2,
+                axis=0,
+            )
+    transpose_perm = [0] + [i+1 for i in range(const_or_var_1_rank-2)] + [1]
+    if isinstance(const_or_var_2, np.ndarray):
+        const_or_var_2 = const_or_var_2.transpose(transpose_perm)
+    elif isinstance(const_or_var_2, tf.Tensor):
+        pass
+    elif not isinstance(const_or_var_2, np.ndarray) \
+        and tf.keras.backend.is_keras_tensor(const_or_var_2):
+        pass
+    else:
+        pass
+    return const_or_var_1, const_or_var_2
+
+
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
 def tf_shape(
     *,
