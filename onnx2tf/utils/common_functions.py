@@ -1686,35 +1686,6 @@ def remove_dilations(
     return output
 
 
-def explicit_broadcast(
-    *,
-    x,
-    y,
-    axis=None,
-):
-    if np.prod(y.shape) == 1:
-        return y
-
-    if axis is None:
-        return y
-
-    total_num_dim = len(x.shape)
-    if axis < 0:
-        axis += total_num_dim
-
-    y_rank = len(y.shape)
-
-    if axis + y_rank == total_num_dim:
-        return y
-
-    dims = [axis + i for i in range(y_rank)]
-    new_y = y
-    for i in range(total_num_dim):
-        if i not in dims:
-            new_y = tf.expand_dims(new_y, i)
-    return new_y
-
-
 def process_neg_idx(
     *,
     data,

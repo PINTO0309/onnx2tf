@@ -65,15 +65,9 @@ def make_node(
         slope = slope.transpose(0,2,3,1)
 
     slope = explicit_broadcast(
-        x=input_tensor,
-        y=slope,
+        const_or_var_1=input_tensor,
+        const_or_var_2=slope,
     )
-
-    if replace_prelu_to_pseudo_prelu:
-        slope = channel_transpose(
-            const_or_var_1=input_tensor,
-            const_or_var_2=slope,
-        )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
