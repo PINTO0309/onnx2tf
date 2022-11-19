@@ -59,6 +59,7 @@ def convert(
     overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
+    keep_shape_absolutely_input_names: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     disable_group_convolution: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
@@ -159,9 +160,11 @@ def convert(
             input2: [n,5]\n
                 mean: [1] -> [0.3]\n
                 std:  [1] -> [0.07]\n
-        -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]\n
-        -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]\n
-        -qcind "input2" "input2.npy" [0.3] [0.07]
+        qcind=[
+            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],\n
+            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
+            ["input2","input2.npy",[0.3],[0.07]],\n
+        ]
 
     input_output_quant_dtype: Optional[str]
         Input and Output dtypes when doing Full INT8 Quantization.\n
@@ -189,14 +192,14 @@ def convert(
         ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
-        Ignores --batch_size if specified at the same time as --batch_size.
+        Ignores batch_size if specified at the same time as batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
         If a nonexistent INPUT OP name is specified, it is ignored.\n
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
-        --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+        keep_ncw_or_nchw_or_ncdhw_input_names=['input0','input1','input2']
 
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
         Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.\n
@@ -205,14 +208,20 @@ def convert(
         in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.\n
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
-        --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+        keep_nwc_or_nhwc_or_ndhwc_input_names=['input0','input1','input2']
+
+    keep_shape_absolutely_input_names: Optional[List[str]]
+        Name of the INPUT that unconditionally maintains its shape.\n
+        If a nonexistent INPUT OP name is specified, it is ignored.\n\n
+        e.g.\n
+        keep_shape_absolutely_input_names=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
         Output names that interrupt model conversion.\n
         Interrupts model transformation at the specified output name\n
         and outputs the model partitioned into subgraphs.\n\n
         e.g.\n
-        --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+        output_names_to_interrupt_model_conversion=['output0','output1','output2']
 
     disable_group_convolution: Optional[bool]
         Disable GroupConvolution and replace it with SeparableConvolution\n
@@ -531,6 +540,7 @@ def convert(
                 tf_layers_dict=tf_layers_dict,
                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                 keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                 **additional_parameters,
             )
 
@@ -1010,6 +1020,17 @@ def main():
             '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"'
     )
     parser.add_argument(
+        '-kat',
+        '--keep_shape_absolutely_input_names',
+        type=str,
+        nargs='+',
+        help=\
+            'Name of the INPUT that unconditionally maintains its shape. \n' +
+            'If a nonexistent INPUT OP name is specified, it is ignored. \n\n' +
+            'e.g. \n' +
+            '--keep_shape_absolutely_input_names "input0" "input1" "input2"'
+    )
+    parser.add_argument(
         '-onimc',
         '--output_names_to_interrupt_model_conversion',
         type=str,
@@ -1211,6 +1232,7 @@ def main():
         overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
+        keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         disable_group_convolution=args.disable_group_convolution,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
