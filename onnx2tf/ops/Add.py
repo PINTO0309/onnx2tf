@@ -9,7 +9,6 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
-    channel_transpose,
     explicit_broadcast,
     pre_process_transpose,
     post_process_transpose,

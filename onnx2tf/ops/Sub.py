@@ -11,7 +11,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
-    channel_transpose,
+    explicit_broadcast,
     pre_process_transpose,
     post_process_transpose,
 )
@@ -82,16 +82,10 @@ def make_node(
         **kwargs,
     )
 
-    if not isinstance(input_tensor_1, np.ndarray):
-        input_tensor_2 = channel_transpose(
-            const_or_var_1=input_tensor_1,
-            const_or_var_2=input_tensor_2,
-        )
-    else:
-        input_tensor_1 = channel_transpose(
-            const_or_var_1=input_tensor_2,
-            const_or_var_2=input_tensor_1,
-        )
+    input_tensor_1, input_tensor_2 = explicit_broadcast(
+        const_or_var_1=input_tensor_1,
+        const_or_var_2=input_tensor_2,
+    )
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
