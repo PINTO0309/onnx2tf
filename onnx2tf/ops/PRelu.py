@@ -11,7 +11,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     explicit_broadcast,
     make_tf_node_info,
-    channel_transpose,
 )
 
 
