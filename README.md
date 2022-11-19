@@ -85,7 +85,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.25
+  ghcr.io/pinto0309/onnx2tf:1.1.26
 
   or
 
@@ -163,6 +163,7 @@ usage: onnx2tf
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
+[-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-dgc]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
@@ -306,6 +307,13 @@ optional arguments:
     Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"
 
+  -kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...], \
+      --keep_shape_absolutely_input_names KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES \
+        [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]
+    Name of the INPUT that unconditionally maintains its shape.
+    If a nonexistent INPUT OP name is specified, it is ignored.
+    e.g. --keep_shape_absolutely_input_names "input0" "input1" "input2"
+
   -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
       --output_names_to_interrupt_model_conversion OUTPUT_NAMES [OUTPUT_NAMES ...]
     Output names that interrupt model conversion.
@@ -421,6 +429,7 @@ convert(
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
+  keep_shape_absolutely_input_names: Optional[List[str]] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -521,9 +530,11 @@ convert(
           mean: [1] -> [0.3]
           std : [1] -> [0.07]
 
-      -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-      -qcind "input1" "./input1.npy" [[0.1, ..., 0.64]] [[0.05, ..., 0.08]]
-      -qcind "input2" "input2.npy" [0.3] [0.07]
+        qcind=[
+            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],
+            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],
+            ["input2","input2.npy",[0.3],[0.07]],
+        ]
 
     input_output_quant_dtype: Optional[str]
       Input and Output dtypes when doing Full INT8 Quantization.
@@ -551,14 +562,14 @@ convert(
       ['data1:1,3,224,224','data2:1,3,112','data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
-      Ignores --batch_size if specified at the same time as --batch_size.
+      Ignores batch_size if specified at the same time as batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
       Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
       If a nonexistent INPUT OP name is specified, it is ignored.
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
-      --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+      keep_ncw_or_nchw_or_ncdhw_input_names=['input0','input1','input2']
 
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
       Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
@@ -567,14 +578,20 @@ convert(
       in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
-      --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+      keep_nwc_or_nhwc_or_ndhwc_input_names=['input0','input1','input2']
+
+    keep_shape_absolutely_input_names: Optional[List[str]]
+        Name of the INPUT that unconditionally maintains its shape.
+        If a nonexistent INPUT OP name is specified, it is ignored.
+        e.g.
+        keep_shape_absolutely_input_names=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
       Output names that interrupt model conversion.
       Interrupts model transformation at the specified output name
       and outputs the model partitioned into subgraphs.
       e.g.
-      --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+      output_names_to_interrupt_model_conversion=['output0','output1','output2']
 
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for
