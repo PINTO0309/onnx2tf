@@ -13,11 +13,11 @@ from onnx2tf.utils.colors import Color
 from typing import Any, List, Optional
 from functools import wraps
 from collections import namedtuple
-
 from onnx2tf.utils.enums import (
     TF_DTYPES_TO_NUMPY_DTYPES,
 )
 
+INF_INDEX_VALUE: int = 4294967296
 
 def get_replacement_parameter(func):
     @wraps(func)
@@ -644,7 +644,10 @@ def explicit_broadcast(
         graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
 
     # If const_or_var_2.shape is all 1's, do not broadcast and return as is
-    if np.prod(const_or_var_2.shape) == 1:
+    shape_for_judging_skip_processing = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
+    ]
+    if np.prod(shape_for_judging_skip_processing) == 1:
         return const_or_var_1, const_or_var_2
 
     const_or_var_1_shape = const_or_var_1.shape

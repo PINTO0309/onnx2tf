@@ -85,7 +85,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.26
+  ghcr.io/pinto0309/onnx2tf:1.1.27
 
   or
 
@@ -139,8 +139,8 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
 # Parameter replacement (Resize,Transpose,Softmax)
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/human_segmentation_pphumanseg_2021oct.onnx
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/replace.json
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
 $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 ## CLI Parameter
