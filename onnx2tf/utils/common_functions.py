@@ -625,13 +625,13 @@ def simple_arithmetic_validity_check(
         pass
 
 
-def dimension_compare(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
+def broadcast_validity_check(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
     """
-    Compare dimension shape including 1
+    Check the validity of dimension shape for same length of tensors.
     Parameters
     ----------
-    shape1
-    shape2
+    shape1: 1d list or ndarray.
+    shape2: 1d list or ndarray.
 
     Returns
     -------
@@ -651,6 +651,7 @@ def dimension_compare(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray,
 
     return result
 
+
 def explicit_broadcast(
     *,
     const_or_var_1: Any,
@@ -668,23 +669,20 @@ def explicit_broadcast(
         graph_node_input_shape1 = list(graph_node.inputs[0].shape)
         graph_node_input_shape2 = list(graph_node.inputs[1].shape)
 
-    # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
-    swapped = False
-    if len(const_or_var_1.shape) < len(const_or_var_2.shape):
-        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
-        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
-        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
-        swapped = True
-
     # If const_or_var_2.shape is all 1's, do not broadcast and return as is
     shape_for_judging_skip_processing = [
         i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
     ]
     if np.prod(shape_for_judging_skip_processing) == 1:
-        if swapped:
-            return const_or_var_2, const_or_var_1
-        else:
-            return const_or_var_1, const_or_var_2
+        return const_or_var_1, const_or_var_2
+
+    # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
+    swapped = 0
+    if len(const_or_var_1.shape) < len(const_or_var_2.shape):
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
+        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
+        swapped += 1
 
     """
     UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1.shape
@@ -718,32 +716,20 @@ def explicit_broadcast(
             )
         graph_node_input_shape2 = [1] + graph_node_input_shape2
 
-    # Check location of channel dimension in onnx and tflite
-    const_or_var_dim_check_1 = np.where(np.array(const_or_var_1.shape)[:, None]
-                                        == np.unique(const_or_var_1.shape)[None, :])[1]
-    graph_node_input_dim_check1 = np.where(np.array(graph_node_input_shape1)[:, None]
-                                           == np.unique(graph_node_input_shape1)[None, :])[1]
-    const_or_var_dim_check_2 = np.where(np.array(const_or_var_2.shape)[:, None]
-                                        == np.unique(const_or_var_2.shape)[None, :])[1]
-    graph_node_input_dim_check2 = np.where(np.array(graph_node_input_shape2)[:, None]
-                                           == np.unique(graph_node_input_shape2)[None, :])[1]
-
-
-    # Swap x and y to apply transpose to correct target if needed
-    if dimension_compare(list(const_or_var_1.shape), graph_node_input_shape1) and \
-            not dimension_compare(list(const_or_var_2.shape), graph_node_input_shape2):
+    # Swap operands to apply transpose to correct target if needed
+    # second operand is always target of transpose
+    if broadcast_validity_check(list(const_or_var_1.shape), graph_node_input_shape1) and \
+            not broadcast_validity_check(list(const_or_var_2.shape), graph_node_input_shape2):
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
         graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
         graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
-        const_or_var_dim_check_1, const_or_var_dim_check_2 = const_or_var_dim_check_2, const_or_var_dim_check_1
-        graph_node_input_dim_check1, graph_node_input_dim_check2 = graph_node_input_dim_check2, graph_node_input_dim_check1
-        swapped = True
+        swapped += 1
 
     # Check if operands need transpose
     # CAUTION: this part may occur problem when there are more than two same numbers in tensor shape.
-    #          please consider manual debugging if channel number is same with other dimensions.
-    if dimension_compare(list(const_or_var_1.shape), list(const_or_var_2.shape)) and \
-            dimension_compare(graph_node_input_shape1, graph_node_input_shape2):
+    #          please consider manual debugging if output is differ with onnx.
+    if broadcast_validity_check(list(const_or_var_1.shape), list(const_or_var_2.shape)) and \
+            broadcast_validity_check(graph_node_input_shape1, graph_node_input_shape2):
         pass
     else:
         transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]        
@@ -787,7 +773,7 @@ def explicit_broadcast(
             pass
 
     # Re-swap operand if swapped in early steps to match shapes. order of operands is important for Sub and Div.
-    if swapped:
+    if swapped == 1:
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
 
     return const_or_var_1, const_or_var_2
