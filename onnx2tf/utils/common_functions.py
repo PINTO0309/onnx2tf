@@ -728,8 +728,6 @@ def explicit_broadcast(
     graph_node_input_dim_check2 = np.where(np.array(graph_node_input_shape2)[:, None]
                                            == np.unique(graph_node_input_shape2)[None, :])[1]
 
-    transpose_perm = []
-    channel_candidates = []
 
     # Swap x and y to apply transpose to correct target if needed
     if dimension_compare(list(const_or_var_1.shape), graph_node_input_shape1) and \
@@ -748,21 +746,7 @@ def explicit_broadcast(
             dimension_compare(graph_node_input_shape1, graph_node_input_shape2):
         pass
     else:
-        for i, (od, td) in enumerate(zip(graph_node_input_dim_check1, const_or_var_dim_check_1)):
-            if td == od or (i > 1 and const_or_var_dim_check_1[i - 1] == od):
-                transpose_perm.append(i)
-            else:
-                channel_candidates.append(i)
-
-        # Simply extend to transpose_perm when unique channel dimension is detected,
-        # otherwise need to compare output brute-force
-        if len(channel_candidates) == 1:
-            transpose_perm.extend(channel_candidates)
-        else:
-            # TODO: brute-force output comparison
-            transpose_perm.extend(channel_candidates[1:])
-            pass
-
+        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]        
 
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
