@@ -669,11 +669,14 @@ def explicit_broadcast(
         graph_node_input_shape1 = list(graph_node.inputs[0].shape)
         graph_node_input_shape2 = list(graph_node.inputs[1].shape)
 
-    # If const_or_var_2.shape is all 1's, do not broadcast and return as is
-    shape_for_judging_skip_processing = [
+    # If either operand have shape of all 1's, do not broadcast and return as is
+    shape_for_judging_skip_processing_1 = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_1.shape
+    ]
+    shape_for_judging_skip_processing_2 = [
         i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
     ]
-    if np.prod(shape_for_judging_skip_processing) == 1:
+    if np.prod(shape_for_judging_skip_processing_1) == 1 or np.prod(shape_for_judging_skip_processing_2) == 1:
         return const_or_var_1, const_or_var_2
 
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
