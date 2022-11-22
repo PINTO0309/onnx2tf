@@ -535,6 +535,7 @@ def convert(
 
             # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
+            graph_input.name = graph_input.name.replace(':','_')
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -556,6 +557,7 @@ def convert(
                 )
                 sys.exit(1)
 
+            graph_node.name = graph_node.name.replace(':','_')
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
