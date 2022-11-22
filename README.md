@@ -981,6 +981,50 @@ Please don't post such low level questions as issues.
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
   ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
 
+## Validated model (without replacement.json)
+|No.|Model|Pass|
+|:-:|:-|:-:|
+|1|age_googlenet.onnx|:heavy_check_mark:|
+|2|arcfaceresnet100-8.onnx|:heavy_check_mark:|
+|3|baseline_simplified.onnx|:heavy_check_mark:|
+|4|bvlcalexnet-12.onnx|:heavy_check_mark:|
+|5|caffenet-12.onnx|:heavy_check_mark:|
+|6|densenet-12.onnx|:heavy_check_mark:|
+|7|digits.onnx|:heavy_check_mark:|
+|8|efficientnet-lite4-11_nchw.onnx|:heavy_check_mark:|
+|9|effnet_opset11_dynamic_axis.onnx|:heavy_check_mark:|
+|10|emotion-ferplus-8_rename.onnx|:heavy_check_mark:|
+|11|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
+|12|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
+|13|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
+|14|gender_googlenet.onnx|:heavy_check_mark:|
+|15|inception-v2-9.onnx|:heavy_check_mark:|
+|16|mobilenetv2-12.onnx|:heavy_check_mark:|
+|17|mosaic_11.onnx|:heavy_check_mark:|
+|18|mosaic-9.onnx|:heavy_check_mark:|
+|19|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|20|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|21|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|22|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|23|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|24|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|25|regnet_x_400mf.onnx|:heavy_check_mark:|
+|26|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|27|resnet18-v1-7.onnx|:heavy_check_mark:|
+|28|resnet50-v1-12.onnx|:heavy_check_mark:|
+|29|resnet50-v2-7.onnx|:heavy_check_mark:|
+|30|retinanet-9.onnx|:heavy_check_mark:|
+|31|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|32|super-resolution-10.onnx|:heavy_check_mark:|
+|33|tinyyolov2-8.onnx|:heavy_check_mark:|
+|34|version-RFB-640.onnx|:heavy_check_mark:|
+|35|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|36|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|37|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|38|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|39|yolox_s.onnx|:heavy_check_mark:|
+|40|zfnet512-12.onnx|:heavy_check_mark:|
+
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
 2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
