@@ -735,7 +735,7 @@ def explicit_broadcast(
             broadcast_validity_check(graph_node_input_shape1, graph_node_input_shape2):
         pass
     else:
-        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]        
+        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]
 
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
