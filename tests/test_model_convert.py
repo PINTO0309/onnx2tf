@@ -545,7 +545,7 @@ if __name__ == '__main__':
         '-m',
         '--models',
         default='models',
-        help='ONNX ModelZoo directory (default: models)'
+        help='ONNX model directory (default: models)'
     )
     parser.add_argument(
         '-o',
