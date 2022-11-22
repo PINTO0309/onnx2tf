@@ -34,6 +34,7 @@ def _dequantize_weights(
     zero_point,
     scale,
     is_bias=False,
+    scale_is_scalar=False,
 ):
     # Do computation in float32
     casted_base = tf.cast(base, tf.float32)
@@ -45,15 +46,19 @@ def _dequantize_weights(
             tensor=casted_zero_point,
             shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
         )
-        reshaped_scale = tf.reshape(
-            tensor=scale,
-            shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
-        )
-        tensor_list = [
-            (casted_base[..., i:i+1] - reshaped_zero_point) * reshaped_scale
-            for i in range(base.shape[-1])
-        ]
-        out_tensor = tf.concat(tensor_list, axis=-1)
+        if scale_is_scalar:
+            reshaped_scale = tf.reshape(
+                tensor=scale,
+                shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
+            )
+            tensor_list = [
+                (casted_base[..., i:i+1] - reshaped_zero_point) * reshaped_scale
+                for i in range(base.shape[-1])
+            ]
+            out_tensor = tf.concat(tensor_list, axis=-1)
+        else:
+            reshaped_scale = scale
+            out_tensor = (casted_base - reshaped_zero_point) * reshaped_scale
         return tf.reshape(out_tensor, base.shape)
     else:
         reshaped_zero_point = casted_zero_point
@@ -126,7 +131,10 @@ def make_node(
         )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    output_tensor_shape = graph_node.o().outputs[0].shape
+    try:
+        output_tensor_shape = graph_node.o().outputs[0].shape
+    except:
+        output_tensor_shape = graph_node.outputs[0].shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
@@ -178,7 +186,9 @@ def make_node(
         )
         sys.exit(1)
 
+    weights_scale_is_scalar = False
     if len(input_weights_scale.shape) == 0:
+        weights_scale_is_scalar = True
         input_weights_scale = tf.fill([input_tensor.shape[-1]//group], input_weights_scale)
     elif len(input_weights_scale.shape) > 1:
         print(
@@ -197,6 +207,7 @@ def make_node(
         base=input_weights,
         zero_point=input_weights_zero_point,
         scale=input_weights_scale,
+        scale_is_scalar=weights_scale_is_scalar,
     )
     y_zero_point = tf.cast(y_zero_point, tf.float32)
 

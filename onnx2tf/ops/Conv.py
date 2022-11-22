@@ -3,6 +3,11 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+from tensorflow.python.keras.layers import (
+    Conv1D,
+    Conv2D,
+    Conv3D,
+)
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -76,6 +81,8 @@ def make_node(
     pads = graph_node.attrs.get('pads', [0, 0] * spatial_size)
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
+    disable_group_convolution: bool = kwargs['disable_group_convolution']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -89,6 +96,9 @@ def make_node(
     Conv2D
     Conv3D
     DepthwiseConv2D
+    GroupConv1D
+    GroupConv2D
+    GroupConv3D
     SeparableConv2D
     """
     # Check auto_pad nonexistent or NOTSET first
@@ -151,26 +161,86 @@ def make_node(
                     )
                 tf_op_type = tf.nn.convolution
             else:
-                # SeparableConv
-                input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-                weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.add(
-                        tf.concat(
-                            values=[
-                                tf.nn.convolution(
-                                    input=input_tensor_split,
-                                    filters=weight_split,
-                                    padding=pad_mode,
-                                    strides=strides,
-                                    dilations=dilations,
-                                ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
-                            ],
-                            axis=-1
-                        ),
-                        input_bias,
+                if kernel_size in (1, 2, 3) and not disable_group_convolution:
+                    print(
+                        f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                        f'This model contains GroupConvolution and is automatically optimized for TFLite,' +
+                        f'but is not output because saved_model does not support GroupConvolution. ' +
+                        f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
                     )
-                tf_op_type = tf.nn.convolution
+                # GroupedConvolution - Conv1D, Conv2D, Conv3D - Bias Add
+                if kernel_size == 1 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.add(
+                            x=Conv1D(
+                                filters=input_weights.shape[-1],
+                                kernel_size=input_weights.shape[:1],
+                                strides=strides,
+                                padding=pad_mode.lower(),
+                                dilation_rate=dilations,
+                                groups=group,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                name=graph_node.name,
+                            )(input_tensor),
+                            y=input_bias,
+                        )
+                    tf_op_type = 'GroupedConvolution1D'
+                elif kernel_size == 2 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.add(
+                            x=Conv2D(
+                                filters=input_weights.shape[-1],
+                                kernel_size=input_weights.shape[:2],
+                                strides=strides,
+                                padding=pad_mode.lower(),
+                                dilation_rate=dilations,
+                                groups=group,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                name=graph_node.name,
+                            )(input_tensor),
+                            y=input_bias,
+                        )
+                    tf_op_type = 'GroupedConvolution2D'
+                elif kernel_size == 3 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.add(
+                            x=Conv3D(
+                                filters=input_weights.shape[-1],
+                                kernel_size=input_weights.shape[:3],
+                                strides=strides,
+                                padding=pad_mode.lower(),
+                                dilation_rate=dilations,
+                                groups=group,
+                                use_bias=False,
+                                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                name=graph_node.name,
+                            )(input_tensor),
+                            y=input_bias,
+                        )
+                    tf_op_type = 'GroupedConvolution3D'
+                else:
+                    # SeparableConv
+                    input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+                    weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.add(
+                            tf.concat(
+                                values=[
+                                    tf.nn.convolution(
+                                        input=input_tensor_split,
+                                        filters=weight_split,
+                                        padding=pad_mode,
+                                        strides=strides,
+                                        dilations=dilations,
+                                    ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                                ],
+                                axis=-1
+                            ),
+                            input_bias,
+                        )
+                    tf_op_type = tf.nn.convolution
 
         else:
             # DepthwiseConv2D
@@ -201,23 +271,74 @@ def make_node(
                     )
                 tf_op_type = tf.nn.convolution
             else:
-                # SeparableConv
-                input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-                weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.concat(
-                        values=[
-                            tf.nn.convolution(
-                                input=input_tensor_split,
-                                filters=weight_split,
-                                padding=pad_mode,
-                                strides=strides,
-                                dilations=dilations,
-                            ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
-                        ],
-                        axis=-1
+                if kernel_size in (1, 2, 3) and not disable_group_convolution:
+                    print(
+                        f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                        f'This model contains GroupConvolution and is automatically optimized for TFLite,' +
+                        f'but is not output because saved_model does not support GroupConvolution. ' +
+                        f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
                     )
-                tf_op_type = tf.nn.convolution
+                # GroupedConvolution - Conv1D, Conv2D, Conv3D - No Bias
+                if kernel_size == 1 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        Conv1D(
+                            filters=input_weights.shape[-1],
+                            kernel_size=input_weights.shape[:1],
+                            strides=strides,
+                            padding=pad_mode.lower(),
+                            dilation_rate=dilations,
+                            groups=group,
+                            use_bias=False,
+                            kernel_initializer=tf.keras.initializers.constant(input_weights),
+                            name=graph_node.name,
+                        )(input_tensor)
+                    tf_op_type = 'GroupedConvolution1D'
+                elif kernel_size == 2 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        Conv2D(
+                            filters=input_weights.shape[-1],
+                            kernel_size=input_weights.shape[:2],
+                            strides=strides,
+                            padding=pad_mode.lower(),
+                            dilation_rate=dilations,
+                            groups=group,
+                            use_bias=False,
+                            kernel_initializer=tf.keras.initializers.constant(input_weights),
+                            name=graph_node.name,
+                        )(input_tensor)
+                    tf_op_type = 'GroupedConvolution2D'
+                elif kernel_size == 3 and not disable_group_convolution:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        Conv3D(
+                            filters=input_weights.shape[-1],
+                            kernel_size=input_weights.shape[:3],
+                            strides=strides,
+                            padding=pad_mode.lower(),
+                            dilation_rate=dilations,
+                            groups=group,
+                            use_bias=False,
+                            kernel_initializer=tf.keras.initializers.constant(input_weights),
+                            name=graph_node.name,
+                        )(input_tensor)
+                    tf_op_type = 'GroupedConvolution3D'
+                else:
+                    # SeparableConv
+                    input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+                    weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.concat(
+                            values=[
+                                tf.nn.convolution(
+                                    input=input_tensor_split,
+                                    filters=weight_split,
+                                    padding=pad_mode,
+                                    strides=strides,
+                                    dilations=dilations,
+                                ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                            ],
+                            axis=-1
+                        )
+                    tf_op_type = tf.nn.convolution
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]

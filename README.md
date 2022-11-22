@@ -1,5 +1,5 @@
 # onnx2tf
-Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) ([onnx-tf](https://pypi.org/project/onnx-tf/)). I don't need a Star, but give me a pull request.
+Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) ([onnx-tf](https://pypi.org/project/onnx-tf/)). I don't need a Star, but give me a pull request.
 
 <p align="center">
   <img src="https://user-images.githubusercontent.com/33194443/193840307-fa69eace-05a9-4d93-9c5d-999cf88af28e.png" />
@@ -10,18 +10,21 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
 - [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
+- [x] I have incorporated all my knowledge of model optimization to other models such as TFLite, EdgeTPU, TensorFlow.js and Myriad based on my years of experience implementing [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow) and [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow). It probably has the best model optimization performance and conversion efficiency of any tool I have created in the past, and the lowest rate of conversion errors.
 - [x] Supported layers list. [Supported layers](#supported-layers)
+- [x] If you are having trouble with conversion errors, searching for [resolved or open issues](https://github.com/PINTO0309/onnx2tf/issues) will almost always solve your problems. Issues are knowledge for engineers around the world.
 - [x] Contributors to this repository should first read **[Contribution Guide](https://github.com/PINTO0309/onnx2tf/blob/main/CONTRIBUTING.md)**.
 
   https://user-images.githubusercontent.com/33194443/197319770-e7ef7174-66cd-4bc2-84be-59e1a251151d.mp4
 
 - [x] All OPs are decomposed into primitive operations as much as possible. This is beneficial for lateral deployment of models to frameworks other than TFLite. Therefore, OPs belonging to `tf.keras.layers` are almost never used, and the tool consists only of `tf.xxx`. (except for a very few OPs)
+- [x] As I do not want to add more dependent packages, I do not use `tensorflow_addons (tfa)`, but replace it with the standard OP of tensorflow.
 - [x] Not only does it handle conversions of 4-dimensional inputs, such as `NCHW` to `NHWC`, but also the number of input dimensions in 3, 5, or even more dimensions. For example, `NCDHW` to `NDHWC`, etc. However, since 1-D, 2-D, 3-D and 6-D input may produce patterns that are mechanically difficult to convert, it should be possible to give parameters to externally modify the tool's behavior. See [Parameter replacement](#parameter-replacement)
 - [x] If there are undefined dimensions in the input OP, the model structure is not fully optimized and conversion errors are very likely to occur.
-- [x] Immediately following a `Reshape` OP with dimensional compression and dimensional decompression, there is a 95% probability that the model transformation operation will be disrupted and errors will occur. For example, patterns such as `[1,200,200,5]` -> `[1,200,-1]` or `[10,20,30,40,50]` -> `[10,2,10,30,10,4,50]` or `Flatten`. See [#8 Not able to reshape input in replace.json](https://github.com/PINTO0309/onnx2tf/issues/8)
+- [x] Immediately following a `Reshape` OP with dimensional compression and dimensional decompression, there is a 95% probability that the model transformation operation will be disrupted and errors will occur. For example, patterns such as `[1,200,200,5]` -> `[1,200,-1]` or `[10,20,30,40,50]` -> `[10,2,10,30,10,4,50]` or `Flatten`. See [#8 Not able to reshape input in replace.json](https://github.com/PINTO0309/onnx2tf/issues/8), or [#15 Conv layer shape wrong](https://github.com/PINTO0309/onnx2tf/issues/15), or [#18 Question about channel_transpose in common_functions.py](https://github.com/PINTO0309/onnx2tf/issues/18)
 - [x] TensorFlow's Convolution does not have an equivalent operation to ONNX's Padding operation. Therefore, a `Pad` OP is inserted immediately before a Convolution with Padding of size greater than 1.
 - [x] Support conversion to TensorFlow saved model and TFLite (Float32/Float16/INT8).
-- [ ] Files exceeding the Protocol Buffers file size limit of 2GB are not supported. Therefore, the external format is not supported at the initial stage of tool creation.
+- [x] Files exceeding the Protocol Buffers file size limit of 2GB are not supported. Therefore, the external format is not supported at the initial stage of tool creation.
 - [x] If there are ONNX OPs that are not supported by TensorFlow, use [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools) to replace them with harmless OPs in advance and then use this tool to convert them. In other words, you can convert any model with your efforts.
 - [x] ONNX splitting, merging, generating OPs, rewriting OP attributes, BGR<->RGB conversion, converting to JSON and editing in the IDE, batch size changes for undefined dimensions, and various other processing can be done with the [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools). Therefore, it is recommended that models with very complex structures be converted to TFLite after modifying the structure beforehand.
 - [x] `BatchNormalization` supports only inference mode.
@@ -44,10 +47,12 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow format (NHWC). The
 The above differences often cannot be dealt with by simply converting the model in a straightforward manner. Therefore, you need to replace the model yourself in advance with an operation that is less prone to errors.
 - [x] Support for `INT8 Quantization`, `Full INT8 Quantization`, `INT8 Quantization with INT16 activation`, `Full INT8 Quantization with INT16 activation` and `Dynamic Range Quantization`.
 - [x] Support for `Per-Channel Quantization` and `Per-Tensor Quantization`.
+- [x] Support for `GroupConvolution`.
 - [x] TFLite does not support `TrueDiv`(INT), so `TrueDiv` is avoided if possible.
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
+- [x] Add process to replace `Abs` with `pseudo-Abs`.
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
 - [x] Add process to replace `GridSample` with `pseudo-GridSample`.
@@ -61,6 +66,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Output in Keras H5 format.
 - [x] Automatically run [onnx-simplifier](https://github.com/daquexian/onnx-simplifier) (onnxsim) backend and optimize onnx files before model transformation.
 - [x] Added the ability to automatically generate each OP name and assign OP names to ONNX files in the old format.
+- [x] Supports model splitting. Interrupts model transformation at the specified output name and outputs the model partitioned into subgraphs.
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
@@ -79,7 +85,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.15
+  ghcr.io/pinto0309/onnx2tf:1.1.28
 
   or
 
@@ -133,8 +139,8 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
 # Parameter replacement (Resize,Transpose,Softmax)
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/human_segmentation_pphumanseg_2021oct.onnx
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.12/replace.json
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
 $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 ## CLI Parameter
@@ -157,10 +163,14 @@ usage: onnx2tf
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
+[-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
+[-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
+[-dgc]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
 [-racos]
+[-rabs]
 [-rpr]
 [-rlr]
 [-rpw]
@@ -247,7 +257,7 @@ optional arguments:
         std : [1] -> [0.07]
 
     -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-    -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+    -qcind "input1" "./input1.npy" [[0.1, ..., 0.64]] [[0.05, ..., 0.08]]
     -qcind "input2" "input2.npy" [0.3] [0.07]
 
   -ioqd {int8,uint8}, --input_output_quant_dtype {int8,uint8}
@@ -290,12 +300,30 @@ optional arguments:
   -kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...], \
       --keep_nwc_or_nhwc_or_ndhwc_input_names KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES \
           [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]
-    Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
+    Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
     If a nonexistent INPUT OP name is specified, it is ignored.
     If the input OP name is the same as the input OP name specified
     in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
     Valid only for 3D, 4D and 5D input tensors.
     e.g. --keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"
+
+  -kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...], \
+      --keep_shape_absolutely_input_names KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES \
+        [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]
+    Name of the INPUT that unconditionally maintains its shape.
+    If a nonexistent INPUT OP name is specified, it is ignored.
+    e.g. --keep_shape_absolutely_input_names "input0" "input1" "input2"
+
+  -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
+      --output_names_to_interrupt_model_conversion OUTPUT_NAMES [OUTPUT_NAMES ...]
+    Output names that interrupt model conversion.
+    Interrupts model transformation at the specified output name and outputs the
+    model partitioned into subgraphs.
+    e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
+
+  -dgc, --disable_group_convolution
+    Disable GroupConvolution and replace it with SeparableConvolution for
+    output to saved_model format.
 
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
@@ -342,6 +370,9 @@ optional arguments:
 
   -racos, --replace_acos_to_pseudo_acos
     Replace Acos with a pseudo Acos.
+
+  -rabs, --replace_abs_to_pseudo_abs
+    Replace Abs with a pseudo Abs.
 
   -rpr, --replace_prelu_to_pseudo_prelu
     Replace PReLU with a pseudo PReLU.
@@ -398,6 +429,9 @@ convert(
   overwrite_input_shape: Union[List[str], NoneType] = None,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
+  keep_shape_absolutely_input_names: Optional[List[str]] = None,
+  output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
+  disable_group_convolution: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -405,6 +439,7 @@ convert(
   fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
   replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
   replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
+  replace_abs_to_pseudo_abs: Union[bool, NoneType] = False,
   replace_prelu_to_pseudo_prelu: Union[bool, NoneType] = False,
   replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
   replace_power_to_pseudo_power: Optional[bool] = False,
@@ -478,8 +513,8 @@ convert(
           mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
           std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
         input1: [n,64,64]
-          mean: [1,64] -> [0.1, ..., 0.64]
-          std : [1,64] -> [0.05, ..., 0.08]
+          mean: [1,64] -> [[0.1, ..., 0.64]]
+          std : [1,64] -> [[0.05, ..., 0.08]]
         input2: [n,5]
           mean: [1] -> [0.3]
           std : [1] -> [0.07]
@@ -489,15 +524,17 @@ convert(
           mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
           std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
         input1: [n,64,64]
-          mean: [1,64] -> [0.1, ..., 0.64]
-          std : [1,64] -> [0.05, ..., 0.08]
+          mean: [1,64] -> [[0.1, ..., 0.64]]
+          std : [1,64] -> [[0.05, ..., 0.08]]
         input2: [n,5]
           mean: [1] -> [0.3]
           std : [1] -> [0.07]
 
-      -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-      -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
-      -qcind "input2" "input2.npy" [0.3] [0.07]
+        qcind=[
+            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],
+            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],
+            ["input2","input2.npy",[0.3],[0.07]],
+        ]
 
     input_output_quant_dtype: Optional[str]
       Input and Output dtypes when doing Full INT8 Quantization.
@@ -525,14 +562,14 @@ convert(
       ['data1:1,3,224,224','data2:1,3,112','data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
-      Ignores --batch_size if specified at the same time as --batch_size.
+      Ignores batch_size if specified at the same time as batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
       Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
       If a nonexistent INPUT OP name is specified, it is ignored.
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
-      --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+      keep_ncw_or_nchw_or_ncdhw_input_names=['input0','input1','input2']
 
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
       Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.
@@ -541,7 +578,24 @@ convert(
       in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.
       Valid only for 3D, 4D and 5D input tensors.
       e.g.
-      --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+      keep_nwc_or_nhwc_or_ndhwc_input_names=['input0','input1','input2']
+
+    keep_shape_absolutely_input_names: Optional[List[str]]
+        Name of the INPUT that unconditionally maintains its shape.
+        If a nonexistent INPUT OP name is specified, it is ignored.
+        e.g.
+        keep_shape_absolutely_input_names=['input0','input1','input2']
+
+    output_names_to_interrupt_model_conversion: Optional[List[str]]
+      Output names that interrupt model conversion.
+      Interrupts model transformation at the specified output name
+      and outputs the model partitioned into subgraphs.
+      e.g.
+      output_names_to_interrupt_model_conversion=['output0','output1','output2']
+
+    disable_group_convolution: Optional[bool]
+      Disable GroupConvolution and replace it with SeparableConvolution for
+      output to saved_model format.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
@@ -592,6 +646,9 @@ convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
       Replace Acos with a pseudo Acos.
+
+    replace_acbs_to_pseudo_abs: Optional[bool]
+      Replace Abs with a pseudo Abs.
 
     replace_prelu_to_pseudo_prelu: Optional[bool]
       Replace PReLU with a pseudo PReLU.
@@ -705,18 +762,20 @@ Please don't post such low level questions as issues.
 - Replacement Supported OPs
   |No.|OP type|Remarks|
   |:-:|:-|:-|
-  |1|Cast|<table><thead><th>Type</th><th align="right">Values</th><th>Type</th><th align="right">Values</th></thead><tbody><tr><td>float16</td><td align="right">10</td><td>int8</td><td align="right">3</td></tr><tr><td>float32</td><td align="right">1</td><td>int16</td><td align="right">5</td></tr><tr><td>float64</td><td align="right">11</td><td>int32</td><td align="right">6</td></tr><tr><td>bool</td><td align="right">9</td><td>int64</td><td align="right">7</td></tr><tr><td>uint8</td><td align="right">2</td><td colspan="2" rowspan="4"></td></tr><tr><td>uint16</td><td align="right">4</td></tr><tr><td>uint32</td><td align="right">12</td></tr><tr><td>uint64</td><td align="right">13</td></tr></tbody></table>|
-  |2|Div||
-  |3|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |4|Gemm||
-  |5|Mul||
-  |6|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |7|Resize||
-  |8|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |9|Sub||
-  |10|Tile||
-  |11|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |12|NonMaxSuppression||
+  |1|Add|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Add operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Add operation with the perm specified as post-processing.|
+  |2|Cast|<table><thead><th>Type</th><th align="right">Values</th><th>Type</th><th align="right">Values</th></thead><tbody><tr><td>float16</td><td align="right">10</td><td>int8</td><td align="right">3</td></tr><tr><td>float32</td><td align="right">1</td><td>int16</td><td align="right">5</td></tr><tr><td>float64</td><td align="right">11</td><td>int32</td><td align="right">6</td></tr><tr><td>bool</td><td align="right">9</td><td>int64</td><td align="right">7</td></tr><tr><td>uint8</td><td align="right">2</td><td colspan="2" rowspan="4"></td></tr><tr><td>uint16</td><td align="right">4</td></tr><tr><td>uint32</td><td align="right">12</td></tr><tr><td>uint64</td><td align="right">13</td></tr></tbody></table>|
+  |3|Div|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Div operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Div operation with the perm specified as post-processing.|
+  |4|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |5|Gemm||
+  |6|MatMul|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the MatMul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the MatMul operation with the perm specified as post-processing.|
+  |7|Mul|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Mul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Mul operation with the perm specified as post-processing.|
+  |8|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |9|Resize||
+  |10|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |11|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
+  |12|Tile||
+  |13|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |14|NonMaxSuppression||
 
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
@@ -786,7 +845,7 @@ Please don't post such low level questions as issues.
   |GridSample|:heavy_check_mark:|
   |GroupNormalization|**Help wanted**|
   |GRU|**Help wanted**|
-  |Hardmax|**Help wanted**|
+  |Hardmax|:heavy_check_mark:|
   |HardSigmoid|:heavy_check_mark:|
   |HardSwish|:heavy_check_mark:|
   |Identity|:heavy_check_mark:|
@@ -916,11 +975,55 @@ Please don't post such low level questions as issues.
 
 - YOLACT-Edge MobileNetV2 with Post-Process (MultiClass-NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.11/yolact_edge_mobilenetv2_550x550.onnx
-  ![model_float32 tflite](https://user-images.githubusercontent.com/33194443/196831377-891dfc49-6cdb-41e0-a723-8f0087817ddf.svg)
+  ![image](https://user-images.githubusercontent.com/33194443/201506248-6ee1e04d-3b5a-4afb-a05c-bf8d5119297b.png)
 
 - MoveNet MultiPose ONNX to TFLite Float32 (`Cast` and `TrueDiv` standard OP support)
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
   ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
+
+## Validated model (without replacement.json)
+|No.|Model|Pass|
+|:-:|:-|:-:|
+|1|age_googlenet.onnx|:heavy_check_mark:|
+|2|arcfaceresnet100-8.onnx|:heavy_check_mark:|
+|3|baseline_simplified.onnx|:heavy_check_mark:|
+|4|bvlcalexnet-12.onnx|:heavy_check_mark:|
+|5|caffenet-12.onnx|:heavy_check_mark:|
+|6|densenet-12.onnx|:heavy_check_mark:|
+|7|digits.onnx|:heavy_check_mark:|
+|8|efficientnet-lite4-11_nchw.onnx|:heavy_check_mark:|
+|9|effnet_opset11_dynamic_axis.onnx|:heavy_check_mark:|
+|10|emotion-ferplus-8_rename.onnx|:heavy_check_mark:|
+|11|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
+|12|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
+|13|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
+|14|gender_googlenet.onnx|:heavy_check_mark:|
+|15|inception-v2-9.onnx|:heavy_check_mark:|
+|16|mobilenetv2-12.onnx|:heavy_check_mark:|
+|17|mosaic_11.onnx|:heavy_check_mark:|
+|18|mosaic-9.onnx|:heavy_check_mark:|
+|19|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|20|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|21|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|22|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|23|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|24|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|25|regnet_x_400mf.onnx|:heavy_check_mark:|
+|26|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|27|resnet18-v1-7.onnx|:heavy_check_mark:|
+|28|resnet50-v1-12.onnx|:heavy_check_mark:|
+|29|resnet50-v2-7.onnx|:heavy_check_mark:|
+|30|retinanet-9.onnx|:heavy_check_mark:|
+|31|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|32|super-resolution-10.onnx|:heavy_check_mark:|
+|33|tinyyolov2-8.onnx|:heavy_check_mark:|
+|34|version-RFB-640.onnx|:heavy_check_mark:|
+|35|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|36|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|37|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|38|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|39|yolox_s.onnx|:heavy_check_mark:|
+|40|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
@@ -933,5 +1036,4 @@ Please don't post such low level questions as issues.
 8. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
 9. [onnx](https://github.com/onnx/onnx)
 10. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-11. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
-12. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
+11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)

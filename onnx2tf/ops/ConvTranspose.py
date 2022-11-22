@@ -65,7 +65,7 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_weights = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_weights, gs.Variable) else input_weights
-    input_bias = tf_layers_dict[input_weights.name]['tf_node'] \
+    input_bias = tf_layers_dict[input_bias.name]['tf_node'] \
         if isinstance(input_bias, gs.Variable) else input_bias
 
     input_tensor_shape = input_tensor.shape
@@ -301,6 +301,7 @@ def make_node(
                     'strides': strides,
                     'padding': pad_mode,
                     'group': group,
+                    'bias': input_bias,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],

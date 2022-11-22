@@ -47,17 +47,25 @@ def make_node(
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1
 
+    opset = kwargs['opset']
+
     input_tensor = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
     roi = None
-    if len(graph_node.inputs) >= 2:
-        roi = get_constant_or_variable(
-            graph_node.inputs[1],
-            before_op_output_shape_trans,
-        )
     scales = None
+    if len(graph_node.inputs) >= 2:
+        if opset > 10:
+            roi = get_constant_or_variable(
+                graph_node.inputs[1],
+                before_op_output_shape_trans,
+            )
+        else:
+            scales = get_constant_or_variable(
+                graph_node.inputs[1],
+                before_op_output_shape_trans,
+            )
     if len(graph_node.inputs) >= 3:
         scales = get_constant_or_variable(
             graph_node.inputs[2],
@@ -78,9 +86,9 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     roi = tf_layers_dict[roi.name]['tf_node'] \
-        if isinstance(roi, gs.Variable) else roi
+        if (isinstance(roi, gs.Variable) and roi.name != '') else roi
     scales = tf_layers_dict[scales.name]['tf_node'] \
-        if isinstance(scales, gs.Variable) else scales
+        if (isinstance(scales, gs.Variable) and scales.name != '') else scales
     sizes = tf_layers_dict[sizes.name]['tf_node'] \
         if isinstance(sizes, gs.Variable) else sizes
 

@@ -11,7 +11,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     explicit_broadcast,
     make_tf_node_info,
-    channel_transpose,
 )
 
 
@@ -53,27 +52,16 @@ def make_node(
     )
     slope = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    slope_rank = len(slope.shape)
 
     replace_prelu_to_pseudo_prelu = kwargs['replace_prelu_to_pseudo_prelu']
 
-    if slope_rank == 1:
-        pass
-    elif slope_rank == 3:
-        slope = slope.transpose(1,2,0)
-    elif slope_rank == 4:
-        slope = slope.transpose(0,2,3,1)
-
-    slope = explicit_broadcast(
-        x=input_tensor,
-        y=slope,
+    _, slope = explicit_broadcast(
+        const_or_var_1=input_tensor,
+        const_or_var_2=slope,
+        graph_node=graph_node,
+        tf_layers_dict= tf_layers_dict
     )
-
-    if replace_prelu_to_pseudo_prelu:
-        slope = channel_transpose(
-            const_or_var_1=input_tensor,
-            const_or_var_2=slope,
-        )
+    slope_rank = len(slope.shape)
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -92,17 +80,9 @@ def make_node(
         neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
         tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
     else:
-        shared_axes = []
-        if slope_rank < 4:
-            if input_tensor.shape[-1] == slope.shape[-1]:
-                shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
-            else:
-                shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 1)]
-        else:
-            shared_axes = None
-
+        shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
         tf_layers_dict[graph_node_output.name]['tf_node'] = PReLU(
-            weights=[slope],
+            weights=slope,
             shared_axes=shared_axes,
         )(input_tensor)
 

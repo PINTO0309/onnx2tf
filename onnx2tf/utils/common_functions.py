@@ -2,6 +2,7 @@ import sys
 import copy
 import random
 random.seed(0)
+import itertools
 import traceback
 import numpy as np
 np.random.seed(0)
@@ -9,14 +10,14 @@ import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 from functools import wraps
 from collections import namedtuple
-
 from onnx2tf.utils.enums import (
     TF_DTYPES_TO_NUMPY_DTYPES,
 )
 
+INF_INDEX_VALUE: int = 4294967296
 
 def get_replacement_parameter(func):
     @wraps(func)
@@ -246,14 +247,14 @@ def print_node_info(func):
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN}input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
+                        f'{Color.CYAN} input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
                         f'{Color.CYAN}shape{Color.RESET}: {graph_node_input.shape} '+
                         f'{Color.CYAN}dtype{Color.RESET}: {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
                     print(
                         f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN}output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
+                        f'{Color.CYAN} output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
                         f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
                         f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
                     )
@@ -278,7 +279,7 @@ def print_node_info(func):
                                     for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
                                         input_info_text = \
                                             f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE}input.{input_idx+1}.{input_key}{Color.RESET}: '
+                                            f'{Color.BLUE} input.{input_idx+1}.{input_key}{Color.RESET}: '
                                         for input_attr_name, input_attr_value in input_values.items():
                                             input_info_text += \
                                                 f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
@@ -290,7 +291,7 @@ def print_node_info(func):
                                     for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
                                         output_info_text = \
                                             f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE}output.{output_idx+1}.{output_key}{Color.RESET}: '
+                                            f'{Color.BLUE} output.{output_idx+1}.{output_key}{Color.RESET}: '
                                         for output_attr_name, output_attr_value in output_values.items():
                                             output_info_text += \
                                                 f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
@@ -578,28 +579,207 @@ def convert_reverse_axis(
     return converted_axis
 
 
-def channel_transpose(
+def simple_arithmetic_validity_check(
+    *,
+    op_type: str,
+    onnx_x: np.ndarray,
+    onnx_y: np.ndarray,
+    tf_x: np.ndarray,
+    tf_y: np.ndarray,
+):
+    copy_onnx_x = onnx_x.copy()
+    copy_onnx_y = onnx_y.copy()
+    copy_tf_x = tf_x.copy()
+    copy_tf_y = tf_y.copy()
+
+    tf_y_shape = copy_tf_y.shape
+    tf_y_rank = len(tf_y_shape)
+    # All permutations of inverted patterns used for brute force checks
+    # Transpose and compute tf_y repeatedly in the pattern of all permutations,
+    # and repeat until the results match the results of onnx_x and onnx_y operations
+    test_perm_list = list(itertools.permutations(range(tf_y_rank)))
+
+    NP_CALC_FUNCS = {
+        'Add': np.add,
+        'Sub': np.subtract,
+        'Mul': np.multiply,
+        'Div': np.divide,
+    }
+
+    matched_perm = None
+    for perm in test_perm_list:
+        trans_copy_tf_y = copy_tf_y.transpose(perm)
+        onnx_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_onnx_x, copy_onnx_y)
+        try:
+            tf_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_tf_x, trans_copy_tf_y)
+            flat_onnx_result = np.sort(onnx_result.flatten())
+            flat_tf_result = np.sort(tf_result.flatten())
+            if flat_onnx_result.shape[0] == flat_tf_result.shape[0] \
+                and np.isclose(flat_onnx_result, flat_tf_result, equal_nan=True).all():
+                matched_perm = perm
+                break
+        except:
+            pass
+    if matched_perm is None:
+        # Exception throw
+        pass
+
+
+def broadcast_validity_check(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
+    """
+    Check the validity of dimension shape for same length of tensors.
+    Parameters
+    ----------
+    shape1: 1d list or ndarray.
+    shape2: 1d list or ndarray.
+
+    Returns
+    -------
+    result: True if shape1 and shape2 is valid for broadcasting, else False
+    """
+    result = False
+
+    if len(shape1) != len(shape2):
+        return result
+    else:
+        for i, j in zip(shape1, shape2):
+            if i == j or i == 1 or j == 1:
+                result = True
+            else:
+                result = False
+                break
+
+    return result
+
+
+def explicit_broadcast(
     *,
     const_or_var_1: Any,
     const_or_var_2: Any,
+    graph_node: Optional[gs.Node] = None,
+    tf_layers_dict: dict = None,
 ):
-    if isinstance(const_or_var_2, np.ndarray) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = const_or_var_2.squeeze()
-    elif isinstance(const_or_var_2, tf.Tensor) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = tf.squeeze(const_or_var_2)
-    elif not isinstance(const_or_var_2, np.ndarray) \
-        and tf.keras.backend.is_keras_tensor(const_or_var_2) \
-        and len(const_or_var_2.shape) > 1 \
-        and list(const_or_var_2.shape).count(1) == len(const_or_var_2.shape)-1 \
-        and const_or_var_1.shape[-1] == max(const_or_var_2.shape):
-        const_or_var_2 = tf.squeeze(const_or_var_2)
-    return const_or_var_2
+    graph_node_input_name1 = None
+    graph_node_input_name2 = None
+    graph_node_input_shape1 = []
+    graph_node_input_shape2 = []
+    if graph_node is not None:
+        graph_node_input_name1 = graph_node.inputs[0].name
+        graph_node_input_name2 = graph_node.inputs[1].name
+        graph_node_input_shape1 = list(graph_node.inputs[0].shape)
+        graph_node_input_shape2 = list(graph_node.inputs[1].shape)
+
+    # If either operand have shape of all 1's, do not broadcast and return as is
+    shape_for_judging_skip_processing_1 = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_1.shape
+    ]
+    shape_for_judging_skip_processing_2 = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
+    ]
+    if np.prod(shape_for_judging_skip_processing_1) == 1 or np.prod(shape_for_judging_skip_processing_2) == 1:
+        return const_or_var_1, const_or_var_2
+
+    # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
+    swapped = 0
+    if len(const_or_var_1.shape) < len(const_or_var_2.shape):
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
+        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
+        swapped += 1
+
+    """
+    UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1.shape
+    and const_or_var_2.shape have the same rank
+    e.g.
+        const_or_var_1.shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
+        const_or_var_2.shape (ONNX const pettern): [3,64,128,128]
+        new_const_or_var_2.shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
+
+        const_or_var_1.shape (TF)  : [1,64,128,128,3]
+        const_or_var_2.shape (TF ver pettern): [128,128,3]
+        new_const_or_var_2.shape (ONNX): [1,1,128,128,3]
+
+        const_or_var_1.shape (TF)  : [1,128,3], onnx[1,3,128]
+        const_or_var_2.shape (ONNX const pettern): [3,128]
+        new_const_or_var_2.shape (ONNX): [1,3,128] -> [1,128,3]
+    """
+    for _ in range(len(const_or_var_1.shape) - len(const_or_var_2.shape)):
+        if isinstance(const_or_var_2, np.ndarray):
+            const_or_var_2 = const_or_var_2[np.newaxis, ...]
+        elif isinstance(const_or_var_2, tf.Tensor):
+            const_or_var_2 = tf.expand_dims(
+                input=const_or_var_2,
+                axis=0,
+            )
+        elif not isinstance(const_or_var_2, np.ndarray) \
+            and tf.keras.backend.is_keras_tensor(const_or_var_2):
+            const_or_var_2 = tf.expand_dims(
+                input=const_or_var_2,
+                axis=0,
+            )
+        graph_node_input_shape2 = [1] + graph_node_input_shape2
+
+    # Swap operands to apply transpose to correct target if needed
+    # second operand is always target of transpose
+    if broadcast_validity_check(list(const_or_var_1.shape), graph_node_input_shape1) and \
+            not broadcast_validity_check(list(const_or_var_2.shape), graph_node_input_shape2):
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
+        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
+        swapped += 1
+
+    # Check if operands need transpose
+    # CAUTION: this part may occur problem when there are more than two same numbers in tensor shape.
+    #          please consider manual debugging if output is differ with onnx.
+    if broadcast_validity_check(list(const_or_var_1.shape), list(const_or_var_2.shape)) and \
+            broadcast_validity_check(graph_node_input_shape1, graph_node_input_shape2):
+        pass
+    else:
+        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]
+
+        if isinstance(const_or_var_2, np.ndarray):
+            const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
+            # # Check output values by brute force only if the shape of const_or_var_2
+            # # is different between const_or_var_1 and const_or_var_2 in dimensions other than 1
+            # const_or_var_1_shape_not_none = [
+            #     i if not isinstance(i, str) else 1 for i in const_or_var_1_shape
+            # ]
+            # for var1_shape, var2_shape in zip(const_or_var_1_shape_not_none, const_or_var_2.shape):
+            #     if var2_shape != 1 and var1_shape != 1 and var1_shape != var2_shape:
+            #         dummy_data_onnx = np.random.random_sample(graph_node.inputs[0].shape)
+            #         dummy_data_onnx = dummy_data_onnx.astype(graph_node.inputs[0].dtype)
+            #         dummy_data_tf = dummy_data_onnx.copy()
+            #         dummy_data_tf = dummy_data_tf.reshape(const_or_var_1_shape).astype(graph_node.inputs[0].dtype)
+            #         simple_arithmetic_validity_check(
+            #             op_type=graph_node.op,
+            #             onnx_x=dummy_data_onnx,
+            #             onnx_y=graph_node.inputs[1].values,
+            #             tf_x=dummy_data_tf,
+            #             tf_y=const_or_var_2,
+            #         )
+            #         break
+
+        elif isinstance(const_or_var_2, tf.Tensor) \
+            or (
+                not isinstance(const_or_var_2, np.ndarray) \
+                and tf.keras.backend.is_keras_tensor(const_or_var_2)
+            ):
+            if graph_node_input_name2 is not None \
+                and tf_layers_dict is not None \
+                and graph_node_input_name2 in tf_layers_dict \
+                and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
+                const_or_var_2: np.ndarray = tf.transpose(
+                    a=const_or_var_2,
+                    perm=transpose_perm
+                )
+        else:
+            pass
+
+    # Re-swap operand if swapped in early steps to match shapes. order of operands is important for Sub and Div.
+    if swapped == 1:
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+
+    return const_or_var_1, const_or_var_2
 
 
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
@@ -1625,35 +1805,6 @@ def remove_dilations(
     output = tf.reshape(output, output_shape)
 
     return output
-
-
-def explicit_broadcast(
-    *,
-    x,
-    y,
-    axis=None,
-):
-    if np.prod(y.shape) == 1:
-        return y
-
-    if axis is None:
-        return y
-
-    total_num_dim = len(x.shape)
-    if axis < 0:
-        axis += total_num_dim
-
-    y_rank = len(y.shape)
-
-    if axis + y_rank == total_num_dim:
-        return y
-
-    dims = [axis + i for i in range(y_rank)]
-    new_y = y
-    for i in range(total_num_dim):
-        if i not in dims:
-            new_y = tf.expand_dims(new_y, i)
-    return new_y
 
 
 def process_neg_idx(

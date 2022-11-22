@@ -83,14 +83,15 @@ def make_node(
     }
 
     # Generation of TF OP
-    mul_values = 1.0 / np.sqrt(input_var.values + epsilon) * scale.values
-
-    if np.count_nonzero(input_mean.values) > 0:
-        tf_layers_dict[Y.name]['tf_node'] = \
-            (tf_layers_dict[X.name]['tf_node'] - input_mean.values) * mul_values + B.values
-    else:
-        tf_layers_dict[Y.name]['tf_node'] = \
-            tf_layers_dict[X.name]['tf_node'] * mul_values + B.values
+    input_tensor = tf_layers_dict[X.name]['tf_node']
+    tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
+        x=input_tensor,
+        mean=input_mean.values,
+        variance=input_var.values,
+        offset=B.values,
+        scale=scale.values,
+        variance_epsilon=epsilon,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[Y.name]['tf_node_info'] = \
@@ -99,10 +100,11 @@ def make_node(
                 'tf_op_type': 'BatchNormalization',
                 'tf_inputs': {
                     'X': tf_layers_dict[X.name]['tf_node'],
-                    'B': B,
                     'mean': input_mean,
-                    'var': input_var,
+                    'variance': input_var,
+                    'offset': B,
                     'scale': scale,
+                    'variance_epsilon': epsilon,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[Y.name]['tf_node'],

@@ -59,6 +59,9 @@ def convert(
     overwrite_input_shape: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
+    keep_shape_absolutely_input_names: Optional[List[str]] = None,
+    output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
+    disable_group_convolution: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -66,6 +69,7 @@ def convert(
     fused_argmax_scale_ratio: Optional[float] = 0.5,
     replace_asin_to_pseudo_asin: Optional[bool] = False,
     replace_acos_to_pseudo_acos: Optional[bool] = False,
+    replace_abs_to_pseudo_abs: Optional[bool] = False,
     replace_prelu_to_pseudo_prelu: Optional[bool] = False,
     replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
     replace_power_to_pseudo_power: Optional[bool] = False,
@@ -156,9 +160,11 @@ def convert(
             input2: [n,5]\n
                 mean: [1] -> [0.3]\n
                 std:  [1] -> [0.07]\n
-        -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]\n
-        -qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]\n
-        -qcind "input2" "input2.npy" [0.3] [0.07]
+        qcind=[
+            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],\n
+            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
+            ["input2","input2.npy",[0.3],[0.07]],\n
+        ]
 
     input_output_quant_dtype: Optional[str]
         Input and Output dtypes when doing Full INT8 Quantization.\n
@@ -186,14 +192,14 @@ def convert(
         ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
-        Ignores --batch_size if specified at the same time as --batch_size.
+        Ignores batch_size if specified at the same time as batch_size.
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
         If a nonexistent INPUT OP name is specified, it is ignored.\n
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
-        --keep_ncw_or_nchw_or_ncdhw_input_names=['input0', 'input1', 'input2']
+        keep_ncw_or_nchw_or_ncdhw_input_names=['input0','input1','input2']
 
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]]
         Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names.\n
@@ -202,7 +208,24 @@ def convert(
         in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored.\n
         Valid only for 3D, 4D and 5D input tensors.\n\n
         e.g. \n
-        --keep_nwc_or_nhwc_or_ndhwc_input_names=['input0', 'input1', 'input2']
+        keep_nwc_or_nhwc_or_ndhwc_input_names=['input0','input1','input2']
+
+    keep_shape_absolutely_input_names: Optional[List[str]]
+        Name of the INPUT that unconditionally maintains its shape.\n
+        If a nonexistent INPUT OP name is specified, it is ignored.\n\n
+        e.g.\n
+        keep_shape_absolutely_input_names=['input0','input1','input2']
+
+    output_names_to_interrupt_model_conversion: Optional[List[str]]
+        Output names that interrupt model conversion.\n
+        Interrupts model transformation at the specified output name\n
+        and outputs the model partitioned into subgraphs.\n\n
+        e.g.\n
+        output_names_to_interrupt_model_conversion=['output0','output1','output2']
+
+    disable_group_convolution: Optional[bool]
+        Disable GroupConvolution and replace it with SeparableConvolution\n
+        for output to saved_model format.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -253,6 +276,9 @@ def convert(
 
     replace_acos_to_pseudo_acos: Optional[bool]
         Replace Acos with a pseudo Acos.
+
+    replace_abs_to_pseudo_abs: Optional[bool]
+        Replace Abs with a pseudo Abs.
 
     replace_prelu_to_pseudo_prelu: Optional[bool]
         Replace PReLU with a pseudo PReLU.
@@ -453,6 +479,7 @@ def convert(
         'opset': graph.opset,
         'batch_size': batch_size,
         'non_verbose': non_verbose,
+        'disable_group_convolution': disable_group_convolution,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -460,6 +487,7 @@ def convert(
         'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
         'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
         'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
+        'replace_abs_to_pseudo_abs': replace_abs_to_pseudo_abs,
         'replace_prelu_to_pseudo_prelu': replace_prelu_to_pseudo_prelu,
         'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
         'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
@@ -507,11 +535,13 @@ def convert(
 
             # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
+            graph_input.name = graph_input.name.replace(':','_')
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                 keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                 **additional_parameters,
             )
 
@@ -527,6 +557,7 @@ def convert(
                 )
                 sys.exit(1)
 
+            graph_node.name = graph_node.name.replace(':','_')
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
@@ -541,9 +572,14 @@ def convert(
         ]
 
         # List Output
-        output_names = [
-            graph_output.name for graph_output in graph.outputs
-        ]
+        if not output_names_to_interrupt_model_conversion:
+            output_names = [
+                graph_output.name for graph_output in graph.outputs
+            ]
+        else:
+            output_names = [
+                output_op_name for output_op_name in output_names_to_interrupt_model_conversion
+            ]
         outputs = [
             layer_info['tf_node'] \
                 for opname, layer_info in tf_layers_dict.items() \
@@ -587,6 +623,22 @@ def convert(
                 print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
             output_pb = True
             flag_for_output_switching_from_saved_model_to_pb_due_to_error = True
+        except KeyError as e:
+            msg_list = [s for s in e.args if isinstance(s, str)]
+            if len(msg_list) > 0:
+                for s in msg_list:
+                    if 'Failed to add concrete function' in s:
+                        print(
+                            f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                            f'This model contains GroupConvolution and is automatically optimized for TFLite,' +
+                            f'but is not output because saved_model does not support GroupConvolution. ' +
+                            f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
+                        )
+                        break
+            else:
+                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                import traceback
+                traceback.print_exc()
         except Exception as e:
             print(f'{Color.RED}ERROR:{Color.RESET}', e)
             import traceback
@@ -969,6 +1021,37 @@ def main():
             'e.g. \n' +
             '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"'
     )
+    parser.add_argument(
+        '-kat',
+        '--keep_shape_absolutely_input_names',
+        type=str,
+        nargs='+',
+        help=\
+            'Name of the INPUT that unconditionally maintains its shape. \n' +
+            'If a nonexistent INPUT OP name is specified, it is ignored. \n\n' +
+            'e.g. \n' +
+            '--keep_shape_absolutely_input_names "input0" "input1" "input2"'
+    )
+    parser.add_argument(
+        '-onimc',
+        '--output_names_to_interrupt_model_conversion',
+        type=str,
+        nargs='+',
+        help=\
+            'Output names that interrupt model conversion. \n' +
+            'Interrupts model transformation at the specified output name \n' +
+            'and outputs the model partitioned into subgraphs. \n\n' +
+            'e.g. \n' +
+            '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
+    )
+    parser.add_argument(
+        '-dgc',
+        '--disable_group_convolution',
+        action='store_true',
+        help=\
+            'Disable GroupConvolution and replace it with SeparableConvolution \n' +
+            'for output to saved_model format.'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1042,6 +1125,12 @@ def main():
         '--replace_acos_to_pseudo_acos',
         action='store_true',
         help='Replace Acos with a pseudo Acos.'
+    )
+    parser.add_argument(
+        '-rabs',
+        '--replace_abs_to_pseudo_abs',
+        action='store_true',
+        help='Replace Abs with a pseudo Abs.'
     )
     parser.add_argument(
         '-rpr',
@@ -1145,6 +1234,9 @@ def main():
         overwrite_input_shape=args.overwrite_input_shape,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
+        keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
+        output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
+        disable_group_convolution=args.disable_group_convolution,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -1152,6 +1244,7 @@ def main():
         fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,
         replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
         replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
+        replace_abs_to_pseudo_abs=args.replace_abs_to_pseudo_abs,
         replace_prelu_to_pseudo_prelu=args.replace_prelu_to_pseudo_prelu,
         replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
         replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,

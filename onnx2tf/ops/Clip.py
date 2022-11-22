@@ -95,19 +95,19 @@ def make_node(
 
 
     tf_op_type = None
-    if isinstance(min_value, np.ndarray) and min_value == 0.0 \
-        and isinstance(max_value, np.ndarray) and max_value == 6.0:
+    if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
+        and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu6(features=features)
         tf_op_type = tf.nn.relu6
-    elif isinstance(min_value, np.ndarray) and min_value == 0.0 \
+    elif (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
         and (max_value is None or max_value.shape is None):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu(features=features)
         tf_op_type = tf.nn.relu
     else:
-        if (min_value is not None and min_value.shape is not None) \
-            and (max_value is not None and max_value.shape is not None):
+        if (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
+            and (isinstance(max_value, np.ndarray) and max_value.shape is not None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.clip_by_value(
                     t=features,
@@ -115,7 +115,7 @@ def make_node(
                     clip_value_max=max_value,
                 )
             tf_op_type = tf.clip_by_value
-        elif (min_value is not None and min_value.shape is not None) \
+        elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
             and (max_value is None or max_value.shape is None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(

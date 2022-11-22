@@ -16,7 +16,10 @@ class Model1(nn.Module):
         super(Model1, self).__init__()
 
     def forward(self, x, y):
-        return torch.add(x, y)
+        if sum(x) > sum(y):
+            return x+1
+        else:
+            return y+2
 
 class Model2(nn.Module):
     def __init__(
@@ -24,8 +27,11 @@ class Model2(nn.Module):
     ):
         super(Model2, self).__init__()
 
-    def forward(self, x):
-        return torch.add(x, torch.tensor([0.6], dtype=torch.float32))
+    def forward(self, x, y):
+        if sum(x) > sum(y):
+            return [x+1]
+        else:
+            return [x+1,y+2]
 
 class Model3(nn.Module):
     def __init__(
@@ -33,29 +39,31 @@ class Model3(nn.Module):
     ):
         super(Model3, self).__init__()
 
-    def forward(self, x):
-        return torch.add(
-            x,
-            torch.tensor(
-                [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0, 1.1,1.2],
-                dtype=torch.float32
-            ).reshape([3,4]),
-        )
+    def forward(self, x, y):
+        if sum(x) > sum(y):
+            return x+1
+        else:
+            if torch.min(x) > torch.min(y):
+                return x+2
+            else:
+                return y+3
+
 
 if __name__ == "__main__":
     OPSET=11
-    MODEL = f'Add_var'
+    MODEL = f'If_p1'
     model = Model1()
     onnx_file = f"{MODEL}_{OPSET}.onnx"
-    x = torch.randn(20, 100)
-    y = torch.randn(20, 100)
+    x = torch.randn(1,100)
+    y = torch.randn(2,100)
     torch.onnx.export(
-        model,
+        torch.jit.script(model),
         args=(x,y),
         f=onnx_file,
         opset_version=OPSET,
         input_names=[
-            f'{MODEL}_input',
+            f'{MODEL}_input1',
+            f'{MODEL}_input2',
         ],
         output_names=[
             f'{MODEL}_output',
@@ -69,16 +77,19 @@ if __name__ == "__main__":
     model_simp, check = simplify(model_onnx2)
     onnx.save(model_simp, onnx_file)
 
-    MODEL = f'Add'
+    MODEL = f'If_p2'
     model = Model2()
     onnx_file = f"{MODEL}_{OPSET}.onnx"
+    x = torch.randn(1,100, dtype=torch.float32)
+    y = torch.randn(2,100, dtype=torch.float32)
     torch.onnx.export(
-        model,
-        args=(x),
+        torch.jit.script(model),
+        args=(x,y),
         f=onnx_file,
         opset_version=OPSET,
         input_names=[
-            f'{MODEL}_input',
+            f'{MODEL}_input1',
+            f'{MODEL}_input2',
         ],
         output_names=[
             f'{MODEL}_output',
@@ -88,21 +99,20 @@ if __name__ == "__main__":
     model_onnx1 = onnx.load(onnx_file)
     model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
     onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
 
-    MODEL = f'Add'
+    MODEL = f'If_p3'
     model = Model3()
-    onnx_file = f"{MODEL}_broadcast_{OPSET}.onnx"
-    x = torch.randn(1, 2, 3, 4)
+    onnx_file = f"{MODEL}_{OPSET}.onnx"
+    x = torch.randn(100)
+    y = torch.randn(100)
     torch.onnx.export(
-        model,
-        args=(x),
+        torch.jit.script(model),
+        args=(x,y),
         f=onnx_file,
         opset_version=OPSET,
         input_names=[
-            f'{MODEL}_input',
+            f'{MODEL}_input1',
+            f'{MODEL}_input2',
         ],
         output_names=[
             f'{MODEL}_output',
@@ -112,6 +122,3 @@ if __name__ == "__main__":
     model_onnx1 = onnx.load(onnx_file)
     model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
     onnx.save(model_onnx1, onnx_file)
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
