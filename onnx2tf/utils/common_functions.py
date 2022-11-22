@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -625,6 +625,33 @@ def simple_arithmetic_validity_check(
         pass
 
 
+def broadcast_validity_check(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
+    """
+    Check the validity of dimension shape for same length of tensors.
+    Parameters
+    ----------
+    shape1: 1d list or ndarray.
+    shape2: 1d list or ndarray.
+
+    Returns
+    -------
+    result: True if shape1 and shape2 is valid for broadcasting, else False
+    """
+    result = False
+
+    if len(shape1) != len(shape2):
+        return result
+    else:
+        for i, j in zip(shape1, shape2):
+            if i == j or i == 1 or j == 1:
+                result = True
+            else:
+                result = False
+                break
+
+    return result
+
+
 def explicit_broadcast(
     *,
     const_or_var_1: Any,
@@ -634,44 +661,49 @@ def explicit_broadcast(
 ):
     graph_node_input_name1 = None
     graph_node_input_name2 = None
+    graph_node_input_shape1 = []
+    graph_node_input_shape2 = []
     if graph_node is not None:
         graph_node_input_name1 = graph_node.inputs[0].name
         graph_node_input_name2 = graph_node.inputs[1].name
+        graph_node_input_shape1 = list(graph_node.inputs[0].shape)
+        graph_node_input_shape2 = list(graph_node.inputs[1].shape)
+
+    # If either operand have shape of all 1's, do not broadcast and return as is
+    shape_for_judging_skip_processing_1 = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_1.shape
+    ]
+    shape_for_judging_skip_processing_2 = [
+        i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
+    ]
+    if np.prod(shape_for_judging_skip_processing_1) == 1 or np.prod(shape_for_judging_skip_processing_2) == 1:
+        return const_or_var_1, const_or_var_2
 
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
+    swapped = 0
     if len(const_or_var_1.shape) < len(const_or_var_2.shape):
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
         graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
-
-    # If const_or_var_2.shape is all 1's, do not broadcast and return as is
-    shape_for_judging_skip_processing = [
-        i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
-    ]
-    if np.prod(shape_for_judging_skip_processing) == 1:
-        return const_or_var_1, const_or_var_2
-
-    const_or_var_1_shape = const_or_var_1.shape
-    const_or_var_1_rank = len(const_or_var_1_shape)
-    const_or_var_2_shape = const_or_var_2.shape
-    const_or_var_2_rank = len(const_or_var_2_shape)
+        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
+        swapped += 1
 
     """
-    UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1_shape
-    and const_or_var_2_shape have the same rank
+    UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1.shape
+    and const_or_var_2.shape have the same rank
     e.g.
-        const_or_var_1_shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
-        const_or_var_2_shape (ONNX const pettern): [3,64,128,128]
-        new_const_or_var_2_shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
+        const_or_var_1.shape (TF)  : [1,64,128,128,3], onnx[1,3,64,128,128]
+        const_or_var_2.shape (ONNX const pettern): [3,64,128,128]
+        new_const_or_var_2.shape (ONNX): [1,3,64,128,128] -> [1,64,128,128,3]
 
-        const_or_var_1_shape (TF)  : [1,64,128,128,3]
-        const_or_var_2_shape (TF ver pettern): [128,128,3]
-        new_const_or_var_2_shape (ONNX): [1,1,128,128,3]
+        const_or_var_1.shape (TF)  : [1,64,128,128,3]
+        const_or_var_2.shape (TF ver pettern): [128,128,3]
+        new_const_or_var_2.shape (ONNX): [1,1,128,128,3]
 
-        const_or_var_1_shape (TF)  : [1,128,3], onnx[1,3,128]
-        const_or_var_2_shape (ONNX const pettern): [3,128]
-        new_const_or_var_2_shape (ONNX): [1,3,128] -> [1,128,3]
+        const_or_var_1.shape (TF)  : [1,128,3], onnx[1,3,128]
+        const_or_var_2.shape (ONNX const pettern): [3,128]
+        new_const_or_var_2.shape (ONNX): [1,3,128] -> [1,128,3]
     """
-    for _ in range(const_or_var_1_rank - const_or_var_2_rank):
+    for _ in range(len(const_or_var_1.shape) - len(const_or_var_2.shape)):
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2 = const_or_var_2[np.newaxis, ...]
         elif isinstance(const_or_var_2, tf.Tensor):
@@ -685,44 +717,68 @@ def explicit_broadcast(
                 input=const_or_var_2,
                 axis=0,
             )
-    transpose_perm = [0] + [i+2 for i in range(const_or_var_1_rank-2)] + [1]
-    if isinstance(const_or_var_2, np.ndarray):
-        const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
-        # # Check output values by brute force only if the shape of const_or_var_2
-        # # is different between const_or_var_1 and const_or_var_2 in dimensions other than 1
-        # const_or_var_1_shape_not_none = [
-        #     i if not isinstance(i, str) else 1 for i in const_or_var_1_shape
-        # ]
-        # for var1_shape, var2_shape in zip(const_or_var_1_shape_not_none, const_or_var_2.shape):
-        #     if var2_shape != 1 and var1_shape != 1 and var1_shape != var2_shape:
-        #         dummy_data_onnx = np.random.random_sample(graph_node.inputs[0].shape)
-        #         dummy_data_onnx = dummy_data_onnx.astype(graph_node.inputs[0].dtype)
-        #         dummy_data_tf = dummy_data_onnx.copy()
-        #         dummy_data_tf = dummy_data_tf.reshape(const_or_var_1_shape).astype(graph_node.inputs[0].dtype)
-        #         simple_arithmetic_validity_check(
-        #             op_type=graph_node.op,
-        #             onnx_x=dummy_data_onnx,
-        #             onnx_y=graph_node.inputs[1].values,
-        #             tf_x=dummy_data_tf,
-        #             tf_y=const_or_var_2,
-        #         )
-        #         break
+        graph_node_input_shape2 = [1] + graph_node_input_shape2
 
-    elif isinstance(const_or_var_2, tf.Tensor) \
-        or (
-            not isinstance(const_or_var_2, np.ndarray) \
-            and tf.keras.backend.is_keras_tensor(const_or_var_2)
-        ):
-        if graph_node_input_name2 is not None \
-            and tf_layers_dict is not None \
-            and graph_node_input_name2 in tf_layers_dict \
-            and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
-            const_or_var_2: np.ndarray = tf.transpose(
-                a=const_or_var_2,
-                perm=transpose_perm
-            )
-    else:
+    # Swap operands to apply transpose to correct target if needed
+    # second operand is always target of transpose
+    if broadcast_validity_check(list(const_or_var_1.shape), graph_node_input_shape1) and \
+            not broadcast_validity_check(list(const_or_var_2.shape), graph_node_input_shape2):
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+        graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
+        graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
+        swapped += 1
+
+    # Check if operands need transpose
+    # CAUTION: this part may occur problem when there are more than two same numbers in tensor shape.
+    #          please consider manual debugging if output is differ with onnx.
+    if broadcast_validity_check(list(const_or_var_1.shape), list(const_or_var_2.shape)) and \
+            broadcast_validity_check(graph_node_input_shape1, graph_node_input_shape2):
         pass
+    else:
+        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]
+
+        if isinstance(const_or_var_2, np.ndarray):
+            const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
+            # # Check output values by brute force only if the shape of const_or_var_2
+            # # is different between const_or_var_1 and const_or_var_2 in dimensions other than 1
+            # const_or_var_1_shape_not_none = [
+            #     i if not isinstance(i, str) else 1 for i in const_or_var_1_shape
+            # ]
+            # for var1_shape, var2_shape in zip(const_or_var_1_shape_not_none, const_or_var_2.shape):
+            #     if var2_shape != 1 and var1_shape != 1 and var1_shape != var2_shape:
+            #         dummy_data_onnx = np.random.random_sample(graph_node.inputs[0].shape)
+            #         dummy_data_onnx = dummy_data_onnx.astype(graph_node.inputs[0].dtype)
+            #         dummy_data_tf = dummy_data_onnx.copy()
+            #         dummy_data_tf = dummy_data_tf.reshape(const_or_var_1_shape).astype(graph_node.inputs[0].dtype)
+            #         simple_arithmetic_validity_check(
+            #             op_type=graph_node.op,
+            #             onnx_x=dummy_data_onnx,
+            #             onnx_y=graph_node.inputs[1].values,
+            #             tf_x=dummy_data_tf,
+            #             tf_y=const_or_var_2,
+            #         )
+            #         break
+
+        elif isinstance(const_or_var_2, tf.Tensor) \
+            or (
+                not isinstance(const_or_var_2, np.ndarray) \
+                and tf.keras.backend.is_keras_tensor(const_or_var_2)
+            ):
+            if graph_node_input_name2 is not None \
+                and tf_layers_dict is not None \
+                and graph_node_input_name2 in tf_layers_dict \
+                and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
+                const_or_var_2: np.ndarray = tf.transpose(
+                    a=const_or_var_2,
+                    perm=transpose_perm
+                )
+        else:
+            pass
+
+    # Re-swap operand if swapped in early steps to match shapes. order of operands is important for Sub and Div.
+    if swapped == 1:
+        const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
+
     return const_or_var_1, const_or_var_2
 
 

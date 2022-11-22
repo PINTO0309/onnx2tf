@@ -58,6 +58,8 @@ def make_node(
     _, slope = explicit_broadcast(
         const_or_var_1=input_tensor,
         const_or_var_2=slope,
+        graph_node=graph_node,
+        tf_layers_dict= tf_layers_dict
     )
     slope_rank = len(slope.shape)
 
