@@ -982,6 +982,7 @@ Please don't post such low level questions as issues.
   ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
 
 ## Validated model (without replacement.json)
+ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |No.|Model|Pass|
 |:-:|:-|:-:|
 |1|age_googlenet.onnx|:heavy_check_mark:|
