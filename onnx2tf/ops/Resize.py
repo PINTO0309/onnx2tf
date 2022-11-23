@@ -183,16 +183,6 @@ def make_node(
     if hasattr(new_size, 'set_shape'):
         new_size.set_shape([2])
 
-
-    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
-        and graph_node.o().op == 'ArgMax' \
-        and input_tensor_rank == 4:
-        new_size = tf.cast(
-            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
-            dtype=tf.int32,
-        )
-
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
@@ -203,6 +193,15 @@ def make_node(
             for new_idx, idx in enumerate(convertion_table):
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-3:-1]
+
+    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+        and graph_node.o().op == 'ArgMax' \
+        and input_tensor_rank == 4:
+        new_size = tf.cast(
+            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
+            dtype=tf.int32,
+        )
 
     # Param replacement
     input_tensor = replace_parameter(
