@@ -166,11 +166,11 @@ def make_node(
             new_size = tf.cast(tf.slice(sizes, [1], [2]), tf.int32)
     elif scales is not None:
         # only scales is defined
-        if hasattr(graph_node.outputs[0], 'shape') \
-            and graph_node.outputs[0].shape is not None \
-            and isinstance(graph_node.outputs[0].shape[-2], int) \
-            and isinstance(graph_node.outputs[0].shape[-1], int):
-            new_size = graph_node.outputs[0].shape[-2:len(graph_node.outputs[0].shape)] # Estimated from ONNX output shape
+        if hasattr(graph_node_output, 'shape') \
+            and graph_node_output.shape is not None \
+            and isinstance(graph_node_output.shape[-2], int) \
+            and isinstance(graph_node_output.shape[-1], int):
+            new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
         else:
             h_w_scale = scales[1:3]
             h_w_shape = input_tensor_shape[1:3]
@@ -183,16 +183,6 @@ def make_node(
     if hasattr(new_size, 'set_shape'):
         new_size.set_shape([2])
 
-
-    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
-        and graph_node.o().op == 'ArgMax' \
-        and input_tensor_rank == 4:
-        new_size = tf.cast(
-            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
-            dtype=tf.int32,
-        )
-
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
@@ -203,6 +193,15 @@ def make_node(
             for new_idx, idx in enumerate(convertion_table):
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-3:-1]
+
+    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+        and graph_node.o().op == 'ArgMax' \
+        and input_tensor_rank == 4:
+        new_size = tf.cast(
+            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
+            dtype=tf.int32,
+        )
 
     # Param replacement
     input_tensor = replace_parameter(

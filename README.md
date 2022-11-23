@@ -9,7 +9,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
-- [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
+- [x] Most of the internal processing of the tool is full-scratch, but some of the more complex OPs have been adapted from [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow). I am very grateful to the engineers at International Business Machines Corporation / LeapMind / Microsoft / IBM for developing [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow).
 - [x] I have incorporated all my knowledge of model optimization to other models such as TFLite, EdgeTPU, TensorFlow.js and Myriad based on my years of experience implementing [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow) and [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow). It probably has the best model optimization performance and conversion efficiency of any tool I have created in the past, and the lowest rate of conversion errors.
 - [x] Supported layers list. [Supported layers](#supported-layers)
 - [x] If you are having trouble with conversion errors, searching for [resolved or open issues](https://github.com/PINTO0309/onnx2tf/issues) will almost always solve your problems. Issues are knowledge for engineers around the world.
@@ -61,6 +61,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
+- [x] Add process to replace `Erf` with `pseudo-Erf`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Added option to overwrite dynamic shape input OPs with static shape. `--overwrite_input_shape`
 - [x] Output in Keras H5 format.
@@ -85,7 +86,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.28
+  ghcr.io/pinto0309/onnx2tf:1.1.32
 
   or
 
@@ -177,6 +178,7 @@ usage: onnx2tf
 [-rgn]
 [-rng]
 [-rhs]
+[-rerf]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
 [-n]
@@ -392,6 +394,9 @@ optional arguments:
   -rhs, --replace_hardswish_to_pseudo_hardswish
     Replace HardSwish with a pseudo HardSwish.
 
+  -rerf, --replace_erf_to_pseudo_erf
+    Replace Erf with a pseudo Erf.
+
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -446,6 +451,7 @@ convert(
   replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
   replace_neg_to_pseudo_neg: Optional[bool] = False,
   replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
+  replace_erf_to_pseudo_erf: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
@@ -667,6 +673,9 @@ convert(
 
     replace_hardswish_to_pseudo_hardswish: Optional[bool]
       Replace HardSwish with a pseudo HardSwish.
+
+    replace_erf_to_pseudo_erf: Optional[bool]
+      Replace Erf with a pseudo Erf.
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.
@@ -982,6 +991,7 @@ Please don't post such low level questions as issues.
   ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
 
 ## Validated model (without replacement.json)
+ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |No.|Model|Pass|
 |:-:|:-|:-:|
 |1|age_googlenet.onnx|:heavy_check_mark:|
@@ -991,39 +1001,41 @@ Please don't post such low level questions as issues.
 |5|caffenet-12.onnx|:heavy_check_mark:|
 |6|densenet-12.onnx|:heavy_check_mark:|
 |7|digits.onnx|:heavy_check_mark:|
-|8|efficientnet-lite4-11_nchw.onnx|:heavy_check_mark:|
-|9|effnet_opset11_dynamic_axis.onnx|:heavy_check_mark:|
-|10|emotion-ferplus-8_rename.onnx|:heavy_check_mark:|
-|11|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
-|12|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
-|13|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
-|14|gender_googlenet.onnx|:heavy_check_mark:|
-|15|inception-v2-9.onnx|:heavy_check_mark:|
-|16|mobilenetv2-12.onnx|:heavy_check_mark:|
-|17|mosaic_11.onnx|:heavy_check_mark:|
-|18|mosaic-9.onnx|:heavy_check_mark:|
-|19|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
-|20|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
-|21|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
-|22|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
-|23|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|24|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|25|regnet_x_400mf.onnx|:heavy_check_mark:|
-|26|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|27|resnet18-v1-7.onnx|:heavy_check_mark:|
-|28|resnet50-v1-12.onnx|:heavy_check_mark:|
-|29|resnet50-v2-7.onnx|:heavy_check_mark:|
-|30|retinanet-9.onnx|:heavy_check_mark:|
-|31|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|32|super-resolution-10.onnx|:heavy_check_mark:|
-|33|tinyyolov2-8.onnx|:heavy_check_mark:|
-|34|version-RFB-640.onnx|:heavy_check_mark:|
-|35|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|36|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|37|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|38|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|39|yolox_s.onnx|:heavy_check_mark:|
-|40|zfnet512-12.onnx|:heavy_check_mark:|
+|8|efficientformer_l1.onnx|:heavy_check_mark:|
+|9|efficientnet-lite4-11_nchw.onnx|:heavy_check_mark:|
+|10|effnet_opset11_dynamic_axis.onnx|:heavy_check_mark:|
+|11|emotion-ferplus-8_rename.onnx|:heavy_check_mark:|
+|12|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
+|13|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
+|14|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
+|15|gender_googlenet.onnx|:heavy_check_mark:|
+|16|inception-v2-9.onnx|:heavy_check_mark:|
+|17|mobilenetv2-12.onnx|:heavy_check_mark:|
+|18|mosaic_11.onnx|:heavy_check_mark:|
+|19|mosaic-9.onnx|:heavy_check_mark:|
+|20|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|21|nanodet-plus-m_416.onnx|:heavy_check_mark:|
+|22|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|23|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|24|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|25|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|26|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|27|regnet_x_400mf.onnx|:heavy_check_mark:|
+|28|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|29|resnet18-v1-7.onnx|:heavy_check_mark:|
+|30|resnet50-v1-12.onnx|:heavy_check_mark:|
+|31|resnet50-v2-7.onnx|:heavy_check_mark:|
+|32|retinanet-9.onnx|:heavy_check_mark:|
+|33|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|34|super-resolution-10.onnx|:heavy_check_mark:|
+|35|tinyyolov2-8.onnx|:heavy_check_mark:|
+|36|version-RFB-640.onnx|:heavy_check_mark:|
+|37|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|38|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|39|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|40|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|41|yolox_s.onnx|:heavy_check_mark:|
+|42|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)

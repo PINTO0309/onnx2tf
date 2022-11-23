@@ -152,6 +152,40 @@ def make_node(
                 a=tf_layers_dict[graph_node_output.name]['tf_node'],
                 perm=[0,2,3,1],
             )
+    else:
+        # Special support for ShuffleNet patterns
+        # 5D Reshape -> 5D Transpose -> 4D Reshape
+        # 1,2,72,16,16 -> 1,72,2,16,16 -> 1,144,16,16
+        # At this time, only the channel shuffling pattern of image processing is supported.
+        try:
+            two_previous_op: gs.Node = graph_node.i().i()
+            two_previous_op_type = two_previous_op.op
+            one_previous_op: gs.Node = graph_node.i()
+            one_previous_op_type = one_previous_op.op
+            if two_previous_op_type == 'Reshape' and one_previous_op_type == 'Transpose':
+                two_previous_op_output_shape = two_previous_op.outputs[0].shape
+                one_previous_op_output_shape = one_previous_op.outputs[0].shape
+                two_previous_op_output_rank = len(two_previous_op_output_shape)
+                one_previous_op_output_rank = len(one_previous_op_output_shape)
+                current_op_output_shape = graph_node.outputs[0].shape
+                current_op_output_rank = len(current_op_output_shape)
+                if two_previous_op_output_rank == 5 \
+                    and one_previous_op_output_rank == 5 \
+                    and current_op_output_rank == 4 \
+                    and two_previous_op_output_shape[1] == one_previous_op_output_shape[2] \
+                    and two_previous_op_output_shape[2] == one_previous_op_output_shape[1] \
+                    and current_op_output_shape[1] == (one_previous_op_output_shape[1] * one_previous_op_output_shape[2]):
+                    # ShuffleNet patterns - 4D only
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.transpose(
+                            a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                            perm=[0,2,3,1],
+                        )
+                else:
+                    pass
+        except:
+            pass
+
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

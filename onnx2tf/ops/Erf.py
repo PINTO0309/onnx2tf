@@ -51,15 +51,33 @@ def make_node(
         'dtype': dtype,
     }
 
+    replace_erf_to_pseudo_erf = kwargs['replace_erf_to_pseudo_erf']
+
     # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.erf(
-            x=input_tensor,
-            name=graph_node.name,
-        )
+    if not replace_erf_to_pseudo_erf:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.erf(
+                x=input_tensor,
+                name=graph_node.name,
+            )
+    else:
+        # https://stackoverflow.com/questions/457408/is-there-an-easily-available-implementation-of-erf-for-python
+        eps = 1e-11
+        x_abs = tf.math.abs(input_tensor)
+        sign = tf.math.divide(input_tensor, tf.math.abs(input_tensor)+eps)
+        a1 =  0.254829592
+        a2 = -0.284496736
+        a3 =  1.421413741
+        a4 = -1.453152027
+        a5 =  1.061405429
+        p  =  0.3275911
+        t = 1.0/(1.0 + p*x_abs)
+        y = 1.0 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*tf.math.exp(-x_abs*x_abs)
+        erf_tensor = sign*y
+        tf_layers_dict[graph_node_output.name]['tf_node'] = erf_tensor
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
