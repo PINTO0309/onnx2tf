@@ -61,6 +61,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `Power` with `pseudo-Power`.
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
+- [x] Add process to replace `Erf` with `pseudo-Erf`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Added option to overwrite dynamic shape input OPs with static shape. `--overwrite_input_shape`
 - [x] Output in Keras H5 format.
