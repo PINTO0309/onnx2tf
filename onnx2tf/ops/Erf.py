@@ -66,8 +66,8 @@ def make_node(
     else:
         # https://stackoverflow.com/questions/457408/is-there-an-easily-available-implementation-of-erf-for-python
         eps = 1e-11
-        x_abs = tf.math.abs(input_tensor)+eps
-        sign = tf.math.divide(input_tensor, x_abs)
+        x_abs = tf.math.abs(input_tensor)
+        sign = tf.math.divide(input_tensor, tf.math.abs(input_tensor)+eps)
         a1 =  0.254829592
         a2 = -0.284496736
         a3 =  1.421413741
