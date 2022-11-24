@@ -61,20 +61,21 @@ class Results:
         self._report('Package | Version')
         self._report('---- | -----')
         self._report(f'Platform | {platform.platform()}')
-        self._report(f'Python | {sys.version.replace("\n", " ")}')
+        sys_version = sys.version.replace("\n", " ")
+        self._report(f'Python | {sys_version}')
         self._report(f'onnx | {onnx.__version__}')
         self._report(f'onnx-tf | {_CFG["onnx_tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
 
         self._report('\n## Summary')
-        self._report('Value | Count')
-        self._report('---- | -----')
-        self._report('Models | {}'.format(self.model_count))
-        self._report('Total | {}'.format(self.total_count))
-        self._report(':heavy_check_mark: Passed | {}'.format(self.pass_count))
-        self._report(':warning: Limitation | {}'.format(self.warn_count))
-        self._report(':x: Failed | {}'.format(self.fail_count))
-        self._report(':heavy_minus_sign: Skipped | {}'.format(self.skip_count))
+        self._report(f'Value | Count')
+        self._report(f'---- | -----')
+        self._report(f'Models | {self.model_count}')
+        self._report(f'Total | {self.total_count}')
+        self._report(f':heavy_check_mark: Passed | {self.pass_count}')
+        self._report(f':warning: Limitation | {self.warn_count}')
+        self._report(f':x: Failed | {self.fail_count}')
+        self._report(f':heavy_minus_sign: Skipped | {self.skip_count}')
 
         self._report('\n## Details')
         self._report('\n'.join(self.details))
@@ -426,9 +427,9 @@ def _configure(
 ):
     """Validate the configuration."""
     if not os.path.isdir(models_dir):
-        raise NotADirectoryError(models_dir)
+        os.makedirs(models_dir, exist_ok=True)
     if not os.path.isdir(output_dir):
-        raise NotADirectoryError(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
     _CFG['models_dir'] = os.path.normpath(models_dir)
     _CFG['include'] = include.split(',') if isinstance(include, str) else include
