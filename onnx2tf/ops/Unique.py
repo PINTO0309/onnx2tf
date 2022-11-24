@@ -107,7 +107,7 @@ def make_node(
     tf_layers_dict[graph_node_outputs[0].name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.split,
+                'tf_op_type': tf.raw_ops.UniqueWithCountsV2,
                 'tf_inputs': {
                     'value': input_tensor,
                     'axis': axis,
