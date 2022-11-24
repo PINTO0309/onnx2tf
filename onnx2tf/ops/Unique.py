@@ -62,26 +62,12 @@ def make_node(
     sorted = graph_node.attrs.get('sorted', 1)
 
     # Preserving Graph Structure (Dict)
-    tf_layers_dict[graph_node_outputs[0].name] = {
-        'optype': graph_node.op,
-        'shape': graph_node_outputs[0].shape,
-        'dtype': graph_node_outputs[0].dtype,
-    }
-    tf_layers_dict[graph_node_outputs[1].name] = {
-        'optype': graph_node.op,
-        'shape': graph_node_outputs[1].shape,
-        'dtype': graph_node_outputs[1].dtype,
-    }
-    tf_layers_dict[graph_node_outputs[2].name] = {
-        'optype': graph_node.op,
-        'shape': graph_node_outputs[1].shape,
-        'dtype': graph_node_outputs[1].dtype,
-    }
-    tf_layers_dict[graph_node_outputs[3].name] = {
-        'optype': graph_node.op,
-        'shape': graph_node_outputs[3].shape,
-        'dtype': graph_node_outputs[3].dtype,
-    }
+    for graph_node_output in graph_node_outputs:
+        tf_layers_dict[graph_node_output.name] = {
+            'optype': graph_node.op,
+            'shape': graph_node_output.shape,
+            'dtype': graph_node_output.dtype,
+        }
 
     # Generation of TF OP
     # tensorflow raw_ops does not support direct call to KerasTensor, need to call through keras layer
@@ -100,6 +86,7 @@ def make_node(
     num_segments = tf.shape(rey)[0]
     num_elems = tf.shape(inverse_indices)[0]
     indices = tf.math.unsorted_segment_min(tf.range(num_elems), reidx, num_segments)
+    indices = tf.cast(indices, dtype=inverse_indices.dtype)
 
     # tf unique returns unsorted tensor, need to sort if option is enabled
     if sorted:
