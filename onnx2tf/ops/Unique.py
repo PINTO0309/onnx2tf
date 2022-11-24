@@ -89,6 +89,7 @@ def make_node(
 
     # flatten tensor if axis is not specified
     if axis is None:
+        axis = 0
         input_tensor = tf.reshape(input_tensor, [-1])
 
     # CAUTION: tensorflow unique returns inverse indices only
