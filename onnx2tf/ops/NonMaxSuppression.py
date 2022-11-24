@@ -62,6 +62,8 @@ def make_node(
             graph_node.inputs[2],
             before_op_output_shape_trans,
         )
+        # onnx may contain invalid max_output_boxes_per_class
+        graph_node_input_3 = np.clip(graph_node_input_3, 0, boxes.shape[1])
     graph_node_input_4 = None
     if len(graph_node.inputs) >= 4:
         graph_node_input_4 = get_constant_or_variable(
