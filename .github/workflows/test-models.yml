@@ -1,0 +1,41 @@
+name: Model Convert Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  conversion-test:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 10
+    - name: Checkout onnx2tf
+      uses: actions/checkout@v3
+    - uses: actions/setup-python@v3
+      with:
+        python-version: '3.8'
+    - name: Install dependencies
+      run: |
+        pip install pip -U
+        pip install cmake==3.22.5
+        pip install onnx==1.12.0
+        pip install tensorflow==2.10.0
+        pip install nvidia-pyindex
+        pip install onnx-graphsurgeon
+        pip install onnxsim
+        pip install sng4onnx
+        pip install -e .
+    - name: Download models
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release download 1.1.28 -p '*.onnx' -D models
+        ls -l models
+    - name: Run Model Convert Tests
+      run: |
+        python tests/test_model_convert.py -m models -o wiki -v

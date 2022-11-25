@@ -12,4 +12,5 @@ saved_model/
 .vscode/
 .github/
 make_test_op/
+tests/
 *.npy
