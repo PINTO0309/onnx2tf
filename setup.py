@@ -25,7 +25,7 @@ setup(
     author_email="rmsdh122@yahoo.co.jp",
     url="https://github.com/PINTO0309/onnx2tf",
     license="MIT License",
-    packages=find_packages(),
+    packages=find_packages(exclude=['test*']),
     platforms=["linux", "unix"],
     python_requires=">=3.8",
     entry_points={
