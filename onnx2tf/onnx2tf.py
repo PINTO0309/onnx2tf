@@ -340,7 +340,7 @@ def convert(
     output_folder_path = fr'{output_folder_path}'
 
     # Input file existence check
-    if not os.path.exists(input_onnx_file_path):
+    if not os.path.exists(input_onnx_file_path) and not onnx_graph:
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
             f'The specified *.onnx file does not exist. ' +

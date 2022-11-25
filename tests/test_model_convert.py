@@ -1,7 +1,5 @@
 import argparse
 import datetime
-import glob
-import math
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -14,12 +12,8 @@ warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
 import platform
 import shutil
-import subprocess
 import sys
-import tarfile
 import tempfile
-
-import numpy as np
 import onnx
 import tensorflow as tf
 import onnx2tf
@@ -64,13 +58,12 @@ class Results:
         sys_version = sys.version.replace("\n", " ")
         self._report(f'Python | {sys_version}')
         self._report(f'onnx | {onnx.__version__}')
-        self._report(f'onnx-tf | {_CFG["onnx_tf_version_md"]}')
+        self._report(f'onnx-tf | {_CFG["onnx2tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
 
         self._report('\n## Summary')
         self._report(f'Value | Count')
         self._report(f'---- | -----')
-        self._report(f'Models | {self.model_count}')
         self._report(f'Total | {self.total_count}')
         self._report(f':heavy_check_mark: Passed | {self.pass_count}')
         self._report(f':warning: Limitation | {self.warn_count}')
@@ -93,137 +86,12 @@ class Results:
         )
 
 
-def _get_model_and_test_data():
-    """Get the filename of the model and directory of the test data set"""
-    onnx_model = None
-    test_data_set = []
-    for root, dirs, files in os.walk(_CFG['untar_directory']):
-        for dir_name in dirs:
-            if dir_name.startswith('test_data_set_'):
-                test_data_set.append(os.path.join(root, dir_name))
-    for file_name in files:
-        if file_name.endswith('.onnx') and not file_name.startswith('.'):
-            onnx_model = os.path.join(root, file_name)
-        elif (file_name.startswith('input_') and file_name.endswith('.pb') and len(test_data_set) == 0):
-            # data files are not in test_data_set_* but in the same
-            # directory of onnx file
-            test_data_set.append(root)
-        elif file_name.startswith('test_data_') and file_name.endswith('.npz'):
-            test_data_file = os.path.join(root, file_name)
-            test_data_dir = os.path.join(root, file_name.split('.')[0])
-            new_test_data_file = os.path.join(test_data_dir, file_name)
-            os.mkdir(test_data_dir)
-            os.rename(test_data_file, new_test_data_file)
-            test_data_set.append(test_data_dir)
-    return onnx_model, test_data_set
-
-
-def _extract_model_and_test_data(file_path):
-    """Extract all files in the tar.gz to test_model_and_data_dir"""
-    tar = tarfile.open(file_path, "r:gz")
-    tar.extractall(_CFG['untar_directory'])
-    tar.close()
-    return _get_model_and_test_data()
-
-
-def _pull_model_file(file_path):
-    """Use Git LFS to pull down a large file.
-        - If the model file is around ~130B, it's just a file pointer.
-        We'll download the file to test, then delete it afterwards
-        to minimize disk utilization (important in CI environment).
-        - If you previously downloaded the file, the file will remain
-        in place after processing. In your local environment, make
-        sure to pull the models you test often to avoid repetitive
-        downloads.
-    """
-    model_path = os.path.join(_CFG['models_dir'], file_path)
-    file_size = os.stat(model_path).st_size
-    pulled = False
-    if file_size <= 150:
-        # need to pull the model file on-demand using git lfs
-        if _CFG['verbose']:
-            print('Pulling {}{}'.format(file_path, ' (dry_run)' if _CFG['dry_run'] else ''))
-        if not _CFG['dry_run']:
-            cmd_args = 'git lfs pull -I {} -X ""'.format(file_path)
-            subprocess.run(
-                cmd_args,
-                cwd=_CFG['models_dir'],
-                shell=True,
-                check=True,
-                stdout=subprocess.DEVNULL
-            )
-            if file_path.endswith('.tar.gz'):
-                onnx_model, test_data_set = _extract_model_and_test_data(model_path)
-            else:
-                onnx_model = model_path
-                test_data_set = []
-            new_size = os.stat(onnx_model).st_size
-            pulled = new_size != file_size
-            file_size = new_size
-        else:
-            # model file is pulled already
-            if file_path.endswith('.tar.gz'):
-                onnx_model, test_data_set = _extract_model_and_test_data(model_path)
-            else:
-                onnx_model = model_path
-                test_data_set = []
-    return (file_size, pulled), onnx_model, test_data_set
-
-
-def _revert_model_pointer(file_path):
-    """Remove downloaded model, revert to pointer, remove cached file."""
-    cmd_args = ('rm -f {0} && git reset HEAD {0} && git checkout {0} && rm -f $(find . | grep $(grep oid {0} | cut -d ":" -f 2))').format(file_path)
-    subprocess.run(
-        cmd_args,
-        cwd=_CFG['models_dir'],
-        shell=True,
-        check=True,
-        stdout=subprocess.DEVNULL
-    )
-
-
-def _include_model(file_path):
-    if _CFG['include'] is None:
-        return True
-    for item in _CFG['include']:
-        if (file_path.startswith(item) or file_path.endswith(item + '.onnx') or '/{}/model/'.format(item) in file_path or '/{}/models/'.format(item) in file_path):
-            return True
-    return False
-
-
-def _has_models(dir_path):
-    for m_dir in ['model', 'models']:
-        # in age_gender there are 2 different models in there so the
-        # directory is "models" instead of "model" like the rest of
-        # the other models
-        model_dir = os.path.join(_CFG['models_dir'], dir_path, m_dir)
-        if os.path.exists(model_dir):
-            for item in os.listdir(model_dir):
-                if item.endswith('.onnx'):
-                    file_path = os.path.join(dir_path, model_dir, item)
-                    if _include_model(file_path):
-                        return True
-    return False
-
-
 def _del_location(loc):
     if not _CFG['dry_run'] and os.path.exists(loc):
         if os.path.isdir(loc):
             shutil.rmtree(loc)
         else:
             os.remove(loc)
-
-
-def _size_with_units(size):
-    if size < 1024:
-        units = '{}B'.format(size)
-    elif size < math.pow(1024, 2):
-        units = '{}K'.format(round(size / 1024))
-    elif size < math.pow(1024, 3):
-        units = '{}M'.format(round(size / math.pow(1024, 2)))
-    else:
-        units = '{}G'.format(round(size / math.pow(1024, 3)))
-    return units
 
 
 def _report_check_model(model):
@@ -234,14 +102,17 @@ def _report_check_model(model):
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
         first_line = str(ex).strip().split('\n')[0].strip()
-        return '{}: {}'.format(type(ex).__name__, first_line)
+        return f'{type(ex).__name__}: {first_line}'
 
 
-def _report_convert_model(model):
+def _report_convert_model(file_path):
     """Test conversion and returns a report string."""
     try:
-        tf_rep = onnx_tf.backend.prepare(model)
-        tf_rep.export_graph(_CFG['output_directory'])
+        onnx2tf.convert(
+            input_onnx_file_path=file_path,
+            output_folder_path=_CFG['output_directory'],
+            non_verbose=True,
+        )
         return ''
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
@@ -250,178 +121,65 @@ def _report_convert_model(model):
         if len(stack_trace) > 1:
             err_msg = stack_trace[-1].strip()
             # OpUnsupportedException gets raised as a RuntimeError
-            if 'OP_UNSUPPORTED_EXCEPT' in str(ex):
+            if 'OP is not yet implemented' in str(ex):
                 err_msg = err_msg.replace(type(ex).__name__, 'OpUnsupportedException')
             return err_msg
-        return '{}: {}'.format(type(ex).__name__, stack_trace[0].strip())
-
-
-def _get_inputs_outputs_pb(tf_rep, data_dir):
-    """Get the input and reference output tensors"""
-    inputs = {}
-    inputs_num = len(glob.glob(os.path.join(data_dir, 'input_*.pb')))
-    for i in range(inputs_num):
-        input_file = os.path.join(data_dir, 'input_{}.pb'.format(i))
-        tensor = onnx.TensorProto()
-        with open(input_file, 'rb') as f:
-            tensor.ParseFromString(f.read())
-            tensor.name = tensor.name if tensor.name else tf_rep.inputs[i]
-        inputs[tensor.name] = onnx.numpy_helper.to_array(tensor)
-    ref_outputs = {}
-    ref_outputs_num = len(glob.glob(os.path.join(data_dir, 'output_*.pb')))
-    for i in range(ref_outputs_num):
-        output_file = os.path.join(data_dir, 'output_{}.pb'.format(i))
-        tensor = onnx.TensorProto()
-        with open(output_file, 'rb') as f:
-            tensor.ParseFromString(f.read())
-            tensor.name = tensor.name if tensor.name else tf_rep.outputs[i]
-        ref_outputs[tensor.name] = onnx.numpy_helper.to_array(tensor)
-    return inputs, ref_outputs
-
-
-def _get_inputs_outputs_npz(tf_rep, data_dir):
-    """Get the input and reference output tensors"""
-    npz_file = os.path.join(data_dir, '{}.npz'.format(data_dir.split('/')[-1]))
-    data = np.load(npz_file, encoding='bytes')
-    inputs = {}
-    ref_outputs = {}
-    for i in range(len(tf_rep.inputs)):
-        inputs[tf_rep.inputs[i]] = data['inputs'][i]
-    for i in range(len(tf_rep.outputs)):
-        ref_outputs[tf_rep.outputs[i]] = data['outputs'][i]
-    return inputs, ref_outputs
-
-
-def _get_inputs_and_ref_outputs(tf_rep, data_dir):
-    """Get the input and reference output tensors"""
-    if len(glob.glob(os.path.join(data_dir, 'input_*.pb'))) > 0:
-        inputs, ref_outputs = _get_inputs_outputs_pb(tf_rep, data_dir)
-    else:
-        inputs, ref_outputs = _get_inputs_outputs_npz(tf_rep, data_dir)
-    return inputs, ref_outputs
-
-
-def _assert_outputs(outputs, ref_outputs, rtol, atol):
-    np.testing.assert_equal(len(outputs), len(ref_outputs))
-    for key in outputs.keys():
-        np.testing.assert_equal(outputs[key].dtype, ref_outputs[key].dtype)
-        if ref_outputs[key].dtype == np.object:
-            np.testing.assert_array_equal(outputs[key], ref_outputs[key])
-        else:
-            np.testing.assert_allclose(
-                outputs[key],
-                ref_outputs[key],
-                rtol=rtol,
-                atol=atol
-            )
-
-
-def _report_run_model(model, data_set):
-    """Run the model and returns a report string."""
-    try:
-        tf_rep = onnx_tf.backend.prepare(model)
-        for data in data_set:
-            inputs, ref_outputs = _get_inputs_and_ref_outputs(tf_rep, data)
-            outputs = tf_rep.run(inputs)
-            outputs_dict = {}
-            for i in range(len(tf_rep.outputs)):
-                outputs_dict[tf_rep.outputs[i]] = outputs[i]
-            _assert_outputs(outputs_dict, ref_outputs, rtol=1e-3, atol=1e-3)
-    except Exception as ex:
-        stack_trace = str(ex).strip().split('\n')
-        if len(stack_trace) > 1:
-            if ex.__class__ == AssertionError:
-                return stack_trace[:5]
-            else:
-                return stack_trace[-1].strip()
-        return '{}: {}'.format(type(ex).__name__, stack_trace[0].strip())
-    finally:
-        _del_location(_CFG['untar_directory'])
-        _del_location(_CFG['output_directory'])
+        return f'{type(ex).__name__}: {stack_trace[0].strip()}'
 
 
 def _report_model(file_path, results=Results(), onnx_model_count=1):
     """Generate a report status for a single model, and append it to results."""
-    size_pulled, onnx_model, test_data_set = _pull_model_file(file_path)
     if _CFG['dry_run']:
         ir_version = ''
         opset_version = ''
         check_err = ''
         convert_err = ''
-        ran_err = ''
         emoji_validated = ''
         emoji_converted = ''
-        emoji_ran = ''
         emoji_overall = ':heavy_minus_sign:'
         results.skip_count += 1
     else:
         if _CFG['verbose']:
             print('Testing', file_path)
-        model = onnx.load(onnx_model)
+        model = onnx.load(file_path)
         ir_version = model.ir_version
         opset_version = model.opset_import[0].version
         check_err = _report_check_model(model)
-        convert_err = '' if check_err else _report_convert_model(model)
-        run_err = '' if convert_err or len(test_data_set) == 0 else _report_run_model(model, test_data_set)
+        convert_err = '' if check_err else _report_convert_model(file_path)
 
-        if (not check_err and not convert_err and not run_err and len(test_data_set) > 0):
-            # https://github-emoji-list.herokuapp.com/
+        if not check_err and not convert_err:
             # ran successfully
             emoji_validated = ':ok:'
             emoji_converted = ':ok:'
-            emoji_ran = ':ok:'
             emoji_overall = ':heavy_check_mark:'
             results.pass_count += 1
-        elif (not check_err and not convert_err and not run_err and len(test_data_set) == 0):
-            # validation & conversion passed but no test data available
-            emoji_validated = ':ok:'
-            emoji_converted = ':ok:'
-            emoji_ran = 'No test data provided in model zoo'
-            emoji_overall = ':warning:'
-            results.warn_count += 1
-        elif not check_err and not convert_err:
-            # validation & conversion passed but failed to run
-            emoji_validated = ':ok:'
-            emoji_converted = ':ok:'
-            emoji_ran = run_err
-            emoji_overall = ':x:'
-            results.fail_count += 1
-        elif not check_err:
+        elif not check_err and convert_err:
             # validation pass, but conversion did not
             emoji_validated = ':ok:'
             emoji_converted = convert_err
-            emoji_ran = ':heavy_minus_sign:'
-            if ('BackendIsNotSupposedToImplementIt' in convert_err or 'OpUnsupportedException' in convert_err):
-                # known limitations
-                # - BackendIsNotSupposedToImplementIt: Op not implemented
-                # - OpUnsupportedException: TensorFlow limitation
-                emoji_overall = ':warning:'
-                results.warn_count += 1
-            else:
-                # conversion failed
-                emoji_overall = ':x:'
-                results.fail_count += 1
+            emoji_overall = ':x:'
+            results.fail_count += 1
+        elif check_err and not convert_err:
+            # validation did not, but conversion pass
+            emoji_validated = check_err
+            emoji_converted = ':ok:'
+            emoji_overall = ':heavy_check_mark:'
+            results.pass_count += 1
         else:
             # validation failed
             emoji_validated = check_err
             emoji_converted = ':heavy_minus_sign:'
-            emoji_ran = ':heavy_minus_sign:'
             emoji_overall = ':x:'
             results.fail_count += 1
 
-        results.append_detail('{} | {}. {} | {} | {} | {} | {} | {} | {}'.format(emoji_overall, onnx_model_count, file_path[file_path.rindex('/') + 1:file_path.index('.')], _size_with_units(size_pulled[0]), ir_version, opset_version, emoji_validated, emoji_converted, emoji_ran))
-
-        if len(test_data_set) == 0:
-            _del_location(_CFG['output_directory'])
-        if size_pulled[1]:
-            # only remove model if it was pulled above on-demand
-            _revert_model_pointer(file_path)
+        results.append_detail(
+            f'{emoji_overall} | {onnx_model_count}. {file_path[file_path.rindex("/") + 1:file_path.index(".")]} | '+
+            f'{ir_version} | {opset_version} | {emoji_validated} | {emoji_converted}')
 
 
 def _configure(
     models_dir='models',
     output_dir=tempfile.gettempdir(),
-    include=None,
     verbose=False,
     dry_run=False,
 ):
@@ -432,7 +190,6 @@ def _configure(
         os.makedirs(output_dir, exist_ok=True)
 
     _CFG['models_dir'] = os.path.normpath(models_dir)
-    _CFG['include'] = include.split(',') if isinstance(include, str) else include
     _CFG['verbose'] = verbose
     _CFG['dry_run'] = dry_run
 
@@ -451,7 +208,7 @@ def _configure_env():
     sha = os.getenv('GITHUB_SHA')
     run_id = os.getenv('GITHUB_RUN_ID')
 
-    _CFG['report_filename'] = 'Model-Status.md'
+    _CFG['report_filename'] = 'model_status.md'
 
     if repo:
         # actions ([run_id](url))
@@ -463,17 +220,16 @@ def _configure_env():
     else:
         _CFG['github_actions_md'] = ''
 
-    _CFG['onnx_tf_version_md'] = onnx2tf.__version__
+    _CFG['onnx2tf_version_md'] = onnx2tf.__version__
     if sha and repo:
         # version ([sha](url))
         commit_url = f'https://github.com/{repo}/commit/{sha}'
-        _CFG['onnx_tf_version_md'] += f' ([{sha[0:7]}]({commit_url}))'
+        _CFG['onnx2tf_version_md'] += f' ([{sha[0:7]}]({commit_url}))'
 
 
 def model_convert_report(
     models_dir='models',
     output_dir=tempfile.gettempdir(),
-    include=None,
     verbose=False,
     dry_run=False,
 ):
@@ -485,8 +241,6 @@ def model_convert_report(
         directory that contains ONNX models
     output_dir: str
         directory for the generated report and converted model
-    include: list
-        comma-separated list of models or paths to include
     verbose: bool
         verbose output
     dry_run: bool
@@ -498,7 +252,7 @@ def model_convert_report(
         Results object containing detailed status and counts for the report.
     """
 
-    _configure(models_dir, output_dir, include, verbose, dry_run)
+    _configure(models_dir, output_dir, verbose, dry_run)
     _del_location(_CFG['report_filename'])
     _del_location(_CFG['output_directory'])
     _del_location(_CFG['untar_directory'])
@@ -507,35 +261,26 @@ def model_convert_report(
     results = Results()
     for root, subdir, files in os.walk(_CFG['models_dir']):
         subdir.sort()
-        if 'model' in subdir or 'models' in subdir:
-            dir_path = os.path.relpath(root, _CFG['models_dir'])
-            if _has_models(dir_path):
-                results.model_count += 1
-                results.append_detail('')
-                results.append_detail(f'### {results.model_count}. {os.path.basename(root)}')
-                results.append_detail(dir_path)
-                results.append_detail('')
-                results.append_detail(
-                    'Status | Model | Size | IR | Opset | ONNX Checker | onnx2tf Converted | onnx2tf Ran'
-                )
-                results.append_detail(
-                    '------ | ----- | ---- | -- | ----- | ------------ | ----------------- | -----------'
-                )
+        dir_path = os.path.relpath(root, _CFG['models_dir'])
+        results.model_count += 1
+        results.append_detail('')
+        results.append_detail(f'### {results.model_count}. {os.path.basename(root)}')
+        results.append_detail(dir_path)
+        results.append_detail('')
+        results.append_detail(
+            'Status | Model | IR | Opset | ONNX Checker | onnx2tf Converted'
+        )
+        results.append_detail(
+            '------ | ----- | -- | ----- | ------------ | -----------------'
+        )
         onnx_model_count = 0
         file_path = ''
         for item in sorted(files):
             if item.endswith('.onnx'):
-                file_path = os.path.relpath(os.path.join(root, item), _CFG['models_dir'])
-                # look for gz file for this model
-                gzfile_path = file_path.replace('.onnx', '.tar.gz')
-                gzfile_path = os.path.join(_CFG['models_dir'], gzfile_path)
-                if gzfile_path in glob.glob(gzfile_path):
-                    file_path = os.path.relpath(gzfile_path, _CFG['models_dir'])
-                if _include_model(file_path):
-                    onnx_model_count += 1
-                    results.total_count += 1
-                    _report_model(file_path, results, onnx_model_count)
-
+                file_path = f'{_CFG["models_dir"]}/{item}'
+                onnx_model_count += 1
+                results.total_count += 1
+                _report_model(file_path, results, onnx_model_count)
     return results
 
 
@@ -555,11 +300,6 @@ if __name__ == '__main__':
         help=f'output directory (default: {tempdir})'
     )
     parser.add_argument(
-        '-i',
-        '--include',
-        help='comma-separated list of models or paths to include. Use `git lfs pull` to cache frequently tested models.'
-    )
-    parser.add_argument(
         '-v',
         '--verbose',
         action='store_true',
@@ -574,7 +314,6 @@ if __name__ == '__main__':
     report = model_convert_report(
         args.models,
         args.output,
-        args.include,
         args.verbose,
         args.dry_run,
     )

@@ -20,3 +20,6 @@ package-lock.json
 *.profile
 saved_model/
 node_modules/
+
+.act.secrets
+.act.env
