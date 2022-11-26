@@ -108,6 +108,7 @@ def make_node(
     tf_layers_dict[graph_input_name]['nwc_nhwc_ndhwc_keep'] = nwc_nhwc_ndhwc_keep
 
     # Generation of TF OP
+    tf_input_shape = None
     if graph_input.shape != tf.TensorShape(None) and len(shape) == 3:
         # 3D
         if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep and not absolutely_keep:
@@ -122,8 +123,13 @@ def make_node(
                     dtype=dtype,
                 )
             tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
+            tf_input_shape = [
+                shape[0] if isinstance(shape[0], int) else None,
+                shape[2] if isinstance(shape[2], int) else None,
+                shape[1] if isinstance(shape[1], int) else None,
+            ]
         else:
-            nchw = tf.keras.Input(
+            ncw = tf.keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
@@ -133,10 +139,20 @@ def make_node(
             )
             if not absolutely_keep:
                 tf_layers_dict[graph_input_name]['tf_node'] = \
-                    tf.transpose(nchw, perm=[0,2,1])
+                    tf.transpose(ncw, perm=[0,2,1])
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                ]
             else:
-                tf_layers_dict[graph_input_name]['tf_node'] = nchw
-            tf_layers_dict[graph_input_name]['op'] = nchw
+                tf_layers_dict[graph_input_name]['tf_node'] = ncw
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                ]
+            tf_layers_dict[graph_input_name]['op'] = ncw
 
     elif graph_input.shape != tf.TensorShape(None) and len(shape) == 4:
         # 4D
@@ -153,6 +169,12 @@ def make_node(
                     dtype=dtype,
                 )
             tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
+            tf_input_shape = [
+                shape[0] if isinstance(shape[0], int) else None,
+                shape[2] if isinstance(shape[2], int) else None,
+                shape[3] if isinstance(shape[3], int) else None,
+                shape[1] if isinstance(shape[1], int) else None,
+            ]
         else:
             nchw = tf.keras.Input(
                 shape=[
@@ -165,8 +187,20 @@ def make_node(
             if not absolutely_keep:
                 tf_layers_dict[graph_input_name]['tf_node'] = \
                     tf.transpose(nchw, perm=[0,2,3,1])
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                    shape[3] if isinstance(shape[3], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                ]
             else:
                 tf_layers_dict[graph_input_name]['tf_node'] = nchw
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                    shape[3] if isinstance(shape[3], int) else None,
+                ]
             tf_layers_dict[graph_input_name]['op'] = nchw
 
     elif graph_input.shape != tf.TensorShape(None) and len(shape) == 5:
@@ -185,6 +219,13 @@ def make_node(
                     dtype=dtype,
                 )
             tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
+            tf_input_shape = [
+                shape[0] if isinstance(shape[0], int) else None,
+                shape[2] if isinstance(shape[2], int) else None,
+                shape[3] if isinstance(shape[3], int) else None,
+                shape[4] if isinstance(shape[4], int) else None,
+                shape[1] if isinstance(shape[1], int) else None,
+            ]
         else:
             ncdhw = tf.keras.Input(
                 shape=[
@@ -197,8 +238,22 @@ def make_node(
             if not absolutely_keep:
                 tf_layers_dict[graph_input_name]['tf_node'] = \
                     tf.transpose(ncdhw, perm=[0,2,3,4,1])
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                    shape[3] if isinstance(shape[3], int) else None,
+                    shape[4] if isinstance(shape[4], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                ]
             else:
                 tf_layers_dict[graph_input_name]['tf_node'] = ncdhw
+                tf_input_shape = [
+                    shape[0] if isinstance(shape[0], int) else None,
+                    shape[1] if isinstance(shape[1], int) else None,
+                    shape[2] if isinstance(shape[2], int) else None,
+                    shape[3] if isinstance(shape[3], int) else None,
+                    shape[4] if isinstance(shape[4], int) else None,
+                ]
             tf_layers_dict[graph_input_name]['op'] = ncdhw
 
     elif graph_input.shape != tf.TensorShape(None) and len(shape) > 0:
@@ -233,6 +288,9 @@ def make_node(
                 dtype=dtype,
             )
         tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
+        tf_input_shape = [
+            shape[0] if isinstance(shape[0], int) else None,
+        ] + [inp if isinstance(inp, int) else None for inp in shape[1:]]
 
     else:
         # Scalar
@@ -263,3 +321,23 @@ def make_node(
                 dtype=dtype,
             )
         tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
+        tf_input_shape = shape if graph_input.shape != tf.TensorShape(None) else [None]
+
+    # The output_shape_trans stores the result of determining
+    output_shape_trans = False
+    for onnx_dim, tf_dim in zip(shape, tf_input_shape):
+        onnx_dim = onnx_dim if isinstance(onnx_dim, int) else None
+        if onnx_dim is None and tf_dim is None:
+            pass
+        elif onnx_dim is None and tf_dim is not None:
+            output_shape_trans = True
+        elif onnx_dim is not None and tf_dim is None:
+            output_shape_trans = True
+        elif onnx_dim is not None and tf_dim is not None:
+            if onnx_dim == tf_dim:
+                pass
+            else:
+                output_shape_trans = True
+        else:
+            pass
+    tf_layers_dict[graph_input_name]['before_op_output_shape_trans'] = output_shape_trans
