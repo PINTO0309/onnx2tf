@@ -48,3 +48,4 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_NAME: ${{ secrets.GH_REPO_OWNER }}
         GH_MAIL: ${{ secrets.GH_EMAIL }}
+        EXCLUDED_FILES: "test_model_pb/"
