@@ -173,7 +173,7 @@ def _report_model(file_path, results=Results(), onnx_model_count=1):
             results.fail_count += 1
 
         results.append_detail(
-            f'{emoji_overall} | {onnx_model_count}. {file_path[file_path.rindex("/") + 1:file_path.index(".")]} | '+
+            f'{emoji_overall} | {onnx_model_count}. {os.path.splitext(os.path.basename(file_path))[0]} | '+
             f'{ir_version} | {opset_version} | {emoji_validated} | {emoji_converted}')
 
 
