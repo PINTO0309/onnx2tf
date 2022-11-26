@@ -37,3 +37,10 @@ jobs:
     - name: Run Model Convert Tests
       run: |
         python tests/test_model_convert.py -m models -o wiki -v
+    - name: Update wiki content
+      uses: Andrew-Chen-Wang/github-wiki-action@v2
+      env:
+        WIKI_DIR: wiki/
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_NAME: ${{ secrets.GH_REPO_OWNER }}
+        GH_MAIL: ${{ secrets.GH_EMAIL }}
