@@ -58,7 +58,7 @@ class Results:
         sys_version = sys.version.replace("\n", " ")
         self._report(f'Python | {sys_version}')
         self._report(f'onnx | {onnx.__version__}')
-        self._report(f'onnx-tf | {_CFG["onnx2tf_version_md"]}')
+        self._report(f'onnx2tf | {_CFG["onnx2tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
 
         self._report('\n## Summary')
