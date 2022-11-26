@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.34
+  ghcr.io/pinto0309/onnx2tf:1.1.35
 
   or
 
@@ -779,15 +779,16 @@ Please don't post such low level questions as issues.
   |3|Div|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Div operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Div operation with the perm specified as post-processing.|
   |4|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
   |5|Gemm||
-  |6|MatMul|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the MatMul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the MatMul operation with the perm specified as post-processing.|
-  |7|Mul|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Mul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Mul operation with the perm specified as post-processing.|
-  |8|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |9|Resize||
-  |10|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |11|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
-  |12|Tile||
-  |13|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |14|NonMaxSuppression||
+  |6|Gather|1. "param_target": "inputs"<br>`values`: Value of `indices`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |7|MatMul|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the MatMul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the MatMul operation with the perm specified as post-processing.|
+  |8|Mul|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Mul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Mul operation with the perm specified as post-processing.|
+  |9|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |10|Resize||
+  |11|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |12|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
+  |13|Tile||
+  |14|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |15|NonMaxSuppression||
 
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
