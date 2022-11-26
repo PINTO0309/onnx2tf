@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   conversion-test:
     runs-on: ubuntu-20.04
@@ -37,3 +41,11 @@ jobs:
     - name: Run Model Convert Tests
       run: |
         python tests/test_model_convert.py -m models -o wiki -v
+    - name: Update wiki content
+      uses: Andrew-Chen-Wang/github-wiki-action@v3
+      env:
+        WIKI_DIR: wiki/
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_NAME: ${{ secrets.GH_REPO_OWNER }}
+        GH_MAIL: ${{ secrets.GH_EMAIL }}
+        EXCLUDED_FILES: "test_model_pb/"

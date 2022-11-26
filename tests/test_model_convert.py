@@ -58,7 +58,7 @@ class Results:
         sys_version = sys.version.replace("\n", " ")
         self._report(f'Python | {sys_version}')
         self._report(f'onnx | {onnx.__version__}')
-        self._report(f'onnx-tf | {_CFG["onnx2tf_version_md"]}')
+        self._report(f'onnx2tf | {_CFG["onnx2tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
 
         self._report('\n## Summary')
@@ -265,7 +265,6 @@ def model_convert_report(
         results.model_count += 1
         results.append_detail('')
         results.append_detail(f'### {results.model_count}. {os.path.basename(root)}')
-        results.append_detail(dir_path)
         results.append_detail('')
         results.append_detail(
             'Status | Model | IR | Opset | ONNX Checker | onnx2tf Converted'
