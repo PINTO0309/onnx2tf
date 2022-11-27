@@ -19,6 +19,8 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.colors import Color
 
+INF_INDEX_VALUE: int = 4294967296
+
 
 @print_node_info
 @inverted_operation_enable_disable
@@ -141,6 +143,44 @@ def make_node(
     if depthwise is True:
         depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
+
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ]
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D
+                input_tensor = tf.transpose(
+                    a=input_tensor,
+                    perm=[0,2,1],
+                )
+            elif len(onnx_input_shape) == 4:
+                # 2D
+                input_tensor = tf.transpose(
+                    a=input_tensor,
+                    perm=[0,2,3,1],
+                )
+            elif len(onnx_input_shape) == 5:
+                # 3D
+                input_tensor = tf.transpose(
+                    a=input_tensor,
+                    perm=[0,2,3,4,1],
+                )
 
     # Conv
     tf_op_type = None
