@@ -142,6 +142,37 @@ def make_node(
         depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ]
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if len(onnx_input_shape) > 0 and len(tf_input_shape) > 0 \
+        and onnx_input_shape == tf_input_shape:
+        if len(onnx_input_shape) == 3:
+            # 1D
+            input_tensor = tf.transpose(
+                a=input_tensor,
+                perm=[0,2,1],
+            )
+        elif len(onnx_input_shape) == 4:
+            # 2D
+            input_tensor = tf.transpose(
+                a=input_tensor,
+                perm=[0,2,3,1],
+            )
+        elif len(onnx_input_shape) == 5:
+            # 3D
+            input_tensor = tf.transpose(
+                a=input_tensor,
+                perm=[0,2,3,4,1],
+            )
+
     # Conv
     tf_op_type = None
     if input_bias is not None:
