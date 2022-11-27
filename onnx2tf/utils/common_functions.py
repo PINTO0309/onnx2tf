@@ -1907,8 +1907,12 @@ def disable_unnecessary_transpose(
                 graph_node_input_1, graph_node_input_2 = graph_node_input_2, graph_node_input_1
 
             node_y_perm: list = graph_node_input_2.inputs[0].attrs['perm']
-            input_tensor_1_shape = input_tensor_1.shape
-            input_tensor_2_shape = input_tensor_2.shape
+            input_tensor_1_shape = [
+                dim if isinstance(dim, int) else None for dim in input_tensor_1.shape
+            ]
+            input_tensor_2_shape = [
+                dim if isinstance(dim, int) else None for dim in input_tensor_2.shape
+            ]
             tensor_rank = len(input_tensor_1_shape)
             perm = [
                 convert_axis(
