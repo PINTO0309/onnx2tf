@@ -261,7 +261,6 @@ def model_convert_report(
     results = Results()
     for root, subdir, files in os.walk(_CFG['models_dir']):
         subdir.sort()
-        dir_path = os.path.relpath(root, _CFG['models_dir'])
         results.model_count += 1
         results.append_detail('')
         results.append_detail(f'### {results.model_count}. {os.path.basename(root)}')
