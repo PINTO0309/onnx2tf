@@ -1895,8 +1895,10 @@ def disable_unnecessary_transpose(
     if isinstance(graph_node_input_1, gs.Variable) \
         and isinstance(graph_node_input_2, gs.Variable):
 
-        node_x_op_type = graph_node_input_1.inputs[0].op
-        node_y_op_type = graph_node_input_2.inputs[0].op
+        node_x_op_type = graph_node_input_1.inputs[0].op \
+            if len(graph_node_input_1.inputs) > 0 else 'Input'
+        node_y_op_type = graph_node_input_2.inputs[0].op \
+            if len(graph_node_input_2.inputs) > 0 else 'Input'
 
         if ((node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose') \
             or (not node_x_op_type == 'Transpose' and node_y_op_type == 'Transpose')) \
