@@ -635,7 +635,7 @@ def convert(
                     if 'Failed to add concrete function' in s:
                         print(
                             f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
-                            f'This model contains GroupConvolution and is automatically optimized for TFLite,' +
+                            f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                             f'but is not output because saved_model does not support GroupConvolution. ' +
                             f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
                         )
