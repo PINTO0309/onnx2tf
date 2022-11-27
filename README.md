@@ -1035,11 +1035,13 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |35|tinyyolov2-8.onnx|:heavy_check_mark:|
 |36|version-RFB-640.onnx|:heavy_check_mark:|
 |37|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|38|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|39|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|40|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|41|yolox_s.onnx|:heavy_check_mark:|
-|42|zfnet512-12.onnx|:heavy_check_mark:|
+|38|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|39|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|40|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|41|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|42|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|43|yolox_s.onnx|:heavy_check_mark:|
+|44|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
