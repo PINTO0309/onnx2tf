@@ -1883,3 +1883,51 @@ def is_integer_num(
         and x.squeeze().ndim == 0 and int(x) == x:
         return True
     return False
+
+
+def disable_unnecessary_transpose(
+    *,
+    graph_node_input_1: Any,
+    graph_node_input_2: Any,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+):
+    if isinstance(graph_node_input_1, gs.Variable) \
+        and isinstance(graph_node_input_2, gs.Variable):
+
+        node_x_op_type = graph_node_input_1.inputs[0].op
+        node_y_op_type = graph_node_input_2.inputs[0].op
+
+        if ((node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose') \
+            or (not node_x_op_type == 'Transpose' and node_y_op_type == 'Transpose')) \
+            and (len(graph_node_input_1.shape) == len(graph_node_input_2.shape)):
+
+            if (node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose'):
+                input_tensor_1, input_tensor_2 = input_tensor_2, input_tensor_1
+                graph_node_input_1, graph_node_input_2 = graph_node_input_2, graph_node_input_1
+
+            node_y_perm: list = graph_node_input_2.inputs[0].attrs['perm']
+            input_tensor_1_shape = input_tensor_1.shape
+            input_tensor_2_shape = input_tensor_2.shape
+            tensor_rank = len(input_tensor_1_shape)
+            perm = [
+                convert_axis(
+                    axis=idx,
+                    tensor_rank=tensor_rank,
+                    before_op_output_shape_trans=True,
+                ) for idx in range(tensor_rank)
+            ]
+            reverse_perm = [
+                convert_reverse_axis(
+                    axis=idx,
+                    tensor_rank=tensor_rank,
+                    before_op_output_shape_trans=True,
+                ) for idx in range(tensor_rank)
+            ]
+            if node_y_perm == perm:
+                if input_tensor_1_shape != input_tensor_2_shape:
+                    input_tensor_2 = tf.transpose(
+                        a=input_tensor_2,
+                        perm=reverse_perm,
+                    )
+    return graph_node_input_1, graph_node_input_2, input_tensor_1, input_tensor_2
