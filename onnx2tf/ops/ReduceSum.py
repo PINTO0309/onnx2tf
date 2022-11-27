@@ -96,14 +96,12 @@ def make_node(
 
     # Generation of TF OP
     reducesumed_tensor = input_tensor
-    for idx in axes:
-        reducesumed_tensor = \
-            tf.reduce_sum(
-                input_tensor=reducesumed_tensor,
-                axis=idx,
-                keepdims=keepdims,
-                name=f'{graph_node.name}_{idx}',
-            )
+    reducesumed_tensor = tf.reduce_sum(
+        input_tensor=reducesumed_tensor,
+        axis=axes,
+        keepdims=keepdims,
+        name=f'{graph_node.name}',
+    )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducesumed_tensor
 
     # Generation of Debug Info

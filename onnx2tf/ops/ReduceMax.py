@@ -78,13 +78,13 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     reducemaxed_tensor = input_tensor
-    for idx in axes:
-        reducemaxed_tensor = tf.math.reduce_max(
-            input_tensor=reducemaxed_tensor,
-            axis=idx,
-            keepdims=keepdims,
-            name=f'{graph_node.name}_{idx}',
-        )
+    reducemaxed_tensor = tf.math.reduce_max(
+        input_tensor=reducemaxed_tensor,
+        axis=axes,
+        keepdims=keepdims,
+        name=f'{graph_node.name}',
+    )
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducemaxed_tensor
 
     # Generation of Debug Info
