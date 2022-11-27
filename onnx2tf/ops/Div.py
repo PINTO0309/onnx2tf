@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     explicit_broadcast,
     pre_process_transpose,
     post_process_transpose,
+    disable_unnecessary_transpose,
 )
 
 
@@ -67,6 +68,19 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    # Disable unnecessary Transpose
+    #   1. If both x and y are gs.Variable
+    #   2. If only one of the two is the output of Transpose
+    #   3. If the perm of the Transpose is [0,2,1] or [0,3,1,2] or [0,4,1,2,3]
+    #   4. Furthermore, if the shape of x and y are mismatched
+    graph_node_input_1, graph_node_input_2, input_tensor_1, input_tensor_2 = \
+        disable_unnecessary_transpose(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+        )
 
     # Param replacement
     input_tensor_1 = replace_parameter(

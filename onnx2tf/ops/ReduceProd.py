@@ -78,13 +78,12 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     reduceproded_tensor = input_tensor
-    for idx in axes:
-        reduceproded_tensor = tf.math.reduce_prod(
-            input_tensor=reduceproded_tensor,
-            axis=idx,
-            keepdims=keepdims,
-            name=f'{graph_node.name}_{idx}',
-        )
+    reduceproded_tensor = tf.math.reduce_prod(
+        input_tensor=reduceproded_tensor,
+        axis=axes,
+        keepdims=keepdims,
+        name=f'{graph_node.name}',
+    )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reduceproded_tensor
 
     # Generation of Debug Info
