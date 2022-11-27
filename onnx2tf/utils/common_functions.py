@@ -1929,7 +1929,13 @@ def disable_unnecessary_transpose(
                 ) for idx in range(tensor_rank)
             ]
             if node_y_perm == perm:
-                if input_tensor_1_shape != input_tensor_2_shape:
+                unmatch = False
+                for dim1, dim2 in zip(input_tensor_1_shape, input_tensor_2_shape):
+                    if isinstance(dim1, int) and dim1 != 1 and isinstance(dim2, int) and dim2 != 1:
+                        if dim1 != dim2:
+                            unmatch = True
+                            break
+                if unmatch:
                     input_tensor_2 = tf.transpose(
                         a=input_tensor_2,
                         perm=reverse_perm,
