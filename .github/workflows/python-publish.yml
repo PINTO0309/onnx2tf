@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: pypi-deploy
     permissions:
+      contents: read
       packages: write
     steps:
       - name: Git checkout
