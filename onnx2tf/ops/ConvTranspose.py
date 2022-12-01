@@ -176,6 +176,9 @@ def make_node(
                         if s is not None else None \
                             for i, s in enumerate(output_shape)
                 ]
+            conv_output_shape = [
+                val if not isinstance(val, str) else -1 for val in conv_output_shape
+            ]
 
             # use raw input x to do transposed conv
             conv_rs = conv_func(
