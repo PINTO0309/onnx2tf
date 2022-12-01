@@ -31,14 +31,14 @@ def make_node(
     """
     # Inputs
     X: gs.Variable = graph_node.inputs[0]
-    scale: gs.Constant = graph_node.inputs[1]
-    B: gs.Constant = graph_node.inputs[2]
-    input_mean: gs.Constant = graph_node.inputs[3]
-    input_var: gs.Constant = graph_node.inputs[4]
+    scale = graph_node.inputs[1]
+    B = graph_node.inputs[2]
+    input_mean = graph_node.inputs[3]
+    input_var = graph_node.inputs[4]
     # Outputs
     Y: gs.Variable = graph_node.outputs[0]
-    # running_mean: gs.Variable = graph_node.outputs[1] # disuse
-    # running_var: gs.Variable = graph_node.outputs[2] # disuse
+    if len(graph_node.outputs) > 1:
+        graph_node.outputs = [graph_node.outputs[0]]
 
     if hasattr(scale, 'inputs') \
         and len(scale.inputs) > 0 \
@@ -86,10 +86,14 @@ def make_node(
     input_tensor = tf_layers_dict[X.name]['tf_node']
     tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
         x=input_tensor,
-        mean=input_mean.values,
-        variance=input_var.values,
-        offset=B.values,
-        scale=scale.values,
+        mean=input_mean.values \
+            if not isinstance(input_mean, gs.Variable) else tf_layers_dict[input_mean.name]['tf_node'],
+        variance=input_var.values \
+            if not isinstance(input_var, gs.Variable) else tf_layers_dict[input_var.name]['tf_node'],
+        offset=B.values \
+            if not isinstance(B, gs.Variable) else tf_layers_dict[B.name]['tf_node'],
+        scale=scale.values \
+            if not isinstance(scale, gs.Variable) else tf_layers_dict[scale.name]['tf_node'],
         variance_epsilon=epsilon,
     )
 
