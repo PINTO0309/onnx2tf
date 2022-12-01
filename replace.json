@@ -2,10 +2,88 @@
   "format_version": 1,
   "operations": [
     {
-      "op_name": "/Gather_1",
-      "param_target": "inputs",
-      "param_name": "/Constant_1_output_0",
-      "values": [1,2,3,4]
+      "op_name": "Reshape_136",
+      "param_target": "outputs",
+      "param_name": "194",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_143",
+      "param_target": "outputs",
+      "param_name": "205",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_170",
+      "param_target": "outputs",
+      "param_name": "234",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_177",
+      "param_target": "outputs",
+      "param_name": "245",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_206",
+      "param_target": "outputs",
+      "param_name": "276",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_213",
+      "param_target": "outputs",
+      "param_name": "287",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_240",
+      "param_target": "outputs",
+      "param_name": "316",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_247",
+      "param_target": "outputs",
+      "param_name": "327",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_303",
+      "param_target": "outputs",
+      "param_name": "385",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_310",
+      "param_target": "outputs",
+      "param_name": "396",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_364",
+      "param_target": "outputs",
+      "param_name": "452",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_371",
+      "param_target": "outputs",
+      "param_name": "463",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_425",
+      "param_target": "outputs",
+      "param_name": "519",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_432",
+      "param_target": "outputs",
+      "param_name": "530",
+      "post_process_transpose_perm": [0,2,3,1]
     }
   ]
 }
