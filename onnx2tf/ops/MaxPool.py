@@ -125,6 +125,7 @@ def make_node(
         padding_ = 'SAME'
 
     # Workaround pads
+    # Ref: https://github.com/MPolaris/onnx2tflite/blob/24b6647c97ca0a74fb8965e0929e4e0bf6775bb4/layers/common_layers.py#L128-L142
     half_shape = True
     calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
     for i in range(spatial_size):
