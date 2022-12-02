@@ -39,6 +39,8 @@ def make_node(
             before_op_output_shape_trans and before_op_output_shape_trans_n
 
     values = []
+    nhwc_flags = []
+    same_input_shape_as_onnxs = []
     for graph_node_input in graph_node.inputs:
         const_or_var = get_constant_or_variable(
             graph_node_input,
@@ -46,8 +48,42 @@ def make_node(
         )
         if isinstance(const_or_var, gs.Variable):
             values.append(tf_layers_dict[const_or_var.name]['tf_node'])
+            nhwc_flags.append(
+                tf_layers_dict[const_or_var.name]['nhwc'] \
+                    if 'nhwc' in tf_layers_dict[const_or_var.name].keys() else False
+            )
+            same_input_shape_as_onnxs.append(
+                True if len(graph_node_input.shape) > 0 \
+                    and graph_node_input.shape == tf_layers_dict[const_or_var.name]['tf_node'].shape else False
+            )
         else:
             values.append(const_or_var)
+            nhwc_flags.append(False)
+            same_input_shape_as_onnxs.append(
+                True if len(graph_node_input.shape) > 0 \
+                    and graph_node_input.shape == const_or_var.shape else False
+            )
+
+    # Shape Unmatched Special Avoidance Workaround
+    # At least one True value for same_input_shape_as_onnx
+    # At least one True value in nhwc_flags
+    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
+    if True in same_input_shape_as_onnxs and True in nhwc_flags:
+        before_op_output_shape_trans = True
+        new_values = []
+        for same_input_shape_as_onnx, nhwc_flag, value in zip(same_input_shape_as_onnxs, nhwc_flags, values):
+            if same_input_shape_as_onnx and not nhwc_flag:
+                if len(value.shape) == 3:
+                    new_values.append(tf.transpose(a=value, perm=[0,2,1]))
+                elif len(value.shape) == 4:
+                    new_values.append(tf.transpose(a=value, perm=[0,2,3,1]))
+                elif len(value.shape) == 5:
+                    new_values.append(tf.transpose(a=value, perm=[0,2,3,4,1]))
+                else:
+                    new_values.append(value)
+            else:
+                new_values.append(value)
+        values = new_values
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
 

@@ -72,6 +72,9 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+            if isinstance(graph_node_input_1, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
 
     # Generation of TF OP
