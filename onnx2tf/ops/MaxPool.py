@@ -1,4 +1,5 @@
 import sys
+import math
 import random
 random.seed(0)
 import numpy as np
@@ -122,6 +123,32 @@ def make_node(
     else:
         padded_tensor = input_tensor
         padding_ = 'SAME'
+
+    # Workaround pads
+    half_shape = True
+    calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
+    for i in range(spatial_size):
+        if ceil_mode == 0:
+            half_shape = half_shape \
+                and math.floor((input_tensor_shape[1+i]+calc_pads[i]-((kernel_shape[i]-1)*1+1))/strides[i]+1) * 2 == input_tensor_shape[1+i]
+        else:
+            half_shape = half_shape \
+                and math.ceil((input_tensor_shape[1+i]+calc_pads[i]-((kernel_shape[i]-1)*1+1))/strides[i]+1) * 2 == input_tensor_shape[1+i]
+    half_shape = half_shape and np.sum(calc_pads) == 0
+    padding_ = "SAME" if half_shape else "VALID"
+    if not half_shape and calc_pads is not None and np.sum(calc_pads) > 0:
+        padded_tensor = pad_input(
+            input_tensor=input_tensor,
+            is_known_shape=is_known_shape,
+            kernel_shape=kernel_shape,
+            ceil_mode=ceil_mode,
+            spatial_size=spatial_size,
+            strides=strides,
+            dilations=dilations,
+            padding=pads,
+            padding_constant=0,
+        )
+        padding_ = 'VALID'
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
