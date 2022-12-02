@@ -1044,7 +1044,8 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |44|yolox_nano_192x192.onnx|:heavy_check_mark:|
 |45|yolox_nano_416x416.onnx|:heavy_check_mark:|
 |46|yolox_s.onnx|:heavy_check_mark:|
-|47|zfnet512-12.onnx|:heavy_check_mark:|
+|47|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|48|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
