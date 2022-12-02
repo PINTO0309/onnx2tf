@@ -85,6 +85,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
 
     # Generation of TF OP

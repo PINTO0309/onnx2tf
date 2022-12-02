@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    shape_unmatched_special_avoidance_workaround,
 )
 
 
@@ -62,6 +63,18 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    # Shape Unmatched Special Avoidance Workaround
+    # At least one True value for same_input_shape_as_onnx
+    # At least one True value in nhwc_flags
+    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
+    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
+        graph_node_input_1=graph_node_input_1,
+        graph_node_input_2=graph_node_input_2,
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        tf_layers_dict=tf_layers_dict,
+    )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.greater_equal(

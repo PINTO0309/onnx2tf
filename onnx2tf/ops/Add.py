@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     disable_unnecessary_transpose,
+    shape_unmatched_special_avoidance_workaround,
 )
 
 
@@ -85,6 +86,18 @@ def make_node(
         const_or_var_2=input_tensor_2,
         graph_node=graph_node,
         tf_layers_dict= tf_layers_dict,
+    )
+
+    # Shape Unmatched Special Avoidance Workaround
+    # At least one True value for same_input_shape_as_onnx
+    # At least one True value in nhwc_flags
+    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
+    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
+        graph_node_input_1=graph_node_input_1,
+        graph_node_input_2=graph_node_input_2,
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        tf_layers_dict=tf_layers_dict,
     )
 
     # Pre-process transpose

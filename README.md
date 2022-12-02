@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.1.46
+  ghcr.io/pinto0309/onnx2tf:1.2.0
 
   or
 
@@ -777,18 +777,19 @@ Please don't post such low level questions as issues.
   |1|Add|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Add operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Add operation with the perm specified as post-processing.|
   |2|Cast|<table><thead><th>Type</th><th align="right">Values</th><th>Type</th><th align="right">Values</th></thead><tbody><tr><td>float16</td><td align="right">10</td><td>int8</td><td align="right">3</td></tr><tr><td>float32</td><td align="right">1</td><td>int16</td><td align="right">5</td></tr><tr><td>float64</td><td align="right">11</td><td>int32</td><td align="right">6</td></tr><tr><td>bool</td><td align="right">9</td><td>int64</td><td align="right">7</td></tr><tr><td>uint8</td><td align="right">2</td><td colspan="2" rowspan="4"></td></tr><tr><td>uint16</td><td align="right">4</td></tr><tr><td>uint32</td><td align="right">12</td></tr><tr><td>uint64</td><td align="right">13</td></tr></tbody></table>|
   |3|Div|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Div operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Div operation with the perm specified as post-processing.|
-  |4|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |5|Gemm||
-  |6|Gather|1. "param_target": "inputs"<br>`values`: Value of `indices`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Gather operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Gather operation with the perm specified as post-processing.|
-  |7|MatMul|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the MatMul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the MatMul operation with the perm specified as post-processing.|
-  |8|Mul|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Mul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Mul operation with the perm specified as post-processing.|
-  |9|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |10|Resize||
-  |11|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |12|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
-  |13|Tile||
-  |14|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-  |15|NonMaxSuppression||
+  |4|Expand|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Expand operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Expand operation with the perm specified as post-processing.|
+  |5|Flatten|1. "param_target": "attributes"<br>`axis`: Value of `axis`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Flatten operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Flatten operation with the perm specified as post-processing.|
+  |6|Gemm||
+  |7|Gather|1. "param_target": "inputs"<br>`values`: Value of `indices`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Gather operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Gather operation with the perm specified as post-processing.|
+  |8|MatMul|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the MatMul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the MatMul operation with the perm specified as post-processing.|
+  |9|Mul|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Mul operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Mul operation with the perm specified as post-processing.|
+  |10|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
+  |11|Resize||
+  |12|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |13|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
+  |14|Tile||
+  |15|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+  |16|NonMaxSuppression||
 
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
@@ -1013,39 +1014,40 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |13|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
 |14|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
 |15|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
-|16|gender_googlenet.onnx|:heavy_check_mark:|
-|17|handpose_estimation_mediapipe_2022may.onnx|:heavy_check_mark:|
-|18|iat_llie_180x320.onnx|:heavy_check_mark:|
-|19|inception-v2-9.onnx|:heavy_check_mark:|
-|20|mobilenetv2-12.onnx|:heavy_check_mark:|
-|21|mosaic_11.onnx|:heavy_check_mark:|
-|22|mosaic-9.onnx|:heavy_check_mark:|
-|23|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
-|24|nanodet-plus-m_416.onnx|:heavy_check_mark:|
-|25|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
-|26|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
-|27|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
-|28|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|29|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|30|regnet_x_400mf.onnx|:heavy_check_mark:|
-|31|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|32|resnet18-v1-7.onnx|:heavy_check_mark:|
-|33|resnet50-v1-12.onnx|:heavy_check_mark:|
-|34|resnet50-v2-7.onnx|:heavy_check_mark:|
-|35|retinanet-9.onnx|:heavy_check_mark:|
-|36|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|37|super-resolution-10.onnx|:heavy_check_mark:|
-|38|tinyyolov2-8.onnx|:heavy_check_mark:|
-|39|version-RFB-640.onnx|:heavy_check_mark:|
-|40|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|41|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|42|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|43|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|44|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|45|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|46|yolox_s.onnx|:heavy_check_mark:|
-|47|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|48|zfnet512-12.onnx|:heavy_check_mark:|
+|16|fastestdet.onnx|:heavy_check_mark:|
+|17|gender_googlenet.onnx|:heavy_check_mark:|
+|18|handpose_estimation_mediapipe_2022may.onnx|:heavy_check_mark:|
+|19|iat_llie_180x320.onnx|:heavy_check_mark:|
+|20|inception-v2-9.onnx|:heavy_check_mark:|
+|21|mobilenetv2-12.onnx|:heavy_check_mark:|
+|22|mosaic_11.onnx|:heavy_check_mark:|
+|23|mosaic-9.onnx|:heavy_check_mark:|
+|24|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|25|nanodet-plus-m_416.onnx|:heavy_check_mark:|
+|26|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|27|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|28|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|29|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|30|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|31|regnet_x_400mf.onnx|:heavy_check_mark:|
+|32|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|33|resnet18-v1-7.onnx|:heavy_check_mark:|
+|34|resnet50-v1-12.onnx|:heavy_check_mark:|
+|35|resnet50-v2-7.onnx|:heavy_check_mark:|
+|36|retinanet-9.onnx|:heavy_check_mark:|
+|37|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|38|super-resolution-10.onnx|:heavy_check_mark:|
+|39|tinyyolov2-8.onnx|:heavy_check_mark:|
+|40|version-RFB-640.onnx|:heavy_check_mark:|
+|41|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|42|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|43|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|44|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|45|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|46|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|47|yolox_s.onnx|:heavy_check_mark:|
+|48|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|49|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
