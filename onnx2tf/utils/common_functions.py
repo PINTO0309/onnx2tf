@@ -1991,7 +1991,7 @@ def shape_unmatched_special_avoidance_workaround(
                     values[idx] = tf.transpose(a=values[idx], perm=[0,2,3,1])
                 elif len(values[idx].shape) == 5:
                     values[idx] = tf.transpose(a=values[idx], perm=[0,2,3,4,1])
-    input_tensor_1 = values[0]
-    input_tensor_2 = values[1]
+        input_tensor_1 = values[0]
+        input_tensor_2 = values[1]
 
     return input_tensor_1, input_tensor_2
