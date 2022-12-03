@@ -1819,12 +1819,9 @@ def process_neg_idx(
     function to convert all the negative indices to positive before
     send it to Tensorflow.
     """
-    data_shape = tf_shape(input_tensor=data)
-    if data.get_shape().is_fully_defined():
-        if not isinstance(indices, np.ndarray):
-            indices_shape = indices.get_shape().as_list()
-        else:
-            indices_shape = indices.shape
+    data_shape = data.shape
+    if None not in data_shape:
+        indices_shape = indices.shape
     else:
         indices_shape = tf_shape(input_tensor=indices)
     if batch_dims > 0:
