@@ -66,8 +66,10 @@ def make_node(
                 ) for idx in perm
             ]
         else:
-            # ゼロ次元目の転置が発生しているときは、ONNXの最終出力テンソルの形状とTFの入力テンソルの形状を比較して
-            # ONNX側の最終出力テンソルの形状に合うように転置する
+            # When a zero-dimensional transposition occurs, compare the shape
+            # of the final output tensor of ONNX with the shape
+            # of the input tensor of TF and transpose to match the shape
+            # of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
             tf_input_shape = input_tensor.shape
             new_perm = [-1] * len(onnx_output_shape)
@@ -95,8 +97,9 @@ def make_node(
                 before_op_output_shape_trans=before_op_output_shape_trans,
             )
         else:
-            # ゼロ次元目の転置が発生しているときは、ONNXの最終出力テンソルの形状とTFの入力テンソルの形状を比較して
-            # ONNX側の最終出力テンソルの形状に合うように転置する
+            # When a zero-dimensional transposition occurs, compare the shape
+            # of the final output tensor of ONNX with the shape of the input tensor
+            # of TF and transpose to match the shape of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
             tf_input_shape = input_tensor.shape
             new_perm = [-1] * len(onnx_output_shape)
