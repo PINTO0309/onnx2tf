@@ -49,7 +49,8 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    tensor_rank = len(input_tensor.shape)
+    input_tensor_shape = input_tensor.shape
+    tensor_rank = len(input_tensor_shape)
 
     perm = graph_node.attrs.get('perm', [idx for idx in reversed(range(tensor_rank))])
     if 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name] \
@@ -58,20 +59,36 @@ def make_node(
 
     if isinstance(perm, list) or (isinstance(perm, np.ndarray) and len(perm.shape) > 0):
         if perm[0] == 0:
-            perm = [
-                convert_axis(
-                    axis=idx,
-                    tensor_rank=tensor_rank,
-                    before_op_output_shape_trans=before_op_output_shape_trans,
-                ) for idx in perm
-            ]
+            try:
+                if graph_node.i().op == 'Softmax' \
+                    and graph_node.i().outputs[0].shape == input_tensor_shape:
+                    perm = [idx for idx in range(tensor_rank)]
+                elif graph_node.o().op == 'Softmax' \
+                    and graph_node.o().inputs[0].shape == input_tensor_shape:
+                    perm = [idx for idx in range(tensor_rank)]
+                else:
+                    perm = [
+                        convert_axis(
+                            axis=idx,
+                            tensor_rank=tensor_rank,
+                            before_op_output_shape_trans=before_op_output_shape_trans,
+                        ) for idx in perm
+                    ]
+            except:
+                perm = [
+                    convert_axis(
+                        axis=idx,
+                        tensor_rank=tensor_rank,
+                        before_op_output_shape_trans=before_op_output_shape_trans,
+                    ) for idx in perm
+                ]
         else:
             # When a zero-dimensional transposition occurs, compare the shape
             # of the final output tensor of ONNX with the shape
             # of the input tensor of TF and transpose to match the shape
             # of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
-            tf_input_shape = input_tensor.shape
+            tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
                 matched_idxs = [
@@ -101,7 +118,7 @@ def make_node(
             # of the final output tensor of ONNX with the shape of the input tensor
             # of TF and transpose to match the shape of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
-            tf_input_shape = input_tensor.shape
+            tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
                 matched_idxs = [
