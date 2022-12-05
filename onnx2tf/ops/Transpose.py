@@ -60,10 +60,7 @@ def make_node(
     if isinstance(perm, list) or (isinstance(perm, np.ndarray) and len(perm.shape) > 0):
         if perm[0] == 0:
             try:
-                if graph_node.i().op == 'Softmax' \
-                    and graph_node.i().outputs[0].shape == input_tensor_shape:
-                    perm = [idx for idx in range(tensor_rank)]
-                elif graph_node.o().op == 'Softmax' \
+                if graph_node.o().op == 'Softmax' \
                     and graph_node.o().inputs[0].shape == input_tensor_shape:
                     perm = [idx for idx in range(tensor_rank)]
                 else:
