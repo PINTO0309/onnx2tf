@@ -6,6 +6,8 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from typing import List
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -16,6 +18,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -86,6 +89,26 @@ def make_node(
             'shape': shape,
             'dtype': dtype,
         }
+
+    # Param replacement
+    axis = replace_parameter(
+        value_before_replacement=axis,
+        param_target='attributes',
+        param_name='axis',
+        **kwargs,
+    )
+    num_outputs = replace_parameter(
+        value_before_replacement=num_outputs,
+        param_target='attributes',
+        param_name='num_outputs',
+        **kwargs,
+    )
+    split = replace_parameter(
+        value_before_replacement=split,
+        param_target='inputs',
+        param_name='split',
+        **kwargs,
+    )
 
     # Generation of TF OP
     splited_tensors = \
