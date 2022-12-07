@@ -454,6 +454,7 @@ def convert(
             print(f'{Color.REVERCE}Automatic generation of each OP name started{Color.RESET}', '=' * 40)
         op_name_auto_generate(
             input_onnx_file_path=f'{input_onnx_file_path}',
+            onnx_graph=onnx_graph,
             output_onnx_file_path=f'{input_onnx_file_path}',
             non_verbose=True,
         )
@@ -666,6 +667,7 @@ def convert(
         converter = tf.lite.TFLiteConverter.from_concrete_functions(
             [concrete_func]
         )
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
@@ -713,8 +715,7 @@ def convert(
                 model_input.name for model_input in model.inputs
             ]
             data_count = 0
-            if output_integer_quantized_tflite \
-                and quant_calib_input_op_name_np_data_path is None \
+            if quant_calib_input_op_name_np_data_path is None \
                 and model.inputs[0].dtype == tf.float32 \
                 and len(model.inputs[0].shape) == 4:
 
@@ -738,23 +739,21 @@ def convert(
                                 MEAN,
                                 STD,
                             ]
-            else:
-                if output_integer_quantized_tflite \
-                    and quant_calib_input_op_name_np_data_path is not None:
-                    for param in quant_calib_input_op_name_np_data_path:
-                        input_op_name = str(param[0])
-                        numpy_file_path = str(param[1])
-                        calib_data = np.load(numpy_file_path)
-                        if data_count == 0:
-                            data_count = calib_data.shape[0]
-                        mean = param[2]
-                        std = param[3]
-                        calib_data_dict[input_op_name] = \
-                            [
-                                calib_data.copy(),
-                                mean,
-                                std,
-                            ]
+            elif quant_calib_input_op_name_np_data_path is not None:
+                for param in quant_calib_input_op_name_np_data_path:
+                    input_op_name = str(param[0])
+                    numpy_file_path = str(param[1])
+                    calib_data = np.load(numpy_file_path)
+                    if data_count == 0:
+                        data_count = calib_data.shape[0]
+                    mean = param[2]
+                    std = param[3]
+                    calib_data_dict[input_op_name] = \
+                        [
+                            calib_data.copy(),
+                            mean,
+                            std,
+                        ]
 
             # representative_dataset_gen
             def representative_dataset_gen():

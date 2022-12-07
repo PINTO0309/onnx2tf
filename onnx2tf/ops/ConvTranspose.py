@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     get_weights_constant_or_variable,
+    get_padding_as_op,
     print_node_info,
     inverted_operation_enable_disable,
     convert_reverse_axis,
@@ -57,7 +58,7 @@ def make_node(
             is_bias=True,
         )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    output_tensor_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
@@ -83,7 +84,7 @@ def make_node(
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': output_tensor_shape,
         'dtype': dtype,
         'nhwc': True,
     }
@@ -92,7 +93,17 @@ def make_node(
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
     if auto_pad == 'NOTSET':
-        pad_mode = 'NOTSET'
+        if input_tensor_rank >=2 \
+            and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
+            pad_mode = "SAME"
+        elif pads != [0, 0] * spatial_size:
+            input_tensor = get_padding_as_op(
+                x=input_tensor,
+                pads=pads,
+            )
+            pad_mode = 'VALID'
+        else:
+            pad_mode = 'VALID'
     # Then we use auto_pad to setup pad_mode
     elif auto_pad == "SAME_UPPER":
         pad_mode = "SAME"
