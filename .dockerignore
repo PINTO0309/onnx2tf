@@ -6,7 +6,6 @@ Dockerfile
 LICENSE
 LICENSE_onnx-tensorflow
 *.py
-README.md
 *.gif
 saved_model/
 .vscode/
@@ -14,3 +13,9 @@ saved_model/
 make_test_op/
 tests/
 *.npy
+replace.json
+replace_with_post.json
+CITATION.cff
+README.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
