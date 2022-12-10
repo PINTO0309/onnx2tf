@@ -1,3 +1,4 @@
+import copy
 import random
 random.seed(0)
 import numpy as np
@@ -10,114 +11,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-
-
-def _check_positive(
-    *,
-    pads,
-):
-    p = tf.greater_equal(
-        x=pads,
-        y=tf.zeros(
-            shape=(1),
-            dtype=pads.dtype,
-        )
-    )
-    r = tf.reduce_all(input_tensor=p)
-    return r
-
-
-def _process_neg_pads(
-    *,
-    x,
-    paddings,
-    constant_values,
-    mode,
-    tensor_rank,
-    name,
-):
-    i_shape = tf.shape(
-        input=x,
-        out_type=paddings.dtype,
-    )
-    i_rank = tf.cast(
-        x=tf.rank(x),
-        dtype=paddings.dtype,
-    )
-    begins = tf.negative(
-        x=tf.gather(
-            params=paddings,
-            indices=tf.range(i_rank),
-        )
-    )
-    ends = i_shape + tf.gather(
-        params=paddings,
-        indices=tf.range(
-            start=i_rank,
-            limit=i_rank*2,
-        ),
-    )
-    sizes = ends - begins
-
-    return tf.slice(
-        input_=x,
-        begin=begins,
-        size=sizes,
-        name=name,
-    )
-
-
-def _process_pos_pads(
-    *,
-    x,
-    paddings,
-    constant_value,
-    mode,
-    tensor_rank,
-    name,
-):
-
-    def _symmetric_pad(i, x):
-        paddings_i = tf.map_fn(
-            fn=lambda e: tf.where(i < e, 1, 0),
-            elems=paddings,
-        )
-        paddings_i = tf.reshape(
-            tensor=paddings_i,
-            shape=[tensor_rank, 2],
-        )
-        x = tf.pad(
-            tensor=x,
-            paddings=paddings_i,
-            mode='SYMMETRIC'
-        )
-        return i + 1, x
-
-    # tf requires int32 paddings
-    paddings = tf.cast(
-        x=paddings,
-        dtype=tf.int32,
-    )
-
-    if mode.lower() == "edge":
-        # Tensorflow doesn't support edge mode so we need to implement the
-        # np.pad(x, paddings, mode="edge") logic using Tensorflow ops. A
-        # while loop is used to go through the tf.pad 'SYMMETRIC' mode to pad
-        # one value at a time for both sides and all dimensions.
-        paddings = tf.reshape(paddings, [-1])
-        max_i = tf.reduce_max(paddings)
-        _, x = tf.while_loop(
-            lambda i, x: tf.less(i, max_i), _symmetric_pad, [0, x],
-            [tf.TensorShape([]), tf.TensorShape(None)])
-        return x
-
-    return tf.pad(
-        tensor=x,
-        paddings=paddings,
-        mode=mode,
-        constant_values=constant_value,
-        name=name,
-    )
 
 
 @print_node_info
@@ -193,11 +86,55 @@ def make_node(
         paddings = values.reshape([2, tensor_rank]).transpose()
         paddings_rank = paddings.shape[0]
         if paddings_rank > 2:
-            convertion_table = [0] + [i for i in range(2, paddings_rank)] + [1]
-            new_paddings = []
-            for idx in convertion_table:
-                new_paddings.append(paddings[idx, :])
-            paddings = np.asarray(new_paddings)
+            """
+            onnx paddings:
+                [
+                    dim0_begin,
+                    dim1_begin,
+                    dim2_begin,
+                    dim3_begin,
+                        :
+                    dim0_end,
+                    dim1_end,
+                    dim2_end,
+                    dim3_end,
+                    dim4_end,
+                        :
+                ]
+
+                e.g.
+                Tensor: [1,128,128,3]
+                paddings:
+                    [5,3,1,0,4,2,0,0]
+                Result: [10,133,129,3]
+
+            tf paddings:
+                [N, 0]: N=dim, 0=begin
+                [N, 1]: N=dim, 1=end
+                    :
+
+                e.g.
+                Tensor: [1,128,128,3]
+                paddings:
+                    [
+                        [5,4], ... dim=0, begin_pad=5, end_pad=4
+                        [3,2], ... dim=1, begin_pad=3, end_pad=2
+                        [1,0], ... dim=2, begin_pad=1, end_pad=0
+                        [0,0], ... dim=3, begin_pad=0, end_pad=0
+                    ]
+                Result: [10,133,129,3]
+            """
+            paddings = np.asarray(
+                [[begin, end] \
+                    for begin, end in zip(values[0:tensor_rank:1], values[tensor_rank:tensor_rank+tensor_rank:1])],
+                dtype=values.dtype,
+            )
+            if before_op_output_shape_trans:
+                convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
+                new_values = [0] * tensor_rank
+                for new_idx, idx in enumerate(convertion_table):
+                    new_values[new_idx] = paddings[idx]
+                paddings = np.asarray(new_values, dtype=paddings.dtype)
 
     mode = graph_node.attrs.get('mode', 'constant')
 
@@ -210,26 +147,12 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.cond(
-            _check_positive(
-                pads=paddings,
-            ),
-            lambda: _process_pos_pads(
-                x=input_tensor,
-                paddings=paddings,
-                constant_value=constant_value,
-                mode=mode,
-                tensor_rank=tensor_rank,
-                name= graph_node.name,
-            ),
-            lambda: _process_neg_pads(
-                x=input_tensor,
-                paddings=paddings,
-                constant_value=constant_value,
-                mode=mode,
-                tensor_rank=tensor_rank,
-                name=graph_node.name,
-            ),
+        tf.pad(
+            tensor=input_tensor,
+            paddings=paddings,
+            mode=mode,
+            constant_values=constant_value,
+            name= graph_node.name,
         )
 
     # Generation of Debug Info
