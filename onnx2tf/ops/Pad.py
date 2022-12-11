@@ -102,10 +102,12 @@ def make_node(
                 ]
 
                 e.g.
-                Tensor: [1,128,128,3]
+                Tensor:
+                    [1,128,128,3]
                 paddings:
                     [5,3,1,0,4,2,0,0]
-                Result: [10,133,129,3]
+                Result:
+                    [10,133,129,3]
 
             tf paddings:
                 [
@@ -117,7 +119,8 @@ def make_node(
                 ]
 
                 e.g.
-                Tensor: [1,128,128,3]
+                Tensor:
+                    [1,128,128,3]
                 paddings:
                     [
                         [5,4], ... dim=0, begin_pad=5, end_pad=4
@@ -125,7 +128,8 @@ def make_node(
                         [1,0], ... dim=2, begin_pad=1, end_pad=0
                         [0,0], ... dim=3, begin_pad=0, end_pad=0
                     ]
-                Result: [10,133,129,3]
+                Result:
+                    [10,133,129,3]
             """
             paddings = np.asarray(
                 [[begin, end] \
