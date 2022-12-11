@@ -98,7 +98,6 @@ def make_node(
                     dim1_end,
                     dim2_end,
                     dim3_end,
-                    dim4_end,
                         :
                 ]
 
@@ -109,6 +108,10 @@ def make_node(
                 Result: [10,133,129,3]
 
             tf paddings:
+                [N, 0]: N=dim, 0=begin
+                [N, 1]: N=dim, 1=end
+                [N, 0]: N=dim, 0=begin
+                [N, 1]: N=dim, 1=end
                 [N, 0]: N=dim, 0=begin
                 [N, 1]: N=dim, 1=end
                     :
