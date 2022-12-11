@@ -108,13 +108,13 @@ def make_node(
                 Result: [10,133,129,3]
 
             tf paddings:
-                [N, 0]: N=dim, 0=begin
-                [N, 1]: N=dim, 1=end
-                [N, 0]: N=dim, 0=begin
-                [N, 1]: N=dim, 1=end
-                [N, 0]: N=dim, 0=begin
-                [N, 1]: N=dim, 1=end
-                    :
+                [
+                    [dim0_begin, dim0_end],
+                    [dim1_begin, dim1_end],
+                    [dim2_begin, dim2_end],
+                    [dim3_begin, dim3_end],
+                            :
+                ]
 
                 e.g.
                 Tensor: [1,128,128,3]
