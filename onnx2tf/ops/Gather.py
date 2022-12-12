@@ -69,6 +69,9 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
+    # tensorflow gather supports only positive indices
+    indices = tf.cast(indices, tf.int64) + tf.cast(tf.where(indices < 0, 1, 0) * tf.shape(input_tensor)[axis], tf.int64)
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
