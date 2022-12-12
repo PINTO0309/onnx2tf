@@ -89,8 +89,11 @@ def make_node(
     except:
         max_output_boxes_per_class = tf.constant(0, tf.int32)
 
-    max_output_boxes_per_class = tf.where(max_output_boxes_per_class <= 0,
-                                          tf.shape(boxes)[1], max_output_boxes_per_class)
+    max_output_boxes_per_class = tf.where(
+        condition=max_output_boxes_per_class <= 0,
+        x=tf.shape(boxes)[1],
+        y=max_output_boxes_per_class,
+    )
 
     max_output_boxes_per_class = tf.squeeze(max_output_boxes_per_class) \
         if len(max_output_boxes_per_class.shape) == 1 else max_output_boxes_per_class
