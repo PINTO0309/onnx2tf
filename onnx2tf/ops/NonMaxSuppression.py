@@ -62,8 +62,6 @@ def make_node(
             graph_node.inputs[2],
             before_op_output_shape_trans,
         )
-        # onnx may contain invalid max_output_boxes_per_class
-        graph_node_input_3 = np.clip(graph_node_input_3, 0, boxes.shape[1])
     graph_node_input_4 = None
     if len(graph_node.inputs) >= 4:
         graph_node_input_4 = get_constant_or_variable(
@@ -83,10 +81,16 @@ def make_node(
     score_threshold = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
 
-    max_output_boxes_per_class = tf.cast(
-        max_output_boxes_per_class,
-        tf.int32,
-    ) if (max_output_boxes_per_class is not None and max_output_boxes_per_class != "") else tf.constant(0, tf.int32)
+    try:
+        max_output_boxes_per_class = tf.cast(
+            max_output_boxes_per_class,
+            tf.int32,
+        )
+    except:
+        max_output_boxes_per_class = tf.constant(0, tf.int32)
+
+    max_output_boxes_per_class = tf.where(max_output_boxes_per_class <= 0,
+                                          tf.shape(boxes)[1], max_output_boxes_per_class)
 
     max_output_boxes_per_class = tf.squeeze(max_output_boxes_per_class) \
         if len(max_output_boxes_per_class.shape) == 1 else max_output_boxes_per_class
