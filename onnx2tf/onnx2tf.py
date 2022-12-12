@@ -667,7 +667,6 @@ def convert(
         converter = tf.lite.TFLiteConverter.from_concrete_functions(
             [concrete_func]
         )
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
