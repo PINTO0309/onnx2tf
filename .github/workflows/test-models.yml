@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
+      uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
       with:
         swap-size-gb: 10
     - name: Checkout onnx2tf
@@ -42,7 +42,7 @@ jobs:
       run: |
         python tests/test_model_convert.py -m models -o wiki -v
     - name: Update wiki content
-      uses: Andrew-Chen-Wang/github-wiki-action@v3
+      uses: Andrew-Chen-Wang/github-wiki-action@7f44b142379b209235c748351558937d3e7546a7
       env:
         WIKI_DIR: wiki/
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
