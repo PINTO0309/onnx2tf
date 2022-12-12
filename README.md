@@ -1050,8 +1050,9 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |47|yolox_nano_192x192.onnx|:heavy_check_mark:|
 |48|yolox_nano_416x416.onnx|:heavy_check_mark:|
 |49|yolox_s.onnx|:heavy_check_mark:|
-|50|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|51|zfnet512-12.onnx|:heavy_check_mark:|
+|50|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|51|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|52|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
