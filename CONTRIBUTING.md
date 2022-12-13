@@ -22,6 +22,11 @@ https://github.com/PINTO0309/onnx2tf/issues
 ## 2. Pull Request
 - Basically any reasonable pull request is welcome. There are no strict rules.
 - I would be very happy if you could share the ONNX file for testing if possible, as I would like to add the ONNX file for testing to the GitHub Actions for regression testing.
+- When you issue a pull request, GitHub Actions will automatically run a regression test of the model transformation. Therefore, you can check the GitHub Actions execution log to see if your suggested modification affects previous code.
+  - https://github.com/PINTO0309/onnx2tf/wiki/model_status
+  - https://github.com/PINTO0309/onnx2tf/actions/workflows/test-models.yml
+  ![image](https://user-images.githubusercontent.com/33194443/207194598-178d99e7-4ceb-44fc-a445-136bb513860d.png)
+
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
   - HostPC install
     ```bash
