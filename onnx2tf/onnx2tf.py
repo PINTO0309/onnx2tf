@@ -313,8 +313,6 @@ def convert(
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.\n
         Default: False
 
     Returns

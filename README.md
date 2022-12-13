@@ -692,8 +692,6 @@ convert(
 
     non_verbose: Optional[bool]
       Do not show all information logs. Only error logs are displayed.
-      Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and
-      replace_argmax_to_reducemax_and_indicies_is_float32 can be specified.
       Default: False
 
     Returns
