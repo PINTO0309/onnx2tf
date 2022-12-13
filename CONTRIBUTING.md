@@ -1,7 +1,7 @@
 # Contribution Guide
 
 ## 1. Issues
-- Right now, I am the sole maintainer of this repository. Therefore, my maintaining the code and cooperating with your research requires a great time cost and a strong motivation. 
+- Right now, I am the sole maintainer of this repository. Therefore, my maintaining the code and cooperating with your research requires a great time cost and a strong motivation.
 
   Simply put, there are five factors that motivate me,
 
@@ -21,6 +21,7 @@ https://github.com/PINTO0309/onnx2tf/issues
 
 ## 2. Pull Request
 - Basically any reasonable pull request is welcome. There are no strict rules.
+- I would be very happy if you could share the ONNX file for testing if possible, as I would like to add the ONNX file for testing to the GitHub Actions for regression testing.
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
   - HostPC install
     ```bash
