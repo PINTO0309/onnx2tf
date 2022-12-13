@@ -26,6 +26,7 @@ https://github.com/PINTO0309/onnx2tf/issues
   - https://github.com/PINTO0309/onnx2tf/wiki/model_status
   - https://github.com/PINTO0309/onnx2tf/actions/workflows/test-models.yml
   ![image](https://user-images.githubusercontent.com/33194443/207194598-178d99e7-4ceb-44fc-a445-136bb513860d.png)
+- Pull requests from engineers other than the repository owner will always fail to post the model conversion status to the Wiki due to lack of permissions to reference secrets, but there is no need to be concerned about this.
 
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
   - HostPC install
