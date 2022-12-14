@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.2.7
+  ghcr.io/pinto0309/onnx2tf:1.2.8
 
   or
 
@@ -1044,13 +1044,14 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |43|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
 |44|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
 |45|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|46|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|47|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|48|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|49|yolox_s.onnx|:heavy_check_mark:|
-|50|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|51|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|52|zfnet512-12.onnx|:heavy_check_mark:|
+|46|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|47|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|48|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|49|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|50|yolox_s.onnx|:heavy_check_mark:|
+|51|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|52|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|53|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
