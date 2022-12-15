@@ -16,6 +16,21 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.colors import Color
 
 
+class NonMaxSuppressionV2(tf.keras.layers.Layer):
+
+    def __init__(self):
+        super(NonMaxSuppressionV2, self).__init__()
+        self.nms_ops = tf.raw_ops.NonMaxSuppressionV2
+
+    def call(self, boxes, scores, max_output_size, iou_threshold):
+        return self.nms_ops(
+            boxes=boxes,
+            scores=scores,
+            max_output_size=max_output_size,
+            iou_threshold=iou_threshold,
+        )
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -104,7 +119,7 @@ def make_node(
         if len(iou_threshold.shape) == 1 else iou_threshold
 
     score_threshold = score_threshold \
-        if (score_threshold is not None and score_threshold != "") else tf.constant(float('-inf'))
+        if (score_threshold is not None and score_threshold != "") else tf.constant(-np.inf)
     score_threshold = tf.squeeze(score_threshold) \
         if len(score_threshold.shape) == 1 else score_threshold
 
@@ -199,13 +214,39 @@ def make_node(
             # get scores in class_j for batch_i only
             tf_scores = tf.squeeze(tf.gather(batch_i_scores, [class_j]), axis=0)
             # get the selected boxes indices
-            selected_indices = tf.image.non_max_suppression(
-                tf_boxes,
-                tf_scores,
-                max_output_boxes_per_class,
-                iou_threshold,
-                score_threshold,
+            #
+            # tf.image.non_max_suppression does not return a dynamic
+            # valid detection number after converting to TFLite models #51629
+            # https://github.com/tensorflow/tensorflow/issues/51629
+            #
+            # Bug in TFlite NonMaxSuppression #48
+            # https://github.com/PINTO0309/onnx2tf/issues/48
+            #
+            # selected_indices = tf.image.non_max_suppression(
+            #     tf_boxes,
+            #     tf_scores,
+            #     max_output_boxes_per_class,
+            #     iou_threshold,
+            #     score_threshold,
+            # )
+            tf_nms_ops = NonMaxSuppressionV2()
+            selected_indices = tf_nms_ops(
+                boxes=tf_boxes,
+                scores=tf_scores,
+                max_output_size=max_output_boxes_per_class,
+                iou_threshold=iou_threshold,
             )
+            if hasattr(score_threshold, 'numpy') and score_threshold.numpy() != -np.inf:
+                selected_scores = tf.gather(
+                    params=tf_scores,
+                    indices=selected_indices,
+                )
+                selected_score_indices = tf.squeeze(
+                    input=tf.where(selected_scores >= score_threshold),
+                    axis=-1,
+                )
+                selected_indices = tf.gather(selected_indices, selected_score_indices)
+
             # add batch and class information into the indices
             output = tf.transpose([tf.cast(selected_indices, dtype=tf.int64)])
             paddings = tf.constant([[0, 0], [1, 0]])
