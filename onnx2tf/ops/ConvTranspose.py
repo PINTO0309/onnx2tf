@@ -77,7 +77,6 @@ def make_node(
 
     # get ONNX convolution output shape
     graph_node_output_shape = graph_node.attrs.get('output_shape', graph_node_output.shape)
-    assert graph_node_output_shape is not None
     if graph_node_output_shape is None:
         output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
         graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
