@@ -1,7 +1,9 @@
 import sys
 import random
+
 random.seed(0)
 import numpy as np
+
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
@@ -15,15 +17,36 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.colors import Color
 
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import gen_image_ops
+from tensorflow.python.util import dispatch
+
+
+@dispatch.add_dispatch_support
+def non_max_suppression(boxes,
+                        scores,
+                        max_output_size,
+                        iou_threshold=0.5,
+                        score_threshold=float('-inf'),
+                        name=None):
+    with ops.name_scope(name, 'non_max_suppression'):
+        iou_threshold = ops.convert_to_tensor(iou_threshold, name='iou_threshold')
+        score_threshold = ops.convert_to_tensor(
+            score_threshold, name='score_threshold')
+        selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(boxes, scores, max_output_size,
+                                                                           iou_threshold, score_threshold,
+                                                                           pad_to_max_output_size=False)
+        return selected_indices[:num_valid]
+
 
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
 def make_node(
-    *,
-    graph_node: gs.Node,
-    tf_layers_dict: dict,
-    **kwargs: dict,
+        *,
+        graph_node: gs.Node,
+        tf_layers_dict: dict,
+        **kwargs: dict,
 ):
     """NonMaxSuppression
 
@@ -180,10 +203,10 @@ def make_node(
 
     if num_batches is None:
         print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
-            f'It is not possible to specify a dynamic shape '+
-            f'for the batch size of the input tensor in NonMaxSuppression. '+
-            f'Use the --batch_size option to change the batch size to a fixed size. \n'+
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'It is not possible to specify a dynamic shape ' +
+            f'for the batch size of the input tensor in NonMaxSuppression. ' +
+            f'Use the --batch_size option to change the batch size to a fixed size. \n' +
             f'graph_node.name: {graph_node.name} boxes.shape: {boxes.shape} scores.shape: {scores.shape}'
         )
         sys.exit(1)
@@ -199,7 +222,7 @@ def make_node(
             # get scores in class_j for batch_i only
             tf_scores = tf.squeeze(tf.gather(batch_i_scores, [class_j]), axis=0)
             # get the selected boxes indices
-            selected_indices = tf.image.non_max_suppression(
+            selected_indices = non_max_suppression(
                 tf_boxes,
                 tf_scores,
                 max_output_boxes_per_class,
