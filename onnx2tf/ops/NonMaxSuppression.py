@@ -23,19 +23,26 @@ from tensorflow.python.util import dispatch
 
 
 @dispatch.add_dispatch_support
-def non_max_suppression(boxes,
-                        scores,
-                        max_output_size,
-                        iou_threshold=0.5,
-                        score_threshold=float('-inf'),
-                        name=None):
+def non_max_suppression(
+    boxes,
+    scores,
+    max_output_size,
+    iou_threshold=0.5,
+    score_threshold=float('-inf'),
+    name=None,
+):
     with ops.name_scope(name, 'non_max_suppression'):
         iou_threshold = ops.convert_to_tensor(iou_threshold, name='iou_threshold')
         score_threshold = ops.convert_to_tensor(
             score_threshold, name='score_threshold')
-        selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(boxes, scores, max_output_size,
-                                                                           iou_threshold, score_threshold,
-                                                                           pad_to_max_output_size=False)
+        selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
+            boxes=boxes,
+            scores=scores,
+            max_output_size=max_output_size,
+            iou_threshold=iou_threshold,
+            score_threshold=score_threshold,
+            pad_to_max_output_size=False,
+        )
         return selected_indices[:num_valid]
 
 
@@ -43,10 +50,10 @@ def non_max_suppression(boxes,
 @inverted_operation_enable_disable
 @get_replacement_parameter
 def make_node(
-        *,
-        graph_node: gs.Node,
-        tf_layers_dict: dict,
-        **kwargs: dict,
+    *,
+    graph_node: gs.Node,
+    tf_layers_dict: dict,
+    **kwargs: dict,
 ):
     """NonMaxSuppression
 
@@ -224,22 +231,12 @@ def make_node(
             # get the selected boxes indices
 
             selected_indices = non_max_suppression(
-                tf_boxes,
-                tf_scores,
-                max_output_boxes_per_class,
-                iou_threshold,
-                score_threshold
+                boxes=tf_boxes,
+                scores=tf_scores,
+                max_output_size=max_output_boxes_per_class,
+                iou_threshold=iou_threshold,
+                score_threshold=score_threshold,
             )
-            if hasattr(score_threshold, 'numpy') and score_threshold.numpy() != -np.inf:
-                selected_scores = tf.gather(
-                    params=tf_scores,
-                    indices=selected_indices,
-                )
-                selected_score_indices = tf.squeeze(
-                    input=tf.where(selected_scores >= score_threshold),
-                    axis=-1,
-                )
-                selected_indices = tf.gather(selected_indices, selected_score_indices)
 
             # add batch and class information into the indices
             output = tf.transpose([tf.cast(selected_indices, dtype=tf.int64)])
