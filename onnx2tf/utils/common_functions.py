@@ -587,6 +587,32 @@ def simple_arithmetic_validity_check(
     tf_x: np.ndarray,
     tf_y: np.ndarray,
 ):
+    """Search for the correct transposition method by brute force
+    when the two input shapes of ONNX and the two input shapes of
+    TF are different and the shape of TF cannot be determined to be NCHW.
+
+    Parameters
+    ----------
+    op_type: str
+        1d list or ndarray.
+
+    onnx_x: np.ndarray
+        1d list or ndarray.
+
+    onnx_y: np.ndarray
+        1d list or ndarray.
+
+    tf_x: np.ndarray
+        1d list or ndarray.
+
+    tf_y: np.ndarray
+        1d list or ndarray.
+
+    Returns
+    -------
+    matched_perm: tuple[int]
+        Correct shape prediction results for TF.
+    """
     copy_onnx_x = onnx_x.copy()
     copy_onnx_y = onnx_y.copy()
     copy_tf_x = tf_x.copy()
@@ -625,17 +651,24 @@ def simple_arithmetic_validity_check(
         pass
 
 
-def broadcast_validity_check(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
-    """
-    Check the validity of dimension shape for same length of tensors.
+def broadcast_validity_check(
+    shape1: Union[np.ndarray, List],
+    shape2: Union[np.ndarray, List],
+):
+    """Check the validity of dimension shape for same length of tensors.
+
     Parameters
     ----------
-    shape1: 1d list or ndarray.
-    shape2: 1d list or ndarray.
+    shape1: Union[np.ndarray, List]
+        1d list or ndarray.
+
+    shape2: Union[np.ndarray, List]
+        1d list or ndarray.
 
     Returns
     -------
-    result: True if shape1 and shape2 is valid for broadcasting, else False
+    result: bool
+        True if shape1 and shape2 is valid for broadcasting, else False
     """
     result = False
 
@@ -659,6 +692,25 @@ def explicit_broadcast(
     graph_node: Optional[gs.Node] = None,
     tf_layers_dict: dict = None,
 ):
+    """Of the two tensors in the argument, the one with the lower dimensionality
+    is broadcast to match the one with the higher dimensionality.
+
+    Parameters
+    ----------
+    const_or_var_1: Any
+        gs.Variable or np.ndarray
+
+    const_or_var_2: Any
+        gs.Variable or np.ndarray
+
+    Returns
+    ----------
+    const_or_var_1:
+        gs.Variable or np.ndarray
+
+    const_or_var_2
+        gs.Variable or np.ndarray
+    """
     graph_node_input_name1 = None
     graph_node_input_name2 = None
     graph_node_input_shape1 = []
@@ -801,7 +853,7 @@ def tf_shape(
 
     Returns
     ----------
-    shape:
+    shape: Any
         The function will check for fully defined shape and will return numpy array or \n
         if the shape is not fully defined will use tf.shape() to return the shape as a Tensor.
     """
@@ -1158,7 +1210,6 @@ def alternative_fused_argmax(
     keepdims: bool = True,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
     replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
-    fused_argmax_scale_ratio: float = 0.5,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1196,10 +1247,6 @@ def alternative_fused_argmax(
         True: Convert final output to float32
         False: Do not convert final output to float32
         Default: False
-
-    fused_argmax_scale_ratio: float
-        Scale ratio when generating Fused ArgMax
-        Default: 0.5
 
     Returns
     ----------
