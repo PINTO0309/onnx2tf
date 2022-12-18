@@ -13,7 +13,6 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -55,8 +54,6 @@ def make_node(
         kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
     replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
         kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
-    fused_argmax_scale_ratio = \
-        kwargs['fused_argmax_scale_ratio']
 
     axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
@@ -140,7 +137,6 @@ def make_node(
             keepdims=keepdims,
             replace_argmax_to_fused_argmax_and_indicies_is_int64=replace_argmax_to_fused_argmax_and_indicies_is_int64,
             replace_argmax_to_fused_argmax_and_indicies_is_float32=replace_argmax_to_fused_argmax_and_indicies_is_float32,
-            fused_argmax_scale_ratio=fused_argmax_scale_ratio,
         )
         tf_op_type = 'alternative_fused_argmax'
     else:

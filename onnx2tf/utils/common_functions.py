@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Union, Tuple
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -587,6 +587,32 @@ def simple_arithmetic_validity_check(
     tf_x: np.ndarray,
     tf_y: np.ndarray,
 ):
+    """Search for the correct transposition method by brute force
+    when the two input shapes of ONNX and the two input shapes of
+    TF are different and the shape of TF cannot be determined to be NCHW.
+
+    Parameters
+    ----------
+    op_type: str
+        'Add' or 'Sub' or 'Mul' or 'Div'
+
+    onnx_x: np.ndarray
+        np.ndarray to be checked
+
+    onnx_y: np.ndarray
+        np.ndarray to be checked
+
+    tf_x: np.ndarray
+        np.ndarray to be checked
+
+    tf_y: np.ndarray
+        np.ndarray to be checked
+
+    Returns
+    -------
+    matched_perm: tuple[int]
+        Correct shape prediction results for TF.
+    """
     copy_onnx_x = onnx_x.copy()
     copy_onnx_y = onnx_y.copy()
     copy_tf_x = tf_x.copy()
@@ -625,17 +651,24 @@ def simple_arithmetic_validity_check(
         pass
 
 
-def broadcast_validity_check(shape1: Union[np.ndarray, List], shape2: Union[np.ndarray, List]):
-    """
-    Check the validity of dimension shape for same length of tensors.
+def broadcast_validity_check(
+    shape1: Union[np.ndarray, List],
+    shape2: Union[np.ndarray, List],
+):
+    """Check the validity of dimension shape for same length of tensors.
+
     Parameters
     ----------
-    shape1: 1d list or ndarray.
-    shape2: 1d list or ndarray.
+    shape1: Union[np.ndarray, List]
+        1d list or ndarray.
+
+    shape2: Union[np.ndarray, List]
+        1d list or ndarray.
 
     Returns
     -------
-    result: True if shape1 and shape2 is valid for broadcasting, else False
+    result: bool
+        True if shape1 and shape2 is valid for broadcasting, else False
     """
     result = False
 
@@ -659,6 +692,25 @@ def explicit_broadcast(
     graph_node: Optional[gs.Node] = None,
     tf_layers_dict: dict = None,
 ):
+    """Of the two tensors in the argument, the one with the lower dimensionality
+    is broadcast to match the one with the higher dimensionality.
+
+    Parameters
+    ----------
+    const_or_var_1: Any
+        gs.Variable or np.ndarray
+
+    const_or_var_2: Any
+        gs.Variable or np.ndarray
+
+    Returns
+    ----------
+    const_or_var_1:
+        gs.Variable or np.ndarray
+
+    const_or_var_2
+        gs.Variable or np.ndarray
+    """
     graph_node_input_name1 = None
     graph_node_input_name2 = None
     graph_node_input_shape1 = []
@@ -801,7 +853,7 @@ def tf_shape(
 
     Returns
     ----------
-    shape:
+    shape: Any
         The function will check for fully defined shape and will return numpy array or \n
         if the shape is not fully defined will use tf.shape() to return the shape as a Tensor.
     """
@@ -1158,7 +1210,6 @@ def alternative_fused_argmax(
     keepdims: bool = True,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
     replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
-    fused_argmax_scale_ratio: float = 0.5,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1196,10 +1247,6 @@ def alternative_fused_argmax(
         True: Convert final output to float32
         False: Do not convert final output to float32
         Default: False
-
-    fused_argmax_scale_ratio: float
-        Scale ratio when generating Fused ArgMax
-        Default: 0.5
 
     Returns
     ----------
@@ -1888,7 +1935,37 @@ def disable_unnecessary_transpose(
     graph_node_input_2: Any,
     input_tensor_1: Any,
     input_tensor_2: Any,
-):
+) -> Tuple[Any, Any, Any, Any]:
+    """Remove unnecessary Transpose to NHWC.
+
+    Parameters
+    ----------
+    graph_node_input_1: Any
+        Input Node X of ONNX
+
+    graph_node_input_2: Any
+        Input Node Y of ONNX
+
+    input_tensor_1: Any
+        Input Node X of TensorFlow
+
+    input_tensor_2: Any
+        Input Node Y of TensorFlow
+
+    Returns
+    ----------
+    graph_node_input_1: Any
+        Input Node X of ONNX
+
+    graph_node_input_2: Any
+        Input Node Y of ONNX
+
+    input_tensor_1: Any
+        Input shape-corrected TensorFlow input node X
+
+    input_tensor_2: Any
+        Input shape-corrected TensorFlow input node Y
+    """
     if isinstance(graph_node_input_1, gs.Variable) \
         and isinstance(graph_node_input_2, gs.Variable):
 
@@ -1944,12 +2021,37 @@ def disable_unnecessary_transpose(
 
 def shape_unmatched_special_avoidance_workaround(
     *,
-    graph_node_input_1,
-    graph_node_input_2,
-    input_tensor_1,
-    input_tensor_2,
-    tf_layers_dict,
-):
+    graph_node_input_1: Any,
+    graph_node_input_2: Any,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+    tf_layers_dict: dict,
+) -> Tuple[Any, Any]:
+    """Force correction of the shape mismatch between input X and input Y to NHWC format
+    only if the output of the immediately preceding OP is definitively NHWC.
+
+    Parameters
+    ----------
+    graph_node_input_1: Any
+        Input Node X of ONNX
+
+    graph_node_input_2: Any
+        Input Node Y of ONNX
+
+    input_tensor_1: Any
+        Input Node X of TensorFlow
+
+    input_tensor_2: Any
+        Input Node Y of TensorFlow
+
+    Returns
+    ----------
+    input_tensor_1: Any
+        Input shape-corrected TensorFlow input node X
+
+    input_tensor_2: Any
+        Input shape-corrected TensorFlow input node Y
+    """
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
@@ -1976,14 +2078,14 @@ def shape_unmatched_special_avoidance_workaround(
         nhwc_flag_2 =tf_layers_dict[input_tensor_2.name]['nhwc'] \
             if 'nhwc' in tf_layers_dict[input_tensor_2.name].keys() else False
         graph_node_input_2_shape = [
-            dim if not isinstance(dim, str) else None for dim in graph_node_input_1.shape
+            dim if not isinstance(dim, str) else None for dim in graph_node_input_2.shape
         ]
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
             and graph_node_input_2_shape == tf_layers_dict[input_tensor_2.name]['tf_node'].shape else False
     else:
         nhwc_flag_2 = False
         graph_node_input_2_shape = [
-            dim if not isinstance(dim, str) else None for dim in graph_node_input_1.shape
+            dim if not isinstance(dim, str) else None for dim in graph_node_input_2.shape
         ]
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
             and graph_node_input_2_shape == input_tensor_2.shape else False
