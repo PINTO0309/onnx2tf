@@ -143,6 +143,7 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
 # Parameter replacement (Resize,Transpose,Softmax)
+$ rm replace.json
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
 $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
