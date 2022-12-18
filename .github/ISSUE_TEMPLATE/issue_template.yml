@@ -21,7 +21,23 @@ body:
     id: onnx2tf-version
     attributes:
       label: onnx2tf version number
-      description: Please list the version number of onnx2tf used.
+      description: Please list the version number of onnx2tf used. `onnx2tf -V`
+      placeholder: x.x.x
+    validations:
+      required: true
+  - type: input
+    id: onnx-version
+    attributes:
+      label: onnx version number
+      description: Please list the version number of onnx used. `pip show onnx | grep Version`
+      placeholder: x.x.x
+    validations:
+      required: true
+  - type: input
+    id: tensorflow-version
+    attributes:
+      label: tensorflow version number
+      description: Please list the version number of tensorflow used. `pip show tensorflow | grep Version`
       placeholder: x.x.x
     validations:
       required: true
