@@ -594,19 +594,19 @@ def simple_arithmetic_validity_check(
     Parameters
     ----------
     op_type: str
-        1d list or ndarray.
+        'Add' or 'Sub' or 'Mul' or 'Div'
 
     onnx_x: np.ndarray
-        1d list or ndarray.
+        np.ndarray to be checked
 
     onnx_y: np.ndarray
-        1d list or ndarray.
+        np.ndarray to be checked
 
     tf_x: np.ndarray
-        1d list or ndarray.
+        np.ndarray to be checked
 
     tf_y: np.ndarray
-        1d list or ndarray.
+        np.ndarray to be checked
 
     Returns
     -------
