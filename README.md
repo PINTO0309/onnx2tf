@@ -81,7 +81,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow=2.10.0
+- tensorflow==2.10.0
 
 ## Sample Usage
 - HostPC
