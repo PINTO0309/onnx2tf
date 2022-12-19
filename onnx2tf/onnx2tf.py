@@ -539,7 +539,10 @@ def convert(
 
             # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
+            # substitution because saved_model does not allow colons
             graph_input.name = graph_input.name.replace(':','_')
+            # Substitution because saved_model does not allow leading slashes in op names
+            graph_input.name = re.sub('^/', 'wa/', graph_input.name)
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -561,7 +564,10 @@ def convert(
                 )
                 sys.exit(1)
 
+            # substitution because saved_model does not allow colons
             graph_node.name = graph_node.name.replace(':','_')
+            # Substitution because saved_model does not allow leading slashes in op names
+            graph_node.name = re.sub('^/', 'wa/', graph_node.name)
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
@@ -625,8 +631,6 @@ def convert(
             # Switch to .pb
             if not non_verbose:
                 print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
-            output_pb = True
-            flag_for_output_switching_from_saved_model_to_pb_due_to_error = True
         except KeyError as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
