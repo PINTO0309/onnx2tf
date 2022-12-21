@@ -209,6 +209,7 @@ def make_node(
     """
 
     op_rep_params = kwargs.get('op_rep_params', [])
+    begin_ = None
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == 'op':
             begin_ = op_rep_param.get('begin', None)
