@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/Slice",
+      "param_target": "op",
+      "begin": [0,0,1,0],
+      "end": [0,0,0,0],
+      "end_mask": 15
+    },
+    {
+      "op_name": "/Slice_1",
+      "param_target": "op",
+      "begin": [0,0,0,0],
+      "end": [0,0,39,0],
+      "end_mask": 11
+    }
+  ]
+}
