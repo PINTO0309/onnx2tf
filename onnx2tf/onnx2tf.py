@@ -542,7 +542,8 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_input.name = graph_input.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            graph_input.name = re.sub('^/', 'wa/', graph_input.name)
+            if output_signaturedefs:
+                graph_input.name = re.sub('^/', 'wa/', graph_input.name)
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -567,7 +568,8 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_node.name = graph_node.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            graph_node.name = re.sub('^/', 'wa/', graph_node.name)
+            if output_signaturedefs:
+                graph_node.name = re.sub('^/', 'wa/', graph_node.name)
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
