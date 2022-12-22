@@ -73,21 +73,14 @@ def make_node(
     }
 
     # Generation of TF OP
-    axis = list(axes) if axes is not None else None
+    axes = list(axes) if axes is not None else None
     l2normed_tensor = \
-        tf.math.l2_normalize(
-            x=input_tensor,
-            axis=axis,
+        tf.math.reduce_euclidean_norm(
+            input_tensor=input_tensor,
+            axis=axes,
+            keepdims=keepdims,
             name=graph_node.name,
         )
-    if keepdims:
-        for idx in axes:
-            l2normed_tensor = \
-                tf.expand_dims(
-                    input=l2normed_tensor,
-                    axis=idx,
-                    name=f'{graph_node.name}_expand_dims',
-                )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = l2normed_tensor
 
@@ -98,7 +91,7 @@ def make_node(
                 'tf_op_type': tf.math.l2_normalize,
                 'tf_inputs': {
                     'x': input_tensor,
-                    'axis': axis,
+                    'axis': axes,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
