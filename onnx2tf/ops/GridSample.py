@@ -168,7 +168,6 @@ def make_node(
         dtype=tf.int64,
     )
 
-    # ind = tf.range(Nt)
     ind = np.arange(Nt)
     ind = tf.reshape(tensor=ind, shape=[Nt, 1])
     ind = tf.tile(input=ind, multiples=[1, grid_H])
@@ -176,24 +175,119 @@ def make_node(
     ind = tf.tile(input=ind, multiples=[1, 1, grid_W])
     ind = tf.cast(ind, dtype=tf.int64)
 
-    image = tf.transpose(
-        a=image,
-        perm=[3,0,1,2],
+    ### common
+    temp_image = tf.reshape(
+        tensor=image,
+        shape=[-1, image.shape[-1]],
     )
-    """
-    image = TensorShape([256, 3, 128, 128])
-    grid = TensorShape([3, 5000, 1, 2])
+    temp_ind = ind * H * W
+    ### wa
+    temp_y0 = y0 * W
+    temp_x0 = x0
+    temp_x0y0ind = temp_x0 + temp_y0 + temp_ind
+    temp_gather_wa = tf.gather(
+        params=temp_image,
+        indices=temp_x0y0ind,
+    )
+    temp_reshape1_wa = tf.reshape(
+        tensor=temp_gather_wa,
+        shape=[-1, temp_gather_wa.shape[3]],
+    )
+    temp_traspose_wa = tf.transpose(
+        a=temp_reshape1_wa,
+        perm=[1,0],
+    )
+    temp_reshape2_wa = tf.reshape(
+        tensor=temp_traspose_wa,
+        shape=[
+            temp_gather_wa.shape[3],
+            temp_gather_wa.shape[0],
+            temp_gather_wa.shape[1],
+            temp_gather_wa.shape[2],
+        ],
+    )
+    temp_wa = temp_reshape2_wa * wa
+    ### wb
+    temp_y1 = y1 * W
+    temp_x0 = x0
+    temp_ind_y1x0 = temp_x0 + temp_y1 + temp_ind
+    temp_gather_wb = tf.gather(
+        params=temp_image,
+        indices=temp_ind_y1x0,
+    )
+    temp_reshape1_wb = tf.reshape(
+        tensor=temp_gather_wb,
+        shape=[-1, temp_gather_wb.shape[3]],
+    )
+    temp_traspose_wb = tf.transpose(
+        a=temp_reshape1_wb,
+        perm=[1,0],
+    )
+    temp_reshape2_wb = tf.reshape(
+        tensor=temp_traspose_wb,
+        shape=[
+            temp_gather_wb.shape[3],
+            temp_gather_wb.shape[0],
+            temp_gather_wb.shape[1],
+            temp_gather_wb.shape[2],
+        ],
+    )
+    temp_wb = temp_reshape2_wb * wb
+    ### wc
+    temp_y0 = y0 * W
+    temp_x1 = x1
+    temp_ind_y0x1 = temp_x1 + temp_y0 + temp_ind
+    temp_gather_wc = tf.gather(
+        params=temp_image,
+        indices=temp_ind_y0x1,
+    )
+    temp_reshape1_wc = tf.reshape(
+        tensor=temp_gather_wc,
+        shape=[-1, temp_gather_wc.shape[3]],
+    )
+    temp_traspose_wc = tf.transpose(
+        a=temp_reshape1_wc,
+        perm=[1,0],
+    )
+    temp_reshape2_wc = tf.reshape(
+        tensor=temp_traspose_wc,
+        shape=[
+            temp_gather_wc.shape[3],
+            temp_gather_wc.shape[0],
+            temp_gather_wc.shape[1],
+            temp_gather_wc.shape[2],
+        ],
+    )
+    temp_wc = temp_reshape2_wc * wc
+    ### wd
+    temp_y1 = y1 * W
+    temp_x1 = x1
+    temp_ind_y1x1 = temp_x1 + temp_y1 + temp_ind
+    temp_gather_wd = tf.gather(
+        params=temp_image,
+        indices=temp_ind_y1x1,
+    )
+    temp_reshape1_wd = tf.reshape(
+        tensor=temp_gather_wd,
+        shape=[-1, temp_gather_wd.shape[3]],
+    )
+    temp_traspose_wd = tf.transpose(
+        a=temp_reshape1_wd,
+        perm=[1,0],
+    )
+    temp_reshape2_wd = tf.reshape(
+        tensor=temp_traspose_wd,
+        shape=[
+            temp_gather_wd.shape[3],
+            temp_gather_wd.shape[0],
+            temp_gather_wd.shape[1],
+            temp_gather_wd.shape[2],
+        ],
+    )
+    temp_wd = temp_reshape2_wd * wd
+    ### wa + wb + wc + wd
+    output_tensor = temp_wa + temp_wb + temp_wc + temp_wd
 
-    ind = TensorShape([3, 5000, 1])
-    y0 = TensorShape([3, 5000, 1])
-    x0 = TensorShape([3, 5000, 1])
-    wa = TensorShape([1, 3, 5000, 1])
-    """
-    output_tensor = \
-        image[:, ind, y0, x0] * wa \
-        + image[:, ind, y1, x0] * wb \
-        + image[:, ind, y0, x1] * wc \
-        + image[:, ind, y1, x1] * wd
     output_tensor = tf.transpose(
         a=output_tensor,
         perm=[1,2,3,0],

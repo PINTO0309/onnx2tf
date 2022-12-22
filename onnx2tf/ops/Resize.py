@@ -162,40 +162,37 @@ def make_node(
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
         if isinstance(sizes, gs.Variable):
             sizes = sizes.set_shape(input_tensor_shape.shape)
-            new_size = tf.cast(sizes[1:3], tf.int32)
+            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
-            new_size = tf.cast(sizes[1:3], tf.int32)
+            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif tf.keras.backend.is_keras_tensor(sizes):
-            new_size = tf.cast(tf.slice(sizes, [1], [2]), tf.int32)
+            new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
     elif scales is not None:
         # only scales is defined
         if hasattr(graph_node_output, 'shape') \
-            and graph_node_output.shape is not None \
-            and isinstance(graph_node_output.shape[-2], int) \
-            and isinstance(graph_node_output.shape[-1], int):
-            new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+            and graph_node_output.shape is not None:
+            numeric_bools = np.asarray([isinstance(graph_node_output.shape[-(idx+1)], int) for idx in range(input_tensor_rank-2)])
+            if numeric_bools.all():
+                new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+            else:
+                h_w_scale = scales[1:input_tensor_rank-1]
+                h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
+                new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
         else:
-            h_w_scale = scales[1:3]
-            h_w_shape = input_tensor_shape[1:3]
+            h_w_scale = scales[1:input_tensor_rank-1]
+            h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
             new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
-
-    # Tensorflow require the shape of "size" in the "tf.image.resize" must be known at
-    # graph creation time. However in the dynamic shape situation, the shape of "new_size"
-    # will be "None", the actual shape can only be determine at runtime. But we know
-    # "new_size" should always contain [h, w], therefore the shape must be 2.
-    if hasattr(new_size, 'set_shape'):
-        new_size.set_shape([2])
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
-            and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:3]]) == 0:
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:input_tensor_rank-1]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             new_values = [0] * tensor_rank
             for new_idx, idx in enumerate(convertion_table):
                 new_values[new_idx] = graph_node_output.shape[idx]
-            new_size = new_values[-3:-1]
+            new_size = new_values[-(input_tensor_rank-1):-1]
 
     if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
         or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
@@ -293,6 +290,19 @@ def make_node(
     elif coordinate_transformation_mode == "asymmetric":
         align_corners = False
         half_pixel_centers = False
+        resized_tensor = Lambda(
+            tf_resize,
+            arguments={
+                'new_size': new_size,
+                'align_corners': align_corners,
+                'half_pixel_centers': half_pixel_centers,
+                'name': graph_node.name,
+            }
+        )(input_tensor)
+        tf_op_type = tf_resize
+    elif coordinate_transformation_mode == "half_pixel":
+        align_corners = False
+        half_pixel_centers = True
         resized_tensor = Lambda(
             tf_resize,
             arguments={
