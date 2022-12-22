@@ -61,7 +61,6 @@ def make_node(
     cond = tf.constant(True)
     
     # Generation of TF OP section
-    # TODO: Add the logic to generate the TF OP. Note: ONNX If is equivalent to TF cond.
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.cond(cond, 
                 lambda: input_tensor_1, 
@@ -69,7 +68,7 @@ def make_node(
                 name=graph_node.name
         )
     
-    # 5. Generation of Debug Info section
+    # Generation of Debug Info section
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
     make_tf_node_info(
         node_info={
