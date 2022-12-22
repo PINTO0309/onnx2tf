@@ -916,16 +916,16 @@ def upsampling3d_bilinear(
     half_pixel_centers,
     name,
 ):
-    d = new_size.shape[0]
-    h = new_size.shape[1]
-    w = new_size.shape[2]
+    d = new_size[0]
+    h = new_size[1]
+    w = new_size[2]
     # Dpeth (height x width)
     resized_list = []
     unstack_img_list = tf.unstack(input_tensor, axis=1)
-    for i in unstack_img_list:
+    for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bilinear(
-                images=input_tensor,
+                images=img,
                 size=[h, w],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -936,10 +936,10 @@ def upsampling3d_bilinear(
     # Width (depth x Height)
     resized_list = []
     unstack_img_list = tf.unstack(stack_img_hw, axis=3)
-    for i in unstack_img_list:
+    for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bilinear(
-                images=input_tensor,
+                images=img,
                 size=[d, h],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
