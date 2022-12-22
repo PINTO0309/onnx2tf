@@ -153,14 +153,43 @@ def make_node(
     }
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.pad(
-            tensor=input_tensor,
-            paddings=paddings,
-            mode=mode,
-            constant_values=constant_value,
-            name= graph_node.name,
-        )
+    if mode != 'edge':
+        # mode != 'edge'
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.pad(
+                tensor=input_tensor,
+                paddings=paddings,
+                mode=mode,
+                constant_values=constant_value,
+                name= graph_node.name,
+            )
+    else:
+        # mode = 'edge'
+        input_tensor_padded = input_tensor
+        for idx, p in enumerate(paddings):
+            begin_, end_ = p[0], p[1]
+            empty_paddings = np.zeros([tensor_rank, 2], dtype=np.int32)
+            for idxe, empty_padding in enumerate(empty_paddings):
+                if idxe == idx:
+                    empty_padding[0], empty_padding[1] = begin_, end_
+                else:
+                    pass
+            if (empty_paddings == 0).all() != True:
+                # begin
+                begin_loop_count = empty_paddings[idx][0]
+                temp_empty_paddings = copy.deepcopy(empty_paddings)
+                temp_empty_paddings[idx][0] = 1
+                temp_empty_paddings[idx][1] = 0
+                for _ in range(begin_loop_count):
+                    input_tensor_padded = tf.pad(input_tensor_padded, temp_empty_paddings, 'SYMMETRIC')
+                # end
+                end_loop_count = empty_paddings[idx][1]
+                temp_empty_paddings = copy.deepcopy(empty_paddings)
+                temp_empty_paddings[idx][0] = 0
+                temp_empty_paddings[idx][1] = 1
+                for _ in range(end_loop_count):
+                    input_tensor_padded = tf.pad(input_tensor_padded, temp_empty_paddings, 'SYMMETRIC')
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor_padded
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
