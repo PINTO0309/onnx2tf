@@ -83,6 +83,8 @@ def make_node(
             tensor_rank=tensor_rank,
             before_op_output_shape_trans=before_op_output_shape_trans,
         )
+    elif axes is None and not noop_with_empty_axes:
+        axes = [idx for idx in range(tensor_rank)]
 
     # 0: False, 1: True
     keepdims = bool(graph_node.attrs.get('keepdims', 1))

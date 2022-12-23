@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     convert_axis,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -40,6 +41,12 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    graph_node_input_2 = None
+    if len(graph_node.inputs) >= 2:
+        graph_node_input_2 = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -47,23 +54,40 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
+    tensor_rank = len(input_tensor_shape)
 
-    axes = graph_node.attrs.get('axes', -1)
+    axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    if axes is not None and axes.shape is None:
+        axes = None
+
+    axes = graph_node.attrs.get('axes', axes)
+    noop_with_empty_axes = bool(graph_node.attrs.get('noop_with_empty_axes', 0))
+    if noop_with_empty_axes:
+        error_msg = f'' +\
+            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            f'TensorFlow does not support noop_with_empty_axes=1 (True).'
+        print(error_msg)
+        assert not noop_with_empty_axes, error_msg
+
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
         axes = [
             convert_axis(
                 axis=idx,
-                tensor_rank=input_tensor_rank,
+                tensor_rank=tensor_rank,
                 before_op_output_shape_trans=before_op_output_shape_trans,
             ) for idx in axes
         ]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
         axes = convert_axis(
             axis=axes,
-            tensor_rank=input_tensor_rank,
+            tensor_rank=tensor_rank,
             before_op_output_shape_trans=before_op_output_shape_trans,
         )
+    elif axes is None and not noop_with_empty_axes:
+        axes = [idx for idx in range(tensor_rank)]
+
+    # 0: False, 1: True
     keepdims = bool(graph_node.attrs.get('keepdims', 1))
 
     # Preserving Graph Structure (Dict)
