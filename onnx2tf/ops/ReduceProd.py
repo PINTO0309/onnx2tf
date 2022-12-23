@@ -107,7 +107,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = reduceproded_tensor
 
     # Generation of Debug Info
-    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)}
+    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)} if axes is not None else {"axis": None}
     tf_inputs['input_tensor'] = input_tensor
     tf_inputs['keepdims'] = keepdims
 
