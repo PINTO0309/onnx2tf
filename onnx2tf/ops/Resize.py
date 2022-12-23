@@ -19,8 +19,12 @@ from onnx2tf.utils.common_functions import (
     upsampling3d_bilinear,
     upsampling3d_bicubic,
     upsampling3d_nearest,
+    pre_process_transpose,
+    post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 @print_node_info
@@ -53,6 +57,44 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
+        if isinstance(input_tensor, gs.Variable) else input_tensor
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
+    # Workaround to avoid as many Resize failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ]
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 4:
+                # 2D
+                input_tensor = tf.transpose(
+                    a=input_tensor,
+                    perm=[0,2,3,1],
+                )
+                before_op_output_shape_trans = True
+            elif len(onnx_input_shape) == 5:
+                # 3D
+                input_tensor = tf.transpose(
+                    a=input_tensor,
+                    perm=[0,2,3,4,1],
+                )
+                before_op_output_shape_trans = True
+
     roi = None
     scales = None
     if len(graph_node.inputs) >= 2:
@@ -81,10 +123,6 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
-        if isinstance(input_tensor, gs.Variable) else input_tensor
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
     roi = tf_layers_dict[roi.name]['tf_node'] \
         if (isinstance(roi, gs.Variable) and roi.name != '') else roi
     scales = tf_layers_dict[scales.name]['tf_node'] \
@@ -251,6 +289,14 @@ def make_node(
         **kwargs,
     )
 
+    # Pre-process transpose
+    input_tensor = pre_process_transpose(
+        value_before_transpose=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+
     resized_tensor = None
     boxes = None
     box_indices = None
@@ -323,6 +369,14 @@ def make_node(
         tf_op_type = tf.image.resize
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
