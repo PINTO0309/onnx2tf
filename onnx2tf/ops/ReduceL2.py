@@ -124,9 +124,10 @@ def make_node(
     # Generation of TF OP
     axes = list(axes) if axes is not None else None
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.reduce_euclidean_norm(
-            input_tensor=input_tensor,
-            axis=axes,
+        tf.norm(
+            tensor=input_tensor,
+            ord=2,
+            axis=axes if len(axes) > 1 else axes[0],
             keepdims=keepdims,
             name=graph_node.name,
         )
