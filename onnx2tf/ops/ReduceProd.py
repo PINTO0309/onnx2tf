@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -36,17 +37,36 @@ def make_node(
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1
 
-    graph_node_input = get_constant_or_variable(
+    graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    graph_node_input_2 = None
+    if len(graph_node.inputs) >= 2:
+        graph_node_input_2 = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    tensor_rank = len(graph_node_input.shape)
+    tensor_rank = len(graph_node_input_1.shape)
 
-    axes = graph_node.attrs.get('axes', [-1])
+    axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    if axes is not None and axes.shape is None:
+        axes = None
+
+    axes = graph_node.attrs.get('axes', axes)
+    noop_with_empty_axes = bool(graph_node.attrs.get('noop_with_empty_axes', 0))
+    if noop_with_empty_axes:
+        error_msg = f'' +\
+            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            f'TensorFlow does not support noop_with_empty_axes=1 (True).'
+        print(error_msg)
+        assert not noop_with_empty_axes, error_msg
+
     # NCHW->NHWC, NCDHW->NDHWC
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
         axes = [
@@ -74,8 +94,8 @@ def make_node(
     }
 
     # Generation of TF OP
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
 
     reduceproded_tensor = input_tensor
     reduceproded_tensor = tf.math.reduce_prod(
@@ -87,7 +107,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = reduceproded_tensor
 
     # Generation of Debug Info
-    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)}
+    tf_inputs = {f"axis{idx}": value for idx, value in enumerate(axes)} if axes is not None else {"axis": None}
     tf_inputs['input_tensor'] = input_tensor
     tf_inputs['keepdims'] = keepdims
 
