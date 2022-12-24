@@ -172,7 +172,7 @@ def make_node(
     if tensor_rank >= 6 and len(squeezed_original_shapes) <= 5:
         # Special Transpose
         # Suppresses as much as possible the conversion of transposes
-        # of 5 or more dimensions into FlexTransposes
+        # of 6 or more dimensions into FlexTransposes
         remove_one_target_perm = [
             idx for idx in perm if idx not in x_shape_one_dims
         ]
