@@ -192,7 +192,9 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.reshape(
                 tensor=transposed_no_one_data,
-                shape=output_shape,
+                shape=[
+                    dim if not isinstance(dim, str) else -1 for dim in output_shape
+                ],
             )
     else:
         # Normal Transpose
