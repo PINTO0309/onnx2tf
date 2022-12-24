@@ -163,13 +163,16 @@ def make_node(
         idx for idx in range(len(input_tensor_shape)) \
             if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx]==1
     ]
+    x_shape_none_dims_count = len(
+        [dim for dim in input_tensor_shape if not isinstance(dim, int) or dim < 1]
+    )
     # Delete dimension with 1 element
     squeezed_original_x = tf.squeeze(input_tensor, x_shape_one_dims)
     # Obtain a shape with the dimension with 1 element removed
     squeezed_original_shapes = squeezed_original_x.shape
 
     # Generation of TF OP
-    if tensor_rank >= 6 and len(squeezed_original_shapes) <= 5:
+    if tensor_rank >= 6 and len(squeezed_original_shapes) <= 5 and x_shape_none_dims_count < 2:
         # Special Transpose
         # Suppresses as much as possible the conversion of transposes
         # of 6 or more dimensions into FlexTransposes
