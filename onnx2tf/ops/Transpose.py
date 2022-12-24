@@ -44,7 +44,7 @@ def make_node(
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
@@ -84,7 +84,7 @@ def make_node(
             # of the final output tensor of ONNX with the shape
             # of the input tensor of TF and transpose to match the shape
             # of the final output tensor on the ONNX side
-            onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
+            onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
             tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
@@ -114,7 +114,7 @@ def make_node(
             # When a zero-dimensional transposition occurs, compare the shape
             # of the final output tensor of ONNX with the shape of the input tensor
             # of TF and transpose to match the shape of the final output tensor on the ONNX side
-            onnx_output_shape = [s if not isinstance(s, str) else None for s in shape]
+            onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
             tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
@@ -136,7 +136,7 @@ def make_node(
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': output_shape,
         'dtype': dtype,
     }
 
@@ -156,13 +156,54 @@ def make_node(
         **kwargs,
     )
 
+    # Special Transpose
+    # https://zenn.dev/pinto0309/scraps/cfb59856ac0453
+    # Get dimension with 1 element
+    x_shape_one_dims = [
+        idx for idx in range(len(input_tensor_shape)) \
+            if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx]==1
+    ]
+    x_shape_none_dims_count = len(
+        [dim for dim in input_tensor_shape if not isinstance(dim, int) or dim < 1]
+    )
+    # Delete dimension with 1 element
+    squeezed_original_x = tf.squeeze(input_tensor, x_shape_one_dims)
+    # Obtain a shape with the dimension with 1 element removed
+    squeezed_original_shapes = squeezed_original_x.shape
+
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.transpose(
-            a=input_tensor,
-            perm=perm,
-            name=graph_node.name,
-        )
+    if tensor_rank >= 6 and len(squeezed_original_shapes) <= 5 and x_shape_none_dims_count < 2:
+        # Special Transpose
+        # Suppresses as much as possible the conversion of transposes
+        # of 6 or more dimensions into FlexTransposes
+        remove_one_target_perm = [
+            idx for idx in perm if idx not in x_shape_one_dims
+        ]
+        sorted_remove_one_target_perm = sorted(remove_one_target_perm)
+        replaced_remove_one_target_perm = [
+            sorted_remove_one_target_perm.index(idx) \
+                for idx in remove_one_target_perm
+        ]
+        transposed_no_one_data = \
+            tf.transpose(
+                a=squeezed_original_x,
+                perm=replaced_remove_one_target_perm,
+            )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.reshape(
+                tensor=transposed_no_one_data,
+                shape=[
+                    dim if not isinstance(dim, str) else -1 for dim in output_shape
+                ],
+            )
+    else:
+        # Normal Transpose
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.transpose(
+                a=input_tensor,
+                perm=perm,
+                name=graph_node.name,
+            )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
