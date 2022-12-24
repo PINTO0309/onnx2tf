@@ -83,6 +83,10 @@ def make_node(
         cal_shape = (1, -1)
     elif len(graph_node_output.shape) == 2 and axis == input_tensor_rank - 1:
         cal_shape = (1, -1)
+    elif input_tensor_shape[0] is None \
+        and len([idx for idx in input_tensor_shape[1:] if idx is not None]) == input_tensor_rank - 1 \
+        and axis == 1:
+        cal_shape = (-1, np.prod(input_tensor_shape[1:]))
     else:
         cal_shape = (
             tf.reduce_prod(input_tensor_shape[0:axis]),
