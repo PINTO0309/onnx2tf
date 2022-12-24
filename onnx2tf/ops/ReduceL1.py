@@ -122,12 +122,12 @@ def make_node(
     )
 
     # Generation of TF OP
-    axis = list(axes) if axes is not None else None
+    axes = list(axes) if axes is not None else None
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.norm(
             tensor=input_tensor,
-            ord='euclidean',
-            axis=axis,
+            ord=1,
+            axis=axes if len(axes) > 1 else axes[0],
             keepdims=keepdims,
             name=graph_node.name,
         )
@@ -148,7 +148,7 @@ def make_node(
                 'tf_inputs': {
                     'tensor': input_tensor,
                     'ord': 'euclidean',
-                    'axis': axis,
+                    'axis': axes,
                     'keepdims': keepdims,
                 },
                 'tf_outputs': {
