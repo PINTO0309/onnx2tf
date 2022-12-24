@@ -169,7 +169,7 @@ def make_node(
     squeezed_original_shapes = squeezed_original_x.shape
 
     # Generation of TF OP
-    if tensor_rank >= 5 and len(squeezed_original_shapes) <= 4:
+    if tensor_rank >= 6 and len(squeezed_original_shapes) <= 5:
         # Special Transpose
         # Suppresses as much as possible the conversion of transposes
         # of 5 or more dimensions into FlexTransposes
