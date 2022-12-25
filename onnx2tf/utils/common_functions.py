@@ -725,14 +725,14 @@ def pre_explicit_broadcast(
         squeezed_input_tensor_1_shape = [idx for idx in input_tensor_1_shape if idx != 1]
         squeezed_input_tensor_1_shape_rank = len(squeezed_input_tensor_1_shape)
         input_tensor_2_shape = input_tensor_2.shape
-        if squeezed_input_tensor_1_shape_rank == 1:
+        if squeezed_input_tensor_1_shape_rank == 1 and squeezed_input_tensor_1_shape[0] == input_tensor_2_shape[-1]:
             input_tensor_1 = tf.squeeze(input_tensor_1)
         else:
             input_tensor_2_shape = input_tensor_2.shape
             squeezed_input_tensor_2_shape = [idx for idx in input_tensor_2_shape if idx != 1]
             squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
             input_tensor_1_shape = input_tensor_1.shape
-            if squeezed_input_tensor_2_shape_rank == 1:
+            if squeezed_input_tensor_2_shape_rank == 1 and squeezed_input_tensor_2_shape[0] == input_tensor_1_shape[-1]:
                 input_tensor_2 = tf.squeeze(input_tensor_2)
     return input_tensor_1, input_tensor_2
 
