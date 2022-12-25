@@ -685,13 +685,65 @@ def broadcast_validity_check(
     return result
 
 
+def pre_explicit_broadcast(
+    *,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+) -> Tuple[Any, Any]:
+    """Shrink a tensor whose input_tensor_1 and input_tensor_2
+    have the same rank and all but one dimension is 1.
+
+    Parameters
+    ----------
+    input_tensor_1: Any
+        gs.Variable or np.ndarray
+
+    input_tensor_2: Any
+        gs.Variable or np.ndarray
+
+    Returns
+    ----------
+    input_tensor_1: Any
+        gs.Variable or np.ndarray
+
+    input_tensor_2: Any
+        gs.Variable or np.ndarray
+    """
+    # e.g.
+    # input:
+    #   input_tensor_1: [1,80,80,12]
+    #   input_tensor_2: [1,12,1,1]
+    # output:
+    #   input_tensor_1: [1,80,80,12]
+    #   input_tensor_2: [12]
+    if input_tensor_1.shape is not None \
+        and input_tensor_2.shape is not None \
+        and None not in input_tensor_1.shape \
+        and None not in input_tensor_2.shape \
+        and len(input_tensor_1.shape) == len(input_tensor_2.shape):
+        input_tensor_1_shape = input_tensor_1.shape
+        squeezed_input_tensor_1_shape = [idx for idx in input_tensor_1_shape if idx != 1]
+        squeezed_input_tensor_1_shape_rank = len(squeezed_input_tensor_1_shape)
+        input_tensor_2_shape = input_tensor_2.shape
+        if squeezed_input_tensor_1_shape_rank == 1:
+            input_tensor_1 = tf.squeeze(input_tensor_1)
+        else:
+            input_tensor_2_shape = input_tensor_2.shape
+            squeezed_input_tensor_2_shape = [idx for idx in input_tensor_2_shape if idx != 1]
+            squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
+            input_tensor_1_shape = input_tensor_1.shape
+            if squeezed_input_tensor_2_shape_rank == 1:
+                input_tensor_2 = tf.squeeze(input_tensor_2)
+    return input_tensor_1, input_tensor_2
+
+
 def explicit_broadcast(
     *,
     const_or_var_1: Any,
     const_or_var_2: Any,
     graph_node: Optional[gs.Node] = None,
     tf_layers_dict: dict = None,
-):
+) -> Tuple[Any, Any]:
     """Of the two tensors in the argument, the one with the lower dimensionality
     is broadcast to match the one with the higher dimensionality.
 
@@ -705,10 +757,10 @@ def explicit_broadcast(
 
     Returns
     ----------
-    const_or_var_1:
+    const_or_var_1: Any
         gs.Variable or np.ndarray
 
-    const_or_var_2
+    const_or_var_2: Any
         gs.Variable or np.ndarray
     """
     graph_node_input_name1 = None

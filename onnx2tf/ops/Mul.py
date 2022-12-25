@@ -11,6 +11,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    pre_explicit_broadcast,
     explicit_broadcast,
     pre_process_transpose,
     post_process_transpose,
@@ -82,6 +83,11 @@ def make_node(
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
         )
+
+    input_tensor_1, input_tensor_2 = pre_explicit_broadcast(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+    )
 
     input_tensor_1, input_tensor_2 = explicit_broadcast(
         const_or_var_1=input_tensor_1,
