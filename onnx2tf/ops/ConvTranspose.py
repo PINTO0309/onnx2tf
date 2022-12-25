@@ -1,3 +1,4 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
@@ -5,6 +6,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
     get_constant_or_variable,
     get_weights_constant_or_variable,
     print_node_info,
@@ -17,6 +19,7 @@ from onnx2tf.utils.colors import Color
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -81,7 +84,7 @@ def make_node(
         output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
         graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
             [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
-              1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
+                1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
 
     # convert ONNX convolution output shape to TF convolution output shape
     converted_axis = []
@@ -124,7 +127,7 @@ def make_node(
         print(error_msg)
         assert False, error_msg
 
-   # get corresponding function in TF
+    # get corresponding function in TF
     if spatial_size == 1:
         conv_func = tf.nn.conv1d_transpose
     elif spatial_size == 2:
@@ -147,27 +150,62 @@ def make_node(
         input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
         weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
 
-    convolved = []
-    for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits):
-        split_conv_output_shape = conv_output_shape[:-1] + [weight_split.shape[spatial_size]]
+    # Param replacement - OP replacement
+    op_rep_params = kwargs.get('op_rep_params', [])
+    output_shape_ = None
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == 'op':
+            output_shape_ = op_rep_param.get('output_shape', None)
+            strides_ = op_rep_param.get('strides', None)
+            padding_ = op_rep_param.get('padding', 'SAME')
+            dilations_ = op_rep_param.get('dilations', None)
 
+            if output_shape_ is None or strides_ is None or group > 1:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'When replacing ConvTranspose OP, "filters", "output_shape" and "strides" must be specified in replace.json. ' +
+                    f'Also, parameter substitution is not supported when group > 1. ' +
+                    f'Check the specification of tf.nn.convXd_transpose in TensorFlow and specify the appropriate parameters. ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv1d_transpose or ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose or ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv3d_transpose'
+                )
+                sys.exit(1)
+
+    conv_rs = None
+    if output_shape_ is None:
+        convolved = []
+        for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits):
+            split_conv_output_shape = conv_output_shape[:-1] + [weight_split.shape[spatial_size]]
+
+            conv_rs = conv_func(
+                input=input_tensor_split,
+                filters=weight_split,
+                output_shape=split_conv_output_shape,
+                strides=strides,
+                padding=pad_mode,
+                dilations=dilations,
+            )
+            convolved.append(conv_rs)
+
+        if group > 1:
+            # concatenate in case of grouped convolution
+            conv_rs = tf.concat(values=convolved, axis=-1)
+    else:
+        # OP replacement
         conv_rs = conv_func(
-            input=input_tensor_split,
-            filters=weight_split,
-            output_shape=split_conv_output_shape,
-            strides=strides,
-            dilations=dilations,
-            padding=pad_mode,
+            input=input_tensor_splits[0],
+            filters=weight_splits[0],
+            output_shape=output_shape_,
+            strides=strides_,
+            padding=padding_,
+            dilations=dilations_,
         )
-        convolved.append(conv_rs)
 
-    if group > 1:
-        # concatenate in case of grouped convolution 
-        conv_rs = tf.concat(values=convolved, axis=-1)
     if input_bias is not None:
         # add bias to combined convolution
         conv_rs = tf.add(conv_rs, input_bias)
-    
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
