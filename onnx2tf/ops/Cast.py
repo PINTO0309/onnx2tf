@@ -7,12 +7,14 @@ from onnx import TensorProto
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
-    get_replacement_parameter,
     replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
@@ -78,6 +80,14 @@ def make_node(
         **kwargs,
     )
 
+    # Pre-process transpose
+    input_tensor = pre_process_transpose(
+        value_before_transpose=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.cast(
@@ -85,6 +95,14 @@ def make_node(
             dtype=ONNX_DTYPES_TO_TF_DTYPES[to],
             name=graph_node.name,
         )
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

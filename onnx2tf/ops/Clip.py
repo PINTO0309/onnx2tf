@@ -9,11 +9,15 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -96,6 +100,13 @@ def make_node(
     else:
         max_value = max_value_node
 
+    # Pre-process transpose
+    features = pre_process_transpose(
+        value_before_transpose=features,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
 
     tf_op_type = None
     if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
@@ -134,6 +145,14 @@ def make_node(
                     y=max_value,
                 )
             tf_op_type = tf.minimum
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
