@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    pre_process_transpose,
     post_process_transpose,
 )
 
@@ -90,7 +91,6 @@ def make_node(
         values = new_values
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
-
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
@@ -118,6 +118,18 @@ def make_node(
     }
 
     # Generation of TF OP
+
+    # Pre-process transpose
+    new_values = []
+    for graph_node_input, value in zip(graph_node.inputs, values):
+        value = pre_process_transpose(
+            value_before_transpose=value,
+            param_target='inputs',
+            param_name=graph_node_input.name,
+            **kwargs,
+        )
+        new_values.append(value)
+    values = new_values
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
     values = [
