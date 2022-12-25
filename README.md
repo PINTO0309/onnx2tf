@@ -1055,21 +1055,22 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |36|resnet50-v1-12.onnx|:heavy_check_mark:|
 |37|resnet50-v2-7.onnx|:heavy_check_mark:|
 |38|retinanet-9.onnx|:heavy_check_mark:|
-|39|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|40|super-resolution-10.onnx|:heavy_check_mark:|
-|41|tinyyolov2-8.onnx|:heavy_check_mark:|
-|42|version-RFB-640.onnx|:heavy_check_mark:|
-|43|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|44|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|45|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|46|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|47|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|48|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|49|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|50|yolox_s.onnx|:heavy_check_mark:|
-|51|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|52|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|53|zfnet512-12.onnx|:heavy_check_mark:|
+|39|sinet_320_op.onnx|:heavy_check_mark:|
+|40|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|41|super-resolution-10.onnx|:heavy_check_mark:|
+|42|tinyyolov2-8.onnx|:heavy_check_mark:|
+|43|version-RFB-640.onnx|:heavy_check_mark:|
+|44|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|45|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|46|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|47|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|48|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|49|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|50|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|51|yolox_s.onnx|:heavy_check_mark:|
+|52|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|53|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|54|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
