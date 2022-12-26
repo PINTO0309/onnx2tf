@@ -5,12 +5,14 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
-    get_replacement_parameter,
     replace_parameter,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
@@ -64,6 +66,27 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     z = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
+
+    # Pre-process transpose
+    x = pre_process_transpose(
+        value_before_transpose=x,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    y = pre_process_transpose(
+        value_before_transpose=y,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+    z = pre_process_transpose(
+        value_before_transpose=z,
+        param_target='inputs',
+        param_name=graph_node.inputs[2].name,
+        **kwargs,
+    )
+
     input_tensor_x_dtype = x.dtype
     x = tf.keras.layers.Flatten()(x)
     # The Flatten API changes data type from tf.float64 to tf.float32
@@ -150,6 +173,14 @@ def make_node(
         result = alpha * tf.matmul(x, y) + beta * z
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.cast(result, input_tensor_x_dtype)
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
