@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
+    pre_explicit_broadcast,
     explicit_broadcast,
     make_tf_node_info,
 )
@@ -55,13 +56,17 @@ def make_node(
 
     replace_prelu_to_pseudo_prelu = kwargs['replace_prelu_to_pseudo_prelu']
 
+    _, slope = pre_explicit_broadcast(
+        input_tensor_1=input_tensor,
+        input_tensor_2=slope,
+    )
+
     _, slope = explicit_broadcast(
         const_or_var_1=input_tensor,
         const_or_var_2=slope,
         graph_node=graph_node,
         tf_layers_dict= tf_layers_dict
     )
-    slope_rank = len(slope.shape)
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
