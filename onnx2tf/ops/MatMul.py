@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
 )
@@ -16,6 +17,7 @@ from onnx2tf.utils.common_functions import (
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
