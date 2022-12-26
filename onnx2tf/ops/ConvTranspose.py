@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     convert_reverse_axis,
     make_tf_node_info,
+    calc_output_shape_conv_transpose,
 )
 from onnx2tf.utils.colors import Color
 
@@ -80,8 +81,8 @@ def make_node(
 
     # get ONNX convolution output shape
     graph_node_output_shape = graph_node.attrs.get('output_shape', graph_node_output.shape)
+    output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
     if graph_node_output_shape is None:
-        output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
         graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
             [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
                 1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
@@ -104,13 +105,21 @@ def make_node(
     # select TF padding mode
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     pad_mode = 'VALID'
+
+    # need to calculate output shape for valid mode
+    tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
+                                                       kernel=kernel_shape,
+                                                       pad_mode='valid',
+                                                       output_padding=output_padding,
+                                                       stride=strides,
+                                                       dilation=dilations)
+    tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
+
     if auto_pad == 'NOTSET':
-        if graph_node_input_shape[2:] == graph_node_output_shape[2:]:
-            pad_mode = "SAME"
-        else:
-            # TODO: check for valid explicit pads.
-            pad_mode = 'VALID'
+        # pad_mode SAME generates flex operation, use VALID always
+        pad_mode = 'VALID'
     elif auto_pad == "SAME_UPPER":
+        # TODO: this may generates flex operation, need to check
         pad_mode = "SAME"
     elif auto_pad == "VALID":
         pad_mode = "VALID"
@@ -174,7 +183,7 @@ def make_node(
     conv_rs = None
     convolved = []
     for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits):
-        split_conv_output_shape = conv_output_shape[:-1] + [weight_split.shape[spatial_size]]
+        split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
         if output_shape_ is None:
             # Normal ConvTranspose
             conv_rs = conv_func(
@@ -185,6 +194,7 @@ def make_node(
                 padding=pad_mode,
                 dilations=dilations,
             )
+
         else:
             # OP replacement
             conv_rs = conv_func(
@@ -195,6 +205,7 @@ def make_node(
                 padding=padding_,
                 dilations=dilations_,
             )
+
         convolved.append(conv_rs)
 
     if group > 1:
@@ -204,6 +215,15 @@ def make_node(
     if input_bias is not None:
         # add bias to combined convolution
         conv_rs = tf.add(conv_rs, input_bias)
+
+    if pad_mode == "VALID":
+        # TODO: this part may not work properly when OP replacement is used, need to check
+        # remove pads
+        begin = [0] + pads[:spatial_size] + [0]
+
+        # add slice if needed
+        if max(begin) > 0:
+            conv_rs = tf.slice(conv_rs, begin=begin, size=conv_output_shape)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

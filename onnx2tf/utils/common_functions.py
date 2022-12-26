@@ -8,6 +8,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
+from tensorflow.python.keras.utils import conv_utils
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.colors import Color
 from typing import Any, List, Optional, Union, Tuple
@@ -2160,3 +2161,18 @@ def shape_unmatched_special_avoidance_workaround(
         input_tensor_2 = values[1]
 
     return input_tensor_1, input_tensor_2
+
+def calc_output_shape_conv_transpose(input_shape, kernel, pad_mode, output_padding, stride, dilation):
+    out_height = conv_utils.deconv_output_length(input_shape[0],
+                                                 kernel[0],
+                                                 padding=pad_mode.lower(),
+                                                 output_padding=output_padding[0],
+                                                 stride=stride[0],
+                                                 dilation=dilation[0])
+    out_width = conv_utils.deconv_output_length(input_shape[1],
+                                                kernel[1],
+                                                padding=pad_mode.lower(),
+                                                output_padding=output_padding[1],
+                                                stride=stride[1],
+                                                dilation=dilation[1])
+    return [out_height, out_width]
