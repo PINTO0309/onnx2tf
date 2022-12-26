@@ -115,13 +115,10 @@ def make_node(
                                                        dilation=dilations)
 
     if auto_pad == 'NOTSET':
-        if tf_output_shape == graph_node_output_shape[2:] \
-                and tf_output_shape == [i * s for i, s in zip(graph_node_input_shape[2:], strides)]:
-            pad_mode = "SAME"
-        else:
-            # TODO: check for valid explicit pads.
-            pad_mode = 'VALID'
+        # pad_mode SAME generates flex operation, use VALID always
+        pad_mode = 'VALID'
     elif auto_pad == "SAME_UPPER":
+        # TODO: this may generates flex operation, need to check
         pad_mode = "SAME"
     elif auto_pad == "VALID":
         pad_mode = "VALID"
