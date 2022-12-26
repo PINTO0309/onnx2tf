@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     convert_reverse_axis,
     make_tf_node_info,
+    calc_output_shape_conv_transpose,
 )
 from onnx2tf.utils.colors import Color
 
@@ -80,8 +81,8 @@ def make_node(
 
     # get ONNX convolution output shape
     graph_node_output_shape = graph_node.attrs.get('output_shape', graph_node_output.shape)
+    output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
     if graph_node_output_shape is None:
-        output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
         graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
             [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
                 1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
@@ -104,8 +105,17 @@ def make_node(
     # select TF padding mode
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     pad_mode = 'VALID'
+
+    # calculate output shape of tensorflow conv_transpose
+    tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
+                                                       kernel=kernel_shape,
+                                                       pad_mode='same',
+                                                       output_padding=output_padding,
+                                                       stride=strides,
+                                                       dilation=dilations)
+
     if auto_pad == 'NOTSET':
-        if graph_node_input_shape[2:] == graph_node_output_shape[2:]:
+        if tf_output_shape == graph_node_output_shape[2:]:
             pad_mode = "SAME"
         else:
             # TODO: check for valid explicit pads.
@@ -126,6 +136,16 @@ def make_node(
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
+
+    if pad_mode == "VALID":
+        # need to re-calculate output shape for valid mode
+        tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
+                                                           kernel=kernel_shape,
+                                                           pad_mode='valid',
+                                                           output_padding=output_padding,
+                                                           stride=strides,
+                                                           dilation=dilations)
+        tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
 
     # get corresponding function in TF
     if spatial_size == 1:
@@ -180,11 +200,12 @@ def make_node(
             conv_rs = conv_func(
                 input=input_tensor_split,
                 filters=weight_split,
-                output_shape=split_conv_output_shape,
+                output_shape=tf_output_shape,
                 strides=strides,
                 padding=pad_mode,
                 dilations=dilations,
             )
+
         else:
             # OP replacement
             conv_rs = conv_func(
@@ -195,6 +216,7 @@ def make_node(
                 padding=padding_,
                 dilations=dilations_,
             )
+
         convolved.append(conv_rs)
 
     if group > 1:
@@ -204,6 +226,12 @@ def make_node(
     if input_bias is not None:
         # add bias to combined convolution
         conv_rs = tf.add(conv_rs, input_bias)
+
+    if pad_mode == "VALID":
+        # TODO: this part may not work properly when OP replacement is used, need to check
+        # remove pads
+        begin = [0] + pads[:spatial_size] + [0]
+        conv_rs = tf.slice(conv_rs, begin=begin, size=conv_output_shape)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
