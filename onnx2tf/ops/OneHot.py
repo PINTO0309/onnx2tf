@@ -126,7 +126,7 @@ def make_node(
     values = pre_process_transpose(
         value_before_transpose=values,
         param_target='inputs',
-        param_name=graph_node.inputs[1].name,
+        param_name=graph_node.inputs[2].name,
         **kwargs,
     )
 

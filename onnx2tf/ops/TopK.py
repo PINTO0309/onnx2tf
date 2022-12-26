@@ -10,11 +10,15 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -83,6 +87,14 @@ def make_node(
         'dtype': Indices_dtype,
     }
 
+    # Pre-process transpose
+    input_tensor = pre_process_transpose(
+        value_before_transpose=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+
     # Generation of TF OP
     topked_values = None
     topked_indices = None
@@ -128,6 +140,20 @@ def make_node(
 
     tf_layers_dict[Values.name]['tf_node'] = topked_values
     tf_layers_dict[Indices.name]['tf_node'] = topked_indices
+
+    # Post-process transpose
+    tf_layers_dict[Values.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[Values.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
+    tf_layers_dict[Indices.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[Indices.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[1].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[Values.name]['tf_node_info'] = \

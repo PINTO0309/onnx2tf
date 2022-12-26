@@ -12,12 +12,16 @@ from onnx2tf.utils.common_functions import (
     process_neg_idx_along_axis,
     make_tf_node_info,
     convert_axis,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
 
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -63,12 +67,33 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    # Pre-process transpose
+    input_tensor = pre_process_transpose(
+        value_before_transpose=input_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     indices_tensor = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    # Pre-process transpose
+    indices_tensor = pre_process_transpose(
+        value_before_transpose=indices_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
     updates_tensor = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
+    # Pre-process transpose
+    updates_tensor = pre_process_transpose(
+        value_before_transpose=updates_tensor,
+        param_target='inputs',
+        param_name=graph_node.inputs[2].name,
+        **kwargs,
+    )
     updates_tensor_shape = updates_tensor.shape
     updates_tensor_rank = len(updates_tensor_shape)
 
@@ -126,6 +151,14 @@ def make_node(
     output = tf.cast(output, input_tensor.dtype)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = output
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
