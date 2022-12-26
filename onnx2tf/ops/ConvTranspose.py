@@ -106,6 +106,15 @@ def make_node(
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     pad_mode = 'VALID'
 
+    # need to calculate output shape for valid mode
+    tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
+                                                       kernel=kernel_shape,
+                                                       pad_mode='valid',
+                                                       output_padding=output_padding,
+                                                       stride=strides,
+                                                       dilation=dilations)
+    tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
+
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
         pad_mode = 'VALID'
@@ -126,16 +135,6 @@ def make_node(
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
-
-    if pad_mode == "VALID":
-        # need to re-calculate output shape for valid mode
-        tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
-                                                           kernel=kernel_shape,
-                                                           pad_mode='valid',
-                                                           output_padding=output_padding,
-                                                           stride=strides,
-                                                           dilation=dilations)
-        tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
 
     # get corresponding function in TF
     if spatial_size == 1:
@@ -221,7 +220,10 @@ def make_node(
         # TODO: this part may not work properly when OP replacement is used, need to check
         # remove pads
         begin = [0] + pads[:spatial_size] + [0]
-        conv_rs = tf.slice(conv_rs, begin=begin, size=conv_output_shape)
+
+        # add slice if needed
+        if max(begin) > 0:
+            conv_rs = tf.slice(conv_rs, begin=begin, size=conv_output_shape)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
