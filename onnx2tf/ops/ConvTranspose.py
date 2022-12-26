@@ -106,14 +106,6 @@ def make_node(
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     pad_mode = 'VALID'
 
-    # calculate output shape of tensorflow conv_transpose
-    tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
-                                                       kernel=kernel_shape,
-                                                       pad_mode='same',
-                                                       output_padding=output_padding,
-                                                       stride=strides,
-                                                       dilation=dilations)
-
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
         pad_mode = 'VALID'
