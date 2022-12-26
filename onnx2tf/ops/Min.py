@@ -9,11 +9,15 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    get_replacement_parameter,
+    pre_process_transpose,
+    post_process_transpose,
 )
 
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -60,12 +64,32 @@ def make_node(
         'dtype': dtype,
     }
 
+    # Pre-process transpose
+    new_values = []
+    for graph_node_input, value in zip(graph_node.inputs, values):
+        value = pre_process_transpose(
+            value_before_transpose=value,
+            param_target='inputs',
+            param_name=graph_node_input.name,
+            **kwargs,
+        )
+        new_values.append(value)
+    values = new_values
+
     # Generation of TF OP
     minimumed_tesnor = values[0]
     for i in range(1, len(values)):
         minimumed_tesnor = tf.minimum(minimumed_tesnor, values[i])
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = minimumed_tesnor
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        param_target='outputs',
+        param_name=graph_node.outputs[0].name,
+        **kwargs,
+    )
 
     # Generation of Debug Info
     tf_inputs = {f"input{idx}": value for idx, value in enumerate(values)}
