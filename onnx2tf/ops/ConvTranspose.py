@@ -183,13 +183,13 @@ def make_node(
     conv_rs = None
     convolved = []
     for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits):
-        split_conv_output_shape = conv_output_shape[:-1] + [weight_split.shape[spatial_size]]
+        split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
         if output_shape_ is None:
             # Normal ConvTranspose
             conv_rs = conv_func(
                 input=input_tensor_split,
                 filters=weight_split,
-                output_shape=tf_output_shape,
+                output_shape=split_conv_output_shape,
                 strides=strides,
                 padding=pad_mode,
                 dilations=dilations,
