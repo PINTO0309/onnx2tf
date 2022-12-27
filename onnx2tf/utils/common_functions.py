@@ -710,33 +710,68 @@ def pre_explicit_broadcast(
     input_tensor_2: Any
         gs.Variable or np.ndarray
     """
-    # e.g.
+    # e.g.1
     # input:
     #   input_tensor_1: [1,80,80,12]
     #   input_tensor_2: [1,12,1,1]
     # output:
     #   input_tensor_1: [1,80,80,12]
     #   input_tensor_2: [12]
+    #
+    # e.g.2
+    # input:
+    #   input_tensor_1: [1,2,3,4]
+    #   input_tensor_2: [1,3,1,1]
+    # output:
+    #   input_tensor_1: [1,2,3,4]
+    #   input_tensor_2: [3,1]
     if input_tensor_1.shape is not None \
         and input_tensor_2.shape is not None \
         and None not in input_tensor_1.shape \
         and None not in input_tensor_2.shape \
         and len(input_tensor_1.shape) == len(input_tensor_2.shape):
+
         input_tensor_1_shape = input_tensor_1.shape
         squeezed_input_tensor_1_shape = [idx for idx in input_tensor_1_shape if idx != 1]
         squeezed_input_tensor_1_shape_rank = len(squeezed_input_tensor_1_shape)
         input_tensor_2_shape = input_tensor_2.shape
         if squeezed_input_tensor_1_shape_rank == 1 \
-            and squeezed_input_tensor_1_shape[0] == input_tensor_2_shape[-1]:
+            and squeezed_input_tensor_1_shape[0] in input_tensor_2_shape:
             input_tensor_1 = tf.squeeze(input_tensor_1)
+            reversed_input_tensor_2_shape = []
+            if isinstance(input_tensor_2_shape, list):
+                reversed_input_tensor_2_shape = input_tensor_2_shape.reverse()
+            elif isinstance(input_tensor_2_shape, np.ndarray):
+                reversed_input_tensor_2_shape = input_tensor_2_shape[::-1].tolist()
+            elif isinstance(input_tensor_2_shape, tf.TensorShape):
+                reversed_input_tensor_2_shape = list(input_tensor_2_shape[::-1])
+            expand_count = reversed_input_tensor_2_shape.index(squeezed_input_tensor_1_shape[0])
+            for _ in range(expand_count):
+                input_tensor_1 = tf.expand_dims(
+                    input=input_tensor_1,
+                    axis=-1,
+                )
         else:
             input_tensor_2_shape = input_tensor_2.shape
             squeezed_input_tensor_2_shape = [idx for idx in input_tensor_2_shape if idx != 1]
             squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
             input_tensor_1_shape = input_tensor_1.shape
             if squeezed_input_tensor_2_shape_rank == 1 \
-                and squeezed_input_tensor_2_shape[0] == input_tensor_1_shape[-1]:
+                and squeezed_input_tensor_2_shape[0] in input_tensor_1_shape:
                 input_tensor_2 = tf.squeeze(input_tensor_2)
+                reversed_input_tensor_1_shape = []
+                if isinstance(input_tensor_1_shape, list):
+                    reversed_input_tensor_1_shape = input_tensor_1_shape.reverse()
+                elif isinstance(input_tensor_1_shape, np.ndarray):
+                    reversed_input_tensor_1_shape = input_tensor_1_shape[::-1].tolist()
+                elif isinstance(input_tensor_1_shape, tf.TensorShape):
+                    reversed_input_tensor_1_shape = list(input_tensor_1_shape[::-1])
+                expand_count = reversed_input_tensor_1_shape.index(squeezed_input_tensor_2_shape[0])
+                for _ in range(expand_count):
+                    input_tensor_2 = tf.expand_dims(
+                        input=input_tensor_2,
+                        axis=-1,
+                    )
     return input_tensor_1, input_tensor_2
 
 
