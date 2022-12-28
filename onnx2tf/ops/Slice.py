@@ -249,7 +249,6 @@ def make_node(
         end_ = [dim for dim in ends]
         ##### strides
         strides_ = None
-
         if steps is not None:
             strides_ = [dim for dim in steps]
 
@@ -264,75 +263,40 @@ def make_node(
                     end_.insert(axis, 0)
                     if strides_ is not None:
                         strides_.insert(axis, 1)
-            ##### Replace max values
-            begin_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=begin_,
-                axes=axes,
-            )
-            ##### Replace negative values
-            end_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=end_,
-                axes=axes,
-            )
-            ##### begin_mask
-            begin_mask_ = np.sum(
-                [2**idx if i in [0] else 0 for idx, i in enumerate(begin_)],
-                dtype=np.int32,
-            )
-            ##### end_mask
-            end_mask_ = np.sum(
-                [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
-                dtype=np.int32,
-            )
-            # strided_slice
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor,
-                    begin=begin_,
-                    end=end_,
-                    strides=strides_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                    name=graph_node.name,
-                )
 
-        elif input_tensor_rank == len(begin_):
-            # Perform normal slicing process
-            ##### Replace max values
-            begin_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=begin_,
-                axes=axes,
+        ##### Replace max values
+        begin_ = replace_max_values_negative_values(
+            input_tensor_shape=input_tensor_shape,
+            index_list=begin_,
+            axes=axes,
+        )
+        ##### Replace negative values
+        end_ = replace_max_values_negative_values(
+            input_tensor_shape=input_tensor_shape,
+            index_list=end_,
+            axes=axes,
+        )
+        ##### begin_mask
+        begin_mask_ = np.sum(
+            [2**idx if i in [0] else 0 for idx, i in enumerate(begin_)],
+            dtype=np.int32,
+        )
+        ##### end_mask
+        end_mask_ = np.sum(
+            [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
+            dtype=np.int32,
+        )
+        # strided_slice
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=begin_,
+                end=end_,
+                strides=strides_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+                name=graph_node.name,
             )
-            ##### Replace negative values
-            end_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=end_,
-                axes=axes,
-            )
-            ##### begin_mask
-            begin_mask_ = np.sum(
-                [2**idx if i in [0] else 0 for idx, i in enumerate(begin_)],
-                dtype=np.int32,
-            )
-            ##### end_mask
-            end_mask_ = np.sum(
-                [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
-                dtype=np.int32,
-            )
-            # strided_slice
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor,
-                    begin=begin_,
-                    end=end_,
-                    strides=strides_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                    name=graph_node.name,
-                )
     else:
         # OP replacement
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
