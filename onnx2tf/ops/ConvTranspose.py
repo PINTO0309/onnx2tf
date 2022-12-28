@@ -155,9 +155,15 @@ def make_node(
     if group == 1:
         input_tensor_splits = [input_tensor]
         weight_splits = [input_weights]
+
+        if input_bias is not None:
+            bias_splits = [input_bias]
     else:
         input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
         weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+
+        if input_bias is not None:
+            bias_splits = tf.split(input_bias, num_or_size_splits=group, axis=-1)
 
     # Param replacement - OP replacement
     op_rep_params = kwargs.get('op_rep_params', [])
@@ -182,7 +188,7 @@ def make_node(
 
     conv_rs = None
     convolved = []
-    for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits):
+    for i, (input_tensor_split, weight_split) in enumerate(zip(input_tensor_splits, weight_splits)):
         split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
         if output_shape_ is None:
             # Normal ConvTranspose
@@ -206,15 +212,19 @@ def make_node(
                 dilations=dilations_,
             )
 
+        # add split bias to combined convolution for 1d and 2d
+        if input_bias is not None and spatial_size != 3:
+            conv_rs = tf.add(conv_rs, bias_splits[i])
+
         convolved.append(conv_rs)
 
     if group > 1:
         # concatenate in case of grouped convolution
         conv_rs = tf.concat(values=convolved, axis=-1)
 
-    if input_bias is not None:
-        # add bias to combined convolution
-        conv_rs = tf.add(conv_rs, input_bias)
+        # add bias after concat for 3d since Conv3dTranspose in tensorflow does not support bias in layer level
+        if input_bias is not None and spatial_size == 3:
+            conv_rs = tf.add(conv_rs, input_bias)
 
     if pad_mode == "VALID":
         # TODO: this part may not work properly when OP replacement is used, need to check
