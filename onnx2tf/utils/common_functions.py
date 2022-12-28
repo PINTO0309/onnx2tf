@@ -2227,60 +2227,61 @@ def replace_max_values_negative_values(
     if axes is None:
         return index_list
 
-    if axes is not None:
-        for axis in axes:
-            data_shape_length = input_tensor_shape[axis]
+    for axis in axes:
+        data_shape_length = input_tensor_shape[axis]
+        if data_shape_length is None:
+            continue
 
-            # Max Value
-            """
-            9223372036854775807 = -1
-            9223372036854775806 = -2
-            9223372036854775805 = -3
-            9223372036854775804 = -4
-            9223372036854775803 = -5
-            """
-            maxvalue_index_list = [
-                ONNX_INF_INDEX_VALUE - i \
-                    for i in range(data_shape_length)
-            ]
-            maxvalue_substitution_index_list = [
-                i - ONNX_INF_INDEX_VALUE + data_shape_length \
-                    for i in maxvalue_index_list
-            ]
-            """
-            maxvalue_index_dict
-                9223372036854775807: 4
-                9223372036854775806: 3
-                9223372036854775805: 2
-                9223372036854775804: 1
-                9223372036854775803: 0
-            """
-            maxvalue_index_dict = {
-                i: j for i,j in zip(maxvalue_index_list, maxvalue_substitution_index_list)
-            }
-            # Negative Value
-            negativevalue_substitution_index_list = [
-                -i - 1 for i in range(data_shape_length)
-            ]
-            """
-            negativevalue_index_dict
-                -1: 4
-                -2: 3
-                -3: 2
-                -4: 1
-                -5: 0
-            """
-            negativevalue_index_dict = {
-                i: i+data_shape_length for i in negativevalue_substitution_index_list
-            }
+        # Max Value
+        """
+        9223372036854775807 = -1
+        9223372036854775806 = -2
+        9223372036854775805 = -3
+        9223372036854775804 = -4
+        9223372036854775803 = -5
+        """
+        maxvalue_index_list = [
+            ONNX_INF_INDEX_VALUE - i \
+                for i in range(data_shape_length)
+        ]
+        maxvalue_substitution_index_list = [
+            i - ONNX_INF_INDEX_VALUE + data_shape_length \
+                for i in maxvalue_index_list
+        ]
+        """
+        maxvalue_index_dict
+            9223372036854775807: 4
+            9223372036854775806: 3
+            9223372036854775805: 2
+            9223372036854775804: 1
+            9223372036854775803: 0
+        """
+        maxvalue_index_dict = {
+            i: j for i,j in zip(maxvalue_index_list, maxvalue_substitution_index_list)
+        }
+        # Negative Value
+        negativevalue_substitution_index_list = [
+            -i - 1 for i in range(data_shape_length)
+        ]
+        """
+        negativevalue_index_dict
+            -1: 4
+            -2: 3
+            -3: 2
+            -4: 1
+            -5: 0
+        """
+        negativevalue_index_dict = {
+            i: i+data_shape_length for i in negativevalue_substitution_index_list
+        }
 
-            # replace max values
-            index_list[axis] = index_list[axis] \
-                if index_list[axis] not in maxvalue_index_dict.keys() \
-                    else maxvalue_index_dict[index_list[axis]]
+        # replace max values
+        index_list[axis] = index_list[axis] \
+            if index_list[axis] not in maxvalue_index_dict.keys() \
+                else maxvalue_index_dict[index_list[axis]]
 
-            # replace negative values
-            index_list[axis] = index_list[axis] \
-                if index_list[axis] not in negativevalue_index_dict.keys() \
-                    else negativevalue_index_dict[index_list[axis]]
-        return index_list
+        # replace negative values
+        index_list[axis] = index_list[axis] \
+            if index_list[axis] not in negativevalue_index_dict.keys() \
+                else negativevalue_index_dict[index_list[axis]]
+    return index_list

@@ -283,7 +283,7 @@ def make_node(
             )
             ##### end_mask
             end_mask_ = np.sum(
-                [2**idx if i  in [0, input_tensor_rank] else 0 for idx, i in enumerate(end_)],
+                [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
                 dtype=np.int32,
             )
             # strided_slice
