@@ -2197,17 +2197,20 @@ def shape_unmatched_special_avoidance_workaround(
 
     return input_tensor_1, input_tensor_2
 
+
 def calc_output_shape_conv_transpose(input_shape, kernel, pad_mode, output_padding, stride, dilation):
-    out_height = conv_utils.deconv_output_length(input_shape[0],
-                                                 kernel[0],
-                                                 padding=pad_mode.lower(),
-                                                 output_padding=output_padding[0],
-                                                 stride=stride[0],
-                                                 dilation=dilation[0])
-    out_width = conv_utils.deconv_output_length(input_shape[1],
-                                                kernel[1],
-                                                padding=pad_mode.lower(),
-                                                output_padding=output_padding[1],
-                                                stride=stride[1],
-                                                dilation=dilation[1])
-    return [out_height, out_width]
+
+    assert len(input_shape) == len(kernel) == len(output_padding) == len(stride) == len(dilation),\
+        "All parameters should have same length"
+
+    output_shape = []
+
+    for i, k, p, s, d in zip(input_shape, kernel, output_padding, stride, dilation):
+        output_shape.append(conv_utils.deconv_output_length(input_length=i,
+                                                            filter_size=k,
+                                                            padding=pad_mode.lower(),
+                                                            output_padding=p,
+                                                            stride=s,
+                                                            dilation=d))
+
+    return output_shape
