@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     convert_axis,
+    replace_max_values_negative_values,
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
@@ -242,119 +243,60 @@ def make_node(
 
     # Generation of TF OP
     if begin_ is None:
-        if None not in input_tensor_shape:
-            # first of all, get the input tensor shape
-            if axes is not None:
-                is_axes_negative = tf.less(axes, tf.zeros_like(axes))
-                axes = tf.where(is_axes_negative, axes + tf.cast(input_tensor_rank, axes.dtype), axes)
-            else:
-                axes = [i for i in range(input_tensor_rank)]
+        ##### begin
+        begin_ = [dim for dim in starts]
+        ##### end
+        end_ = [dim for dim in ends]
+        ##### strides
+        strides_ = None
+        if steps is not None:
+            strides_ = [dim for dim in steps]
 
-            # expand a dimension of 1 at the end
-            sparse_indices = tf.cast(tf.expand_dims(axes, -1), tf.int64)
+        if input_tensor_rank > len(begin_):
+            # Adjust the number of dimensions of the input data according to the number of axes
+            unsqueeze_mask = [1] * input_tensor_rank
+            for axis in axes:
+                unsqueeze_mask[axis] = 0
+            for axis, maskbit in enumerate(unsqueeze_mask):
+                if maskbit == 1:
+                    begin_.insert(axis, 0)
+                    end_.insert(axis, 0)
+                    if strides_ is not None:
+                        strides_.insert(axis, 1)
 
-            # build the indexed dimension sizes as sparse_shape
-            sparse_shape = tf.gather_nd(
-                params=input_tensor_shape,
-                indices=sparse_indices,
+        ##### Replace max values
+        begin_ = replace_max_values_negative_values(
+            input_tensor_shape=input_tensor_shape,
+            index_list=begin_,
+            axes=axes,
+        )
+        ##### Replace negative values
+        end_ = replace_max_values_negative_values(
+            input_tensor_shape=input_tensor_shape,
+            index_list=end_,
+            axes=axes,
+        )
+        ##### begin_mask
+        begin_mask_ = np.sum(
+            [2**idx if i in [0] else 0 for idx, i in enumerate(begin_)],
+            dtype=np.int32,
+        )
+        ##### end_mask
+        end_mask_ = np.sum(
+            [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
+            dtype=np.int32,
+        )
+        # strided_slice
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=begin_,
+                end=end_,
+                strides=strides_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+                name=graph_node.name,
             )
-            sparse_shape = tf.cast(sparse_shape, tf.int64)
-
-            # take care of starts, ends that are larger than the dim size.
-            starts_min = tf.minimum(starts, sparse_shape)
-            ends_min = tf.minimum(ends, sparse_shape)
-
-            # need to densify everything for the inputs to slice
-            # the output shape is the input_tensor rank
-            output_shape = tf.reshape(input_tensor_rank, [1])
-            output_shape = tf.cast(output_shape, tf.int64)
-
-            def tf_SparseTensor(sparse_indices, pos, sparse_shape, start_or_end):
-                dense = None
-                # take care of starts, ends that are negative
-                if start_or_end == 'start':
-                    is_starts_negative = tf.less(pos, tf.zeros_like(pos))
-                    final = tf.where(is_starts_negative, pos + sparse_shape, pos)
-                    sparse_tensor = tf.sparse.reorder(
-                        sp_input=tf.sparse.SparseTensor(
-                            indices=sparse_indices,
-                            values=final,
-                            dense_shape=sparse_shape,
-                        )
-                    )
-                    dense = tf.sparse.to_dense(sparse_tensor)
-                elif start_or_end == 'end':
-                    is_ends_negative = tf.less(pos, tf.zeros_like(pos))
-                    final = tf.where(is_ends_negative, pos + sparse_shape, pos)
-                    sparse_tensor = tf.sparse.reorder(
-                        sp_input=tf.sparse.SparseTensor(
-                            indices=sparse_indices,
-                            values=final,
-                            dense_shape=sparse_shape,
-                        )
-                    )
-                    dense_ends = tf.sparse.to_dense(
-                        sparse_tensor,
-                        default_value=tf.constant(-1, dtype=dense_begins.dtype)
-                    )
-                    dense = tf.where(
-                        tf.equal(dense_ends, tf.constant(-1, dtype=dense_begins.dtype)),
-                        input_tensor_shape,
-                        dense_ends,
-                    )
-                return dense
-
-            # create dense tensor, pad 0 as default begins
-            dense_begins = Lambda(
-                tf_SparseTensor,
-                arguments={
-                    'pos': starts_min,
-                    'sparse_shape': output_shape,
-                    'start_or_end': 'start',
-                }
-            )(sparse_indices)
-            # create dense tensor, pad -1 for next step
-            dense_ends = Lambda(
-                tf_SparseTensor,
-                arguments={
-                    'pos': ends_min,
-                    'sparse_shape': output_shape,
-                    'start_or_end': 'end'
-                }
-            )(sparse_indices)
-
-            # create dense tensor for steps if not already so
-            if steps is not None:
-                dense_steps = tf.sparse.reorder(
-                    sp_input=tf.sparse.SparseTensor(
-                        sparse_indices,
-                        steps,
-                        output_shape,
-                    )
-                )
-                dense_steps = tf.sparse.to_dense(
-                    dense_steps,
-                    default_value=tf.constant(1, dtype=steps.dtype)
-                )
-            else:
-                dense_steps = tf.ones(input_tensor_rank, ends.dtype)
-
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor,
-                    begin=dense_begins,
-                    end=dense_ends,
-                    strides=tf.cast(dense_steps, dtype=dense_begins.dtype),
-                )
-        else:
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor,
-                    begin=starts,
-                    end=ends,
-                    strides=steps,
-                    name=graph_node.name,
-                )
     else:
         # OP replacement
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
