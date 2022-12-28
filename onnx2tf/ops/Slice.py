@@ -244,13 +244,22 @@ def make_node(
     # Generation of TF OP
     if begin_ is None:
         ##### begin
-        begin_ = [dim for dim in starts]
+        if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
+            begin_ = [dim for dim in starts.numpy()]
+        else:
+            begin_ = [dim for dim in starts]
         ##### end
-        end_ = [dim for dim in ends]
+        if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
+            end_ = [dim for dim in ends.numpy()]
+        else:
+            end_ = [dim for dim in ends]
         ##### strides
         strides_ = None
         if steps is not None:
-            strides_ = [dim for dim in steps]
+            if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
+                strides_ = [dim for dim in steps.numpy()]
+            else:
+                strides_ = [dim for dim in steps]
 
         if input_tensor_rank > len(begin_):
             # Adjust the number of dimensions of the input data according to the number of axes
