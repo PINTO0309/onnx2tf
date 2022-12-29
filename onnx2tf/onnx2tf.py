@@ -1190,7 +1190,7 @@ def main():
         '-ho',
         '--hailo_optimization',
         action='store_true',
-        help='[experimental implementation] Optimize the model for hailo hardware accelerator.'
+        help='[experimental] Optimize the model for hailo hardware accelerator.'
     )
     parser.add_argument(
         '-me',
