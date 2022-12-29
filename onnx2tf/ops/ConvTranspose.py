@@ -107,12 +107,14 @@ def make_node(
     pad_mode = 'VALID'
 
     # need to calculate output shape for valid mode
-    tf_output_shape = calc_output_shape_conv_transpose(graph_node_input_shape[2:],
-                                                       kernel=kernel_shape,
-                                                       pad_mode='valid',
-                                                       output_padding=output_padding,
-                                                       stride=strides,
-                                                       dilation=dilations)
+    tf_output_shape = calc_output_shape_conv_transpose(
+        input_shape=graph_node_input_shape[2:],
+        kernel=kernel_shape,
+        pad_mode='valid',
+        output_padding=output_padding,
+        stride=strides,
+        dilation=dilations,
+    )
     tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
 
     if auto_pad == 'NOTSET':

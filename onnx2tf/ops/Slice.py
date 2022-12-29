@@ -4,7 +4,6 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-from tensorflow.python.keras.layers import Lambda
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -110,11 +109,14 @@ def make_node(
     axes = tf_layers_dict[axes.name]['tf_node'] \
         if isinstance(axes, gs.Variable) else axes
     if isinstance(axes, np.ndarray):
-        axes = axes if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
+        axes = axes \
+            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
     elif isinstance(axes, list):
-        axes = np.asarray(axes, dtype=ends.dtype) if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
+        axes = np.asarray(axes, dtype=ends.dtype) \
+            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
     elif axes is not None:
-        axes = axes if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
+        axes = axes \
+            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends.dtype)
 
     steps = None
     if len(graph_node.inputs) >= 5:
