@@ -159,8 +159,6 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    hailo_optimization = kwargs['hailo_optimization']
-
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -300,45 +298,16 @@ def make_node(
             dtype=np.int32,
         )
         # strided_slice
-        if not hailo_optimization or (hailo_optimization and len(axes) > 1):
-            # disable hailo optimization
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor,
-                    begin=begin_,
-                    end=end_,
-                    strides=strides_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                    name=graph_node.name,
-                )
-        else:
-            # enable hailo optimization
-            if strides_ is None:
-                strides_ = 1
-            start = 0
-            if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
-                start = [start for start in starts.numpy()][0]
-            else:
-                start = [start for start in starts][0]
-            axis_ = axes[0]
-            strides_ = strides_[axis_]
-            slice_dim = input_tensor_shape[axis_]
-            step_indicies = []
-            for stride_idx in range(strides_):
-                step_indicies.append(np.asarray(range(slice_dim))[stride_idx:slice_dim:strides_])
-            gathered_tensors = []
-            for indicies in step_indicies:
-                gathered_tensor = tf.gather(
-                    params=input_tensor,
-                    indices=indicies,
-                    axis=axis_,
-                )
-                gathered_tensors.append(
-                    gathered_tensor
-                )
-            tf_layers_dict[graph_node_output.name]['tf_node'] = gathered_tensors[start]
-
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=begin_,
+                end=end_,
+                strides=strides_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+                name=graph_node.name,
+            )
     else:
         # OP replacement
         tf_layers_dict[graph_node_output.name]['tf_node'] = \

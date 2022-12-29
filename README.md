@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.3.4
+  ghcr.io/pinto0309/onnx2tf:1.3.5
 
   or
 
@@ -183,7 +183,6 @@ usage: onnx2tf
 [-rng]
 [-rhs]
 [-rerf]
-[-ho]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
 [-n]
@@ -402,9 +401,6 @@ optional arguments:
   -rerf, --replace_erf_to_pseudo_erf
     Replace Erf with a pseudo Erf.
 
-  -ho, --hailo_optimization
-    [experimental] Optimize the model for hailo hardware accelerator.
-
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
     The number to be added to the variance to avoid division by zero
@@ -460,7 +456,6 @@ convert(
   replace_neg_to_pseudo_neg: Optional[bool] = False,
   replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
   replace_erf_to_pseudo_erf: Optional[bool] = False,
-  hailo_optimization: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   non_verbose: Union[bool, NoneType] = False
@@ -685,9 +680,6 @@ convert(
 
     replace_erf_to_pseudo_erf: Optional[bool]
       Replace Erf with a pseudo Erf.
-
-    hailo_optimization: Optional[bool]
-      [experimental] Optimize the model for hailo hardware accelerator.
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.
