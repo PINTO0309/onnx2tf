@@ -2200,20 +2200,58 @@ def shape_unmatched_special_avoidance_workaround(
     return input_tensor_1, input_tensor_2
 
 
-def calc_output_shape_conv_transpose(input_shape, kernel, pad_mode, output_padding, stride, dilation):
+def calc_output_shape_conv_transpose(
+    *,
+    input_shape: List[Any],
+    kernel: List[int],
+    pad_mode: str,
+    output_padding: List[int],
+    stride: List[int],
+    dilation: List[int],
+) -> List[int]:
+    """Calculation of ConvTranspose output geometry.
 
+    Parameters
+    ----------
+    input_shape: List[Any]
+        INPUT Node Shape
+
+    kernel: List[int]
+        kernel size
+
+    pad_mode: str
+        pad mode. "valid" or "same"
+
+    output_padding: List[int]
+        output paddings
+
+    stride: List[int]
+        strides
+
+    dilation: List[int]
+        dilations
+
+    Returns
+    ----------
+    output_shape: List[int]
+        Accurately calculated ConvTranspose output shape
+    """
     assert len(input_shape) == len(kernel) == len(output_padding) == len(stride) == len(dilation),\
         "All parameters should have same length"
 
     output_shape = []
 
     for i, k, p, s, d in zip(input_shape, kernel, output_padding, stride, dilation):
-        output_shape.append(conv_utils.deconv_output_length(input_length=i,
-                                                            filter_size=k,
-                                                            padding=pad_mode.lower(),
-                                                            output_padding=p,
-                                                            stride=s,
-                                                            dilation=d))
+        output_shape.append(
+            conv_utils.deconv_output_length(
+                input_length=i,
+                filter_size=k,
+                padding=pad_mode.lower(),
+                output_padding=p,
+                stride=s,
+                dilation=d,
+            )
+        )
 
     return output_shape
 
@@ -2224,6 +2262,26 @@ def replace_max_values_negative_values(
     index_list: np.asarray,
     axes: np.asarray,
 ) -> List[int]:
+    """Replacement of maximum index value and negative index value for ONNX.
+    For Slice OP.
+
+    Parameters
+    ----------
+    input_tensor_shape: np.asarray
+        INPUT Node Shape
+
+    index_list: np.asarray
+        Index list of starts or ends of Slice OP
+
+    axes: np.asarray
+        Slice OP axes
+
+    Returns
+    ----------
+    index_list: List[int]
+        List of ONNX maximum index values and negative index values replaced
+        with acceptable positive integers
+    """
     if axes is None:
         return index_list
 
