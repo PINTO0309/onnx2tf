@@ -52,7 +52,7 @@ def make_node(
             before_op_output_shape_trans,
         )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
@@ -71,16 +71,16 @@ def make_node(
 
     # If Reshape's shape contains zeros, get the deformed shape from the output shape
     if isinstance(reshape_shape, list) and reshape_shape.count(0) > 0:
-        new_shape = [-1 if isinstance(s, str) else int(s) for s in shape]
+        new_shape = [-1 if isinstance(s, str) else int(s) for s in output_shape]
         reshape_shape = new_shape
     elif isinstance(reshape_shape, np.ndarray) and np.count_nonzero(reshape_shape == 0) > 0:
-        new_shape = [-1 if isinstance(s, str) else int(s) for s in shape]
+        new_shape = [-1 if isinstance(s, str) else int(s) for s in output_shape]
         reshape_shape = new_shape
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': output_shape,
         'dtype': dtype,
     }
 
@@ -136,10 +136,16 @@ def make_node(
     )
 
     # Reshape
+    has_undefined_outputshape = output_shape is None
+    if not has_undefined_outputshape:
+        has_none_outputshape = None in output_shape
+        has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
+        has_undefined_outputshape = has_none_outputshape or has_str_outputshape
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
             tensor=transposed_tensor,
-            shape=transposed_reshape_shape,
+            shape=transposed_reshape_shape \
+                if has_undefined_outputshape else output_shape,
             name=graph_node.name,
         )
 
