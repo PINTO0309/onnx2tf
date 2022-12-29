@@ -138,7 +138,7 @@ def make_node(
     # Reshape
     has_undefined_outputshape = output_shape is None
     if not has_undefined_outputshape:
-        has_none_outputshape = output_shape is None or None in output_shape
+        has_none_outputshape = None in output_shape
         has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
         has_undefined_outputshape = has_none_outputshape or has_str_outputshape
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
