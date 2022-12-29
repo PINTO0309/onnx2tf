@@ -133,8 +133,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
             tensor=input_tensor,
-            shape=cal_shape \
-                if has_undefined_outputshape else output_shape,
+            shape=cal_shape,
             name=graph_node.name,
         )
 
