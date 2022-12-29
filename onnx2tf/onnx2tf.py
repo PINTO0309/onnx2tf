@@ -77,6 +77,7 @@ def convert(
     replace_neg_to_pseudo_neg: Optional[bool] = False,
     replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
     replace_erf_to_pseudo_erf: Optional[bool] = False,
+    hailo_optimization: Optional[bool] = False,
     param_replacement_file: Optional[str] = '',
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
@@ -302,6 +303,9 @@ def convert(
     replace_erf_to_pseudo_erf: Optional[bool]
         Replace Erf with a pseudo Erf.
 
+    hailo_optimization: Optional[bool]
+        [experimental] Optimize the model for hailo's hardware accelerator.
+
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
         The number to be added to the variance to avoid division by zero when normalizing the value.\n
@@ -498,6 +502,7 @@ def convert(
         'replace_neg_to_pseudo_neg': replace_neg_to_pseudo_neg,
         'replace_hardswish_to_pseudo_hardswish': replace_hardswish_to_pseudo_hardswish,
         'replace_erf_to_pseudo_erf': replace_erf_to_pseudo_erf,
+        'hailo_optimization': hailo_optimization,
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
     }
@@ -1182,6 +1187,12 @@ def main():
         help='Replace Erf with a pseudo Erf.'
     )
     parser.add_argument(
+        '-ho',
+        '--hailo_optimization',
+        action='store_true',
+        help='[experimental implementation] Optimize the model for hailo hardware accelerator.'
+    )
+    parser.add_argument(
         '-me',
         '--mvn_epsilon',
         type=float,
@@ -1265,6 +1276,7 @@ def main():
         replace_neg_to_pseudo_neg=args.replace_neg_to_pseudo_neg,
         replace_hardswish_to_pseudo_hardswish=args.replace_hardswish_to_pseudo_hardswish,
         replace_erf_to_pseudo_erf=args.replace_erf_to_pseudo_erf,
+        hailo_optimization=args.hailo_optimization,
         param_replacement_file=args.param_replacement_file,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
