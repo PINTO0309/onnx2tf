@@ -52,7 +52,7 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
 
-    shape = graph_node_output.shape
+    output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     axis = graph_node.attrs.get("axis", 0)
@@ -65,7 +65,7 @@ def make_node(
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': output_shape,
         'dtype': dtype,
     }
 
@@ -93,6 +93,14 @@ def make_node(
             tf.reduce_prod(input_tensor_shape[0:axis]),
             tf.reduce_prod(input_tensor_shape[axis:tf.size(input_tensor_shape)]),
         )
+
+    # If the output geometry is clear, overwrite with ONNX output geometry
+    has_undefined_outputshape = output_shape is None
+    if not has_undefined_outputshape:
+        has_none_outputshape = None in output_shape
+        has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
+        has_undefined_outputshape = has_none_outputshape or has_str_outputshape
+    cal_shape = cal_shape if has_undefined_outputshape else output_shape
 
     # Param replacement
     input_tensor = replace_parameter(
