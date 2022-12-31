@@ -73,7 +73,7 @@ def make_node(
     )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.maximum(0.0, tf.minimum(1.0, alpha * input_tensor + beta)),
+        tf.maximum(0.0, tf.minimum(1.0, alpha * input_tensor + beta))
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
