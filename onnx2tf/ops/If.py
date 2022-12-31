@@ -74,9 +74,9 @@ def make_node(
             tf_layers_dict=tf_layers_dict,
             **kwargs,
         )
-    then_branch_op = []
+    then_branch_ops = []
     for then_branch_graph_output in then_branch_graph_outputs:
-        then_branch_op.append(
+        then_branch_ops.append(
             tf_layers_dict[then_branch_graph_output.name]['tf_node']
         )
 
@@ -102,9 +102,9 @@ def make_node(
             tf_layers_dict=tf_layers_dict,
             **kwargs,
         )
-    else_branch_op = []
+    else_branch_ops = []
     for else_branch_graph_output in else_branch_graph_outputs:
-        else_branch_op.append(
+        else_branch_ops.append(
             tf_layers_dict[else_branch_graph_output.name]['tf_node']
         )
 
@@ -126,8 +126,8 @@ def make_node(
 
     if_cond_outputs = [] + switch(
             condition=input_tensor,
-            then_expression=then_branch_op,
-            else_expression=else_branch_op,
+            then_expression=then_branch_ops,
+            else_expression=else_branch_ops,
         )
 
     for graph_node_output, if_cond_output in zip(graph_node_outputs, if_cond_outputs):
@@ -148,8 +148,8 @@ def make_node(
                 'tf_op_type': tf.cond,
                 'tf_inputs': {
                     'input': input_tensor,
-                    'true_fn': then_branch_op,
-                    'false_fn': else_branch_op,
+                    'true_fn': then_branch_ops,
+                    'false_fn': else_branch_ops,
                 },
                 'tf_outputs': {
                     'output': tf_outputs,
