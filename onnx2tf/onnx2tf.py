@@ -450,14 +450,23 @@ def convert(
         if not non_verbose:
             print('')
             print(f'{Color.REVERCE}Automatic generation of each OP name started{Color.RESET}', '=' * 40)
-        op_name_auto_generate(
-            input_onnx_file_path=f'{input_onnx_file_path}',
-            onnx_graph=onnx_graph,
-            output_onnx_file_path=f'{input_onnx_file_path}',
-            non_verbose=True,
-        )
-        if not non_verbose:
-            print(f'{Color.GREEN}Automatic generation of each OP name complete!{Color.RESET}')
+        try:
+            op_name_auto_generate(
+                input_onnx_file_path=f'{input_onnx_file_path}',
+                onnx_graph=onnx_graph,
+                output_onnx_file_path=f'{input_onnx_file_path}',
+                non_verbose=True,
+            )
+            if not non_verbose:
+                print(f'{Color.GREEN}Automatic generation of each OP name complete!{Color.RESET}')
+        except Exception as e:
+            if not non_verbose:
+                print(
+                    f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                    'Failed to automatic generation of each OP name.'
+                )
+                import traceback
+                traceback.print_exc()
 
     # quantization_type
     disable_per_channel = False \
@@ -500,6 +509,7 @@ def convert(
         'replace_erf_to_pseudo_erf': replace_erf_to_pseudo_erf,
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
+        'output_signaturedefs': output_signaturedefs,
     }
 
     tf_layers_dict = {}
