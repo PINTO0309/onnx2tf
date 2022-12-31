@@ -102,7 +102,7 @@ def make_node(
     GroupConv1D
     GroupConv2D
     GroupConv3D
-    SeparableConv2D
+    SeparableConv
     """
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
@@ -244,23 +244,25 @@ def make_node(
                             y=input_bias,
                         )
                     tf_op_type = 'GroupedConvolution2D'
-                elif kernel_size == 3 and not disable_group_convolution:
-                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.add(
-                            x=Conv3D(
-                                filters=input_weights.shape[-1],
-                                kernel_size=input_weights.shape[:3],
-                                strides=strides,
-                                padding=pad_mode.lower(),
-                                dilation_rate=dilations,
-                                groups=group,
-                                use_bias=False,
-                                kernel_initializer=tf.keras.initializers.constant(input_weights),
-                                name=graph_node.name,
-                            )(input_tensor),
-                            y=input_bias,
-                        )
-                    tf_op_type = 'GroupedConvolution3D'
+                # TODO: As of TensorFlow Lite v2.10.0, GroupedConvolution3D is converted to FlexConv3D.
+                # TODO: Uncomment out when TensorFlow Lite officially supports GroupedConvolution3D.
+                # elif kernel_size == 3 and not disable_group_convolution:
+                #     tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                #         tf.add(
+                #             x=Conv3D(
+                #                 filters=input_weights.shape[-1],
+                #                 kernel_size=input_weights.shape[:3],
+                #                 strides=strides,
+                #                 padding=pad_mode.lower(),
+                #                 dilation_rate=dilations,
+                #                 groups=group,
+                #                 use_bias=False,
+                #                 kernel_initializer=tf.keras.initializers.constant(input_weights),
+                #                 name=graph_node.name,
+                #             )(input_tensor),
+                #             y=input_bias,
+                #         )
+                #     tf_op_type = 'GroupedConvolution3D'
                 else:
                     # SeparableConv
                     input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
