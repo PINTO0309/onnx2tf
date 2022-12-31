@@ -18,6 +18,7 @@ RUN pip install pip -U \
     && pip install -U onnx2tf \
     && pip install -U simple_onnx_processing_tools \
     && pip install tensorflow==2.10.0 \
+    && pip install protobuf==3.20.3 \
     && python -m pip cache purge
 
 ENV USERNAME=user
