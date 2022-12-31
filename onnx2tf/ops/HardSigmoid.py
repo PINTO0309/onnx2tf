@@ -44,9 +44,11 @@ def make_node(
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
+
+    alpha = graph_node.attrs.get('alpha', 0.2)
+    beta = graph_node.attrs.get('beta', 0.5)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -71,7 +73,7 @@ def make_node(
     )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.keras.activations.hard_sigmoid(input_tensor)
+        tf.maximum(0.0, tf.minimum(1.0, alpha * input_tensor + beta)),
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
