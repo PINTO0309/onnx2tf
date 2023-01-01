@@ -108,6 +108,11 @@ def make_node(
         **kwargs,
     )
 
+    if min_value is not None and isinstance(min_value, float):
+        min_value = np.asarray([min_value])
+    if max_value is not None and isinstance(max_value, float):
+        max_value = np.asarray([max_value])
+
     tf_op_type = None
     if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
         and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:

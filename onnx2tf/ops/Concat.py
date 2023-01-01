@@ -58,14 +58,14 @@ def make_node(
                     if 'nhwc' in tf_layers_dict[const_or_var.name].keys() else False
             )
             same_input_shape_as_onnxs.append(
-                True if len(graph_node_input.shape) > 0 \
+                True if graph_node_input.shape is not None and len(graph_node_input.shape) > 0 \
                     and graph_node_input.shape == tf_layers_dict[const_or_var.name]['tf_node'].shape else False
             )
         else:
             values.append(const_or_var)
             nhwc_flags.append(False)
             same_input_shape_as_onnxs.append(
-                True if len(graph_node_input.shape) > 0 \
+                True if graph_node_input.shape is not None and len(graph_node_input.shape) > 0 \
                     and graph_node_input.shape == const_or_var.shape else False
             )
 
@@ -98,7 +98,7 @@ def make_node(
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(shape),
+        tensor_rank=len(shape) if shape is not None else len(values[0].shape),
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
