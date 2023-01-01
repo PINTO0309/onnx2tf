@@ -85,6 +85,7 @@ def make_node(
             # of the input tensor of TF and transpose to match the shape
             # of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
+            onnx_output_shape_none_count = onnx_output_shape.count(None)
             tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
@@ -92,8 +93,10 @@ def make_node(
                     idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
                         if onnx_shape_value == tf_shape_value
                 ]
-                if len(matched_idxs) == 0:
+                if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
                     new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
+                elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
+                    new_perm = perm
                 elif len(matched_idxs) == 1:
                     new_perm[matched_idxs[0]] = tf_shape_idx
                 else:
@@ -115,6 +118,7 @@ def make_node(
             # of the final output tensor of ONNX with the shape of the input tensor
             # of TF and transpose to match the shape of the final output tensor on the ONNX side
             onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
+            onnx_output_shape_none_count = onnx_output_shape.count(None)
             tf_input_shape = input_tensor_shape
             new_perm = [-1] * len(onnx_output_shape)
             for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
@@ -122,8 +126,10 @@ def make_node(
                     idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
                         if onnx_shape_value == tf_shape_value
                 ]
-                if len(matched_idxs) == 0:
+                if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
                     new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
+                elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
+                    new_perm = perm
                 elif len(matched_idxs) == 1:
                     new_perm[matched_idxs[0]] = tf_shape_idx
                 else:
