@@ -9,6 +9,8 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    convert_axis,
+    convert_reverse_axis,
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
@@ -24,7 +26,7 @@ def make_node(
     tf_layers_dict: dict,
     **kwargs: dict,
 ):
-    """Acosh
+    """Inverse
 
     Parameters
     ----------
@@ -52,9 +54,6 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
-        'nhwc': tf_layers_dict[graph_node_input.name]['nhwc'] \
-            if isinstance(graph_node_input, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
     # Generation of TF OP
@@ -69,11 +68,50 @@ def make_node(
         **kwargs,
     )
 
+    # https://pytorch.org/docs/stable/generated/torch.linalg.inv.html#torch.linalg.inv
+    # https://www.tensorflow.org/api_docs/python/tf/linalg/inv
+    # The input is a tensor of shape [..., M, M] whose inner-most 2 dimensions form square matrices.
+    # The output is a tensor of the same shape as the input containing the inverse for all input submatrices [..., :, :].
+    nhwc_flag = tf_layers_dict[input_tensor.name]['nhwc'] \
+        if 'nhwc' in tf_layers_dict[input_tensor.name].keys() else False
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
+    inv_transpose = \
+        nhwc_flag == True \
+        and input_tensor_rank >= 4 \
+        and input_tensor_shape[input_tensor_rank-3] == input_tensor_shape[input_tensor_rank-2]
+    if inv_transpose:
+        perm = [
+            convert_axis(
+                axis=axis,
+                tensor_rank=input_tensor_rank,
+                before_op_output_shape_trans=True
+            ) for axis in range(input_tensor_rank)
+        ]
+        input_tensor = tf.transpose(
+            a=input_tensor,
+            perm=perm,
+        )
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.acosh(
-            x=input_tensor,
+        tf.linalg.inv(
+            input=input_tensor,
             name=graph_node.name,
         )
+
+    if inv_transpose:
+        perm = [
+            convert_reverse_axis(
+                axis=axis,
+                tensor_rank=input_tensor_rank,
+                before_op_output_shape_trans=True
+            ) for axis in range(input_tensor_rank)
+        ]
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.transpose(
+                a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                perm=perm,
+            )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -87,7 +125,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.math.acosh,
+                'tf_op_type': tf.linalg.inv,
                 'tf_inputs': {
                     'x': input_tensor,
                 },
