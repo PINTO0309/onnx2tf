@@ -9,7 +9,6 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
-    tf_shape,
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
@@ -131,7 +130,7 @@ def make_node(
     )
 
     axis = graph_node.attrs.get('axis', -1)
-    axis = axis if axis >= 0 else axis + len(tf_shape(indices)) + axis + 1
+    axis = axis if axis >= 0 else axis + len(indices.shape) + axis + 1
 
     # process tf.one_hot unsupported datatype for indices
     indices = tf.cast(indices, indices_cast_map[indices.dtype]) \
@@ -141,7 +140,7 @@ def make_node(
     depth = tf.cast(depth, depth_cast_map[depth.dtype]) \
         if depth.dtype in depth_cast_map else depth
 
-    depth = tf.squeeze(depth) if len(tf_shape(depth)) == 1 else depth
+    depth = tf.squeeze(depth) if len(depth.shape) == 1 else depth
 
     # process negative indices
     indices = process_neg_indices(depth, indices)
