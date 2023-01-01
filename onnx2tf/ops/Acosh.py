@@ -69,6 +69,12 @@ def make_node(
         **kwargs,
     )
 
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        tf.math.acosh(
+            x=input_tensor,
+            name=graph_node.name,
+        )
+
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
@@ -76,12 +82,6 @@ def make_node(
         param_name=graph_node.outputs[0].name,
         **kwargs,
     )
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.acosh(
-            x=input_tensor,
-            name=graph_node.name,
-        )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
