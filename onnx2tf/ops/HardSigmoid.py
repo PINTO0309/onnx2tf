@@ -82,14 +82,14 @@ def make_node(
         tf.maximum(0.0, tf.minimum(1.0, alpha * input_tensor + beta))
 
     # Post-process transpose
-    before_trans_shape = tf_layers_dict[graph_node_output.name].shape
+    before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
         **kwargs,
     )
-    after_trans_shape = tf_layers_dict[graph_node_output.name].shape
+    after_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
     if 'nhwc' in tf_layers_dict[graph_node_output.name].keys() \
         and tf_layers_dict[graph_node_output.name]['nhwc'] == True \
         and before_trans_shape != after_trans_shape:
