@@ -369,12 +369,18 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
 
     # Post-process transpose
+    before_trans_shape = tf_layers_dict[graph_node_output.name].shape
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
         **kwargs,
     )
+    after_trans_shape = tf_layers_dict[graph_node_output.name].shape
+    if 'nhwc' in tf_layers_dict[graph_node_output.name].keys() \
+        and tf_layers_dict[graph_node_output.name]['nhwc'] == True \
+        and before_trans_shape != after_trans_shape:
+        tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
