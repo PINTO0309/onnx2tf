@@ -72,8 +72,8 @@ def make_node(
     # https://www.tensorflow.org/api_docs/python/tf/linalg/inv
     # The input is a tensor of shape [..., M, M] whose inner-most 2 dimensions form square matrices.
     # The output is a tensor of the same shape as the input containing the inverse for all input submatrices [..., :, :].
-    nhwc_flag = tf_layers_dict[input_tensor.name]['nhwc'] \
-        if 'nhwc' in tf_layers_dict[input_tensor.name].keys() else False
+    nhwc_flag = tf_layers_dict[graph_node_input.name]['nhwc'] \
+        if 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     inv_transpose = \
