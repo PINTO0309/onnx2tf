@@ -63,12 +63,18 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
 
     # Pre-process transpose
+    before_trans_shape = input_tensor_1.shape
     input_tensor_1 = pre_process_transpose(
         value_before_transpose=input_tensor_1,
         param_target='inputs',
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
+    after_trans_shape = input_tensor_1.shape
+    if 'nhwc' in tf_layers_dict[graph_node_output.name].keys() \
+        and tf_layers_dict[graph_node_output.name]['nhwc'] == True \
+        and before_trans_shape != after_trans_shape:
+        tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     zero = tf.zeros(shape, dtype)
     dn = bool(graph_node.attrs.get('detect_negative', 1))
@@ -86,12 +92,18 @@ def make_node(
         )
 
     # Post-process transpose
+    before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
         **kwargs,
     )
+    after_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+    if 'nhwc' in tf_layers_dict[graph_node_output.name].keys() \
+        and tf_layers_dict[graph_node_output.name]['nhwc'] == True \
+        and before_trans_shape != after_trans_shape:
+        tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
