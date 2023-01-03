@@ -1,3 +1,4 @@
+import os
 import sys
 import random
 random.seed(0)
@@ -183,6 +184,7 @@ def make_node(
         tf_output_shape = []
         for idx in range(input_tensor_rank):
             tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
+        os.remove(DUMMY_ONNXFILE_NAME)
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
