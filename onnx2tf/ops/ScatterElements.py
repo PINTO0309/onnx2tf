@@ -157,7 +157,7 @@ def make_node(
     # TODO: Correct any other appropriate error workarounds.
     new_dim_expanded_idx_tensors_per_axis = []
     for dim in dim_expanded_idx_tensors_per_axis:
-        if dim is not None and len([i for i in dim.shape if i is None]) == len(dim.shape)-1 and dim.shape[-1] == 1:
+        if dim is not None and len([i for i in dim.shape if i is None]) == len(dim.shape)-1 and dim.shape[-1] == 1 and len(dim.shape) == 5:
             new_dim_expanded_idx_tensors_per_axis.append(
                 tf.transpose(a=dim, perm=[0,2,3,1,4])
             )
