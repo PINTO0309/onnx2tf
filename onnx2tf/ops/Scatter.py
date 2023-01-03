@@ -5,7 +5,6 @@ np.random.seed(0)
 import importlib
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
-    print_node_info,
     inverted_operation_enable_disable,
     get_replacement_parameter,
 )
