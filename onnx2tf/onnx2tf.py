@@ -492,6 +492,7 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
+        'gs_graph': graph,
         'opset': graph.opset,
         'batch_size': batch_size,
         'non_verbose': non_verbose,

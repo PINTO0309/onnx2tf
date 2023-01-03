@@ -3,6 +3,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+from typing import List, Any
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -107,15 +108,81 @@ def make_node(
     pad_mode = 'VALID'
 
     # need to calculate output shape for valid mode
-    tf_output_shape = calc_output_shape_conv_transpose(
-        input_shape=graph_node_input_shape[2:],
-        kernel=kernel_shape,
-        pad_mode='valid',
-        output_padding=output_padding,
-        stride=strides,
-        dilation=dilations,
-    )
-    tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
+    disable_calc_output_shape_conv_transpose = len([
+        dim for dim in graph_node_input_shape[2:] \
+            if isinstance(dim, str) or dim is None
+    ]) > 0
+    # If the spartial shape is an undefined dimension, skip the process.
+    # Instead, run inference with dummy input tensors in onnxruntime to try to estimate the output shape.
+    tf_output_shape = None
+    if not disable_calc_output_shape_conv_transpose:
+        # The TensorFlow API is used to estimate the output shape.
+        tf_output_shape = calc_output_shape_conv_transpose(
+            input_shape=graph_node_input_shape[2:],
+            kernel=kernel_shape,
+            pad_mode='valid',
+            output_padding=output_padding,
+            stride=strides,
+            dilation=dilations,
+        )
+        tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
+    else:
+        # Perform inference using a dummy input tensor to attempt to estimate the output shape.
+        try:
+            from sne4onnx import extraction
+            import onnxruntime as ort
+        except Exception as e:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'The information needed to estimate the output shape of the ConvTranspose ' +\
+                f'was missing and must be estimated using onnxruntime.' +\
+                f'Install sne4onnx and onnxruntime. pip install sne4onnx onnxruntime'
+            )
+            sys.exit(1)
+        gs_graph: gs.Graph = kwargs['gs_graph']
+        onnx_graph = gs.export_onnx(gs_graph)
+        DUMMY_ONNXFILE_NAME = 'dummy_convtranspose.onnx'
+        extraction(
+            onnx_graph=onnx_graph,
+            output_onnx_file_path=DUMMY_ONNXFILE_NAME,
+            input_op_names=[graph_input.name for graph_input in gs_graph.inputs],
+            output_op_names=[graph_node_output.name],
+            non_verbose=True,
+        )
+        onnx_session = ort.InferenceSession(
+            path_or_bytes=DUMMY_ONNXFILE_NAME,
+            providers=['CPUExecutionProvider'],
+        )
+        onnx_inputs = gs_graph.inputs
+        input_names: List[str] = [inp.name for inp in onnx_inputs]
+        input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
+        new_input_sizes = []
+        for input_size in input_sizes:
+            new_input_size = []
+            for idx, dim in enumerate(input_size):
+                if idx == 0 and input_sizes[0][0] is not None and not isinstance(input_sizes[0][0], str):
+                    # Batch size assignment for input OPs
+                    new_input_size.append(input_sizes[0][0])
+                elif dim is None or isinstance(dim, str):
+                    # Fixed and assigned 1
+                    new_input_size.append(1)
+                else:
+                    # Assign input shape as is
+                    new_input_size.append(dim)
+            new_input_sizes.append(new_input_size)
+        input_sizes = new_input_sizes
+        input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
+        dummy_datas = {}
+        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            dummy_datas[input_name] = np.ones(
+                input_size,
+                dtype=input_dtype,
+            )
+        convtranspose_output = onnx_session.run(None, dummy_datas)[0]
+        onnx_output_shape = list(convtranspose_output.shape)
+        tf_output_shape = []
+        for idx in range(input_tensor_rank):
+            tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
