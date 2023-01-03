@@ -147,9 +147,24 @@ def make_node(
         for idx_tensor in idx_tensors_per_axis
     ]
     new_dim_expanded_idx_tensors_per_axis = []
-    for i in dim_expanded_idx_tensors_per_axis:
-        new_dim_expanded_idx_tensors_per_axis.append(tf.cast(i, dtype=tf.int64))
+    for dim in dim_expanded_idx_tensors_per_axis:
+        new_dim_expanded_idx_tensors_per_axis.append(tf.cast(dim, dtype=tf.int64))
     dim_expanded_idx_tensors_per_axis = new_dim_expanded_idx_tensors_per_axis
+
+    # If the tensor to be concat contains different shapes, transpose the shapes using majority logic
+    # However, only tensors whose geometry is all None are considered.
+    # This is a special process for Faster-RCNN
+    # TODO: Correct any other appropriate error workarounds.
+    new_dim_expanded_idx_tensors_per_axis = []
+    for dim in dim_expanded_idx_tensors_per_axis:
+        if dim is not None and len([i for i in dim.shape if i is None]) == len(dim.shape)-1 and dim.shape[-1] == 1:
+            new_dim_expanded_idx_tensors_per_axis.append(
+                tf.transpose(a=dim, perm=[0,2,3,1,4])
+            )
+        else:
+            new_dim_expanded_idx_tensors_per_axis.append(dim)
+    dim_expanded_idx_tensors_per_axis = new_dim_expanded_idx_tensors_per_axis
+
     coordinate = tf.concat(
         dim_expanded_idx_tensors_per_axis,
         axis=-1,
