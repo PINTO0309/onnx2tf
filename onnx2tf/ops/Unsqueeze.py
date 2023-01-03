@@ -86,7 +86,6 @@ def make_node(
         axes.sort()
 
     new_shape = copy.deepcopy(input_tensor_shape)
-    # TODO: Dynamic Tensor
     for idx in axes:
         new_shape.insert(idx, 1)
 
@@ -127,12 +126,23 @@ def make_node(
     test pattern.8 : axes=[3,6], [2,3,4,1,5,6,1,7]
     test pattern.9 : axes=[3,-1], [2,3,4,1,5,6,1,7]
     """
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.reshape(
-            tensor=input_tensor,
-            shape=new_shape,
-            name=graph_node.name,
-        )
+    if len(new_shape) >= 2 \
+        and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
+        and not isinstance(axes, int) \
+        and len(axes) == 1:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.expand_dims(
+                input=input_tensor,
+                axis=axes[0],
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.reshape(
+                tensor=input_tensor,
+                shape=new_shape,
+                name=graph_node.name,
+            )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

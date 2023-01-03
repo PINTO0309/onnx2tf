@@ -107,6 +107,12 @@ def make_node(
                 perm=perm,
             )
 
+    # MLIR only accepts scalar values for k-values, thus compressing the dimension
+    if isinstance(k_tensor, int):
+        pass
+    elif k_tensor.shape is not None and len(k_tensor.shape) >= 1:
+        k_tensor = tf.squeeze(k_tensor)
+
     if largest:
         topked_values, topked_indices = \
             tf.math.top_k(
