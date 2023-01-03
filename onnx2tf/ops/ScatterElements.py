@@ -129,20 +129,34 @@ def make_node(
     )
     sparsified_dense_idx_shape = updates_tensor_shape
 
-    idx_tensors_per_axis = [
-        tf.range(sparsified_dense_idx_shape[i])
-        for i in range(updates_tensor_rank)
-    ]
+    if None not in sparsified_dense_idx_shape:
+        idx_tensors_per_axis = [
+            tf.range(sparsified_dense_idx_shape[i])
+            for i in range(updates_tensor_rank)
+        ]
+    else:
+        idx_tensors_per_axis = [
+            tf.range(tf.shape(updates_tensor)[i])
+            for i in range(updates_tensor_rank)
+        ]
+
     idx_tensors_per_axis = tf.meshgrid(*idx_tensors_per_axis, indexing='ij')
-    idx_tensors_per_axis[axis] = indices
+    idx_tensors_per_axis[axis] = indices_tensor
     dim_expanded_idx_tensors_per_axis = [
         tf.expand_dims(idx_tensor, axis=-1)
         for idx_tensor in idx_tensors_per_axis
     ]
-    coordinate = tf.concat(dim_expanded_idx_tensors_per_axis, axis=-1)
+    new_dim_expanded_idx_tensors_per_axis = []
+    for i in dim_expanded_idx_tensors_per_axis:
+        new_dim_expanded_idx_tensors_per_axis.append(tf.cast(i, dtype=tf.int64))
+    dim_expanded_idx_tensors_per_axis = new_dim_expanded_idx_tensors_per_axis
+    coordinate = tf.concat(
+        dim_expanded_idx_tensors_per_axis,
+        axis=-1,
+    )
 
     indices = tf.reshape(coordinate, [-1, input_tensor_rank])
-    updates = tf.reshape(updates, [-1])
+    updates = tf.reshape(updates_tensor, [-1])
     output = tf.tensor_scatter_nd_update(
         tensor=input_tensor,
         indices=indices,
