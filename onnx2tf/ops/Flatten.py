@@ -89,6 +89,12 @@ def make_node(
         and len([idx for idx in input_tensor_shape[1:] if idx is not None]) == input_tensor_rank - 1 \
         and axis == 1:
         cal_shape = (-1, np.prod(input_tensor_shape[1:]))
+    elif input_tensor_rank >= 2 \
+        and input_tensor_shape[0] is None \
+        and len([idx for idx in input_tensor_shape[1:] if idx is not None]) != input_tensor_rank - 1 \
+        and axis == 1:
+        # Use Keras Flatten() if there are two or more undefined dimensions
+        cal_shape = None
     else:
         cal_shape = (
             tf.reduce_prod(input_tensor_shape[0:axis]),
@@ -131,12 +137,16 @@ def make_node(
         perm=list(perm) if perm is not None else None,
     )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.reshape(
-            tensor=input_tensor,
-            shape=cal_shape,
-            name=graph_node.name,
-        )
+    if cal_shape is not None:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.reshape(
+                tensor=input_tensor,
+                shape=cal_shape,
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.keras.layers.Flatten()(input_tensor)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
