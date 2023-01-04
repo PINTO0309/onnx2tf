@@ -817,6 +817,10 @@ def explicit_broadcast(
         graph_node_input_shape2 = list(graph_node.inputs[1].shape) \
             if graph_node.inputs[1].shape is not None else None
 
+    # If shape is empty (scalar value), return it without doing anything.
+    if graph_node_input_shape1 == [] or graph_node_input_shape2 == []:
+        return const_or_var_1, const_or_var_2
+
     # If either operand have shape of all 1's, do not broadcast and return as is
     shape_for_judging_skip_processing_1 = [
         i if i is not None else INF_INDEX_VALUE for i in const_or_var_1.shape

@@ -1,3 +1,4 @@
+import re
 import sys
 import random
 random.seed(0)
@@ -11,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 import importlib
 from onnx2tf.utils.colors import Color
 
@@ -92,7 +94,7 @@ def make_node(
         tf.TensorShape([None for i in range(len(v.shape))]) for v in v_init
     ]
 
-    body: gs.Node = graph_node.attrs["body"]
+    body: gs.Graph = graph_node.attrs["body"]
 
     iter_cnt_init = np.int64(0)
 
@@ -119,37 +121,29 @@ def make_node(
 
     # Generation of TF OP
     def run_subgraph(iter_cnt, cond, v, scan_outputs):
-        # Inputs
-        op = importlib.import_module(f'onnx2tf.ops.Input')
-        kwargs['subgraph_input_name'] = body.inputs[0].name
-        op.make_node(
-            graph_input=iter_cnt,
-            tf_layers_dict=tf_layers_dict,
-            keep_ncw_or_nchw_or_ncdhw_input_names=None,
-            **kwargs,
-        )
-        op = importlib.import_module(f'onnx2tf.ops.Input')
-        kwargs['subgraph_input_name'] = body.inputs[1].name
-        op.make_node(
-            graph_input=cond,
-            tf_layers_dict=tf_layers_dict,
-            keep_ncw_or_nchw_or_ncdhw_input_names=None,
-            **kwargs,
-        )
-        for i in range(2, len(body.inputs)):
-            op = importlib.import_module(f'onnx2tf.ops.Input')
-            kwargs['subgraph_input_name'] = body.inputs[i].name
+        for body_input in body.inputs:
+            try:
+                op = importlib.import_module(f'onnx2tf.ops.Input')
+            except ModuleNotFoundError as ex:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+                )
+                sys.exit(1)
+            # substitution because saved_model does not allow colons
+            body_input.name = body_input.name.replace(':','_')
+            # Substitution because saved_model does not allow leading slashes in op names
+            if kwargs['output_signaturedefs']:
+                body_input.name = re.sub('^/', 'wa/', body_input.name)
             op.make_node(
-                graph_input=v[i-2],
+                graph_input=body_input,
                 tf_layers_dict=tf_layers_dict,
-                keep_ncw_or_nchw_or_ncdhw_input_names=None,
+                keep_ncw_or_nchw_or_ncdhw_input_names=[],
+                keep_nwc_or_nhwc_or_ndhwc_input_names=[],
+                keep_shape_absolutely_input_names=[],
                 **kwargs,
             )
-        kwargs.pop('subgraph_input_name', None)
-
-        # Nodes
-        for graph_node in body.nodes:
-            optype = graph_node.op
+        for body_node in body.nodes:
+            optype = body_node.op
             try:
                 op = importlib.import_module(f'onnx2tf.ops.{optype}')
             except ModuleNotFoundError as ex:
@@ -157,11 +151,29 @@ def make_node(
                     f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
                 )
                 sys.exit(1)
+            # substitution because saved_model does not allow colons
+            body_node.name = body_node.name.replace(':','_')
+            # Substitution because saved_model does not allow leading slashes in op names
+            if kwargs['output_signaturedefs']:
+                body_node.name = re.sub('^/', 'wa/', body_node.name)
             op.make_node(
-                graph_node=graph_node,
+                graph_node=body_node,
                 tf_layers_dict=tf_layers_dict,
                 **kwargs,
             )
+            # Resister constant
+            for output in body.outputs:
+                if output.name not in tf_layers_dict and isinstance(output, gs.Constant):
+                    tf_layers_dict[output.name] = {
+                        'optype': 'Constant',
+                        'shape': output.values.shape,
+                        'dtype': output.values.dtype,
+                    }
+                    tf_layers_dict[output.name]['tf_node'] = \
+                        tf.constant(
+                            output.values,
+                            dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype],
+                        )
         outputs = [tf_layers_dict[output.name]['tf_node'] for output in body.outputs]
         for i in range(scan_outputs_start_index, len(outputs)):
             s_index = i - scan_outputs_start_index
