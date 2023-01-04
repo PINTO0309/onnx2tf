@@ -86,11 +86,11 @@ def make_node(
 
         reshape_node = tf.reshape(
             tensor=input_tensor,
-            shape=[batch, blocksize, blocksize, height, width, csize]
+            shape=[batch, height, width, csize, blocksize, blocksize]
         )
         transpose_node = tf.transpose(
             a=reshape_node,
-            perm=[0, 3, 1, 4, 2, 5]
+            perm=[0, 1, 4, 2, 5, 3]
         )
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.reshape(
