@@ -130,8 +130,9 @@ def make_node(
     else:
         # Perform inference using a dummy input tensor to attempt to estimate the output shape.
         try:
-            from sne4onnx import extraction
+            import onnx
             import onnxruntime as ort
+            from sne4onnx import extraction
         except Exception as e:
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
@@ -142,16 +143,15 @@ def make_node(
             sys.exit(1)
         gs_graph: gs.Graph = kwargs['gs_graph']
         onnx_graph = gs.export_onnx(gs_graph)
-        DUMMY_ONNXFILE_NAME = 'dummy_convtranspose.onnx'
-        extraction(
+        extracted_graph = extraction(
             onnx_graph=onnx_graph,
-            output_onnx_file_path=DUMMY_ONNXFILE_NAME,
             input_op_names=[graph_input.name for graph_input in gs_graph.inputs],
             output_op_names=[graph_node_output.name],
             non_verbose=True,
         )
+        serialized_graph = onnx._serialize(extracted_graph)
         onnx_session = ort.InferenceSession(
-            path_or_bytes=DUMMY_ONNXFILE_NAME,
+            path_or_bytes=serialized_graph,
             providers=['CPUExecutionProvider'],
         )
         onnx_inputs = gs_graph.inputs
@@ -184,7 +184,6 @@ def make_node(
         tf_output_shape = []
         for idx in range(input_tensor_rank):
             tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
-        os.remove(DUMMY_ONNXFILE_NAME)
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
