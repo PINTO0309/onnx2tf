@@ -17,6 +17,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.colors import Color
 
 
@@ -74,6 +75,19 @@ def make_node(
             tf_layers_dict=tf_layers_dict,
             **kwargs,
         )
+    # Then branch - Resister constant
+    for output in then_branch_graph_outputs:
+        if output.name not in tf_layers_dict and isinstance(output, gs.Constant):
+            tf_layers_dict[output.name] = {
+                'optype': 'Constant',
+                'shape': output.values.shape,
+                'dtype': output.values.dtype,
+            }
+            tf_layers_dict[output.name]['tf_node'] = \
+                tf.constant(
+                    output.values,
+                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype],
+                )
     then_branch_ops = []
     for then_branch_graph_output in then_branch_graph_outputs:
         then_branch_ops.append(
@@ -102,6 +116,19 @@ def make_node(
             tf_layers_dict=tf_layers_dict,
             **kwargs,
         )
+    # Else branch - Resister constant
+    for output in else_branch_graph_outputs:
+        if output.name not in tf_layers_dict and isinstance(output, gs.Constant):
+            tf_layers_dict[output.name] = {
+                'optype': 'Constant',
+                'shape': output.values.shape,
+                'dtype': output.values.dtype,
+            }
+            tf_layers_dict[output.name]['tf_node'] = \
+                tf.constant(
+                    output.values,
+                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype],
+                )
     else_branch_ops = []
     for else_branch_graph_output in else_branch_graph_outputs:
         else_branch_ops.append(
