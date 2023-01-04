@@ -20,14 +20,6 @@ from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.colors import Color
 
 
-class BitMaskLayer(tf.keras.layers.Layer):
-    def __init__(self):
-        super(BitMaskLayer, self).__init__()
-
-    def call(self, x):
-        return [2**idx if i in [0] else 0 for idx, i in enumerate(end_)]
-
-
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
