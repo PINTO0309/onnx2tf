@@ -132,7 +132,7 @@ def make_node(
             import onnx
             import onnxruntime as ort
             from sne4onnx import extraction
-        except Exception as e:
+        except Exception as ex:
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The information needed to estimate the output shape of the ConvTranspose ' +\
