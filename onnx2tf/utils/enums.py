@@ -35,7 +35,7 @@ ONNX_DTYPES_TO_TF_DTYPES = {
 }
 
 NUMPY_DTYPES_TO_TF_DTYPES = {
-    np.dtype('int32'): tf.float16,
+    np.dtype('float16'): tf.float16,
     np.dtype('float32'): tf.float32,
     np.dtype('float64'): tf.float64,
 
@@ -53,7 +53,7 @@ NUMPY_DTYPES_TO_TF_DTYPES = {
 }
 
 TF_DTYPES_TO_NUMPY_DTYPES = {
-    tf.float16: np.dtype('int32'),
+    tf.float16: np.dtype('float16'),
     tf.float32: np.dtype('float32'),
     tf.float64: np.dtype('float64'),
 
