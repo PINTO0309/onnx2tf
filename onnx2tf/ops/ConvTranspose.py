@@ -1,4 +1,3 @@
-import os
 import sys
 import random
 random.seed(0)
