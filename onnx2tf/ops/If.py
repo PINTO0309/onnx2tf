@@ -125,10 +125,10 @@ def make_node(
         }
 
     if_cond_outputs = [] + switch(
-            condition=input_tensor,
-            then_expression=then_branch_ops,
-            else_expression=else_branch_ops,
-        )
+        condition=input_tensor,
+        then_expression=then_branch_ops,
+        else_expression=else_branch_ops,
+    )
 
     for graph_node_output, if_cond_output in zip(graph_node_outputs, if_cond_outputs):
         tf_layers_dict[graph_node_output.name]['tf_node'] = if_cond_output

@@ -136,7 +136,7 @@ def make_node(
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The information needed to estimate the output shape of the ConvTranspose ' +\
-                f'was missing and must be estimated using onnxruntime.' +\
+                f'was missing and must be estimated using onnxruntime. ' +\
                 f'Install sne4onnx and onnxruntime. pip install sne4onnx onnxruntime'
             )
             sys.exit(1)
