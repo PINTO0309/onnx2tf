@@ -745,6 +745,8 @@ def pre_explicit_broadcast(
             reversed_input_tensor_2_shape = []
             if isinstance(input_tensor_2_shape, list):
                 reversed_input_tensor_2_shape = input_tensor_2_shape.reverse()
+            elif isinstance(input_tensor_2_shape, tuple):
+                reversed_input_tensor_2_shape = list(input_tensor_2_shape[::-1])
             elif isinstance(input_tensor_2_shape, np.ndarray):
                 reversed_input_tensor_2_shape = input_tensor_2_shape[::-1].tolist()
             elif isinstance(input_tensor_2_shape, tf.TensorShape):
@@ -766,6 +768,8 @@ def pre_explicit_broadcast(
                 reversed_input_tensor_1_shape = []
                 if isinstance(input_tensor_1_shape, list):
                     reversed_input_tensor_1_shape = input_tensor_1_shape.reverse()
+                elif isinstance(input_tensor_1_shape, tuple):
+                    reversed_input_tensor_1_shape = list(input_tensor_1_shape[::-1])
                 elif isinstance(input_tensor_1_shape, np.ndarray):
                     reversed_input_tensor_1_shape = input_tensor_1_shape[::-1].tolist()
                 elif isinstance(input_tensor_1_shape, tf.TensorShape):

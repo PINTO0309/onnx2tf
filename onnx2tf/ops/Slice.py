@@ -248,11 +248,15 @@ def make_node(
         ##### begin
         if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
             begin_ = [dim for dim in starts.numpy()]
+        elif not isinstance(starts, np.ndarray) and tf.keras.backend.is_keras_tensor(starts):
+            begin_ = starts
         else:
             begin_ = [dim for dim in starts]
         ##### end
         if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
             end_ = [dim for dim in ends.numpy()]
+        elif not isinstance(ends, np.ndarray) and tf.keras.backend.is_keras_tensor(ends):
+            end_ = ends
         else:
             end_ = [dim for dim in ends]
         ##### strides
@@ -260,43 +264,97 @@ def make_node(
         if steps is not None:
             if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
                 strides_ = [dim for dim in steps.numpy()]
+            elif not isinstance(steps, np.ndarray) and tf.keras.backend.is_keras_tensor(steps):
+                strides_ = steps
             else:
                 strides_ = [dim for dim in steps]
 
-        if input_tensor_rank > len(begin_):
-            # Adjust the number of dimensions of the input data according to the number of axes
+        # Adjust the number of dimensions of the input data according to the number of axes [List]
+        ##### Replace max values
+        if isinstance(begin_, list):
             unsqueeze_mask = [1] * input_tensor_rank
             for axis in axes:
                 unsqueeze_mask[axis] = 0
             for axis, maskbit in enumerate(unsqueeze_mask):
                 if maskbit == 1:
                     begin_.insert(axis, 0)
+            begin_ = replace_max_values_negative_values(
+                input_tensor_shape=input_tensor_shape,
+                index_list=begin_,
+                axes=axes,
+            )
+        ##### Replace negative values
+        if isinstance(end_, list):
+            unsqueeze_mask = [1] * input_tensor_rank
+            for axis in axes:
+                unsqueeze_mask[axis] = 0
+            for axis, maskbit in enumerate(unsqueeze_mask):
+                if maskbit == 1:
                     end_.insert(axis, 0)
-                    if strides_ is not None:
+            end_ = replace_max_values_negative_values(
+                input_tensor_shape=input_tensor_shape,
+                index_list=end_,
+                axes=axes,
+            )
+        if strides_ is not None:
+            if isinstance(strides_, list):
+                unsqueeze_mask = [1] * input_tensor_rank
+                for axis in axes:
+                    unsqueeze_mask[axis] = 0
+                for axis, maskbit in enumerate(unsqueeze_mask):
+                    if maskbit == 1:
                         strides_.insert(axis, 1)
 
-        ##### Replace max values
-        begin_ = replace_max_values_negative_values(
-            input_tensor_shape=input_tensor_shape,
-            index_list=begin_,
-            axes=axes,
-        )
-        ##### Replace negative values
-        end_ = replace_max_values_negative_values(
-            input_tensor_shape=input_tensor_shape,
-            index_list=end_,
-            axes=axes,
-        )
+        # Adjust the number of dimensions of the input data according to the number of axes [Tensor]
+        if not isinstance(begin_, list) and input_tensor_rank > begin_.shape[0]:
+            begin_zeros = tf.zeros(shape=input_tensor_rank, dtype=tf.int64)
+            begin_ = tf.tensor_scatter_nd_update(
+                tensor=begin_zeros,
+                indices=[[axis] for axis in axes],
+                updates=begin_,
+            )
+        begin_ = tf.cast(x=begin_, dtype=tf.int64)
+        if not isinstance(end_, list) and input_tensor_rank > end_.shape[0]:
+            end_zeros = tf.zeros(input_tensor_rank, dtype=tf.int64)
+            end_ = tf.tensor_scatter_nd_update(
+                tensor=end_zeros,
+                indices=[[axis] for axis in axes],
+                updates=end_,
+            )
+        end_ = tf.cast(x=end_, dtype=tf.int64)
+        if strides_ is not None and not isinstance(strides_, list) and input_tensor_rank > strides_.shape[0]:
+            strides_ones = tf.ones(input_tensor_rank, dtype=tf.int64)
+            strides_ = tf.tensor_scatter_nd_update(
+                tensor=strides_ones,
+                indices=[[axis] for axis in axes],
+                updates=strides_,
+            )
+            strides_ = tf.cast(x=strides_, dtype=tf.int64)
+
         ##### begin_mask
-        begin_mask_ = np.sum(
-            [2**idx if i in [0] else 0 for idx, i in enumerate(begin_)],
-            dtype=np.int32,
+        begin_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
+        cliped_values = tf.cast(1-tf.clip_by_value(t=begin_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+        begin_mask_ = tf.cast(
+            tf.math.reduce_sum(
+                input_tensor=tf.math.multiply(x=cliped_values, y=begin_bit_mask),
+            ),
+            dtype=tf.int32,
         )
+        if hasattr(begin_mask_, '_inferred_value') and begin_mask_._inferred_value == [None]:
+            begin_mask_ = 0
+
         ##### end_mask
-        end_mask_ = np.sum(
-            [2**idx if i  in [0, input_tensor_shape[idx]] else 0 for idx, i in enumerate(end_)],
-            dtype=np.int32,
+        end_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
+        cliped_values = tf.cast(1-tf.clip_by_value(t=end_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+        end_mask_ = tf.cast(
+            tf.math.reduce_sum(
+                input_tensor=tf.math.multiply(x=cliped_values, y=end_bit_mask),
+            ),
+            dtype=tf.int32,
         )
+        if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
+            end_mask_ = 0
+
         # strided_slice
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.strided_slice(
