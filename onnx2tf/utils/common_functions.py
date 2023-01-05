@@ -2569,10 +2569,13 @@ def transpose_with_flexing_deterrence(
                 axeses_idx += 1
                 if axeses_idx > len(axeses)-1:
                     break
-                np_axeses = np.asarray(axeses)
-                axeses = [
-                    axis for axis in np_axeses[:axeses_idx]] + [axis-1 for axis in np_axeses[axeses_idx:]
-                ]
+                new_axeses = []
+                for axes in axeses:
+                    if axes <= axis:
+                        new_axeses.append(axes)
+                    else:
+                        new_axeses.append(axes-1)
+                axeses = new_axeses
 
             # 3. Transpose a divided tensor (splited_squeezed_tensors)
             """
