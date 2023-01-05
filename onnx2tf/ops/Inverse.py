@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -88,9 +89,10 @@ def make_node(
                 before_op_output_shape_trans=True
             ) for axis in range(input_tensor_rank)
         ]
-        input_tensor = tf.transpose(
-            a=input_tensor,
+        input_tensor = transpose_with_flexing_deterrence(
+            input_tensor=input_tensor,
             perm=perm,
+            **kwargs,
         )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -108,9 +110,10 @@ def make_node(
             ) for axis in range(input_tensor_rank)
         ]
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.transpose(
-                a=tf_layers_dict[graph_node_output.name]['tf_node'],
+            transpose_with_flexing_deterrence(
+                input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                 perm=perm,
+                **kwargs,
             )
 
     # Post-process transpose

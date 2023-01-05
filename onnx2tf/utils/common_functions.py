@@ -121,9 +121,10 @@ def pre_process_transpose(
             and op_rep_param['param_name'] == param_name:
             transpose_perm = op_rep_param.get('pre_process_transpose_perm', None)
             if transpose_perm is not None:
-                transposed_value = tf.transpose(
-                    a=value_before_transpose,
+                transposed_value = transpose_with_flexing_deterrence(
+                    input_tensor=value_before_transpose,
                     perm=transpose_perm,
+                    **kwargs,
                 )
             break
     return transposed_value
@@ -156,9 +157,10 @@ def post_process_transpose(
             and op_rep_param['param_name'] == param_name:
             transpose_perm = op_rep_param.get('post_process_transpose_perm', None)
             if transpose_perm is not None:
-                transposed_value = tf.transpose(
-                    a=value_before_transpose,
+                transposed_value = transpose_with_flexing_deterrence(
+                    input_tensor=value_before_transpose,
                     perm=transpose_perm,
+                    **kwargs,
                 )
             break
     return transposed_value
