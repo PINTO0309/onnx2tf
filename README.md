@@ -1100,22 +1100,22 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |58|sinet_320_op.onnx|:heavy_check_mark:|
 |59|squeezenet1.0-12.onnx|:heavy_check_mark:|
 |60|super-resolution-10.onnx|:heavy_check_mark:|
-|61|tinyyolov2-8.onnx|:heavy_check_mark:|
-|62|version-RFB-640.onnx|:heavy_check_mark:|
-|63|vit-b-32_textual.onnx|:heavy_check_mark:|
-|64|vit-b-32_visual.onnx|:heavy_check_mark:|
-|65|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|66|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|67|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|68|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|69|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|70|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|71|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|72|yolox_s.onnx|:heavy_check_mark:|
-|73|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|74|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|75|zfnet512-12.onnx|:heavy_check_mark:|
-
+|61|swinir-m_64x64_12.onnx|:heavy_check_mark:|
+|62|tinyyolov2-8.onnx|:heavy_check_mark:|
+|63|version-RFB-640.onnx|:heavy_check_mark:|
+|64|vit-b-32_textual.onnx|:heavy_check_mark:|
+|65|vit-b-32_visual.onnx|:heavy_check_mark:|
+|66|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|67|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|68|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|69|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|70|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|71|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|72|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|73|yolox_s.onnx|:heavy_check_mark:|
+|74|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|75|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|76|zfnet512-12.onnx|:heavy_check_mark:|
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
 2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
