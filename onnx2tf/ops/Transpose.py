@@ -169,6 +169,7 @@ def make_node(
             perm=perm,
             output_shape=output_shape,
             name=graph_node.name,
+            **kwargs,
         )
 
     # Generation of Debug Info
