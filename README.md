@@ -173,6 +173,7 @@ usage: onnx2tf
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-dgc]
 [-ebu]
+[-dsft]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
@@ -336,6 +337,9 @@ optional arguments:
   -ebu, --enaable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
+  -dsft, --disable_suppression_flextranspose
+    Disables FlexTranspose generation suppression.
+
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
     Only one of replace_argmax_to_reducemax_and_indicies_is_int64
@@ -447,6 +451,7 @@ convert(
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   enaable_batchmatmul_unfold: Optional[bool] = False,
+  disable_suppression_flextranspose: Optional[bool] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -615,6 +620,9 @@ convert(
 
     enaable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
+
+    disable_suppression_flextranspose: Optional[bool]
+      Disables FlexTranspose generation suppression.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
