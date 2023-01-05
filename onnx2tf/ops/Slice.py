@@ -131,20 +131,20 @@ def make_node(
 
     axes = graph_node.attrs.get('axes', axes)
 
-    if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-        axes = [
-            convert_axis(
-                axis=idx,
-                tensor_rank=input_tensor_rank,
-                before_op_output_shape_trans=before_op_output_shape_trans,
-            ) for idx in axes
-        ]
-    elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-        axes = convert_axis(
-            axis=axes,
-            tensor_rank=input_tensor_rank,
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        )
+    # if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
+    #     axes = [
+    #         convert_axis(
+    #             axis=idx,
+    #             tensor_rank=input_tensor_rank,
+    #             before_op_output_shape_trans=before_op_output_shape_trans,
+    #         ) for idx in axes
+    #     ]
+    # elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
+    #     axes = convert_axis(
+    #         axis=axes,
+    #         tensor_rank=input_tensor_rank,
+    #         before_op_output_shape_trans=before_op_output_shape_trans,
+    #     )
     if isinstance(axes, list):
         axes = np.asarray(axes)
 
@@ -154,6 +154,16 @@ def make_node(
     ends = graph_node.attrs.get('ends', ends)
     if isinstance(ends, list):
         ends = np.asarray(ends)
+
+    # Transpose starts, ends and steps based on the dimensional placement order of the axes.
+    # TODO: Add processing for types other than np.ndarray (tf.Tensor, KerasTensor)
+    if isinstance(axes, np.ndarray) and len(axes) > 1:
+        if isinstance(starts, np.ndarray):
+            starts = starts[axes]
+        if isinstance(ends, np.ndarray):
+            ends = ends[axes]
+        if isinstance(steps, np.ndarray):
+            steps = steps[axes]
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
