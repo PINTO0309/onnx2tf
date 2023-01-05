@@ -62,7 +62,8 @@ def convert(
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     disable_group_convolution: Optional[bool] = False,
-    enaable_batchmatmul_unfold: Optional[bool] = False,
+    enable_batchmatmul_unfold: Optional[bool] = False,
+    disable_suppression_flextranspose: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -229,8 +230,11 @@ def convert(
         Disable GroupConvolution and replace it with SeparableConvolution\n
         for output to saved_model format.
 
-    enaable_batchmatmul_unfold: Optional[bool]
+    enable_batchmatmul_unfold: Optional[bool]
         BatchMatMul is separated batch by batch to generate a primitive MatMul.
+
+    disable_suppression_flextranspose: Optional[bool]
+        Disables FlexTranspose generation suppression.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -497,6 +501,7 @@ def convert(
         'batch_size': batch_size,
         'non_verbose': non_verbose,
         'disable_group_convolution': disable_group_convolution,
+        'disable_suppression_flextranspose': disable_suppression_flextranspose,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -690,7 +695,7 @@ def convert(
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
         ]
-        converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+        converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
             w.write(tflite_model)
@@ -719,7 +724,7 @@ def convert(
                 tf.lite.OpsSet.SELECT_TF_OPS,
             ]
             converter._experimental_disable_per_channel = disable_per_channel
-            converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+            converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
             tflite_model = converter.convert()
             with open(f'{output_folder_path}/model_dynamic_range_quant.tflite', 'wb') as w:
                 w.write(tflite_model)
@@ -792,7 +797,7 @@ def convert(
                 tf.lite.OpsSet.SELECT_TF_OPS,
             ]
             converter._experimental_disable_per_channel = disable_per_channel
-            converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+            converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
             converter.representative_dataset = representative_dataset_gen
             tflite_model = converter.convert()
             with open(f'{output_folder_path}/model_integer_quant.tflite', 'wb') as w:
@@ -807,7 +812,7 @@ def convert(
                 tf.lite.OpsSet.SELECT_TF_OPS,
             ]
             converter._experimental_disable_per_channel = disable_per_channel
-            converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+            converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
             converter.representative_dataset = representative_dataset_gen
             inf_type = None
             if input_output_quant_dtype == 'int8':
@@ -832,7 +837,7 @@ def convert(
                 tf.lite.OpsSet.SELECT_TF_OPS,
             ]
             converter._experimental_disable_per_channel = disable_per_channel
-            converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+            converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
             converter.representative_dataset = representative_dataset_gen
             converter.inference_input_type = tf.float32
             converter.inference_output_type = tf.float32
@@ -850,7 +855,7 @@ def convert(
                 tf.lite.OpsSet.SELECT_TF_OPS,
             ]
             converter._experimental_disable_per_channel = disable_per_channel
-            converter._experimental_disable_batchmatmul_unfold = not enaable_batchmatmul_unfold
+            converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
             converter.representative_dataset = representative_dataset_gen
             converter.inference_input_type = tf.int16
             converter.inference_output_type = tf.int16
@@ -1082,10 +1087,17 @@ def main():
     )
     parser.add_argument(
         '-ebu',
-        '--enaable_batchmatmul_unfold',
+        '--enable_batchmatmul_unfold',
         action='store_true',
         help=\
             'BatchMatMul is separated batch by batch to generate a primitive MatMul.'
+    )
+    parser.add_argument(
+        '-dsft',
+        '--disable_suppression_flextranspose',
+        action='store_true',
+        help=\
+            'Disables FlexTranspose generation suppression.'
     )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
@@ -1278,7 +1290,8 @@ def main():
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         disable_group_convolution=args.disable_group_convolution,
-        enaable_batchmatmul_unfold=args.enaable_batchmatmul_unfold,
+        enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
+        disable_suppression_flextranspose=args.disable_suppression_flextranspose,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,

@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -88,9 +89,10 @@ def make_node(
             tensor=input_tensor,
             shape=[batch, height, width, csize, blocksize, blocksize]
         )
-        transpose_node = tf.transpose(
-            a=reshape_node,
-            perm=[0, 1, 4, 2, 5, 3]
+        transpose_node = transpose_with_flexing_deterrence(
+            input_tensor=reshape_node,
+            perm=[0,1,4,2,5,3],
+            **kwargs,
         )
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.reshape(
