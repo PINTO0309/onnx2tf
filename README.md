@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.3.19
+  ghcr.io/pinto0309/onnx2tf:1.4.0
 
   or
 
@@ -197,6 +197,7 @@ usage: onnx2tf
 [-rerf]
 [-me]
 [-prf PARAM_REPLACEMENT_FILE]
+[-cgdc]
 [-n]
 
 optional arguments:
@@ -429,6 +430,64 @@ optional arguments:
   -prf PARAM_REPLACEMENT_FILE, --param_replacement_file PARAM_REPLACEMENT_FILE
     Parameter replacement file path. (.json)
 
+  -cgdc, --check_gpu_delegate_compatibility
+    Run TFLite ModelAnalyzer on the generated Float16 tflite model
+    to check if the model can be supported by GPU Delegate.
+    e.g.
+    """
+    === TFLite ModelAnalyzer ===
+
+    Your TFLite model has '1' subgraph(s). In the subgraph description below,
+    T# represents the Tensor numbers. For example, in Subgraph#0, the RESHAPE op takes
+    tensor #0 and tensor #6 as input and produces tensor #7 as output.
+
+    Subgraph#0 main(T#0) -> [T#17]
+      Op#0 RESHAPE(T#0, T#6[2, 8, 8, 3, 2, ...]) -> [T#7]
+      Op#1 SPLIT(T#5[0], T#7) -> [T#8, T#9]
+      Op#2 RESHAPE(T#8, T#1[8, 8, 3, 2, 2]) -> [T#10]
+      Op#3 TRANSPOSE(T#10, T#4[0, 3, 1, 4, 2]) -> [T#11]
+      Op#4 RESHAPE(T#11, T#2[1, 8, 2, 8, 2, ...]) -> [T#12]
+      Op#5 RESHAPE(T#9, T#1[8, 8, 3, 2, 2]) -> [T#13]
+      Op#6 TRANSPOSE(T#13, T#4[0, 3, 1, 4, 2]) -> [T#14]
+      Op#7 RESHAPE(T#14, T#2[1, 8, 2, 8, 2, ...]) -> [T#15]
+      Op#8 CONCATENATION(T#12, T#15) -> [T#16]
+      Op#9 RESHAPE(T#16, T#3[2, 16, 16, 3]) -> [T#17]
+
+    Tensors of Subgraph#0
+      T#0(inputs_0) shape:[2, 8, 8, 12], type:FLOAT32
+      T#1(model/tf.compat.v1.squeeze_2/Squeeze) shape:[5], type:INT32 RO 20 bytes, data:[8, 8, 3, 2, 2]
+      T#2(model/tf.expand_dims_1/ExpandDims) shape:[6], type:INT32 RO 24 bytes, data:[1, 8, 2, 8, 2, ...]
+      T#3(model/tf.reshape_1/Reshape/shape) shape:[4], type:INT32 RO 16 bytes, data:[2, 16, 16, 3]
+      T#4(model/tf.compat.v1.transpose/transpose/perm) shape:[5], type:INT32 RO 20 bytes, data:[0, 3, 1, 4, 2]
+      T#5(model/tf.concat/concat/axis) shape:[], type:INT32 RO 4 bytes, data:[0]
+      T#6(model/tf.reshape/Reshape/shape) shape:[6], type:INT32 RO 24 bytes, data:[2, 8, 8, 3, 2, ...]
+      T#7(model/tf.reshape/Reshape) shape:[2, 8, 8, 3, 2, 2], type:FLOAT32
+      T#8(model/tf.split/split) shape:[1, 8, 8, 3, 2, 2], type:FLOAT32
+      T#9(model/tf.split/split1) shape:[1, 8, 8, 3, 2, 2], type:FLOAT32
+      T#10(model/tf.compat.v1.squeeze_1/Squeeze) shape:[8, 8, 3, 2, 2], type:FLOAT32
+      T#11(model/tf.compat.v1.transpose/transpose) shape:[8, 2, 8, 2, 3], type:FLOAT32
+      T#12(model/tf.expand_dims/ExpandDims) shape:[1, 8, 2, 8, 2, 3], type:FLOAT32
+      T#13(model/tf.compat.v1.squeeze_2/Squeeze1) shape:[8, 8, 3, 2, 2], type:FLOAT32
+      T#14(model/tf.compat.v1.transpose_1/transpose) shape:[8, 2, 8, 2, 3], type:FLOAT32
+      T#15(model/tf.expand_dims_1/ExpandDims1) shape:[1, 8, 2, 8, 2, 3], type:FLOAT32
+      T#16(model/tf.concat/concat) shape:[2, 8, 2, 8, 2, 3], type:FLOAT32
+      T#17(Identity) shape:[2, 16, 16, 3], type:FLOAT32
+
+    Your model looks compatibile with GPU delegate with TFLite runtime version 2.10.0.
+    But it doesn't guarantee that your model works well with GPU delegate.
+    There could be some runtime incompatibililty happen.
+    ---------------------------------------------------------------
+                  Model size:       2988 bytes
+        Non-data buffer size:       2757 bytes (92.27 %)
+      Total data buffer size:        231 bytes (07.73 %)
+        (Zero value buffers):          4 bytes (00.13 %)
+
+    * Buffers of TFLite model are mostly used for constant tensors.
+      And zero value buffers are buffers filled with zeros.
+      Non-data buffers area are used to store operators, subgraphs and etc.
+      You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+    """
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -478,6 +537,7 @@ convert(
   replace_erf_to_pseudo_erf: Optional[bool] = False,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
+  check_gpu_delegate_compatibility: Optional[bool] = False,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -716,6 +776,65 @@ convert(
 
     param_replacement_file: Optional[str]
       Parameter replacement file path. (.json)
+
+    check_gpu_delegate_compatibility: Optional[bool]
+      Run TFLite ModelAnalyzer on the generated Float16 tflite model
+      to check if the model can be supported by GPU Delegate.
+      e.g.
+      """
+      === TFLite ModelAnalyzer ===
+
+      Your TFLite model has '1' subgraph(s). In the subgraph description below,
+      T# represents the Tensor numbers. For example, in Subgraph#0, the RESHAPE op takes
+      tensor #0 and tensor #6 as input and produces tensor #7 as output.
+
+      Subgraph#0 main(T#0) -> [T#17]
+        Op#0 RESHAPE(T#0, T#6[2, 8, 8, 3, 2, ...]) -> [T#7]
+        Op#1 SPLIT(T#5[0], T#7) -> [T#8, T#9]
+        Op#2 RESHAPE(T#8, T#1[8, 8, 3, 2, 2]) -> [T#10]
+        Op#3 TRANSPOSE(T#10, T#4[0, 3, 1, 4, 2]) -> [T#11]
+        Op#4 RESHAPE(T#11, T#2[1, 8, 2, 8, 2, ...]) -> [T#12]
+        Op#5 RESHAPE(T#9, T#1[8, 8, 3, 2, 2]) -> [T#13]
+        Op#6 TRANSPOSE(T#13, T#4[0, 3, 1, 4, 2]) -> [T#14]
+        Op#7 RESHAPE(T#14, T#2[1, 8, 2, 8, 2, ...]) -> [T#15]
+        Op#8 CONCATENATION(T#12, T#15) -> [T#16]
+        Op#9 RESHAPE(T#16, T#3[2, 16, 16, 3]) -> [T#17]
+
+      Tensors of Subgraph#0
+        T#0(inputs_0) shape:[2, 8, 8, 12], type:FLOAT32
+        T#1(model/tf.compat.v1.squeeze_2/Squeeze) shape:[5], type:INT32 RO 20 bytes, data:[8, 8, 3, 2, 2]
+        T#2(model/tf.expand_dims_1/ExpandDims) shape:[6], type:INT32 RO 24 bytes, data:[1, 8, 2, 8, 2, ...]
+        T#3(model/tf.reshape_1/Reshape/shape) shape:[4], type:INT32 RO 16 bytes, data:[2, 16, 16, 3]
+        T#4(model/tf.compat.v1.transpose/transpose/perm) shape:[5], type:INT32 RO 20 bytes, data:[0, 3, 1, 4, 2]
+        T#5(model/tf.concat/concat/axis) shape:[], type:INT32 RO 4 bytes, data:[0]
+        T#6(model/tf.reshape/Reshape/shape) shape:[6], type:INT32 RO 24 bytes, data:[2, 8, 8, 3, 2, ...]
+        T#7(model/tf.reshape/Reshape) shape:[2, 8, 8, 3, 2, 2], type:FLOAT32
+        T#8(model/tf.split/split) shape:[1, 8, 8, 3, 2, 2], type:FLOAT32
+        T#9(model/tf.split/split1) shape:[1, 8, 8, 3, 2, 2], type:FLOAT32
+        T#10(model/tf.compat.v1.squeeze_1/Squeeze) shape:[8, 8, 3, 2, 2], type:FLOAT32
+        T#11(model/tf.compat.v1.transpose/transpose) shape:[8, 2, 8, 2, 3], type:FLOAT32
+        T#12(model/tf.expand_dims/ExpandDims) shape:[1, 8, 2, 8, 2, 3], type:FLOAT32
+        T#13(model/tf.compat.v1.squeeze_2/Squeeze1) shape:[8, 8, 3, 2, 2], type:FLOAT32
+        T#14(model/tf.compat.v1.transpose_1/transpose) shape:[8, 2, 8, 2, 3], type:FLOAT32
+        T#15(model/tf.expand_dims_1/ExpandDims1) shape:[1, 8, 2, 8, 2, 3], type:FLOAT32
+        T#16(model/tf.concat/concat) shape:[2, 8, 2, 8, 2, 3], type:FLOAT32
+        T#17(Identity) shape:[2, 16, 16, 3], type:FLOAT32
+
+      Your model looks compatibile with GPU delegate with TFLite runtime version 2.10.0.
+      But it doesn't guarantee that your model works well with GPU delegate.
+      There could be some runtime incompatibililty happen.
+      ---------------------------------------------------------------
+                    Model size:       2988 bytes
+          Non-data buffer size:       2757 bytes (92.27 %)
+        Total data buffer size:        231 bytes (07.73 %)
+          (Zero value buffers):          4 bytes (00.13 %)
+
+      * Buffers of TFLite model are mostly used for constant tensors.
+        And zero value buffers are buffers filled with zeros.
+        Non-data buffers area are used to store operators, subgraphs and etc.
+        You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+      """
+
 
     non_verbose: Optional[bool]
       Do not show all information logs. Only error logs are displayed.

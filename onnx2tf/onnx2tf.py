@@ -80,6 +80,7 @@ def convert(
     replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
     replace_erf_to_pseudo_erf: Optional[bool] = False,
     param_replacement_file: Optional[str] = '',
+    check_gpu_delegate_compatibility: Optional[bool] = False,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
@@ -318,6 +319,10 @@ def convert(
 
     param_replacement_file: Optional[str]
         Parameter replacement file path. (.json)
+
+    check_gpu_delegate_compatibility: Optional[bool]
+        Run TFLite ModelAnalyzer on the generated Float16 tflite model\n
+        to check if the model can be supported by GPU Delegate.'
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -713,6 +718,24 @@ def convert(
             w.write(tflite_model)
         if not non_verbose:
             print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
+
+        # Run TFLite ModelAnalyzer on the generated Float16 tflite model
+        # to check if the model can be supported by GPU Delegate.
+        if check_gpu_delegate_compatibility:
+            print('')
+            try:
+                tf.lite.experimental.Analyzer.analyze(
+                    model_content=tflite_model,
+                    gpu_compatibility=True,
+                )
+            except Exception as ex:
+                if not non_verbose:
+                    import traceback
+                    traceback.print_exc()
+                    print(
+                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                        'TFLite ModelAnalyzer failed.'
+                    )
 
         # Quantized TFLite
         if output_integer_quantized_tflite:
@@ -1276,6 +1299,15 @@ def main():
         help='Parameter replacement file path. (.json)'
     )
     parser.add_argument(
+        '-cgdc',
+        '--check_gpu_delegate_compatibility',
+        action='store_true',
+        help=\
+            'Run TFLite ModelAnalyzer on the generated Float16 tflite model ' +
+            'to check if the model can be supported by GPU Delegate.'
+    )
+    tf.lite.experimental.Analyzer.analyze()
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -1344,6 +1376,7 @@ def main():
         replace_hardswish_to_pseudo_hardswish=args.replace_hardswish_to_pseudo_hardswish,
         replace_erf_to_pseudo_erf=args.replace_erf_to_pseudo_erf,
         param_replacement_file=args.param_replacement_file,
+        check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
     )
