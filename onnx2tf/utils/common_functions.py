@@ -846,6 +846,14 @@ def explicit_broadcast(
         graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
         swapped += 1
 
+        # Skip subsequent processing in the following patterns.
+        #   const_or_var_1: [1,1,5000]
+        #   const_or_var_2: [5000]
+        if len(const_or_var_1.shape) >= 1 \
+            and len(const_or_var_2.shape) == 1 \
+            and const_or_var_1.shape[-1] == const_or_var_2.shape[-1]:
+            return const_or_var_1, const_or_var_2
+
     """
     UnSqueeze 1 at the beginning of const_or_var_2_shape until const_or_var_1.shape
     and const_or_var_2.shape have the same rank
