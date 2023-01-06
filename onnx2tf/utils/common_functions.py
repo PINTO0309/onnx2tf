@@ -360,7 +360,8 @@ def inverted_operation_enable_disable(func):
 
             trans_judge = (onnx_node_output_shape != tf_node_output_shape)
             # Avoiding patterns of misjudgment when the second and subsequent dimensions are all the same value
-            if len(tf_node_output_shape) >= 3:
+            if tf_node_output_shape != tf.TensorShape(None) \
+                and len(tf_node_output_shape) >= 3:
                 base_shape = tf_node_output_shape[1]
                 if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
                     and (onnx_node_output_shape == tf_node_output_shape):
@@ -2082,6 +2083,8 @@ def disable_unnecessary_transpose(
 
         if ((node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose') \
             or (not node_x_op_type == 'Transpose' and node_y_op_type == 'Transpose')) \
+            and graph_node_input_1.shape is not None \
+            and graph_node_input_2.shape is not None \
             and (len(graph_node_input_1.shape) == len(graph_node_input_2.shape)):
 
             if (node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose'):
