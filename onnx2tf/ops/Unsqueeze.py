@@ -56,15 +56,24 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    input_tensor_shape = list(input_tensor.shape)
-    tensor_rank = len(input_tensor_shape)
 
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     if axes is not None and axes.shape is None:
         axes = None
-
     axes = graph_node.attrs.get('axes', axes)
+
+    if input_tensor.shape != tf.TensorShape(None):
+        input_tensor_shape = list(input_tensor.shape)
+        tensor_rank = len(input_tensor_shape)
+    elif graph_node_output.shape is not None:
+        input_tensor_shape = [
+            dim for idx, dim in enumerate(graph_node_output.shape) if idx not in axes
+        ]
+        input_tensor_shape = [
+            dim if not isinstance(dim, str) else None for dim in input_tensor_shape
+        ]
+        tensor_rank = len(input_tensor_shape)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
         axes = [

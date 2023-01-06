@@ -80,7 +80,7 @@ def make_node(
                         before_op_output_shape_trans=before_op_output_shape_trans,
                     ) for idx in perm
                 ]
-        else:
+        elif output_shape is not None:
             # When a zero-dimensional transposition occurs, compare the shape
             # of the final output tensor of ONNX with the shape
             # of the input tensor of TF and transpose to match the shape
@@ -114,7 +114,7 @@ def make_node(
                 tensor_rank=tensor_rank,
                 before_op_output_shape_trans=before_op_output_shape_trans,
             )
-        else:
+        elif output_shape is not None:
             # When a zero-dimensional transposition occurs, compare the shape
             # of the final output tensor of ONNX with the shape of the input tensor
             # of TF and transpose to match the shape of the final output tensor on the ONNX side
