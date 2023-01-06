@@ -123,6 +123,7 @@ def make_node(
                 sorted=sorted,
                 name=graph_node.name,
             )
+        topked_indices = tf.cast(x=topked_indices, dtype=tf.int64)
     else:
         topked_values, topked_indices = \
             tf.math.top_k(
@@ -132,6 +133,7 @@ def make_node(
                 name=graph_node.name,
             )
         topked_values = tf.negative(topked_values)
+        topked_indices = tf.cast(x=topked_indices, dtype=tf.int64)
 
     if axis != (tensor_rank-1):
         perm = [perm.index(idx) for idx in range(tensor_rank)]
