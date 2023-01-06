@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     transpose_with_flexing_deterrence,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -132,6 +133,10 @@ def make_node(
                 name=graph_node.name,
             )
         topked_values = tf.negative(topked_values)
+    topked_indices = tf.cast(
+        x=topked_indices,
+        dtype=NUMPY_DTYPES_TO_TF_DTYPES[Indices_dtype],
+    )
 
     if axis != (tensor_rank-1):
         perm = [perm.index(idx) for idx in range(tensor_rank)]
