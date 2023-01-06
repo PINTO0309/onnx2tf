@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -102,9 +103,10 @@ def make_node(
     if axis != (tensor_rank-1):
         perm = [idx for idx in range(tensor_rank) if idx != axis] + [axis]
         input_tensor = \
-            tf.transpose(
-                a=input_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=input_tensor,
                 perm=perm,
+                **kwargs,
             )
 
     # MLIR only accepts scalar values for k-values, thus compressing the dimension
@@ -134,14 +136,16 @@ def make_node(
     if axis != (tensor_rank-1):
         perm = [perm.index(idx) for idx in range(tensor_rank)]
         topked_values = \
-            tf.transpose(
-                a=topked_values,
+            transpose_with_flexing_deterrence(
+                input_tensor=topked_values,
                 perm=perm,
+                **kwargs,
             )
         topked_indices = \
-            tf.transpose(
-                a=topked_indices,
+            transpose_with_flexing_deterrence(
+                input_tensor=topked_indices,
                 perm=perm,
+                **kwargs,
             )
 
     tf_layers_dict[Values.name]['tf_node'] = topked_values

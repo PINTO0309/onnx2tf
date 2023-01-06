@@ -272,9 +272,12 @@ def make_node(
         # Adjust the number of dimensions of the input data according to the number of axes [List]
         ##### Replace max values
         if isinstance(begin_, list):
-            unsqueeze_mask = [1] * input_tensor_rank
-            for axis in axes:
-                unsqueeze_mask[axis] = 0
+            if axes is not None:
+                unsqueeze_mask = [1] * input_tensor_rank
+                for axis in axes:
+                    unsqueeze_mask[axis] = 0
+            else:
+                unsqueeze_mask = [0] * input_tensor_rank
             for axis, maskbit in enumerate(unsqueeze_mask):
                 if maskbit == 1:
                     begin_.insert(axis, 0)
@@ -285,9 +288,12 @@ def make_node(
             )
         ##### Replace negative values
         if isinstance(end_, list):
-            unsqueeze_mask = [1] * input_tensor_rank
-            for axis in axes:
-                unsqueeze_mask[axis] = 0
+            if axes is not None:
+                unsqueeze_mask = [1] * input_tensor_rank
+                for axis in axes:
+                    unsqueeze_mask[axis] = 0
+            else:
+                unsqueeze_mask = [0] * input_tensor_rank
             for axis, maskbit in enumerate(unsqueeze_mask):
                 if maskbit == 1:
                     end_.insert(axis, 0)
@@ -298,9 +304,12 @@ def make_node(
             )
         if strides_ is not None:
             if isinstance(strides_, list):
-                unsqueeze_mask = [1] * input_tensor_rank
-                for axis in axes:
-                    unsqueeze_mask[axis] = 0
+                if axes is not None:
+                    unsqueeze_mask = [1] * input_tensor_rank
+                    for axis in axes:
+                        unsqueeze_mask[axis] = 0
+                else:
+                    unsqueeze_mask = [0] * input_tensor_rank
                 for axis, maskbit in enumerate(unsqueeze_mask):
                     if maskbit == 1:
                         strides_.insert(axis, 1)
