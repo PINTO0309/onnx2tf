@@ -136,7 +136,7 @@ Run test.
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx
 
-# Float32, Float16 with saved_model with signaturedefs added
+# Float32, Float16, saved_model with signaturedefs added
 # Output in the form of saved_model that can be used for serving or conversion to other frameworks
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
