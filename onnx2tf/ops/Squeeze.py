@@ -97,12 +97,64 @@ def make_node(
 
     # Generation of TF OP
     axes = list(axes) if axes is not None else None
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.squeeze(
-            input=input_tensor,
-            axis=axes,
-            name=graph_node.name,
-        )
+
+    try:
+        if graph_node.o().op == 'Unsqueeze' \
+            and hasattr(graph_node.o(), 'attrs') \
+            and 'axes' in graph_node.o().attrs:
+            # Remove useless squeeze/unsqueeze combinations
+            #   Only when squeeze and unsqueeze are consecutive
+            #   and each is performing a useless process of
+            #   compressing and decompressing the same axis,
+            #   the two operations are disabled at the same time.
+            next_unsqueeze_node = graph_node.o()
+            next_unsqueeze_output_shape = next_unsqueeze_node.outputs[0].shape
+            next_unsqueeze_output_rank = len(next_unsqueeze_output_shape)
+            next_unsqueezed_axes = next_unsqueeze_node.attrs['axes']
+            if isinstance(next_unsqueezed_axes, list) or (isinstance(next_unsqueezed_axes, np.ndarray) and len(next_unsqueezed_axes.shape) > 0):
+                next_unsqueezed_axes = [
+                    convert_axis(
+                        axis=idx,
+                        tensor_rank=next_unsqueeze_output_rank,
+                        before_op_output_shape_trans=before_op_output_shape_trans,
+                    ) for idx in next_unsqueezed_axes
+                ]
+            elif next_unsqueezed_axes is not None and isinstance(next_unsqueezed_axes, np.ndarray) and len(next_unsqueezed_axes.shape) == 0:
+                next_unsqueezed_axes = convert_axis(
+                    axis=next_unsqueezed_axes,
+                    tensor_rank=next_unsqueeze_output_rank,
+                    before_op_output_shape_trans=before_op_output_shape_trans,
+                )
+            if next_unsqueezed_axes == axes:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.identity(input=input_tensor)
+                tf_layers_dict[graph_node_output.name]['unnecessary_squeeze'] = True
+            else:
+                # Normal squeeze
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.squeeze(
+                        input=input_tensor,
+                        axis=axes,
+                        name=graph_node.name,
+                    )
+        else:
+            # Normal squeeze
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.squeeze(
+                    input=input_tensor,
+                    axis=axes,
+                    name=graph_node.name,
+                )
+    except Exception as ex:
+        # Normal squeeze
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.squeeze(
+                input=input_tensor,
+                axis=axes,
+                name=graph_node.name,
+            )
+
+
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

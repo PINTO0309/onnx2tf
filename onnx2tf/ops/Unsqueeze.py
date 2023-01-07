@@ -135,7 +135,16 @@ def make_node(
     test pattern.8 : axes=[3,6], [2,3,4,1,5,6,1,7]
     test pattern.9 : axes=[3,-1], [2,3,4,1,5,6,1,7]
     """
-    if len(new_shape) >= 2 \
+    if 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['unnecessary_squeeze'] == True:
+        # Remove useless squeeze/unsqueeze combinations
+        #   Only when squeeze and unsqueeze are consecutive
+        #   and each is performing a useless process of
+        #   compressing and decompressing the same axis,
+        #   the two operations are disabled at the same time.
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+    elif len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
         and len(axes) == 1:
