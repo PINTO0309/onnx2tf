@@ -1,3 +1,4 @@
+import copy
 import random
 random.seed(0)
 import numpy as np
@@ -64,6 +65,8 @@ def make_node(
         axes = None
 
     axes = graph_node.attrs.get('axes', axes)
+    # axes for determining the deletion of unnecessary squeeze/unsqueeze combinations
+    non_transpose_axes = copy.deepcopy(axes)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
         axes = [
@@ -99,33 +102,35 @@ def make_node(
     axes = list(axes) if axes is not None else None
 
     try:
-        if graph_node.o().op == 'Unsqueeze' \
+        workaround_exec_flg = False
+        try:
+            graph_node.o(consumer_idx=1)
+        except Exception as ex:
+            # Error == Only one node connected next
+            workaround_exec_flg = True
+        if workaround_exec_flg \
+            and graph_node.o().op == 'Unsqueeze' \
             and hasattr(graph_node.o(), 'attrs') \
-            and 'axes' in graph_node.o().attrs:
+            and ('axes' in graph_node.o().attrs or len(graph_node.o().inputs) >= 2):
             # Remove useless squeeze/unsqueeze combinations
             #   Only when squeeze and unsqueeze are consecutive
             #   and each is performing a useless process of
             #   compressing and decompressing the same axis,
             #   the two operations are disabled at the same time.
             next_unsqueeze_node = graph_node.o()
-            next_unsqueeze_output_shape = next_unsqueeze_node.outputs[0].shape
-            next_unsqueeze_output_rank = len(next_unsqueeze_output_shape)
-            next_unsqueezed_axes = next_unsqueeze_node.attrs['axes']
-            if isinstance(next_unsqueezed_axes, list) or (isinstance(next_unsqueezed_axes, np.ndarray) and len(next_unsqueezed_axes.shape) > 0):
-                next_unsqueezed_axes = [
-                    convert_axis(
-                        axis=idx,
-                        tensor_rank=next_unsqueeze_output_rank,
-                        before_op_output_shape_trans=before_op_output_shape_trans,
-                    ) for idx in next_unsqueezed_axes
-                ]
-            elif next_unsqueezed_axes is not None and isinstance(next_unsqueezed_axes, np.ndarray) and len(next_unsqueezed_axes.shape) == 0:
-                next_unsqueezed_axes = convert_axis(
-                    axis=next_unsqueezed_axes,
-                    tensor_rank=next_unsqueeze_output_rank,
-                    before_op_output_shape_trans=before_op_output_shape_trans,
+            next_node_axes = None
+            if len(next_unsqueeze_node.inputs) >= 2:
+                next_node_axes = get_constant_or_variable(
+                    next_unsqueeze_node.inputs[1],
+                    before_op_output_shape_trans,
                 )
-            if next_unsqueezed_axes == axes:
+                next_node_axes = tf_layers_dict[next_node_axes.name]['tf_node'] \
+                    if isinstance(next_node_axes, gs.Variable) else next_node_axes
+                if next_node_axes is not None and next_node_axes.shape is None:
+                    next_node_axes = None
+            next_unsqueezed_axes = next_unsqueeze_node.attrs['axes'] \
+                if 'axes' in next_unsqueeze_node.attrs else next_node_axes
+            if next_unsqueezed_axes == non_transpose_axes:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor)
                 tf_layers_dict[graph_node_output.name]['unnecessary_squeeze'] = True
