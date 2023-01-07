@@ -1992,10 +1992,27 @@ def process_neg_idx(
             indices.dtype,
         )
     else:
-        max_i = tf.cast(
-            data_shape[:indices_shape[-1]],
-            indices.dtype,
-        )
+        if not isinstance(indices_shape[-1], int) \
+            and not isinstance(indices_shape[-1], np.ndarray) \
+            and not isinstance(indices_shape[-1], tf.Tensor) \
+            and tf.keras.backend.is_keras_tensor(indices_shape[-1]):
+            if data_shape != tf.TensorShape([None]):
+                max_i = tf.cast(
+                    tf.strided_slice(
+                        input_=data_shape,
+                        begin=0,
+                        end=indices_shape[-1],
+                        begin_mask=1,
+                    ),
+                    indices.dtype,
+                )
+            else:
+                return indices
+        else:
+            max_i = tf.cast(
+                data_shape[:indices_shape[-1]],
+                indices.dtype,
+            )
     return tf.math.floormod(tf.add(indices, max_i), max_i)
 
 

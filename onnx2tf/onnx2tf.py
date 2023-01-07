@@ -1306,7 +1306,6 @@ def main():
             'Run TFLite ModelAnalyzer on the generated Float16 tflite model ' +
             'to check if the model can be supported by GPU Delegate.'
     )
-    tf.lite.experimental.Analyzer.analyze()
     parser.add_argument(
         '-n',
         '--non_verbose',
