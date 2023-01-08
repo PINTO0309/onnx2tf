@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.4.1
+  ghcr.io/pinto0309/onnx2tf:1.4.2
 
   or
 
@@ -1218,33 +1218,34 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |48|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
 |49|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
 |50|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
-|51|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|52|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|53|regnet_x_400mf.onnx|:heavy_check_mark:|
-|54|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|55|resnet18-v1-7.onnx|:heavy_check_mark:|
-|56|resnet50-v1-12.onnx|:heavy_check_mark:|
-|57|resnet50-v2-7.onnx|:heavy_check_mark:|
-|58|retinanet-9.onnx|:heavy_check_mark:|
-|59|sinet_320_op.onnx|:heavy_check_mark:|
-|60|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|61|super-resolution-10.onnx|:heavy_check_mark:|
-|62|swinir-m_64x64_12.onnx|:heavy_check_mark:|
-|63|tinyyolov2-8.onnx|:heavy_check_mark:|
-|64|version-RFB-640.onnx|:heavy_check_mark:|
-|65|vit-b-32_textual.onnx|:heavy_check_mark:|
-|66|vit-b-32_visual.onnx|:heavy_check_mark:|
-|67|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|68|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|69|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|70|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|71|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|72|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|73|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|74|yolox_s.onnx|:heavy_check_mark:|
-|75|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|76|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|77|zfnet512-12.onnx|:heavy_check_mark:|
+|51|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
+|52|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|53|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|54|regnet_x_400mf.onnx|:heavy_check_mark:|
+|55|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|56|resnet18-v1-7.onnx|:heavy_check_mark:|
+|57|resnet50-v1-12.onnx|:heavy_check_mark:|
+|58|resnet50-v2-7.onnx|:heavy_check_mark:|
+|59|retinanet-9.onnx|:heavy_check_mark:|
+|60|sinet_320_op.onnx|:heavy_check_mark:|
+|61|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|62|super-resolution-10.onnx|:heavy_check_mark:|
+|63|swinir-m_64x64_12.onnx|:heavy_check_mark:|
+|64|tinyyolov2-8.onnx|:heavy_check_mark:|
+|65|version-RFB-640.onnx|:heavy_check_mark:|
+|66|vit-b-32_textual.onnx|:heavy_check_mark:|
+|67|vit-b-32_visual.onnx|:heavy_check_mark:|
+|68|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|69|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|70|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|71|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|72|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|73|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|74|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|75|yolox_s.onnx|:heavy_check_mark:|
+|76|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|77|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|78|zfnet512-12.onnx|:heavy_check_mark:|
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
