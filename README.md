@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.4.2
+  ghcr.io/pinto0309/onnx2tf:1.5.0
 
   or
 
@@ -197,9 +197,12 @@ usage: onnx2tf
 [-rng]
 [-rhs]
 [-rerf]
-[-me]
+[-me MVN_EPSILON]
 [-prf PARAM_REPLACEMENT_FILE]
 [-cgdc]
+[-coto]
+[-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
+[-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
 [-n]
 
 optional arguments:
@@ -490,6 +493,20 @@ optional arguments:
       You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
     """
 
+  -coto, --check_onnx_tf_outputs_elementwise_close
+    Returns true if the two arrays, the output of onnx and the output of TF,
+    are elementwise close within an acceptable range.
+
+  -cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL,\
+    --check_onnx_tf_outputs_elementwise_close_rtol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL
+    The relative tolerance parameter.
+    Default: 1e-5
+
+  -cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL,\
+    --check_onnx_tf_outputs_elementwise_close_atol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL
+    The absolute tolerance parameter.
+    Default: 1e-5
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -540,6 +557,9 @@ convert(
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   check_gpu_delegate_compatibility: Optional[bool] = False,
+  check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
+  check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 1e-5,
+  check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-5,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -837,6 +857,21 @@ convert(
         You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
       """
 
+    check_onnx_tf_outputs_elementwise_close: Optional[bool]
+        Returns true if the two arrays, the output of onnx and the output of TF,
+        are elementwise close within an acceptable range.
+
+    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
+        The relative tolerance parameter.
+        Default: 1e-5
+
+    check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
+        The absolute tolerance parameter.
+        Default: 1e-5
+
+    non_verbose: Optional[bool]
+        Do not show all information logs. Only error logs are displayed.
+        Default: False
 
     non_verbose: Optional[bool]
       Do not show all information logs. Only error logs are displayed.

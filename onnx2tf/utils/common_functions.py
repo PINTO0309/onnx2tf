@@ -9,9 +9,15 @@ np.random.seed(0)
 import tensorflow as tf
 from tensorflow.keras.layers import Lambda # type: ignore
 from tensorflow.python.keras.utils import conv_utils
+import onnx
 import onnx_graphsurgeon as gs
+try:
+    import onnxruntime as ort
+    from sne4onnx import extraction
+except Exception as ex:
+    pass
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional, Union, Tuple
+from typing import Any, List, Optional, Union, Tuple, Dict
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -2759,3 +2765,236 @@ def transpose_with_flexing_deterrence(
             )
 
     return tensor_after_transposition
+
+
+def dummy_onnx_inference(
+    *,
+    onnx_graph: onnx.ModelProto,
+    output_names: List[str],
+) -> List[np.ndarray]:
+    """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
+
+    Parameters
+    ----------
+    onnx_graph: onnx.ModelProto
+        ONNX subgraphs
+
+    output_names: List[str]
+        List of output names to be checked for output values
+
+    Returns
+    ----------
+    outputs: List[np.ndarray]
+        Results of inference using dummy tensor
+    """
+    # Separate onnx at specified output_names position
+    gs_graph = gs.import_onnx(onnx_graph)
+    extracted_graph = extraction(
+        onnx_graph=onnx_graph,
+        input_op_names=[graph_input.name for graph_input in gs_graph.inputs],
+        output_op_names=output_names,
+        non_verbose=True,
+    )
+    ### debug
+    onnx.save(extracted_graph, 'test.onnx')
+    ### debug
+    serialized_graph = onnx._serialize(extracted_graph)
+    onnx_session = ort.InferenceSession(
+        path_or_bytes=serialized_graph,
+        providers=['CPUExecutionProvider'],
+    )
+    onnx_inputs = gs_graph.inputs
+    input_names: List[str] = [inp.name for inp in onnx_inputs]
+    input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
+    new_input_sizes = []
+    for input_size in input_sizes:
+        new_input_size = []
+        for idx, dim in enumerate(input_size):
+            if idx == 0 and input_sizes[0][0] is not None \
+                and not isinstance(input_sizes[0][0], str):
+                # Batch size assignment for input OPs
+                new_input_size.append(input_sizes[0][0])
+            elif dim is None or isinstance(dim, str):
+                # Fixed and assigned 1
+                new_input_size.append(1)
+            else:
+                # Assign input shape as is
+                new_input_size.append(dim)
+        new_input_sizes.append(new_input_size)
+    input_sizes = new_input_sizes
+    input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
+    dummy_datas = {}
+    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+        dummy_datas[input_name] = np.ones(
+            input_size,
+            dtype=input_dtype,
+        )
+    outputs = onnx_session.run(None, dummy_datas)
+    return outputs
+
+
+def dummy_tf_inference(
+    *,
+    model: tf.keras.Model,
+    inputs: List[tf.keras.Input],
+) -> Any:
+    """Perform inference on TF subgraphs with an all-1 dummy tensor.
+
+    Parameters
+    ----------
+    model: tf.keras.Model
+        Keras model
+
+    inputs: List[tf.keras.Input]
+        List of tf.keras.Input
+
+    Returns
+    ----------
+    outputs: np.ndarray or List[np.ndarray]
+        Results of inference using dummy tensor.
+        Unlisted np.ndarray with one output.
+        List of np.ndarray when there are two or more outputs.
+    """
+    input_names: List[str] = [inp.name for inp in inputs]
+    input_sizes: List[int] = [inp.shape for inp in inputs]
+    new_input_sizes = []
+    for input_size in input_sizes:
+        new_input_size = []
+        for idx, dim in enumerate(input_size):
+            if idx == 0 and input_sizes[0][0] is not None:
+                # Batch size assignment for input OPs
+                new_input_size.append(input_sizes[0][0])
+            elif dim is None:
+                # Fixed and assigned 1
+                new_input_size.append(1)
+            else:
+                # Assign input shape as is
+                new_input_size.append(dim)
+        new_input_sizes.append(new_input_size)
+    input_sizes = new_input_sizes
+    input_dtypes: List[Any] = [inp.dtype for inp in inputs]
+    dummy_datas = {}
+    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+        dummy_datas[input_name] = np.ones(
+            input_size,
+            dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+        )
+    outputs = model(
+        inputs={
+            input.name: dummy_datas[input.name] for input in inputs
+        },
+        training=False,
+    )
+    return outputs
+
+
+def onnx_tf_tensor_validation(
+    *,
+    onnx_tensor_infos: Dict[str, np.ndarray],
+    tf_tensors: List[np.ndarray],
+    rtol: float=1e-05,
+    atol: float=1e-05,
+) -> Dict[str, List]:
+    """Check if the ONNX tensor and the TF tensor are approximate.
+
+    Parameters
+    ----------
+    onnx_tensor_infos: Dict[str, np.ndarray]
+        ONNX tensor to be verified
+        {
+            output_name: np.ndarray,
+            output_name: np.ndarray,
+                    :
+        }
+
+    tf_tensors: List[np.ndarray]
+        TF tensor to be verified
+        [
+            np.ndarray,
+            np.ndarray,
+                :
+        ]
+
+    rtol: float=1e-05
+        The relative tolerance parameter
+
+    atol: float=1e-05
+        The absolute tolerance parameter
+
+    Returns
+    ----------
+    check_results: Dict[str, List[np.ndarray, bool]]
+        Tensor Comparison Results
+        {
+            onnx_output_name: [
+                onnx_tensor,
+                matched_flg, <--- True: Matched, False: Unmatched
+            ]
+        }
+    """
+    check_results = {
+        onnx_output_name: [onnx_tensor, False] \
+            for onnx_output_name, onnx_tensor in onnx_tensor_infos.items()
+    }
+    tf_check_skip_flag = [False] * len(tf_tensors)
+    for onnx_output_name, onnx_check_info in check_results.items():
+        onnx_tensor: np.ndarray = onnx_check_info[0] # onnx_tensor
+        onnx_tensor_shape = onnx_tensor.shape
+        for tf_idx, tf_tensor in enumerate(tf_tensors):
+            """
+            onnx_dummy_data: np.random.random_sample([1,3,224,224])
+            tf_dummy_data  : onnx_dummy_data.transpose([0,2,3,1]), len(tf_tensor.shape) == 4
+
+            tf_shape_transpose_perms:
+                [
+                    (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 2, 3, 1), (0, 3, 1, 2),
+                    (0, 3, 2, 1), (1, 0, 2, 3), (1, 0, 3, 2), (1, 2, 0, 3), (1, 2, 3, 0),
+                    (1, 3, 0, 2), (1, 3, 2, 0), (2, 0, 1, 3), (2, 0, 3, 1), (2, 1, 0, 3),
+                    (2, 1, 3, 0), (2, 3, 0, 1), (2, 3, 1, 0), (3, 0, 1, 2), (3, 0, 2, 1),
+                    (3, 1, 0, 2), (3, 1, 2, 0), (3, 2, 0, 1), (3, 2, 1, 0)
+                ]
+
+            tf_target_transpose_perms:
+                [(0, 3, 1, 2), (0, 3, 2, 1)]
+            """
+            if not tf_check_skip_flag[tf_idx]:
+                tf_shape_transpose_perms = list(itertools.permutations(range(len(tf_tensor.shape))))
+                tf_target_transpose_perms = [
+                    tf_shape_transpose_perm \
+                        for tf_shape_transpose_perm in tf_shape_transpose_perms \
+                            if tf_tensor.transpose(tf_shape_transpose_perm).shape == onnx_tensor_shape
+                ]
+                # Validation
+                """
+                tf_check_infos:
+                    {
+                        [
+                            tf_target_transpose_perm, <--- tf_target_transpose_perms[idx]
+                            matched_flg, <--- True: Matched, False: Unmatched
+                        ]
+                    }
+                """
+                tf_check_infos = [
+                    [tf_target_transpose_perm, False] for tf_target_transpose_perm in tf_target_transpose_perms
+                ]
+                for tf_check_info in tf_check_infos:
+                    tf_transposed_tensor = tf_tensor.transpose(tf_check_info[0])
+                    if np.allclose(a=onnx_tensor, b=tf_transposed_tensor, rtol=rtol, atol=atol, equal_nan=True):
+                        # Matched
+                        tf_check_info[1] = True
+                        tf_check_skip_flag[tf_idx] = True
+                        break
+                    else:
+                        # Unmatched
+                        pass
+                # Validation results check
+                validate_result = False
+                for tf_check_info in tf_check_infos:
+                    if tf_check_info[1]:
+                        validate_result = tf_check_info[1]
+                        break
+                else:
+                    continue
+                check_results[onnx_output_name][1] = validate_result
+                break
+    return check_results

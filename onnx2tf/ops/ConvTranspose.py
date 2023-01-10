@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     convert_reverse_axis,
     make_tf_node_info,
     calc_output_shape_conv_transpose,
+    dummy_onnx_inference,
 )
 from onnx2tf.utils.colors import Color
 
@@ -140,45 +141,11 @@ def make_node(
                 f'Install sne4onnx and onnxruntime. pip install sne4onnx onnxruntime'
             )
             sys.exit(1)
-        gs_graph: gs.Graph = kwargs['gs_graph']
-        onnx_graph = gs.export_onnx(gs_graph)
-        extracted_graph = extraction(
+        onnx_graph = kwargs['onnx_graph']
+        convtranspose_output = dummy_onnx_inference(
             onnx_graph=onnx_graph,
-            input_op_names=[graph_input.name for graph_input in gs_graph.inputs],
-            output_op_names=[graph_node_output.name],
-            non_verbose=True,
-        )
-        serialized_graph = onnx._serialize(extracted_graph)
-        onnx_session = ort.InferenceSession(
-            path_or_bytes=serialized_graph,
-            providers=['CPUExecutionProvider'],
-        )
-        onnx_inputs = gs_graph.inputs
-        input_names: List[str] = [inp.name for inp in onnx_inputs]
-        input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
-        new_input_sizes = []
-        for input_size in input_sizes:
-            new_input_size = []
-            for idx, dim in enumerate(input_size):
-                if idx == 0 and input_sizes[0][0] is not None and not isinstance(input_sizes[0][0], str):
-                    # Batch size assignment for input OPs
-                    new_input_size.append(input_sizes[0][0])
-                elif dim is None or isinstance(dim, str):
-                    # Fixed and assigned 1
-                    new_input_size.append(1)
-                else:
-                    # Assign input shape as is
-                    new_input_size.append(dim)
-            new_input_sizes.append(new_input_size)
-        input_sizes = new_input_sizes
-        input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
-        dummy_datas = {}
-        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-            dummy_datas[input_name] = np.ones(
-                input_size,
-                dtype=input_dtype,
-            )
-        convtranspose_output = onnx_session.run(None, dummy_datas)[0]
+            output_names=[graph_node_output.name],
+        )[0]
         onnx_output_shape = list(convtranspose_output.shape)
         tf_output_shape = []
         for idx in range(input_tensor_rank):
