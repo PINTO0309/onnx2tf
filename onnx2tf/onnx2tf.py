@@ -35,10 +35,15 @@ tf.get_logger().setLevel(logging.FATAL)
 
 import onnx
 import onnx_graphsurgeon as gs
-from typing import Optional, List
+from typing import Optional, List, Any
 from argparse import ArgumentParser
 
 import importlib
+from onnx2tf.utils.common_functions import (
+    dummy_onnx_inference,
+    dummy_tf_inference,
+    onnx_tf_tensor_validation,
+)
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
 
@@ -81,6 +86,9 @@ def convert(
     replace_erf_to_pseudo_erf: Optional[bool] = False,
     param_replacement_file: Optional[str] = '',
     check_gpu_delegate_compatibility: Optional[bool] = False,
+    check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
+    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 1e-5,
+    check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-5,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
@@ -322,7 +330,19 @@ def convert(
 
     check_gpu_delegate_compatibility: Optional[bool]
         Run TFLite ModelAnalyzer on the generated Float16 tflite model\n
-        to check if the model can be supported by GPU Delegate.'
+        to check if the model can be supported by GPU Delegate.
+
+    check_onnx_tf_outputs_elementwise_close: Optional[bool]
+        Returns true if the two arrays, the output of onnx and the output of TF,\n
+        are elementwise close within an acceptable range.
+
+    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
+        The relative tolerance parameter.\n
+        Default: 1e-5
+
+    check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
+        The absolute tolerance parameter.\n
+        Default: 1e-5
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -501,7 +521,7 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
-        'gs_graph': graph,
+        'onnx_graph': onnx_graph,
         'opset': graph.opset,
         'batch_size': batch_size,
         'non_verbose': non_verbose,
@@ -924,6 +944,93 @@ def convert(
                         'Full INT8 Quantization with int16 activations tflite output failed.'
                     )
 
+        # Returns true if the two arrays, the output of onnx and the output of TF,
+        # are elementwise equal within an acceptable range.
+        # https://numpy.org/doc/stable/reference/generated/numpy.allclose.html#numpy-allclose
+        # numpy.allclose(a, b, rtol=1e-05, atol=1e-05, equal_nan=True)
+        if check_onnx_tf_outputs_elementwise_close:
+            try:
+                import onnxruntime
+                import sne4onnx
+            except Exception as ex:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +\
+                    f'If --check_onnx_tf_outputs_elementwise_close is specified, ' +\
+                    f'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
+                )
+                sys.exit(1)
+
+            if not non_verbose:
+                print('')
+                print(f'{Color.REVERCE}ONNX and TF output value validation started{Color.RESET}', '=' * 41)
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} {Color.GREEN}validation_conditions{Color.RESET}: '+
+                    f'np.allclose(onnx_outputs, tf_outputs, '+
+                    f'rtol={check_onnx_tf_outputs_elementwise_close_rtol}, '+
+                    f'atol={check_onnx_tf_outputs_elementwise_close_atol}, '+
+                    f'equal_nan=True)')
+
+            # ONNX dummy inference
+            dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=output_names,
+            )
+
+            # TF dummy inference
+            dummy_tf_outputs: List[Any] = dummy_tf_inference(
+                model=model,
+                inputs=inputs,
+            )
+            if not isinstance(dummy_tf_outputs, list):
+                dummy_tf_outputs = [dummy_tf_outputs]
+            dummy_tf_outputs = [
+                dummy_tf_output.numpy() \
+                    for dummy_tf_output in dummy_tf_outputs
+            ]
+            # Validation
+            onnx_tensor_infos = {
+                output_name: dummy_onnx_output \
+                    for output_name, dummy_onnx_output in zip(output_names, dummy_onnx_outputs)
+            }
+            """
+            np.allclose(
+                dummy_onnx_outputs,
+                dummy_tf_outputs,
+                rtol=1e-05,
+                atol=1e-05,
+                equal_nan=True,
+            )
+
+            check_results: Dict[str, List[np.ndarray, bool]]
+                {
+                    onnx_output_name: [
+                        onnx_tensor,
+                        matched_flg, <--- True: Matched, False: Unmatched
+                    ]
+                }
+            """
+            check_results = onnx_tf_tensor_validation(
+                onnx_tensor_infos=onnx_tensor_infos,
+                tf_tensors=dummy_tf_outputs,
+                rtol=1e-05,
+                atol=1e-05,
+            )
+            for onnx_output_name, checked_value in check_results.items():
+                validated_onnx_tensor: np.ndarray = checked_value[0]
+                matched_flg: bool = checked_value[1]
+                message = ''
+                if matched_flg:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                else:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} '+
+                    f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
+                    f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
+                    f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
+                    f'{message}'
+                )
+
         return model
 
 
@@ -1288,7 +1395,7 @@ def main():
         help=\
             'For MeanVarianceNormalization. \n' +
             'The number to be added to the variance to avoid division by zero when normalizing the value. \n' +
-            '(input_tensor - mean) / tf.sqrt(variance + mvn_epsilon) \n'
+            '(input_tensor - mean) / tf.sqrt(variance + mvn_epsilon) \n' +
             'Default: 0.0000000001'
     )
     parser.add_argument(
@@ -1305,6 +1412,32 @@ def main():
         help=\
             'Run TFLite ModelAnalyzer on the generated Float16 tflite model ' +
             'to check if the model can be supported by GPU Delegate.'
+    )
+    parser.add_argument(
+        '-coto',
+        '--check_onnx_tf_outputs_elementwise_close',
+        action='store_true',
+        help=\
+            'Returns true if the two arrays, the output of onnx and the output of TF, '+
+            'are elementwise close within an acceptable range.'
+    )
+    parser.add_argument(
+        '-cotor',
+        '--check_onnx_tf_outputs_elementwise_close_rtol',
+        type=float,
+        default=1e-5,
+        help=\
+            'The relative tolerance parameter \n' +
+            'Default: 1e-5'
+    )
+    parser.add_argument(
+        '-cotoa',
+        '--check_onnx_tf_outputs_elementwise_close_atol',
+        type=float,
+        default=1e-5,
+        help=\
+            'The absolute tolerance parameter \n' +
+            'Default: 1e-5'
     )
     parser.add_argument(
         '-n',
@@ -1376,6 +1509,9 @@ def main():
         replace_erf_to_pseudo_erf=args.replace_erf_to_pseudo_erf,
         param_replacement_file=args.param_replacement_file,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
+        check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
+        check_onnx_tf_outputs_elementwise_close_rtol=args.check_onnx_tf_outputs_elementwise_close_rtol,
+        check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
     )
