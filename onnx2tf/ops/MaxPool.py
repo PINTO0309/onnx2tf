@@ -137,19 +137,19 @@ def make_node(
         padding_ = 'SAME'
 
     # Workaround pads
+    # Thanks, MPolaris/onnx2tflite
     # Ref: https://github.com/MPolaris/onnx2tflite/blob/24b6647c97ca0a74fb8965e0929e4e0bf6775bb4/layers/common_layers.py#L128-L142
-    half_shape = True
+    # Ref: https://github.com/MPolaris/onnx2tflite/blob/a1bbae47c31a2174919a7d596427fb41a9bce113/layers/common_layers.py#L130-L139
     calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
+    func = math.floor if ceil_mode == 0 else math.ceil
     for i in range(spatial_size):
-        if ceil_mode == 0:
-            half_shape = half_shape \
-                and math.floor((input_tensor_shape[1+i]+calc_pads[i]-((kernel_shape[i]-1)*1+1))/strides[i]+1) * 2 == input_tensor_shape[1+i]
-        else:
-            half_shape = half_shape \
-                and math.ceil((input_tensor_shape[1+i]+calc_pads[i]-((kernel_shape[i]-1)*1+1))/strides[i]+1) * 2 == input_tensor_shape[1+i]
-    half_shape = half_shape and np.sum(calc_pads) == 0
-    padding_ = "SAME" if half_shape else "VALID"
-    if not half_shape and calc_pads is not None and np.sum(calc_pads) > 0:
+        pad_shape = calc_pads[i] + calc_pads[i+2]
+        output_shape_raw = (input_tensor_shape[1+i]+pad_shape-((kernel_shape[i]-1)*dilations[i]+1))/strides[i]+1
+        if func(output_shape_raw) != input_tensor_shape[1+i]:
+            padding_ = "VALID"
+            break
+
+    if padding_ == "VALID" and calc_pads is not None and np.sum(calc_pads) > 0:
         padded_tensor = pad_input(
             input_tensor=input_tensor,
             is_known_shape=is_known_shape,
