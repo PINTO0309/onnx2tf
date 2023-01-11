@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.1
+  ghcr.io/pinto0309/onnx2tf:1.5.2
 
   or
 
@@ -500,12 +500,12 @@ optional arguments:
   -cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL,\
     --check_onnx_tf_outputs_elementwise_close_rtol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL
     The relative tolerance parameter.
-    Default: 1e-5
+    Default: 0.0
 
   -cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL,\
     --check_onnx_tf_outputs_elementwise_close_atol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL
     The absolute tolerance parameter.
-    Default: 1e-5
+    Default: 1e-4
 
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
@@ -558,8 +558,8 @@ convert(
   param_replacement_file: Optional[str] = '',
   check_gpu_delegate_compatibility: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
-  check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 1e-5,
-  check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-5,
+  check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
+  check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -863,11 +863,11 @@ convert(
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.
-        Default: 1e-5
+        Default: 0.0
 
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
         The absolute tolerance parameter.
-        Default: 1e-5
+        Default: 1e-4
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.

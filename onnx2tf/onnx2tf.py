@@ -87,8 +87,8 @@ def convert(
     param_replacement_file: Optional[str] = '',
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
-    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 1e-5,
-    check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-5,
+    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
+    check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
@@ -338,11 +338,11 @@ def convert(
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.\n
-        Default: 1e-5
+        Default: 0.0
 
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
         The absolute tolerance parameter.\n
-        Default: 1e-5
+        Default: 1e-4
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -1012,8 +1012,8 @@ def convert(
             check_results = onnx_tf_tensor_validation(
                 onnx_tensor_infos=onnx_tensor_infos,
                 tf_tensors=dummy_tf_outputs,
-                rtol=1e-05,
-                atol=1e-05,
+                rtol=check_onnx_tf_outputs_elementwise_close_rtol,
+                atol=check_onnx_tf_outputs_elementwise_close_atol,
             )
             for onnx_output_name, checked_value in check_results.items():
                 validated_onnx_tensor: np.ndarray = checked_value[0]
@@ -1425,19 +1425,19 @@ def main():
         '-cotor',
         '--check_onnx_tf_outputs_elementwise_close_rtol',
         type=float,
-        default=1e-5,
+        default=0.0,
         help=\
             'The relative tolerance parameter \n' +
-            'Default: 1e-5'
+            'Default: 0.0'
     )
     parser.add_argument(
         '-cotoa',
         '--check_onnx_tf_outputs_elementwise_close_atol',
         type=float,
-        default=1e-5,
+        default=1e-4,
         help=\
             'The absolute tolerance parameter \n' +
-            'Default: 1e-5'
+            'Default: 1e-4'
     )
     parser.add_argument(
         '-n',
