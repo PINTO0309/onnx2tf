@@ -870,10 +870,6 @@ convert(
         Default: 1e-4
 
     non_verbose: Optional[bool]
-        Do not show all information logs. Only error logs are displayed.
-        Default: False
-
-    non_verbose: Optional[bool]
       Do not show all information logs. Only error logs are displayed.
       Default: False
 
