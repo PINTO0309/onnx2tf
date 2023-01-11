@@ -160,8 +160,14 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segme
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
 $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
+Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold.
+```
+$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 
+```
+![Kazam_screencast_00102_](https://user-images.githubusercontent.com/33194443/211826909-2072bc59-31d9-4e78-b6c2-51d030b41a06.gif)
 ## CLI Parameter
 ```
+
 $ onnx2tf -h
 
 usage: onnx2tf
