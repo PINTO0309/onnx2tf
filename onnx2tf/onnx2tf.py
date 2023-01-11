@@ -544,14 +544,15 @@ def convert(
             )
             sys.exit(1)
         # Cut ONNX graph at specified output position
+        output_names = [
+            output_op_name \
+                for output_op_name in output_names_to_interrupt_model_conversion
+        ]
         onnx_graph = extraction(
             input_op_names=[graph_input.name for graph_input in graph.inputs],
-            output_op_names=output_names_to_interrupt_model_conversion,
+            output_op_names=output_names,
             onnx_graph=onnx_graph,
         )
-        output_names = [
-            output_op_name for output_op_name in output_names_to_interrupt_model_conversion
-        ]
         # Re-import of onnx_graph
         del graph
         graph = gs.import_onnx(onnx_graph)
