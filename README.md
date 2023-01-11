@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.3
+  ghcr.io/pinto0309/onnx2tf:1.5.4
 
   or
 
@@ -162,7 +162,7 @@ $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold. Automatically determines before and after which OPs the tool's automatic conversion of the model failed. Know where dimensional compression, dimensional expansion, and dimensional transposition by `Reshape` and `Traspose` are failing. Once you have identified the problem area, you can refer to the tutorial on [Parameter replacement](#parameter-replacement) to modify the tool's behavior.
 ```
-$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 
+$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1
 ```
 ![Kazam_screencast_00102_](https://user-images.githubusercontent.com/33194443/211826909-2072bc59-31d9-4e78-b6c2-51d030b41a06.gif)
 ## CLI Parameter
