@@ -527,6 +527,35 @@ def convert(
 
     graph = gs.import_onnx(onnx_graph)
 
+    # List Output
+    # Cut the ONNX graph when an output name is specified that interrupts the conversion
+    if not output_names_to_interrupt_model_conversion:
+        output_names = [
+            graph_output.name for graph_output in graph.outputs
+        ]
+    else:
+        try:
+            from sne4onnx import extraction
+        except Exception as ex:
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                f'If --output_names_to_interrupt_model_conversion is specified, ' +\
+                f'you must install sne4onnx. pip install sne4onnx'
+            )
+            sys.exit(1)
+        # Cut ONNX graph at specified output position
+        onnx_graph = extraction(
+            input_op_names=[graph_input.name for graph_input in graph.inputs],
+            output_op_names=output_names_to_interrupt_model_conversion,
+            onnx_graph=onnx_graph,
+        )
+        output_names = [
+            output_op_name for output_op_name in output_names_to_interrupt_model_conversion
+        ]
+        # Re-import of onnx_graph
+        del graph
+        graph = gs.import_onnx(onnx_graph)
+
     if not non_verbose:
         print('')
         print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
@@ -642,16 +671,6 @@ def convert(
                 for layer_info in tf_layers_dict.values() \
                     if layer_info['optype'] == 'Input'
         ]
-
-        # List Output
-        if not output_names_to_interrupt_model_conversion:
-            output_names = [
-                graph_output.name for graph_output in graph.outputs
-            ]
-        else:
-            output_names = [
-                output_op_name for output_op_name in output_names_to_interrupt_model_conversion
-            ]
         outputs = [
             layer_info['tf_node'] \
                 for opname, layer_info in tf_layers_dict.items() \
