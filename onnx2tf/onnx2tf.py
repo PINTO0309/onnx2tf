@@ -87,6 +87,7 @@ def convert(
     param_replacement_file: Optional[str] = '',
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
+    check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
@@ -333,8 +334,22 @@ def convert(
         to check if the model can be supported by GPU Delegate.
 
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
-        Returns true if the two arrays, the output of onnx and the output of TF,\n
-        are elementwise close within an acceptable range.
+        Returns "Matches" if the output of onnx and the output of TF are\n
+        within acceptable proximity element by element.\n
+        Returns Unmatched if the output of onnx and the output of TF are\n
+        not within acceptable proximity element by element.\n
+        Only the output content of the models final output OP is checked.
+
+    check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
+        Returns "Matches" if the output of onnx and the output of TF are\n
+        within acceptable proximity element by element.\n
+        The outputs of all OPs, including those other than the final output OP\n
+        of the model, are checked in order from the beginning, and the check is\n
+        stopped at the OP where the error becomes large.\n
+        Returns "Unmatched" if the output of onnx and the output of TF are\n
+        not within acceptable proximity element by element.\n
+        It is very time consuming because it performs as many inferences as\n
+        there are operations.
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.\n
@@ -948,7 +963,7 @@ def convert(
         # are elementwise equal within an acceptable range.
         # https://numpy.org/doc/stable/reference/generated/numpy.allclose.html#numpy-allclose
         # numpy.allclose(a, b, rtol=1e-05, atol=1e-05, equal_nan=True)
-        if check_onnx_tf_outputs_elementwise_close:
+        if check_onnx_tf_outputs_elementwise_close or check_onnx_tf_outputs_elementwise_close_full:
             try:
                 import onnxruntime
                 import sne4onnx
@@ -970,66 +985,106 @@ def convert(
                     f'atol={check_onnx_tf_outputs_elementwise_close_atol}, '+
                     f'equal_nan=True)')
 
-            # ONNX dummy inference
-            dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
-                output_names=output_names,
-            )
+            # Listing of output_names
+            # --check_onnx_tf_outputs_elementwise_close_full lists all output names
+            # in the ONNX graph when enabled.
+            # ops_output_names is a list of output_names.
+            #
+            # output_names: List[str]
+            #
+            # ops_output_names = [
+            #   output_names,
+            #   output_names,
+            #   output_names,
+            #         :
+            # ]
+            if check_onnx_tf_outputs_elementwise_close_full:
+                ops_output_names = [
+                    graph_node_output.name \
+                        for graph_node in graph.nodes \
+                            for graph_node_output in graph_node.outputs
+                ]
+                ops_output_names = []
+                for graph_node in graph.nodes:
+                    ops_output_names_sub = []
+                    for graph_node_output in graph_node.outputs:
+                        ops_output_names_sub.append(graph_node_output.name)
+                    ops_output_names.append(ops_output_names_sub)
+            else:
+                ops_output_names = [output_names]
 
-            # TF dummy inference
-            dummy_tf_outputs: List[Any] = dummy_tf_inference(
-                model=model,
-                inputs=inputs,
-            )
-            if not isinstance(dummy_tf_outputs, list):
-                dummy_tf_outputs = [dummy_tf_outputs]
-            dummy_tf_outputs = [
-                dummy_tf_output.numpy() \
-                    for dummy_tf_output in dummy_tf_outputs
-            ]
-            # Validation
-            onnx_tensor_infos = {
-                output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip(output_names, dummy_onnx_outputs)
-            }
-            """
-            np.allclose(
-                dummy_onnx_outputs,
-                dummy_tf_outputs,
-                rtol=1e-05,
-                atol=1e-05,
-                equal_nan=True,
-            )
-
-            check_results: Dict[str, List[np.ndarray, bool]]
-                {
-                    onnx_output_name: [
-                        onnx_tensor,
-                        matched_flg, <--- True: Matched, False: Unmatched
-                    ]
-                }
-            """
-            check_results = onnx_tf_tensor_validation(
-                onnx_tensor_infos=onnx_tensor_infos,
-                tf_tensors=dummy_tf_outputs,
-                rtol=check_onnx_tf_outputs_elementwise_close_rtol,
-                atol=check_onnx_tf_outputs_elementwise_close_atol,
-            )
-            for onnx_output_name, checked_value in check_results.items():
-                validated_onnx_tensor: np.ndarray = checked_value[0]
-                matched_flg: bool = checked_value[1]
-                message = ''
-                if matched_flg:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
-                else:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
-                print(
-                    f'{Color.GREEN}INFO:{Color.RESET} '+
-                    f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
-                    f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
-                    f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
-                    f'{message}'
+            for output_names in ops_output_names:
+                # ONNX dummy inference
+                dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=output_names,
                 )
+
+                # TF dummy inference
+                del model
+                outputs = [
+                    layer_info['tf_node'] \
+                        for opname, layer_info in tf_layers_dict.items() \
+                            if opname in output_names
+                ]
+                model = tf.keras.Model(inputs=inputs, outputs=outputs)
+                dummy_tf_outputs: List[Any] = dummy_tf_inference(
+                    model=model,
+                    inputs=inputs,
+                )
+                if not isinstance(dummy_tf_outputs, list):
+                    dummy_tf_outputs = [dummy_tf_outputs]
+                dummy_tf_outputs = [
+                    dummy_tf_output.numpy() \
+                        for dummy_tf_output in dummy_tf_outputs
+                ]
+                # Validation
+                onnx_tensor_infos = {
+                    output_name: dummy_onnx_output \
+                        for output_name, dummy_onnx_output in zip(output_names, dummy_onnx_outputs)
+                }
+                """
+                np.allclose(
+                    dummy_onnx_outputs,
+                    dummy_tf_outputs,
+                    rtol=0.0,
+                    atol=1e-04,
+                    equal_nan=True,
+                )
+
+                check_results: Dict[str, List[np.ndarray, bool]]
+                    {
+                        onnx_output_name: [
+                            onnx_tensor,
+                            matched_flg, <--- True: Matched, False: Unmatched
+                        ]
+                    }
+                """
+                check_results = onnx_tf_tensor_validation(
+                    onnx_tensor_infos=onnx_tensor_infos,
+                    tf_tensors=dummy_tf_outputs,
+                    rtol=check_onnx_tf_outputs_elementwise_close_rtol,
+                    atol=check_onnx_tf_outputs_elementwise_close_atol,
+                )
+                total_matched_flg = True
+                for onnx_output_name, checked_value in check_results.items():
+                    validated_onnx_tensor: np.ndarray = checked_value[0]
+                    matched_flg: bool = checked_value[1]
+                    message = ''
+                    if matched_flg:
+                        message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                    else:
+                        message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
+                    print(
+                        f'{Color.GREEN}INFO:{Color.RESET} '+
+                        f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
+                        f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
+                        f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
+                        f'{message}'
+                    )
+                    total_matched_flg = total_matched_flg & matched_flg
+                if not total_matched_flg:
+                    break
 
         return model
 
@@ -1413,13 +1468,32 @@ def main():
             'Run TFLite ModelAnalyzer on the generated Float16 tflite model ' +
             'to check if the model can be supported by GPU Delegate.'
     )
-    parser.add_argument(
+    coto_group = parser.add_mutually_exclusive_group()
+    coto_group.add_argument(
         '-coto',
         '--check_onnx_tf_outputs_elementwise_close',
         action='store_true',
         help=\
-            'Returns true if the two arrays, the output of onnx and the output of TF, '+
-            'are elementwise close within an acceptable range.'
+            'Returns "Matches" if the output of onnx and the output of TF are'+
+            'within acceptable proximity element by element. '+
+            'Returns Unmatched if the output of onnx and the output of TF are '+
+            'not within acceptable proximity element by element. '+
+            'Only the output content of the models final output OP is checked.'
+    )
+    coto_group.add_argument(
+        '-cotof',
+        '--check_onnx_tf_outputs_elementwise_close_full',
+        action='store_true',
+        help=\
+            'Returns "Matches" if the output of onnx and the output of TF are '+
+            'within acceptable proximity element by element. '+
+            'The outputs of all OPs, including those other than the final output OP '+
+            'of the model, are checked in order from the beginning, and the check is '+
+            'stopped at the OP where the error becomes large. '+
+            'Returns "Unmatched" if the output of onnx and the output of TF are '+
+            'not within acceptable proximity element by element. '+
+            'It is very time consuming because it performs as many inferences as '+
+            'there are operations.'
     )
     parser.add_argument(
         '-cotor',
@@ -1510,6 +1584,7 @@ def main():
         param_replacement_file=args.param_replacement_file,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
+        check_onnx_tf_outputs_elementwise_close_full=args.check_onnx_tf_outputs_elementwise_close_full,
         check_onnx_tf_outputs_elementwise_close_rtol=args.check_onnx_tf_outputs_elementwise_close_rtol,
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,

@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.2
+  ghcr.io/pinto0309/onnx2tf:1.5.3
 
   or
 
@@ -200,7 +200,7 @@ usage: onnx2tf
 [-me MVN_EPSILON]
 [-prf PARAM_REPLACEMENT_FILE]
 [-cgdc]
-[-coto]
+[-coto | -cotof]
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
 [-n]
@@ -497,6 +497,17 @@ optional arguments:
     Returns true if the two arrays, the output of onnx and the output of TF,
     are elementwise close within an acceptable range.
 
+  -cotof, --check_onnx_tf_outputs_elementwise_close_full
+    Returns "Matches" if the output of onnx and the output of TF are
+    within acceptable proximity element by element.
+    The outputs of all OPs, including those other than the final output OP
+    of the model, are checked in order from the beginning, and the check is
+    stopped at the OP where the error becomes large.
+    Returns "Unmatched" if the output of onnx and the output of TF are
+    not within acceptable proximity element by element.
+    It is very time consuming because it performs as many inferences as
+    there are operations.
+
   -cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL,\
     --check_onnx_tf_outputs_elementwise_close_rtol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL
     The relative tolerance parameter.
@@ -558,6 +569,7 @@ convert(
   param_replacement_file: Optional[str] = '',
   check_gpu_delegate_compatibility: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
+  check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   non_verbose: Union[bool, NoneType] = False
@@ -860,6 +872,17 @@ convert(
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
         Returns true if the two arrays, the output of onnx and the output of TF,
         are elementwise close within an acceptable range.
+
+    check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
+        Returns "Matches" if the output of onnx and the output of TF are
+        within acceptable proximity element by element.
+        The outputs of all OPs, including those other than the final output OP
+        of the model, are checked in order from the beginning, and the check is
+        stopped at the OP where the error becomes large.
+        Returns "Unmatched" if the output of onnx and the output of TF are
+        not within acceptable proximity element by element.
+        It is very time consuming because it performs as many inferences as
+        there are operations.
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.
