@@ -43,6 +43,7 @@ from onnx2tf.utils.common_functions import (
     dummy_onnx_inference,
     dummy_tf_inference,
     onnx_tf_tensor_validation,
+    weights_export,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -54,6 +55,7 @@ def convert(
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
+    output_weights: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
     quant_calib_input_op_name_np_data_path: Optional[List] = None,
@@ -116,7 +118,10 @@ def convert(
         of model conversion and significant increase the size of the model.
 
     output_h5: Optional[bool]
-        Output in Keras H5 format.
+        Output model in Keras (hdf5) format.
+
+    output_weights: Optional[bool]
+        Output weights in hdf5 format.
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
@@ -759,6 +764,11 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
             w.write(tflite_model)
+        if output_weights:
+            weights_export(
+                extract_target_tflite_file_path=f'{output_folder_path}/model_float32.tflite',
+                output_weights_file_path=f'{output_folder_path}/model_float32_weights.h5',
+            )
         if not non_verbose:
             print(f'{Color.GREEN}Float32 tflite output complete!{Color.RESET}')
 
@@ -771,6 +781,11 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/model_float16.tflite', 'wb') as w:
             w.write(tflite_model)
+        if output_weights:
+            weights_export(
+                extract_target_tflite_file_path=f'{output_folder_path}/model_float16.tflite',
+                output_weights_file_path=f'{output_folder_path}/model_float16_weights.h5',
+            )
         if not non_verbose:
             print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
 
@@ -807,6 +822,11 @@ def convert(
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/model_dynamic_range_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
+                if output_weights:
+                    weights_export(
+                        extract_target_tflite_file_path=f'{output_folder_path}/model_dynamic_range_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/model_dynamic_range_quant_weights.h5',
+                    )
                 if not non_verbose:
                     print(f'{Color.GREEN}Dynamic Range Quantization tflite output complete!{Color.RESET}')
             except RuntimeError as ex:
@@ -890,6 +910,11 @@ def convert(
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/model_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
+                if output_weights:
+                    weights_export(
+                        extract_target_tflite_file_path=f'{output_folder_path}/model_integer_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/model_integer_quant_weights.h5',
+                    )
                 if not non_verbose:
                     print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
 
@@ -914,6 +939,11 @@ def convert(
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/model_full_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
+                if output_weights:
+                    weights_export(
+                        extract_target_tflite_file_path=f'{output_folder_path}/model_full_integer_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/model_full_integer_quant_weights.h5',
+                    )
                 if not non_verbose:
                     print(f'{Color.GREEN}Full INT8 Quantization tflite output complete!{Color.RESET}')
             except RuntimeError as ex:
@@ -1146,7 +1176,14 @@ def main():
         '--output_h5',
         action='store_true',
         help=\
-            'Output in Keras H5 format.'
+            'Output model in Keras (hdf5) format.'
+    )
+    parser.add_argument(
+        '-ow',
+        '--output_weights',
+        action='store_true',
+        help=\
+            'Output weights in hdf5 format.'
     )
     parser.add_argument(
         '-oiqt',
@@ -1571,6 +1608,7 @@ def main():
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
+        output_weights=args.output_weights,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
         quant_calib_input_op_name_np_data_path=calib_params,
