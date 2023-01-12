@@ -1,6 +1,8 @@
+import io
 import sys
 import copy
 import random
+import requests
 random.seed(0)
 import itertools
 import traceback
@@ -2771,6 +2773,7 @@ def dummy_onnx_inference(
     *,
     onnx_graph: onnx.ModelProto,
     output_names: List[str],
+    test_data_nhwc: Optional[np.ndarray] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -2781,6 +2784,9 @@ def dummy_onnx_inference(
 
     output_names: List[str]
         List of output names to be checked for output values
+
+    test_data_nhwc: Optional[np.ndarray]
+        Test Image Data
 
     Returns
     ----------
@@ -2825,10 +2831,20 @@ def dummy_onnx_inference(
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
     dummy_datas = {}
     for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        dummy_datas[input_name] = np.ones(
-            input_size,
-            dtype=input_dtype,
-        )
+        if test_data_nhwc is None:
+            dummy_datas[input_name] = np.ones(
+                input_size,
+                dtype=input_dtype,
+            )
+        else:
+            dummy_datas[input_name] = \
+                tf.transpose(
+                    a=tf.image.resize(
+                        images=test_data_nhwc,
+                        size=[input_size[2],input_size[3]],
+                    ),
+                    perm=[0,3,1,2],
+                ).numpy().astype(input_dtype)
     outputs = onnx_session.run(None, dummy_datas)
     return outputs
 
@@ -2837,6 +2853,7 @@ def dummy_tf_inference(
     *,
     model: tf.keras.Model,
     inputs: List[tf.keras.Input],
+    test_data_nhwc: Optional[np.ndarray] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -2847,6 +2864,9 @@ def dummy_tf_inference(
 
     inputs: List[tf.keras.Input]
         List of tf.keras.Input
+
+    test_data_nhwc: Optional[np.ndarray]
+        Test Image Data
 
     Returns
     ----------
@@ -2875,10 +2895,17 @@ def dummy_tf_inference(
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     dummy_datas = {}
     for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        dummy_datas[input_name] = np.ones(
-            input_size,
-            dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-        )
+        if test_data_nhwc is None:
+            dummy_datas[input_name] = np.ones(
+                input_size,
+                dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+            )
+        else:
+            dummy_datas[input_name] = \
+                tf.image.resize(
+                    images=test_data_nhwc,
+                    size=[input_size[1],input_size[2]],
+                ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
     outputs = model(
         inputs={
             input.name: dummy_datas[input.name] for input in inputs
@@ -3044,3 +3071,21 @@ def weights_export(
                     del d
                 except Exception as e:
                     pass
+
+
+def download_test_image_data() -> np.ndarray:
+    """Download dummy data for testing.
+
+    Returns
+    ----------
+    test_image_data: np.ndarray
+    """
+    DATA_COUNT = 20
+    FILE_NAME = f'calibration_image_sample_data_{DATA_COUNT}x128x128x3_float32.npy'
+    DOWNLOAD_VER = '1.0.49'
+    URL = f'https://github.com/PINTO0309/onnx2tf/releases/download/{DOWNLOAD_VER}/{FILE_NAME}'
+    test_sample_images_npy = requests.get(URL).content
+    test_image_data = None
+    with io.BytesIO(test_sample_images_npy) as f:
+        test_image_data: np.ndarray = np.load(f)
+    return test_image_data
