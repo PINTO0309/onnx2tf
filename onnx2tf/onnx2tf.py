@@ -6,12 +6,11 @@ __path__ = (os.path.dirname(__file__), )
 with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
     __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
-import io
 import sys
 import ast
 import json
+import copy
 import logging
-import requests
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
@@ -44,6 +43,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
     weights_export,
+    download_test_image_data,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -808,6 +808,8 @@ def convert(
                     )
 
         # Quantized TFLite
+        MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
+        STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
             # Dynamic Range Quantization
             try:
@@ -852,25 +854,18 @@ def convert(
                 and len(model.inputs[0].shape) == 4:
 
                 # AUTO calib 4D images
-                FILE_NAME = 'calibration_image_sample_data_20x128x128x3_float32.npy'
-                DOWNLOAD_VER = '1.0.49'
-                URL = f'https://github.com/PINTO0309/onnx2tf/releases/download/{DOWNLOAD_VER}/{FILE_NAME}'
-                MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-                STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
-                calib_sample_images_npy = requests.get(URL).content
-                with io.BytesIO(calib_sample_images_npy) as f:
-                    calib_data: np.ndarray = np.load(f)
-                    data_count = calib_data.shape[0]
-                    for model_input in model.inputs:
-                        calib_data_dict[model_input.name] = \
-                            [
-                                tf.image.resize(
-                                    calib_data.copy(),
-                                    (model_input.shape[1], model_input.shape[2])
-                                ),
-                                MEAN,
-                                STD,
-                            ]
+                calib_data: np.ndarray = download_test_image_data()
+                data_count = calib_data.shape[0]
+                for model_input in model.inputs:
+                    calib_data_dict[model_input.name] = \
+                        [
+                            tf.image.resize(
+                                calib_data.copy(),
+                                (model_input.shape[1], model_input.shape[2])
+                            ),
+                            MEAN,
+                            STD,
+                        ]
             elif quant_calib_input_op_name_np_data_path is not None:
                 for param in quant_calib_input_op_name_np_data_path:
                     input_op_name = str(param[0])
@@ -1063,13 +1058,35 @@ def convert(
             else:
                 ops_output_names = [output_names]
 
+            # download test data
+            all_four_dim = sum(
+                [
+                    1 for input in inputs \
+                        if len(input.shape) == 4 \
+                            and input.shape[0] is not None \
+                            and input.shape[0] <= 20 \
+                            and input.shape[-1] == 3 \
+                            and input.shape[1] is not None \
+                            and input.shape[2] is not None
+                ]
+            ) == len(inputs)
+            same_batch_dim = False
+            if all_four_dim:
+                batch_size = inputs[0].shape[0]
+                for input in inputs:
+                    same_batch_dim = batch_size == input.shape[0]
+            test_data_nhwc = None
+            if all_four_dim and same_batch_dim:
+                test_data: np.ndarray = download_test_image_data()
+                test_data_nhwc = test_data[:inputs[0].shape[0], ...]
+                test_data_nhwc = test_data_nhwc * 255.0
             for output_names in ops_output_names:
                 # ONNX dummy inference
                 dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
                     onnx_graph=onnx_graph,
                     output_names=output_names,
+                    test_data_nhwc=test_data_nhwc,
                 )
-
                 # TF dummy inference
                 del model
                 outputs = [
@@ -1081,6 +1098,7 @@ def convert(
                 dummy_tf_outputs: List[Any] = dummy_tf_inference(
                     model=model,
                     inputs=inputs,
+                    test_data_nhwc=test_data_nhwc,
                 )
                 if not isinstance(dummy_tf_outputs, list):
                     dummy_tf_outputs = [dummy_tf_outputs]
