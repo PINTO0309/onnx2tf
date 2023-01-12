@@ -1,0 +1,215 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Reshape_247",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_753",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_418",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_1015",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_588",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_1275",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_759",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_1537",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_929",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_1797",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_1098",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_2056",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_1269",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_2318",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_1439",
+      "param_target": "outputs",
+      "param_name": "onnx::Add_2578",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Transpose_120",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_126",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_129",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_291",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_297",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_300",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_462",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_468",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_471",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_632",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_638",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_641",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_803",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_809",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_812",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_973",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_979",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_982",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_1142",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_1148",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_1151",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_1313",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_1319",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_1322",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    },
+    {
+      "op_name": "Transpose_1444",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0,3]
+    },
+    {
+      "op_name": "Softmax_1449",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "Transpose_1452",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,1,3]
+    }
+  ]
+}
