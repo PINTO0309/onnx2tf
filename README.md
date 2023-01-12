@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.4
+  ghcr.io/pinto0309/onnx2tf:1.5.5
 
   or
 
@@ -98,7 +98,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxsim \
   && pip install -U simple_onnx_processing_tools \
-  && pip install -U onnx2tf
+  && pip install -U onnx2tf \
+  && pip install -U h5py==3.7.0
 
   or
 
@@ -127,7 +128,8 @@ or
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
-    && python3.9 -m pip install -U protobuf==3.20.3
+    && python3.9 -m pip install -U protobuf==3.20.3 \
+    && python3.9 -m pip install -U h5py==3.7.0
   ```
 
 Run test.
@@ -176,6 +178,7 @@ usage: onnx2tf
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-oh5]
+[-ow]
 [-oiqt]
 [-qt {per-channel,per-tensor}]
 [-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
@@ -230,7 +233,10 @@ optional arguments:
     of model conversion and significant increase the size of the model.
 
   -oh5, --output_h5
-    Output in Keras H5 format.
+    Output model in Keras (hdf5) format.
+
+  -ow, --output_weights
+    Output weights in hdf5 format.
 
   -oiqt, --output_integer_quantized_tflite
     Output of integer quantized tflite.
@@ -500,8 +506,11 @@ optional arguments:
     """
 
   -coto, --check_onnx_tf_outputs_elementwise_close
-    Returns true if the two arrays, the output of onnx and the output of TF,
-    are elementwise close within an acceptable range.
+    Returns "Matches" if the output of onnx and the output of TF are
+    within acceptable proximity element by element.
+    Returns Unmatched if the output of onnx and the output of TF are
+    not within acceptable proximity element by element.
+    Only the output content of the models final output OP is checked.
 
   -cotof, --check_onnx_tf_outputs_elementwise_close_full
     Returns "Matches" if the output of onnx and the output of TF are
@@ -541,6 +550,7 @@ convert(
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
+  output_weights: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
   quant_type: Optional[str] = 'per-channel',
   quant_calib_input_op_name_np_data_path: Optional[List] = None,
@@ -604,7 +614,10 @@ convert(
       of model conversion and significant increase the size of the model.
 
     output_h5: Optional[bool]
-      Output in Keras H5 format.
+      Output model in Keras H5 format.
+
+    output_weights: Optional[bool]
+        Output weights in hdf5 format.
 
     output_integer_quantized_tflite: Optional[bool]
       Output of integer quantized tflite.
@@ -876,8 +889,11 @@ convert(
       """
 
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
-        Returns true if the two arrays, the output of onnx and the output of TF,
-        are elementwise close within an acceptable range.
+        Returns "Matches" if the output of onnx and the output of TF are
+        within acceptable proximity element by element.
+        Returns Unmatched if the output of onnx and the output of TF are
+        not within acceptable proximity element by element.
+        Only the output content of the models final output OP is checked.
 
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
         Returns "Matches" if the output of onnx and the output of TF are

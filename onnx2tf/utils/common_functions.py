@@ -2998,3 +2998,49 @@ def onnx_tf_tensor_validation(
                 check_results[onnx_output_name][1] = validate_result
                 break
     return check_results
+
+
+def weights_export(
+    *,
+    extract_target_tflite_file_path: str,
+    output_weights_file_path: str,
+):
+    """Extract only the weights from the generated TFLite file and save it to a file in hdf5 format.
+    Note that the INT16 format is not supported.
+
+    Parameters
+    ----------
+    extract_target_tflite_file_path: str
+        Path of the tflite file from which the weights are extracted
+
+    output_weights_file_path: str
+        Path to file in hdf5 format to save the extracted weights
+    """
+    import h5py
+    from tensorflow.lite.python import interpreter as interpreter_wrapper
+    interpreter = interpreter_wrapper.Interpreter(
+        model_path=extract_target_tflite_file_path,
+    )
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    input_indexes = [
+        input_detail['index'] for input_detail in input_details
+    ]
+    output_details = interpreter.get_output_details()
+    output_indexes = [
+        output_detail['index'] for output_detail in output_details
+    ]
+    tensor_details = interpreter.get_tensor_details()
+    with h5py.File(output_weights_file_path, 'w') as f:
+        for tensor_detail in tensor_details:
+            tensor_index = tensor_detail['index']
+            if tensor_index not in input_indexes \
+                and tensor_index not in output_indexes:
+                try:
+                    d = f.create_dataset(
+                        name=tensor_detail['name'],
+                        data=interpreter.get_tensor(tensor_index)
+                    )
+                    del d
+                except Exception as e:
+                    pass
