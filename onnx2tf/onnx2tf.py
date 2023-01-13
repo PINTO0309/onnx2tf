@@ -1056,7 +1056,7 @@ def convert(
                         ops_output_names_sub.append(graph_node_output.name)
                     ops_output_names.extend(ops_output_names_sub)
             else:
-                ops_output_names = [output_names]
+                ops_output_names = output_names
 
             # download test data
             all_four_dim = sum(
