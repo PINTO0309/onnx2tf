@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.6
+  ghcr.io/pinto0309/onnx2tf:1.5.7
 
   or
 
@@ -210,6 +210,7 @@ usage: onnx2tf
 [-prf PARAM_REPLACEMENT_FILE]
 [-cgdc]
 [-coto | -cotof]
+[-coton]
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
 [-n]
@@ -523,6 +524,13 @@ optional arguments:
     It is very time consuming because it performs as many inferences as
     there are operations.
 
+  -coton, --check_onnx_tf_outputs_sample_data_normalization
+    norm: Validate using random data normalized to the range 0.0 to 1.0
+    denorm: Validate using random data in the range 0.0 to 255.0
+    If there is a normalization layer at the model's entry point, or
+    if the model was trained on denormalized data, "denorm" must be specified.
+    Default: "norm"
+
   -cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL,\
     --check_onnx_tf_outputs_elementwise_close_rtol CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL
     The relative tolerance parameter.
@@ -586,6 +594,7 @@ convert(
   check_gpu_delegate_compatibility: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
+  check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   non_verbose: Union[bool, NoneType] = False
@@ -905,6 +914,13 @@ convert(
         not within acceptable proximity element by element.
         It is very time consuming because it performs as many inferences as
         there are operations.
+
+    check_onnx_tf_outputs_sample_data_normalization: Optional[str]
+        norm: Validate using random data normalized to the range 0.0 to 1.0
+        denorm: Validate using random data in the range 0.0 to 255.0
+        If there is a normalization layer at the models entry point, or
+        if the model was trained on denormalized data, "denorm" must be specified.
+        Default: "norm"
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.
