@@ -1098,7 +1098,8 @@ def convert(
             outputs = [
                 layer_info['tf_node'] \
                     for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names
+                        if opname in ops_output_names \
+                            and not hasattr(layer_info['tf_node'], 'numpy')
             ]
             model = tf.keras.Model(inputs=inputs, outputs=outputs)
             dummy_tf_outputs: List[Any] = dummy_tf_inference(
