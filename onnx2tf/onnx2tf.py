@@ -1052,19 +1052,14 @@ def convert(
             #         :
             # ]
             if check_onnx_tf_outputs_elementwise_close_full:
-                ops_output_names = [
-                    graph_node_output.name \
-                        for graph_node in graph.nodes \
-                            for graph_node_output in graph_node.outputs
-                ]
                 ops_output_names = []
                 for graph_node in graph.nodes:
                     ops_output_names_sub = []
                     for graph_node_output in graph_node.outputs:
                         ops_output_names_sub.append(graph_node_output.name)
-                    ops_output_names.append(ops_output_names_sub)
+                    ops_output_names.extend(ops_output_names_sub)
             else:
-                ops_output_names = [output_names]
+                ops_output_names = output_names
 
             # download test data
             all_four_dim = sum(
@@ -1091,79 +1086,75 @@ def convert(
                     pass
                 elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
                     test_data_nhwc = test_data_nhwc * 255.0
-            for output_names in ops_output_names:
-                # ONNX dummy inference
-                dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
-                    onnx_graph=onnx_graph,
-                    output_names=output_names,
-                    test_data_nhwc=test_data_nhwc,
-                )
-                # TF dummy inference
-                del model
-                outputs = [
-                    layer_info['tf_node'] \
-                        for opname, layer_info in tf_layers_dict.items() \
-                            if opname in output_names
-                ]
-                model = tf.keras.Model(inputs=inputs, outputs=outputs)
-                dummy_tf_outputs: List[Any] = dummy_tf_inference(
-                    model=model,
-                    inputs=inputs,
-                    test_data_nhwc=test_data_nhwc,
-                )
-                if not isinstance(dummy_tf_outputs, list):
-                    dummy_tf_outputs = [dummy_tf_outputs]
-                dummy_tf_outputs = [
-                    dummy_tf_output.numpy() \
-                        for dummy_tf_output in dummy_tf_outputs
-                ]
-                # Validation
-                onnx_tensor_infos = {
-                    output_name: dummy_onnx_output \
-                        for output_name, dummy_onnx_output in zip(output_names, dummy_onnx_outputs)
-                }
-                """
-                np.allclose(
-                    dummy_onnx_outputs,
-                    dummy_tf_outputs,
-                    rtol=0.0,
-                    atol=1e-04,
-                    equal_nan=True,
-                )
 
-                check_results: Dict[str, List[np.ndarray, bool]]
-                    {
-                        onnx_output_name: [
-                            onnx_tensor,
-                            matched_flg, <--- True: Matched, False: Unmatched
-                        ]
-                    }
-                """
-                check_results = onnx_tf_tensor_validation(
-                    onnx_tensor_infos=onnx_tensor_infos,
-                    tf_tensors=dummy_tf_outputs,
-                    rtol=check_onnx_tf_outputs_elementwise_close_rtol,
-                    atol=check_onnx_tf_outputs_elementwise_close_atol,
+            # ONNX dummy inference
+            dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=ops_output_names,
+                test_data_nhwc=test_data_nhwc,
+            )
+            # TF dummy inference
+            del model
+            outputs = [
+                layer_info['tf_node'] \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names
+            ]
+            model = tf.keras.Model(inputs=inputs, outputs=outputs)
+            dummy_tf_outputs: List[Any] = dummy_tf_inference(
+                model=model,
+                inputs=inputs,
+                test_data_nhwc=test_data_nhwc,
+            )
+            if not isinstance(dummy_tf_outputs, list):
+                dummy_tf_outputs = [dummy_tf_outputs]
+            dummy_tf_outputs = [
+                dummy_tf_output.numpy() \
+                    for dummy_tf_output in dummy_tf_outputs
+            ]
+            # Validation
+            onnx_tensor_infos = {
+                output_name: dummy_onnx_output \
+                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+            }
+            """
+            np.allclose(
+                dummy_onnx_outputs,
+                dummy_tf_outputs,
+                rtol=0.0,
+                atol=1e-04,
+                equal_nan=True,
+            )
+
+            check_results: Dict[str, List[np.ndarray, bool]]
+                {
+                    onnx_output_name: [
+                        onnx_tensor,
+                        matched_flg, <--- True: Matched, False: Unmatched
+                    ]
+                }
+            """
+            check_results = onnx_tf_tensor_validation(
+                onnx_tensor_infos=onnx_tensor_infos,
+                tf_tensors=dummy_tf_outputs,
+                rtol=check_onnx_tf_outputs_elementwise_close_rtol,
+                atol=check_onnx_tf_outputs_elementwise_close_atol,
+            )
+            for onnx_output_name, checked_value in check_results.items():
+                validated_onnx_tensor: np.ndarray = checked_value[0]
+                matched_flg: bool = checked_value[1]
+                message = ''
+                if matched_flg:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                else:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
+                print(
+                    f'{Color.GREEN}INFO:{Color.RESET} '+
+                    f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
+                    f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
+                    f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
+                    f'{message}'
                 )
-                total_matched_flg = True
-                for onnx_output_name, checked_value in check_results.items():
-                    validated_onnx_tensor: np.ndarray = checked_value[0]
-                    matched_flg: bool = checked_value[1]
-                    message = ''
-                    if matched_flg:
-                        message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
-                    else:
-                        message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
-                    print(
-                        f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
-                        f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
-                        f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
-                        f'{message}'
-                    )
-                    total_matched_flg = total_matched_flg & matched_flg
-                if not total_matched_flg:
-                    break
 
         return model
 
