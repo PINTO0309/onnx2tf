@@ -1098,7 +1098,14 @@ def convert(
             outputs = [
                 layer_info['tf_node'] \
                     for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names
+                        if opname in ops_output_names \
+                            and not hasattr(layer_info['tf_node'], 'numpy')
+            ]
+            exclude_output_names = [
+                opname \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names \
+                            and hasattr(layer_info['tf_node'], 'numpy')
             ]
             model = tf.keras.Model(inputs=inputs, outputs=outputs)
             dummy_tf_outputs: List[Any] = dummy_tf_inference(
@@ -1115,7 +1122,8 @@ def convert(
             # Validation
             onnx_tensor_infos = {
                 output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs) \
+                        if output_name not in exclude_output_names
             }
             """
             np.allclose(
