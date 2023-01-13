@@ -509,7 +509,7 @@ optional arguments:
   -coto, --check_onnx_tf_outputs_elementwise_close
     Returns "Matches" if the output of onnx and the output of TF are
     within acceptable proximity element by element.
-    Returns Unmatched if the output of onnx and the output of TF are
+    Returns "Unmatched" if the output of onnx and the output of TF are
     not within acceptable proximity element by element.
     Only the output content of the models final output OP is checked.
 
@@ -900,7 +900,7 @@ convert(
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
         Returns "Matches" if the output of onnx and the output of TF are
         within acceptable proximity element by element.
-        Returns Unmatched if the output of onnx and the output of TF are
+        Returns "Unmatched" if the output of onnx and the output of TF are
         not within acceptable proximity element by element.
         Only the output content of the models final output OP is checked.
 
