@@ -90,6 +90,7 @@ def convert(
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
+    check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
@@ -355,6 +356,13 @@ def convert(
         not within acceptable proximity element by element.\n
         It is very time consuming because it performs as many inferences as\n
         there are operations.
+
+    check_onnx_tf_outputs_sample_data_normalization: Optional[str]
+        norm: Validate using random data normalized to the range 0.0 to 1.0\n
+        denorm: Validate using random data in the range 0.0 to 255.0\n
+        If there is a normalization layer at the model's entry point,\n
+        or if the model was trained on denormalized data, "denorm" must be specified.\n
+        Default: "norm"
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
         The relative tolerance parameter.\n
@@ -1044,11 +1052,6 @@ def convert(
             #         :
             # ]
             if check_onnx_tf_outputs_elementwise_close_full:
-                ops_output_names = [
-                    graph_node_output.name \
-                        for graph_node in graph.nodes \
-                            for graph_node_output in graph_node.outputs
-                ]
                 ops_output_names = []
                 for graph_node in graph.nodes:
                     ops_output_names_sub = []
@@ -1080,6 +1083,10 @@ def convert(
                 test_data: np.ndarray = download_test_image_data()
                 test_data_nhwc = test_data[:inputs[0].shape[0], ...]
                 test_data_nhwc = test_data_nhwc * 255.0
+                if check_onnx_tf_outputs_sample_data_normalization == "norm":
+                    pass
+                elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
+                    test_data_nhwc = test_data_nhwc * 255.0
 
             # ONNX dummy inference
             dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
@@ -1567,6 +1574,19 @@ def main():
             'there are operations.'
     )
     parser.add_argument(
+        '-coton',
+        '--check_onnx_tf_outputs_sample_data_normalization',
+        type=str,
+        choices=['norm', 'denorm'],
+        default='norm',
+        help=\
+            'norm: Validate using random data normalized to the range 0.0 to 1.0 ' +
+            'denorm: Validate using random data in the range 0.0 to 255.0 ' +
+            'If there is a normalization layer at the models entry point, ' +
+            'or if the model was trained on denormalized data, "denorm" must be specified. ' +
+            'Default: "norm"'
+    )
+    parser.add_argument(
         '-cotor',
         '--check_onnx_tf_outputs_elementwise_close_rtol',
         type=float,
@@ -1657,6 +1677,7 @@ def main():
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
         check_onnx_tf_outputs_elementwise_close_full=args.check_onnx_tf_outputs_elementwise_close_full,
+        check_onnx_tf_outputs_sample_data_normalization=args.check_onnx_tf_outputs_sample_data_normalization,
         check_onnx_tf_outputs_elementwise_close_rtol=args.check_onnx_tf_outputs_elementwise_close_rtol,
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
