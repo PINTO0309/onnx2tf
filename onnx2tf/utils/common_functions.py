@@ -2809,18 +2809,11 @@ def dummy_onnx_inference(
     # )
 
     # instead, modify onnx graph manually
-    graph_node_outputs = [
-        graph_nodes \
-        for graph_nodes in gs_graph.nodes \
-        for graph_nodes_output in graph_nodes.outputs \
-        if graph_nodes_output.name in output_names
-    ]
-
-    gs_graph.outputs = [
-        graph_node_output \
-        for graph_node in graph_node_outputs \
-        for graph_node_output in graph_node.outputs
-    ]
+    gs_graph.outputs = []
+    for graph_node in gs_graph.nodes:
+        for node_output in graph_node.outputs:
+            if node_output.name in output_names:
+                gs_graph.outputs.append(node_output)
 
     new_onnx_graph = gs.export_onnx(gs_graph)
 
