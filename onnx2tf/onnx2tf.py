@@ -1082,7 +1082,6 @@ def convert(
             if all_four_dim and same_batch_dim:
                 test_data: np.ndarray = download_test_image_data()
                 test_data_nhwc = test_data[:inputs[0].shape[0], ...]
-                test_data_nhwc = test_data_nhwc * 255.0
                 if check_onnx_tf_outputs_sample_data_normalization == "norm":
                     pass
                 elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
