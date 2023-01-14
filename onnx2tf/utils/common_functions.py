@@ -2966,12 +2966,12 @@ def onnx_tf_tensor_validation(
 
     Returns
     ----------
-    check_results: Dict[str, List[np.ndarray, bool]]
+    check_results: Dict[str, List[np.ndarray, int]]
         Tensor Comparison Results
         {
             onnx_output_name: [
                 onnx_tensor,
-                matched_flg, <--- True: Matched, False: Unmatched
+                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
             ]
         }
     """
@@ -3018,18 +3018,23 @@ def onnx_tf_tensor_validation(
                     }
                 """
                 tf_check_infos = [
-                    [tf_target_transpose_perm, False] for tf_target_transpose_perm in tf_target_transpose_perms
+                    [tf_target_transpose_perm, 0] for tf_target_transpose_perm in tf_target_transpose_perms
                 ]
                 for tf_check_info in tf_check_infos:
-                    tf_transposed_tensor = tf_tensor.transpose(tf_check_info[0])
-                    if np.allclose(a=onnx_tensor, b=tf_transposed_tensor, rtol=rtol, atol=atol, equal_nan=True):
-                        # Matched
-                        tf_check_info[1] = True
-                        tf_check_skip_flag[tf_idx] = True
-                        break
+                    if len(onnx_tensor_shape) > 1:
+                        tf_transposed_tensor = tf_tensor.transpose(tf_check_info[0])
+                        if np.allclose(a=onnx_tensor, b=tf_transposed_tensor, rtol=rtol, atol=atol, equal_nan=True):
+                            # Matched
+                            tf_check_info[1] = 1
+                            tf_check_skip_flag[tf_idx] = True
+                            break
+                        else:
+                            # Unmatched
+                            pass
                     else:
-                        # Unmatched
-                        pass
+                        tf_check_info[1] = 2
+                        continue
+
                 # Validation results check
                 validate_result = False
                 for tf_check_info in tf_check_infos:
