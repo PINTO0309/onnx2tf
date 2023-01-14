@@ -1,7 +1,9 @@
+import math
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import tensorflow as tf
 import onnx_graphsurgeon as gs
 from tensorflow.python.keras.layers import (
     AveragePooling1D,
@@ -74,7 +76,8 @@ def make_node(
     x_rank = spatial_size + 2
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    is_known_shape = None not in input_tensor.shape
+    input_tensor_shape = input_tensor.shape
+    is_known_shape = None not in input_tensor_shape
 
     pads = graph_node.attrs.get('auto_pad', 'NOTSET')
     if pads == 'NOTSET':
@@ -118,6 +121,32 @@ def make_node(
         padded_tensor = input_tensor
         padding_ = 'same'
 
+    # Workaround pads
+    # Thanks, MPolaris/onnx2tflite
+    # https://github.com/MPolaris/onnx2tflite/blob/abbec2606b5767de7c9e348d1a24fbcd0d013564/layers/common_layers.py#L107-L113
+    calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
+    func = math.floor if ceil_mode == 0 else math.ceil
+    for i in range(spatial_size):
+        pad_shape = calc_pads[i] + calc_pads[i+spatial_size]
+        output_shape_raw = (input_tensor_shape[1+i]+pad_shape-((kernel_shape[i]-1)*dilations[i]+1))/strides[i]+1
+        if func(output_shape_raw) != input_tensor_shape[1+i]:
+            padding_ = "valid"
+            break
+
+    if padding_ == "valid" and calc_pads is not None and np.sum(calc_pads) > 0:
+        tmp_pad = \
+            [[0,0]] + \
+            [
+                [pad_begin, pad_end] \
+                    for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
+            ] + \
+            [[0,0]]
+        padded_tensor = tf.pad(
+            tensor=input_tensor,
+            paddings=tmp_pad,
+            mode='SYMMETRIC',
+        )
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -131,7 +160,7 @@ def make_node(
         pooled_tensor = AveragePooling1D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_,
+            padding=padding_.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling1D
 
@@ -139,7 +168,7 @@ def make_node(
         pooled_tensor = AveragePooling2D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_,
+            padding=padding_.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling2D
 
@@ -147,7 +176,7 @@ def make_node(
         pooled_tensor = AveragePooling3D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_,
+            padding=padding_.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling3D
 

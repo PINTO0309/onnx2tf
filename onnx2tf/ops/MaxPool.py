@@ -143,25 +143,25 @@ def make_node(
     calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
     func = math.floor if ceil_mode == 0 else math.ceil
     for i in range(spatial_size):
-        pad_shape = calc_pads[i] + calc_pads[i+2]
+        pad_shape = calc_pads[i] + calc_pads[i+spatial_size]
         output_shape_raw = (input_tensor_shape[1+i]+pad_shape-((kernel_shape[i]-1)*dilations[i]+1))/strides[i]+1
         if func(output_shape_raw) != input_tensor_shape[1+i]:
             padding_ = "VALID"
             break
 
     if padding_ == "VALID" and calc_pads is not None and np.sum(calc_pads) > 0:
-        padded_tensor = pad_input(
-            input_tensor=input_tensor,
-            is_known_shape=is_known_shape,
-            kernel_shape=kernel_shape,
-            ceil_mode=ceil_mode,
-            spatial_size=spatial_size,
-            strides=strides,
-            dilations=dilations,
-            padding=pads,
-            padding_constant=0,
+        tmp_pad = \
+            [[0,0]] + \
+            [
+                [pad_begin, pad_end] \
+                    for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
+            ] + \
+            [[0,0]]
+        padded_tensor = tf.pad(
+            tensor=input_tensor,
+            paddings=tmp_pad,
+            mode='SYMMETRIC',
         )
-        padding_ = 'VALID'
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
