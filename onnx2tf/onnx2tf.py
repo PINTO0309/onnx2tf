@@ -459,9 +459,20 @@ def convert(
     # fused_argmax_scale_ratio
     if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
         print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
             f'fused_argmax_scale_ratio must be specified in the range '+
             f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
             f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
+        )
+        sys.exit(1)
+
+    # number_of_dimensions_after_flextranspose_compression
+    if number_of_dimensions_after_flextranspose_compression < 2:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
+            f'number_of_dimensions_after_flextranspose_compression: ' +
+            f'{number_of_dimensions_after_flextranspose_compression}'
         )
         sys.exit(1)
 
