@@ -109,6 +109,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 or
 
 - Google Colaboratory Python3.8+
+  - Ref: https://stackoverflow.com/questions/75053660/output-of-conv-op-in-onnx-is-of-shape-none/
   ```
   !sudo add-apt-repository -y ppa:deadsnakes/ppa
   !sudo apt-get -y update
