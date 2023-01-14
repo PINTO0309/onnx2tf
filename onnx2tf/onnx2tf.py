@@ -71,6 +71,7 @@ def convert(
     disable_group_convolution: Optional[bool] = False,
     enable_batchmatmul_unfold: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
+    number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -251,6 +252,10 @@ def convert(
 
     disable_suppression_flextranspose: Optional[bool]
         Disables FlexTranspose generation suppression.
+
+    number_of_dimensions_after_flextranspose_compression: Optional[int]
+        Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
+        Default: 5
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -454,9 +459,20 @@ def convert(
     # fused_argmax_scale_ratio
     if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
         print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
             f'fused_argmax_scale_ratio must be specified in the range '+
             f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
             f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
+        )
+        sys.exit(1)
+
+    # number_of_dimensions_after_flextranspose_compression
+    if number_of_dimensions_after_flextranspose_compression < 2:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
+            f'number_of_dimensions_after_flextranspose_compression: ' +
+            f'{number_of_dimensions_after_flextranspose_compression}'
         )
         sys.exit(1)
 
@@ -592,6 +608,7 @@ def convert(
         'non_verbose': non_verbose,
         'disable_group_convolution': disable_group_convolution,
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
+        'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -1414,6 +1431,15 @@ def main():
         help=\
             'Disables FlexTranspose generation suppression.'
     )
+    parser.add_argument(
+        '-nodafc',
+        '--number_of_dimensions_after_flextranspose_compression',
+        type=int,
+        default=5,
+        help=\
+            'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
+            'Default: 5'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1681,6 +1707,7 @@ def main():
         disable_group_convolution=args.disable_group_convolution,
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
+        number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,

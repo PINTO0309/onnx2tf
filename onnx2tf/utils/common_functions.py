@@ -2442,6 +2442,8 @@ def transpose_with_flexing_deterrence(
     """
     disable_suppression_flextranspose: bool = \
         kwargs['disable_suppression_flextranspose']
+    number_of_dimensions_after_flextranspose_compression: int = \
+        kwargs['number_of_dimensions_after_flextranspose_compression']
     tensor_after_transposition = input_tensor
 
     if disable_suppression_flextranspose:
@@ -2525,7 +2527,8 @@ def transpose_with_flexing_deterrence(
             """
             # 1. Extract the dimension with the smallest number needed to be less than 5 dimensions
             np_input_tensor_shape = np.asarray(input_tensor_shape)
-            num_of_dim_requiring_compression = input_tensor_rank - 5
+            num_of_dim_requiring_compression = \
+                input_tensor_rank - number_of_dimensions_after_flextranspose_compression
             """
             np_input_tensor_shape:
                 Shape of input data before transposition
