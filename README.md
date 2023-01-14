@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.10
+  ghcr.io/pinto0309/onnx2tf:1.5.11
 
   or
 
@@ -195,6 +195,7 @@ usage: onnx2tf
 [-dgc]
 [-ebu]
 [-dsft]
+[-nodafc]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
 [-rasin]
@@ -368,6 +369,11 @@ optional arguments:
 
   -dsft, --disable_suppression_flextranspose
     Disables FlexTranspose generation suppression.
+
+  -nodafc, --number_of_dimensions_after_flextranspose_compression
+    Number of Transpose OP dimensions generated after avoiding FlexTranspose
+    generation.
+    Default: 5
 
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
     Replace ArgMax with a ReduceMax. The returned indicies are int64.
@@ -582,6 +588,7 @@ convert(
   disable_group_convolution: Union[bool, NoneType] = False,
   enaable_batchmatmul_unfold: Optional[bool] = False,
   disable_suppression_flextranspose: Optional[bool] = False,
+  number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -762,6 +769,11 @@ convert(
 
     disable_suppression_flextranspose: Optional[bool]
       Disables FlexTranspose generation suppression.
+
+    number_of_dimensions_after_flextranspose_compression: Optional[int]
+      Number of Transpose OP dimensions generated after avoiding FlexTranspose
+      generation.
+      Default: 5
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.
