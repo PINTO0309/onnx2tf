@@ -342,18 +342,25 @@ def convert(
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
         Returns "Matches" if the output of onnx and the output of TF are\n
         within acceptable proximity element by element.\n
-        Returns Unmatched if the output of onnx and the output of TF are\n
+        Returns "Unmatched" if the output of onnx and the output of TF are\n
         not within acceptable proximity element by element.\n
+        If the output of onnx is 1D, it returns "Skipped" and skips the comparison\n
+        between the output of onnx and that of TF. This is because when undefined\n
+        dimensions are present, a situation often arises where very large index\n
+        values are compared, causing OutOfMemory.\n
         Only the output content of the models final output OP is checked.
 
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
         Returns "Matches" if the output of onnx and the output of TF are\n
         within acceptable proximity element by element.\n
-        The outputs of all OPs, including those other than the final output OP\n
-        of the model, are checked in order from the beginning, and the check is\n
-        stopped at the OP where the error becomes large.\n
+        Check the output of all OPs in sequence from the beginning,\n
+        including all but the final output OP of the model.\n
         Returns "Unmatched" if the output of onnx and the output of TF are\n
         not within acceptable proximity element by element.\n
+        If the output of onnx is 1D, it returns "Skipped" and skips the comparison\n
+        between the output of onnx and that of TF. This is because when undefined\n
+        dimensions are present, a situation often arises where very large index\n
+        values are compared, causing OutOfMemory.\n
         It is very time consuming because it performs as many inferences as\n
         there are operations.
 
@@ -1138,7 +1145,7 @@ def convert(
                 {
                     onnx_output_name: [
                         onnx_tensor,
-                        matched_flg, <--- True: Matched, False: Unmatched
+                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
                     ]
                 }
             """
@@ -1150,12 +1157,14 @@ def convert(
             )
             for onnx_output_name, checked_value in check_results.items():
                 validated_onnx_tensor: np.ndarray = checked_value[0]
-                matched_flg: bool = checked_value[1]
+                matched_flg: int = checked_value[1]
                 message = ''
-                if matched_flg:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
-                else:
+                if matched_flg == 0:
                     message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
+                elif matched_flg == 1:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                elif matched_flg == 2:
+                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.BLUE} Skipped {Color.RESET}'
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
                     f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
@@ -1561,8 +1570,12 @@ def main():
         help=\
             'Returns "Matches" if the output of onnx and the output of TF are'+
             'within acceptable proximity element by element. '+
-            'Returns Unmatched if the output of onnx and the output of TF are '+
+            'Returns "Unmatched" if the output of onnx and the output of TF are '+
             'not within acceptable proximity element by element. '+
+            'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '+
+            'between the output of onnx and that of TF. This is because when undefined '+
+            'dimensions are present, a situation often arises where very large index '+
+            'values are compared, causing OutOfMemory. '+
             'Only the output content of the models final output OP is checked.'
     )
     coto_group.add_argument(
@@ -1572,11 +1585,14 @@ def main():
         help=\
             'Returns "Matches" if the output of onnx and the output of TF are '+
             'within acceptable proximity element by element. '+
-            'The outputs of all OPs, including those other than the final output OP '+
-            'of the model, are checked in order from the beginning, and the check is '+
-            'stopped at the OP where the error becomes large. '+
+            'Check the output of all OPs in sequence from the beginning, '+
+            'including all but the final output OP of the model. '+
             'Returns "Unmatched" if the output of onnx and the output of TF are '+
             'not within acceptable proximity element by element. '+
+            'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '+
+            'between the output of onnx and that of TF. This is because when undefined '+
+            'dimensions are present, a situation often arises where very large index '+
+            'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
             'there are operations.'
     )

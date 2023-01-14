@@ -89,7 +89,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.8
+  ghcr.io/pinto0309/onnx2tf:1.5.9
 
   or
 
@@ -164,9 +164,9 @@ $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold. Automatically determines before and after which OPs the tool's automatic conversion of the model failed. Know where dimensional compression, dimensional expansion, and dimensional transposition by `Reshape` and `Traspose` are failing. Once you have identified the problem area, you can refer to the tutorial on [Parameter replacement](#parameter-replacement) to modify the tool's behavior.
 ```
-$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1
+$ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ```
-![Kazam_screencast_00102_](https://user-images.githubusercontent.com/33194443/211826909-2072bc59-31d9-4e78-b6c2-51d030b41a06.gif)
+![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 ## CLI Parameter
 ```
 
@@ -511,16 +511,23 @@ optional arguments:
     within acceptable proximity element by element.
     Returns "Unmatched" if the output of onnx and the output of TF are
     not within acceptable proximity element by element.
+    If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+    between the output of onnx and that of TF. This is because when undefined
+    dimensions are present, a situation often arises where very large index
+    values are compared, causing OutOfMemory.
     Only the output content of the models final output OP is checked.
 
   -cotof, --check_onnx_tf_outputs_elementwise_close_full
     Returns "Matches" if the output of onnx and the output of TF are
     within acceptable proximity element by element.
-    The outputs of all OPs, including those other than the final output OP
-    of the model, are checked in order from the beginning, and the check is
-    stopped at the OP where the error becomes large.
+    Check the output of all OPs in sequence from the beginning,
+    including all but the final output OP of the model.
     Returns "Unmatched" if the output of onnx and the output of TF are
     not within acceptable proximity element by element.
+    If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+    between the output of onnx and that of TF. This is because when undefined
+    dimensions are present, a situation often arises where very large index
+    values are compared, causing OutOfMemory.
     It is very time consuming because it performs as many inferences as
     there are operations.
 
@@ -902,16 +909,23 @@ convert(
         within acceptable proximity element by element.
         Returns "Unmatched" if the output of onnx and the output of TF are
         not within acceptable proximity element by element.
+        If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+        between the output of onnx and that of TF. This is because when undefined
+        dimensions are present, a situation often arises where very large index
+        values are compared, causing OutOfMemory.
         Only the output content of the models final output OP is checked.
 
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
         Returns "Matches" if the output of onnx and the output of TF are
         within acceptable proximity element by element.
-        The outputs of all OPs, including those other than the final output OP
-        of the model, are checked in order from the beginning, and the check is
-        stopped at the OP where the error becomes large.
+        Check the output of all OPs in sequence from the beginning,
+        including all but the final output OP of the model.
         Returns "Unmatched" if the output of onnx and the output of TF are
         not within acceptable proximity element by element.
+        If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+        between the output of onnx and that of TF. This is because when undefined
+        dimensions are present, a situation often arises where very large index
+        values are compared, causing OutOfMemory.
         It is very time consuming because it performs as many inferences as
         there are operations.
 
