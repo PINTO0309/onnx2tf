@@ -1163,6 +1163,7 @@ def convert(
                     onnx_output_name: [
                         onnx_tensor,
                         matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
+                        max_abs_err,
                     ]
                 }
             """
@@ -1175,13 +1176,21 @@ def convert(
             for onnx_output_name, checked_value in check_results.items():
                 validated_onnx_tensor: np.ndarray = checked_value[0]
                 matched_flg: int = checked_value[1]
+                max_abs_err: Any = checked_value[2]
                 message = ''
                 if matched_flg == 0:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET}'
+                    message = \
+                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                        f'{Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET} ' +\
+                        f'{Color.GREEN}max_abs_error{Color.RESET}: {max_abs_err}'
                 elif matched_flg == 1:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                    message = \
+                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                        f'{Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
                 elif matched_flg == 2:
-                    message = f'{Color.GREEN}validate_result{Color.RESET}: {Color.REVERCE}{Color.BLUE} Skipped {Color.RESET}'
+                    message = \
+                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                        f'{Color.REVERCE}{Color.BLUE} Skipped {Color.RESET}'
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
                     f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
