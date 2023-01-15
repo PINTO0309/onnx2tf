@@ -2825,7 +2825,8 @@ def dummy_onnx_inference(
     for graph_node in gs_graph.nodes:
         for node_output in graph_node.outputs:
             if node_output.name in output_names:
-                gs_graph.outputs.append(node_output)
+                if node_output.dtype is not None:
+                    gs_graph.outputs.append(node_output)
 
     new_onnx_graph = gs.export_onnx(gs_graph)
 
