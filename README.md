@@ -371,8 +371,7 @@ optional arguments:
     Disables FlexTranspose generation suppression.
 
   -nodafc, --number_of_dimensions_after_flextranspose_compression
-    Number of Transpose OP dimensions generated after avoiding FlexTranspose
-    generation.
+    Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
     Default: 5
 
   -rari64, --replace_argmax_to_reducemax_and_indicies_is_int64
@@ -771,8 +770,7 @@ convert(
       Disables FlexTranspose generation suppression.
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
-      Number of Transpose OP dimensions generated after avoiding FlexTranspose
-      generation.
+      Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
       Default: 5
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
