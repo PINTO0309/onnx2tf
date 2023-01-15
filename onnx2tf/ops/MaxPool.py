@@ -158,7 +158,7 @@ def make_node(
             ] + \
             [[0,0]]
         symmetric_enable_check = [
-            True if pad_size[0] <= input_tensor.shape[dim+1] else False \
+            True if pad_size[0] <= input_tensor.shape[dim+1] and pad_size[1] <= input_tensor.shape[dim+1] else False \
                 for dim, pad_size in enumerate(tmp_pad[1:spatial_size])
         ]
         padded_tensor = tf.pad(
