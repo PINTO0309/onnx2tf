@@ -157,10 +157,14 @@ def make_node(
                     for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
             ] + \
             [[0,0]]
+        symmetric_enable_check = [
+            True if pad_size[0] <= input_tensor.shape[dim+1] else False \
+                for dim, pad_size in enumerate(tmp_pad[1:spatial_size])
+        ]
         padded_tensor = tf.pad(
             tensor=input_tensor,
             paddings=tmp_pad,
-            mode='SYMMETRIC',
+            mode='SYMMETRIC' if False not in symmetric_enable_check else 'CONSTANT',
         )
 
     # Preserving Graph Structure (Dict)
