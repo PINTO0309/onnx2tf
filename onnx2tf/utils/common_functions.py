@@ -2110,6 +2110,14 @@ def disable_unnecessary_transpose(
     if isinstance(graph_node_input_1, gs.Variable) \
         and isinstance(graph_node_input_2, gs.Variable):
 
+        # Skip special processing if the operation does not result
+        # in an error even if special processing is not performed
+        try:
+            _ = input_tensor_1 * input_tensor_2
+            return graph_node_input_1, graph_node_input_2, input_tensor_1, input_tensor_2
+        except Exception as ex:
+            pass
+
         node_x_op_type = graph_node_input_1.inputs[0].op \
             if len(graph_node_input_1.inputs) > 0 else 'Input'
         node_y_op_type = graph_node_input_2.inputs[0].op \
