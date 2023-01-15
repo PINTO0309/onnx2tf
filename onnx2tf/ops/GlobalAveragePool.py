@@ -4,6 +4,11 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
+from tensorflow.python.keras.layers import (
+    GlobalAveragePooling1D,
+    GlobalAveragePooling2D,
+    GlobalAveragePooling3D,
+)
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
@@ -69,13 +74,29 @@ def make_node(
 
     # Generation of TF OP
     axis = [dim for dim in range(1, input_tensor_rank - 1)]
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.reduce_mean(
-            input_tensor=input_tensor,
-            axis=axis,
-            keepdims=True,
-            name=graph_node.name,
-        )
+    if len(axis) == 1:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            GlobalAveragePooling1D(
+                keepdims=True,
+            )(input_tensor)
+    elif len(axis) == 2:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            GlobalAveragePooling2D(
+                keepdims=True,
+            )(input_tensor)
+    elif len(axis) == 3:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            GlobalAveragePooling3D(
+                keepdims=True,
+            )(input_tensor)
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.reduce_mean(
+                input_tensor=input_tensor,
+                axis=axis,
+                keepdims=True,
+                name=graph_node.name,
+            )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
