@@ -372,7 +372,8 @@ def inverted_operation_enable_disable(func):
                 and len(tf_node_output_shape) >= 3:
                 base_shape = tf_node_output_shape[1]
                 if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
-                    and (onnx_node_output_shape == tf_node_output_shape):
+                    and (onnx_node_output_shape == tf_node_output_shape) \
+                    and graph_node.op != 'MatMul':
                     trans_judge = True
             output_shape_trans = output_shape_trans or trans_judge
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
