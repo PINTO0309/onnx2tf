@@ -15,7 +15,6 @@ import onnx
 import onnx_graphsurgeon as gs
 try:
     import onnxruntime as ort
-    from sne4onnx import extraction
 except Exception as ex:
     pass
 from onnx2tf.utils.colors import Color
@@ -2810,15 +2809,9 @@ def dummy_onnx_inference(
     for i, node in enumerate(gs_graph.nodes):
         if "Reduce" in gs_graph.nodes[i].op and 'axes' not in node.attrs:
             # reduce all axes except batch axis
-            gs_graph.nodes[i].attrs['axes'] = [i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))]
-
-    # CAUTION: these lines are commented due to error in shape inference when ReduceXX operators are used
-    # extracted_graph = extraction(
-    #     onnx_graph=onnx_graph,
-    #     input_op_names=[graph_input.name for graph_input in gs_graph.inputs],
-    #     output_op_names=output_names,
-    #     non_verbose=True,
-    # )
+            gs_graph.nodes[i].attrs['axes'] = [
+                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
+            ]
 
     # instead, modify onnx graph manually
     gs_graph.outputs = []
@@ -2829,10 +2822,6 @@ def dummy_onnx_inference(
                     gs_graph.outputs.append(node_output)
 
     new_onnx_graph = gs.export_onnx(gs_graph)
-
-    ### debug
-    onnx.save(new_onnx_graph, 'test.onnx')
-    ### debug
     serialized_graph = onnx._serialize(new_onnx_graph)
     onnx_session = ort.InferenceSession(
         path_or_bytes=serialized_graph,
