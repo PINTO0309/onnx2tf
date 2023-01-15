@@ -2974,18 +2974,21 @@ def onnx_tf_tensor_validation(
         {
             onnx_output_name: [
                 onnx_tensor,
-                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
+                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped,
+                max_abs_err,
             ]
         }
     """
     check_results = {
-        onnx_output_name: [onnx_tensor, False] \
+        onnx_output_name: [onnx_tensor, False, 0.0] \
             for onnx_output_name, onnx_tensor in onnx_tensor_infos.items()
     }
     tf_check_skip_flag = [False] * len(tf_tensors)
     for onnx_output_name, onnx_check_info in check_results.items():
         onnx_tensor: np.ndarray = onnx_check_info[0] # onnx_tensor
         onnx_tensor_shape = onnx_tensor.shape
+        max_abs_err = ONNX_INF_INDEX_VALUE
+        validate_result = False
         for tf_idx, tf_tensor in enumerate(tf_tensors):
             """
             onnx_dummy_data: np.random.random_sample([1,3,224,224])
@@ -3030,24 +3033,27 @@ def onnx_tf_tensor_validation(
                             # Matched
                             tf_check_info[1] = 1
                             tf_check_skip_flag[tf_idx] = True
+                            max_abs_err = 0.0
                             break
                         else:
                             # Unmatched
-                            pass
+                            if onnx_tensor.shape == tf_transposed_tensor.shape:
+                                error_value = np.max(np.abs(onnx_tensor - tf_transposed_tensor))
+                                max_abs_err = error_value if error_value < max_abs_err else max_abs_err
                     else:
                         tf_check_info[1] = 2
-                        continue
+                        max_abs_err = 0.0
 
                 # Validation results check
-                validate_result = False
                 for tf_check_info in tf_check_infos:
                     if tf_check_info[1]:
                         validate_result = tf_check_info[1]
                         break
                 else:
                     continue
-                check_results[onnx_output_name][1] = validate_result
                 break
+        check_results[onnx_output_name][1] = validate_result
+        check_results[onnx_output_name][2] = max_abs_err
     return check_results
 
 
