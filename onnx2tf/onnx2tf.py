@@ -73,6 +73,7 @@ def convert(
     enable_batchmatmul_unfold: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
     number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
+    optimization_for_gpu_delegate: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
@@ -257,6 +258,10 @@ def convert(
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
         Default: 5
+
+    optimization_for_gpu_delegate: Optional[bool]
+        Replace operations that do not support gpu delegate with those\n
+        that do as much as possible.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
         Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
@@ -610,6 +615,7 @@ def convert(
         'disable_group_convolution': disable_group_convolution,
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
         'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
+        'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
@@ -1450,6 +1456,14 @@ def main():
             'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
             'Default: 5'
     )
+    parser.add_argument(
+        '-ofgd',
+        '--optimization_for_gpu_delegate',
+        action='store_true',
+        help=\
+            'Replace operations that do not support gpu delegate with those \n' +
+            'that do as much as possible.'
+    )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
@@ -1718,6 +1732,7 @@ def main():
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
         number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
+        optimization_for_gpu_delegate=args.optimization_for_gpu_delegate,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
