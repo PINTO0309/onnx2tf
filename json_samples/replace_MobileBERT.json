@@ -1,0 +1,804 @@
+{
+  "format_version": 1,
+  "model": "https://tfhub.dev/tensorflow/lite-model/mobilebert/1/metadata/1?lite-format=tflite",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/130",
+  "operations": [
+    {
+      "op_name": "bert/embeddings/embedding_transformation/add",
+      "param_target": "inputs",
+      "param_name": "Reshape__35:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_0/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_0/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_0/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__77:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_0/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__74:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_0/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__71:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_0/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__68:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+    {
+      "op_name": "bert/encoder/layer_1/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_1/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_1/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__149:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_1/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__146:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_1/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__143:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_1/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__140:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_2/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_2/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_2/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__221:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_2/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__218:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_2/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__215:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_2/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__212:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_3/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_3/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_3/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__293:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_3/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__290:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_3/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__287:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_3/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__284:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_4/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_4/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_4/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__365:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_4/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__362:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_4/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__359:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_4/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__356:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_5/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_5/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_5/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__437:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_5/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__434:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_5/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__431:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_5/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__428:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_6/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_6/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_6/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__509:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_6/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__506:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_6/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__503:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_6/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__500:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_7/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_7/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_7/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__581:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_7/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__578:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_7/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__575:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_7/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__572:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_8/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_8/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_8/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__653:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_8/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__650:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_8/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__647:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_8/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__644:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_9/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_9/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_9/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__725:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_9/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__722:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_9/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__719:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_9/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__716:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_10/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_10/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_10/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__797:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_10/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__794:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_10/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__791:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_10/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__788:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_11/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_11/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_11/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__869:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_11/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__866:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_11/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__863:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_11/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__860:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_12/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_12/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_12/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__941:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_12/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__938:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_12/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__935:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_12/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__932:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_13/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_13/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_13/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1013:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_13/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1010:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_13/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1007:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_13/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1004:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_14/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_14/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_14/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1085:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_14/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1082:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_14/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1079:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_14/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1076:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_15/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_15/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_15/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1157:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_15/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1154:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_15/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1151:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_15/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1148:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_16/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_16/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_16/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1229:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_16/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1226:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_16/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1223:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_16/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1220:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_17/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_17/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_17/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1301:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_17/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1298:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_17/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1295:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_17/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1292:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_18/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_18/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_18/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1373:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_18/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1370:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_18/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1367:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_18/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1364:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_19/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_19/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_19/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1445:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_19/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1442:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_19/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1439:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_19/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1436:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_20/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_20/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_20/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1517:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_20/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1514:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_20/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1511:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_20/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1508:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_21/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_21/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_21/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1589:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_21/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1586:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_21/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1583:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_21/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1580:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_22/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_22/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_22/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1661:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_22/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1658:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_22/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1655:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_22/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1652:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+
+
+
+    {
+      "op_name": "bert/encoder/layer_23/attention/self/Softmax",
+      "param_target": "inputs",
+      "param_name": "bert/encoder/layer_23/attention/self/add",
+      "pre_process_transpose_perm": [0,1,3,2]
+    },
+    {
+      "op_name": "bert/encoder/layer_23/attention/self/MatMul_1_b3",
+      "param_target": "inputs",
+      "param_name": "Reshape__1733:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_23/attention/self/MatMul_1_b2",
+      "param_target": "inputs",
+      "param_name": "Reshape__1730:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_23/attention/self/MatMul_1_b1",
+      "param_target": "inputs",
+      "param_name": "Reshape__1727:0",
+      "pre_process_transpose_perm": [1,0]
+    },
+    {
+      "op_name": "bert/encoder/layer_23/attention/self/MatMul_1_b0",
+      "param_target": "inputs",
+      "param_name": "Reshape__1724:0",
+      "pre_process_transpose_perm": [1,0]
+    }
+  ]
+}
