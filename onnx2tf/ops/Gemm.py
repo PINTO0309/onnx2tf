@@ -102,6 +102,9 @@ def make_node(
     alpha = graph_node.attrs.get('alpha', 1.0)
     beta = graph_node.attrs.get('beta', 1.0)
 
+    optimization_for_gpu_delegate: bool = \
+        kwargs['optimization_for_gpu_delegate']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -170,7 +173,10 @@ def make_node(
         x = tf.cast(x, tf.float32)
         y = tf.cast(y, tf.float32)
         z = tf.cast(z, tf.float32)
-        result = alpha * tf.matmul(x, y) + beta * z
+        if not optimization_for_gpu_delegate:
+            result = alpha * tf.matmul(x, y) + beta * z
+        else:
+            result = alpha * tf.matmul(x, y) - (beta * z) * -1
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.cast(result, input_tensor_x_dtype)
 
