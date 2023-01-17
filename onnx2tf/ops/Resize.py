@@ -301,6 +301,7 @@ def make_node(
     tf_op_type = None
     align_corners = None
     half_pixel_centers = None
+    org_dtype = input_tensor.dtype
     if coordinate_transformation_mode == "tf_crop_and_resize":
         # get boxes for crop
         indices = [1,2,5,6]
@@ -365,6 +366,14 @@ def make_node(
             name=graph_node.name,
         )
         tf_op_type = tf.image.resize
+
+    # TensorFlow's Resize operation casts to Float32 on its own,
+    # so we have to change it back to the original type.
+    if org_dtype != resized_tensor.dtype:
+        resized_tensor = tf.cast(
+            x=resized_tensor,
+            dtype=org_dtype,
+        )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
 
