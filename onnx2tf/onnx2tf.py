@@ -7,8 +7,8 @@ with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
     __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
 import sys
+sys.setrecursionlimit(10000)
 import ast
-import json
 import copy
 import logging
 import warnings
