@@ -17,6 +17,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     disable_unnecessary_transpose,
     shape_unmatched_special_avoidance_workaround,
+    broadcast_for_gpu_delegate,
 )
 
 
@@ -106,6 +107,13 @@ def make_node(
         input_tensor_1=input_tensor_1,
         input_tensor_2=input_tensor_2,
         tf_layers_dict=tf_layers_dict,
+    )
+
+    # broadcast_for_gpu_delegate
+    input_tensor_1, input_tensor_2 = broadcast_for_gpu_delegate(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        **kwargs,
     )
 
     # Param replacement
