@@ -13,14 +13,13 @@ from tensorflow.python.keras.layers import (
 from onnx2tf.utils.colors import Color
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
-    calc_pads_same_pooling,
-    pad_input,
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    calc_tf_pooling_pads,
 )
 
 
@@ -67,91 +66,101 @@ def make_node(
         **kwargs,
     )
 
-    # 0: False, 1: True
+    auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))
-    # 0: False, 1: True
     count_include_pad = bool(graph_node.attrs.get('count_include_pad', 0))
     kernel_shape = graph_node.attrs['kernel_shape']
     spatial_size = len(kernel_shape)
-    x_rank = spatial_size + 2
+    pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
-    dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    input_tensor_shape = input_tensor.shape
-    is_known_shape = None not in input_tensor_shape
 
-    pads = graph_node.attrs.get('auto_pad', 'NOTSET')
-    if pads == 'NOTSET':
-        pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
-        if is_known_shape and pads != [0] * spatial_size * 2:
-            in_shape = input_tensor.get_shape()
-            same_paddings = calc_pads_same_pooling(
-                in_spatial_shape=in_shape[1:x_rank - 1],
-                kernel_shape=kernel_shape,
-                strides=strides,
-                dilations=dilations,
-                padding='SAME_UPPER',
-                is_known_shape=is_known_shape,
-            )
-            if pads == same_paddings:
-                pads = 'SAME_UPPER'
+    input_tensor_shape = input_tensor.shape.as_list()
+    is_known_shape = None not in input_tensor_shape[1:]
+    average_multiplier = [1] * spatial_size * 2
 
-    is_explicit_padding = type(pads) is list
-    padding_ = ''
+    # default tensorflow action is 'SAME_UPPER' mode (extra padding in the end for odd numbers)
+    # explicit pad layer is added for tensorflow incompatible cases
+    tf_pad_mode = 'VALID'
+    is_explicit_padding = False
+    func = math.ceil if ceil_mode else math.floor
+    tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
+                                   kernel=kernel_shape,
+                                   strides=strides,
+                                   func=func)
 
-    if is_explicit_padding or pads == 'SAME_LOWER' or (pads == 'SAME_UPPER' and count_include_pad):
-        # pad the input
-        padded_tensor = pad_input(
-            input_tensor=input_tensor,
-            is_known_shape=is_known_shape,
-            kernel_shape=kernel_shape,
-            ceil_mode=ceil_mode,
-            spatial_size=spatial_size,
-            strides=strides,
-            dilations=dilations,
-            padding=pads,
-            padding_constant=0,
+    # onnx padding value is ignored if auto_pad is not 'NOTSET'
+    if auto_pad == 'NOTSET':
+
+        # check if onnx padding is same with tensorflow padding mode 'SAME'
+        # this is to avoid flex operations since tflite has no builtin pooling with manual padding value
+        if is_known_shape and pads != [0] * spatial_size * 2 and tf_pads == pads:
+            auto_pad = 'SAME_UPPER'
+            tf_pad_mode = 'SAME'
+
+        else:
+            auto_pad = 'VALID'
+            is_explicit_padding = True
+            tf_pads = pads
+
+    elif auto_pad == 'SAME_UPPER':
+        tf_pad_mode = 'SAME'
+
+    elif auto_pad == 'SAME_LOWER':
+        is_explicit_padding = True
+
+    elif auto_pad == 'VALID':
+        tf_pads = [0] * spatial_size * 2
+
+    else:
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong auto_pad parameter in AveragePool: {auto_pad}.'
+        raise ValueError(error_msg)
+
+    # add extra pad layer if needed
+    if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
+
+        if auto_pad == 'SAME_LOWER':
+            # switch the order of pads
+            tf_pads = [i for tup in zip(tf_pads[1::2], tf_pads[::2]) for i in tup]
+
+        if not count_include_pad:
+            # if last step is smaller than kernel, it will be dropped
+            last_step = [
+                (tensor_shape + p_begin + p_end - (k - 1) - 1) % s
+                for tensor_shape, p_begin, p_end, k, s
+                in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
+            ]
+
+            average_multiplier_begin = [k / (k - p) for p, k in zip(tf_pads[::2], kernel_shape)]
+            average_multiplier_end = [k / (k - (p - l)) if l < p else 1
+                                      for p, k, l in zip(tf_pads[1::2], kernel_shape, last_step)]
+            average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
+
+        # convert to tensorflow padding format
+        tf_pads = [[0, 0]] + \
+                  [list(i) for i in zip(tf_pads[::2], tf_pads[1::2])] + \
+                  [[0, 0]]
+
+        padded_tensor = tf.pad(
+            tensor=input_tensor,
+            paddings=tf_pads,
+            mode='CONSTANT',
         )
-        padding_ = 'valid'
-
-    elif pads == 'SAME_UPPER':
-        padded_tensor = input_tensor
-        padding_ = 'same'
 
     else:
         padded_tensor = input_tensor
-        padding_ = 'same'
 
-    # Workaround pads
-    # Thanks, MPolaris/onnx2tflite
-    # https://github.com/MPolaris/onnx2tflite/blob/abbec2606b5767de7c9e348d1a24fbcd0d013564/layers/common_layers.py#L107-L113
-    calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
-    func = math.floor if ceil_mode == 0 else math.ceil
-    for i in range(spatial_size):
-        pad_shape = calc_pads[i] + calc_pads[i+spatial_size]
-        output_shape_raw = (input_tensor_shape[1+i]+pad_shape-((kernel_shape[i]-1)*dilations[i]+1))/strides[i]+1
-        if func(output_shape_raw) != input_tensor_shape[1+i]:
-            padding_ = "valid"
-            break
-
-    if padding_ == "valid" and calc_pads is not None and np.sum(calc_pads) > 0:
-        tmp_pad = \
-            [[0,0]] + \
-            [
-                [pad_begin, pad_end] \
-                    for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
-            ] + \
-            [[0,0]]
-        # Padding in `SYMMETRIC` mode will cause an error if the padding size is larger than the input size,
-        # so replace `CONSTANT` with `SYMMETRIC`
-        symmetric_enable_check = [
-            True if pad_size[0] <= input_tensor.shape[dim+1] and pad_size[1] <= input_tensor.shape[dim+1] else False \
-                for dim, pad_size in enumerate(tmp_pad[1:spatial_size])
-        ]
-        padded_tensor = tf.pad(
-            tensor=input_tensor,
-            paddings=tmp_pad,
-            mode='SYMMETRIC' if False not in symmetric_enable_check else 'CONSTANT',
-        )
+        if count_include_pad:
+            # if last step is smaller than kernel, it will be dropped
+            last_step = [
+                (tensor_shape + p_begin + p_end - (k - 1) - 1) % s
+                for tensor_shape, p_begin, p_end, k, s
+                in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
+            ]
+            average_multiplier_begin = [(k - p) / k for p, k in zip(tf_pads[::2], kernel_shape)]
+            average_multiplier_end = [(k - (p - l)) / k if l < p else 1
+                                      for p, k, l in zip(tf_pads[1::2], kernel_shape, last_step)]
+            average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -166,7 +175,7 @@ def make_node(
         pooled_tensor = AveragePooling1D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_.upper(),
+            padding=tf_pad_mode.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling1D
 
@@ -174,7 +183,7 @@ def make_node(
         pooled_tensor = AveragePooling2D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_.upper(),
+            padding=tf_pad_mode.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling2D
 
@@ -182,7 +191,7 @@ def make_node(
         pooled_tensor = AveragePooling3D(
             pool_size=kernel_shape,
             strides=strides,
-            padding=padding_.upper(),
+            padding=tf_pad_mode.upper(),
         )(padded_tensor)
         tf_op_type = AveragePooling3D
 
@@ -193,6 +202,30 @@ def make_node(
             f'opname: {graph_node.name} Type: AveragePool{len(kernel_shape)}D'
         print(error_msg)
         assert False, error_msg
+
+    # tensorflow average pooling needs extra process to get same output with onnx
+    # https://github.com/PINTO0309/onnx2tf/issues/124
+    if average_multiplier != [1] * spatial_size * 2:
+
+        # split, multiply, concat except batch and channel dimension
+        padded_slice_1 = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
+        padded_slice_2 = pooled_tensor[:, -1:, ...] * average_multiplier[1]
+        pooled_tensor = tf.concat([padded_slice_1, pooled_tensor[:, 1:-1, ...], padded_slice_2], axis=1)
+
+        if len(kernel_shape) >= 2:
+
+            padded_slice_3 = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
+            padded_slice_4 = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
+            pooled_tensor = tf.concat([padded_slice_3, pooled_tensor[:, :, 1:-1, ...], padded_slice_4], axis=2)
+
+        if len(kernel_shape) >= 3:
+
+            padded_slice_5 = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
+            padded_slice_6 = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
+            pooled_tensor = tf.concat([padded_slice_5, pooled_tensor[:, :, :, 1:-1, ...], padded_slice_6], axis=3)
+
+
+
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
@@ -213,7 +246,7 @@ def make_node(
                     'x': input_tensor,
                     'pool_size': kernel_shape,
                     'strides': strides,
-                    'padding': padding_,
+                    'padding': tf_pads if tf_pad_mode != 'same' else tf_pad_mode,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],

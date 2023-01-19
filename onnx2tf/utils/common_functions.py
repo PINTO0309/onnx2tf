@@ -18,7 +18,7 @@ try:
 except Exception as ex:
     pass
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional, Union, Tuple, Dict
+from typing import Any, List, Optional, Union, Tuple, Dict, Callable
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -3269,3 +3269,46 @@ def broadcast_for_gpu_delegate(
     except Exception as ex:
         pass
     return input_tensor_1, input_tensor_2
+
+
+def calc_tf_pooling_pads(input_shape, kernel, strides, func):
+    """
+    Calculate how much padding is needed for tensorflow mode 'SAME'
+
+    Parameters
+    ----------
+    input_shape: Union[np.ndarray, List]
+        input tensor shape of pooling layer
+    kernel: List
+        kernel shape from onnx
+    strides: List
+        strides from onnx
+    func: Callable
+        function for ceil or floor, depends on onnx option ceil_mode
+
+    Returns
+    -------
+    same_pads: List
+        onnx formatted padding, [x1_begin, x1_end, ... xn_begin, xn_end]
+    """
+
+    same_pads = []
+
+    # calculate how much padding is needed except batch and channel dimension
+    for i, k, s in zip(input_shape[1:-1], kernel, strides):
+        same_output_shape = func((i - 1) / s) + 1
+        axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
+
+        padded_valid_output_shape = func((i + axis_pads - k) / s) + 1
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong padding calculation.'
+        assert same_output_shape == padded_valid_output_shape, error_msg
+
+        same_pads.append(axis_pads // 2)
+        # pads to end more for odd number padding
+        if axis_pads % 2:
+            same_pads.append(axis_pads // 2 + 1)
+        else:
+            same_pads.append(axis_pads // 2)
+
+    return same_pads
