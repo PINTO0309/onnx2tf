@@ -3165,7 +3165,7 @@ def broadcast_for_gpu_delegate(
                 tile_counts_part_list = list(tile_counts[-yshapes_rank:])
                 xshape_part_list = list(xshapes[-yshapes_rank:])
                 for axis, (xshape, yshape) in enumerate(zip(xshape_part_list, yshape_list)):
-                    if xshape is not None and yshape is not None and xshape < yshape:
+                    if xshape is not None and yshape is not None and xshape < yshape and xshape == 1:
                         tile_counts_part_list[axis] = yshape
                 tile_counts[-yshapes_rank:] = tile_counts_part_list
                 tiled_x = tf.tile(input_tensor_1, list(tile_counts)) * -1 * -1
@@ -3185,7 +3185,7 @@ def broadcast_for_gpu_delegate(
                 tile_counts_part_list = list(tile_counts[-xshapes_rank:])
                 yshape_part_list = list(yshapes[-xshapes_rank:])
                 for axis, (xshape, yshape) in enumerate(zip(xshape_list, yshape_part_list)):
-                    if xshape is not None and yshape is not None and xshape > yshape:
+                    if xshape is not None and yshape is not None and xshape > yshape and yshape == 1:
                         tile_counts_part_list[axis] = xshape
                 tile_counts[-xshapes_rank:] = tile_counts_part_list
                 tiled_y = tf.tile(input_tensor_2, list(tile_counts)) * -1 * -1
