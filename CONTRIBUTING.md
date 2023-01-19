@@ -1,7 +1,7 @@
 # Contribution Guide
 
 ## 1. Issues
-- Right now, I am the sole maintainer of this repository. Therefore, my maintaining the code and cooperating with your research requires a great time cost and a strong motivation.
+- Currently, this repository is actively maintained by [PINTO0309](https://github.com/PINTO0309) and [Hyunseok-Kim0](https://github.com/Hyunseok-Kim0). Therefore, our maintenance of the code and cooperation with your research requires a large time cost and strong motivation.
 
   Simply put, there are five factors that motivate me,
 
