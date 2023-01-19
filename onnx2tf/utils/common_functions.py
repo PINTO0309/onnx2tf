@@ -3051,8 +3051,15 @@ def onnx_tf_tensor_validation(
                 else:
                     continue
                 break
-        check_results[onnx_output_name][1] = validate_result
-        check_results[onnx_output_name][2] = max_abs_err
+        if not validate_result and max_abs_err == ONNX_INF_INDEX_VALUE:
+            # Tensors deleted from the TensorFlow model structure during
+            # the model optimization process are not comparable,
+            # so the status is rewritten to Skip.
+            check_results[onnx_output_name][1] = 2
+            check_results[onnx_output_name][2] = max_abs_err
+        else:
+            check_results[onnx_output_name][1] = validate_result
+            check_results[onnx_output_name][2] = max_abs_err
     return check_results
 
 
