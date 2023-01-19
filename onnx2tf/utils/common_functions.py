@@ -3147,32 +3147,125 @@ def broadcast_for_gpu_delegate(
     yshapes = input_tensor_2.shape
     yshape_list = [int(dim) for dim in input_tensor_2.shape]
     yshapes_rank = len(yshape_list)
-    xshape_part_list = []
-    if xshapes_rank > 0 and yshapes_rank > 0:
-        if xshapes_rank > yshapes_rank:
-            tile_counts = np.asarray([1] * xshapes_rank, dtype=np.int64)
-            tile_counts_part_list = list(tile_counts)
-            tile_counts_part_list = list(tile_counts[-yshapes_rank:])
-            xshape_part_list = list(xshapes[-yshapes_rank:])
-            for axis, (xshape, yshape) in enumerate(zip(xshape_part_list, yshape_list)):
-                if xshape is not None and yshape is not None and xshape < yshape:
-                    tile_counts_part_list[axis] = yshape
-            tile_counts[-yshapes_rank:] = tile_counts_part_list
-            tiled_x = tf.tile(input_tensor_1, list(tile_counts))
-            return tiled_x, input_tensor_2
 
-        elif xshapes_rank < yshapes_rank:
-            tile_counts = np.asarray([1] * yshapes_rank, dtype=np.int64)
-            tile_counts_part_list = list(tile_counts)
-            tile_counts_part_list = list(tile_counts[-xshapes_rank:])
-            yshape_part_list = list(yshapes[-xshapes_rank:])
-            for axis, (xshape, yshape) in enumerate(zip(xshape_list, yshape_part_list)):
-                if xshape is not None and yshape is not None and xshape > yshape:
-                    tile_counts_part_list[axis] = xshape
-            tile_counts[-xshapes_rank:] = tile_counts_part_list
-            tiled_y = tf.tile(input_tensor_2, list(tile_counts))
-            return input_tensor_1, tiled_y
+    try:
+        if xshapes_rank > 0 and yshapes_rank > 0:
 
-        elif xshapes_rank == yshapes_rank:
-            pass
+            def x_tile(
+                *,
+                input_tensor_1,
+                input_tensor_2,
+                xshapes,
+                xshapes_rank,
+                yshapes_rank,
+                yshape_list,
+            ):
+                tile_counts = np.asarray([1] * xshapes_rank, dtype=np.int64)
+                tile_counts_part_list = list(tile_counts)
+                tile_counts_part_list = list(tile_counts[-yshapes_rank:])
+                xshape_part_list = list(xshapes[-yshapes_rank:])
+                for axis, (xshape, yshape) in enumerate(zip(xshape_part_list, yshape_list)):
+                    if xshape is not None and yshape is not None and xshape < yshape:
+                        tile_counts_part_list[axis] = yshape
+                tile_counts[-yshapes_rank:] = tile_counts_part_list
+                tiled_x = tf.tile(input_tensor_1, list(tile_counts)) * -1 * -1
+                return tiled_x, input_tensor_2
+
+            def y_tile(
+                *,
+                input_tensor_1,
+                input_tensor_2,
+                yshapes,
+                yshapes_rank,
+                xshapes_rank,
+                xshape_list,
+            ):
+                tile_counts = np.asarray([1] * yshapes_rank, dtype=np.int64)
+                tile_counts_part_list = list(tile_counts)
+                tile_counts_part_list = list(tile_counts[-xshapes_rank:])
+                yshape_part_list = list(yshapes[-xshapes_rank:])
+                for axis, (xshape, yshape) in enumerate(zip(xshape_list, yshape_part_list)):
+                    if xshape is not None and yshape is not None and xshape > yshape:
+                        tile_counts_part_list[axis] = xshape
+                tile_counts[-xshapes_rank:] = tile_counts_part_list
+                tiled_y = tf.tile(input_tensor_2, list(tile_counts)) * -1 * -1
+                return input_tensor_1, tiled_y
+
+            if xshapes_rank > yshapes_rank:
+                tiled_x, input_tensor_2 = x_tile(
+                    input_tensor_1=input_tensor_1,
+                    input_tensor_2=input_tensor_2,
+                    xshapes=xshapes,
+                    xshapes_rank=xshapes_rank,
+                    yshapes_rank=yshapes_rank,
+                    yshape_list=yshape_list,
+                )
+                return tiled_x, input_tensor_2
+
+            elif xshapes_rank < yshapes_rank:
+                input_tensor_1, tiled_y =  y_tile(
+                    input_tensor_1=input_tensor_1,
+                    input_tensor_2=input_tensor_2,
+                    yshapes=yshapes,
+                    yshapes_rank=yshapes_rank,
+                    xshapes_rank=xshapes_rank,
+                    xshape_list=xshape_list,
+                )
+                return tiled_y, input_tensor_1
+
+            elif xshapes_rank == yshapes_rank:
+                # 1. Compare xshape_list from the end to get the position where [-(n-1)] > [-n].
+                # 2. Compare yshape_list from the end to get the position where [-(n-1)] > [-n].
+                # 3. Tile the dimension for which [-(n-1)] > [-n] first holds.
+                x_mn2_large_mn1_index = -1
+                y_mn2_large_mn1_index = -1
+                for axis, dim in reversed(list(enumerate(xshape_list))):
+                    if dim is not None and dim > x_mn2_large_mn1_index:
+                        x_mn2_large_mn1_index = axis
+                for axis, dim in reversed(list(enumerate(yshape_list))):
+                    if dim is not None and dim > y_mn2_large_mn1_index:
+                        y_mn2_large_mn1_index = axis
+
+                if x_mn2_large_mn1_index == xshapes_rank - 1 and y_mn2_large_mn1_index == yshapes_rank - 1:
+                    return input_tensor_1, input_tensor_2
+                elif x_mn2_large_mn1_index != xshapes_rank - 1 and y_mn2_large_mn1_index == yshapes_rank - 1:
+                    tiled_x, input_tensor_2 = x_tile(
+                        input_tensor_1=input_tensor_1,
+                        input_tensor_2=input_tensor_2,
+                        xshapes=xshapes,
+                        xshapes_rank=xshapes_rank,
+                        yshapes_rank=yshapes_rank,
+                        yshape_list=yshape_list,
+                    )
+                    return tiled_x, input_tensor_2
+                elif x_mn2_large_mn1_index == xshapes_rank - 1 and y_mn2_large_mn1_index != yshapes_rank - 1:
+                    input_tensor_1, tiled_y =  y_tile(
+                        input_tensor_1=input_tensor_1,
+                        input_tensor_2=input_tensor_2,
+                        yshapes=yshapes,
+                        yshapes_rank=yshapes_rank,
+                        xshapes_rank=xshapes_rank,
+                        xshape_list=xshape_list,
+                    )
+                    return tiled_y, input_tensor_1
+                elif x_mn2_large_mn1_index != xshapes_rank - 1 and y_mn2_large_mn1_index != yshapes_rank - 1:
+                    tiled_x, input_tensor_2 = x_tile(
+                        input_tensor_1=input_tensor_1,
+                        input_tensor_2=input_tensor_2,
+                        xshapes=xshapes,
+                        xshapes_rank=xshapes_rank,
+                        yshapes_rank=yshapes_rank,
+                        yshape_list=yshape_list,
+                    )
+                    tiled_x, tiled_y = y_tile(
+                        input_tensor_1=tiled_x,
+                        input_tensor_2=input_tensor_2,
+                        yshapes=yshapes,
+                        yshapes_rank=yshapes_rank,
+                        xshapes_rank=xshapes_rank,
+                        xshape_list=xshape_list,
+                    )
+                    return tiled_x, tiled_y
+    except Exception as ex:
+        pass
     return input_tensor_1, input_tensor_2

@@ -90,13 +90,6 @@ def make_node(
         input_tensor_2=input_tensor_2,
     )
 
-    # broadcast_for_gpu_delegate
-    input_tensor_1, input_tensor_2 = broadcast_for_gpu_delegate(
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        **kwargs,
-    )
-
     input_tensor_1, input_tensor_2 = explicit_broadcast(
         const_or_var_1=input_tensor_1,
         const_or_var_2=input_tensor_2,
@@ -114,6 +107,13 @@ def make_node(
         input_tensor_1=input_tensor_1,
         input_tensor_2=input_tensor_2,
         tf_layers_dict=tf_layers_dict,
+    )
+
+    # broadcast_for_gpu_delegate
+    input_tensor_1, input_tensor_2 = broadcast_for_gpu_delegate(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        **kwargs,
     )
 
     # Param replacement
