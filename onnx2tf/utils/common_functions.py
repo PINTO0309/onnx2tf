@@ -3278,13 +3278,18 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
     Parameters
     ----------
     input_shape: Union[np.ndarray, List]
+        input tensor shape of pooling layer
     kernel: List
+        kernel shape from onnx
     strides: List
+        strides from onnx
     func: Callable
+        function for ceil or floor, depends on onnx option ceil_mode
 
     Returns
     -------
     same_pads: List
+        onnx formatted padding, [x1_begin, x1_end, ... xn_begin, xn_end]
     """
 
     same_pads = []
