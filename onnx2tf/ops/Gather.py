@@ -75,10 +75,10 @@ def make_node(
     # tensorflow gather supports only positive indices
     if not optimization_for_gpu_delegate:
         cond = tf.cast(indices < 0, dtype=indices.dtype)
-        indices = tf.cast(indices + cond * tf.shape(input_tensor)[axis], dtype=tf.int64)
+        indices = tf.cast(indices + cond * tf.shape(input_tensor, out_type=indices.dtype)[axis], dtype=indices.dtype)
     else:
         cond = indices < 0
-        indices = indices + tf.cast(tf.where(cond, 1, 0) * tf.shape(input_tensor)[axis], dtype=indices.dtype)
+        indices = indices + tf.cast(tf.where(cond, 1, 0) * tf.shape(input_tensor, out_type=indices.dtype)[axis], dtype=indices.dtype)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
