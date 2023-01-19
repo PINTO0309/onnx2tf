@@ -18,7 +18,7 @@ try:
 except Exception as ex:
     pass
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional, Union, Tuple, Dict
+from typing import Any, List, Optional, Union, Tuple, Dict, Callable
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -3118,3 +3118,41 @@ def download_test_image_data() -> np.ndarray:
     with io.BytesIO(test_sample_images_npy) as f:
         test_image_data: np.ndarray = np.load(f)
     return test_image_data
+
+
+def calc_tf_pooling_pads(input_shape, kernel, strides, func):
+    """
+    Calculate how much padding is needed for tensorflow mode 'SAME'
+
+    Parameters
+    ----------
+    input_shape: Union[np.ndarray, List]
+    kernel: List
+    strides: List
+    func: Callable
+
+    Returns
+    -------
+    same_pads: List
+    """
+
+    same_pads = []
+
+    # calculate how much padding is needed except batch and channel dimension
+    for i, k, s in zip(input_shape[1:-1], kernel, strides):
+        same_output_shape = func((i - 1) / s) + 1
+        axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
+
+        padded_valid_output_shape = func((i + axis_pads - k) / s) + 1
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong padding calculation.'
+        assert same_output_shape == padded_valid_output_shape, error_msg
+
+        same_pads.append(axis_pads // 2)
+        # pads to end more for odd number padding
+        if axis_pads % 2:
+            same_pads.append(axis_pads // 2 + 1)
+        else:
+            same_pads.append(axis_pads // 2)
+
+    return same_pads
