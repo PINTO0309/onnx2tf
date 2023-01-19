@@ -19,7 +19,6 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    tf_shape,
     calc_tf_pooling_pads,
 )
 
@@ -75,7 +74,7 @@ def make_node(
     pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
-    input_tensor_shape = tf_shape(input_tensor=input_tensor)
+    input_tensor_shape = input_tensor.shape.as_list()
     is_known_shape = None not in input_tensor_shape[1:]
     average_multiplier = [1] * spatial_size * 2
 
