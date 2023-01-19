@@ -3118,3 +3118,61 @@ def download_test_image_data() -> np.ndarray:
     with io.BytesIO(test_sample_images_npy) as f:
         test_image_data: np.ndarray = np.load(f)
     return test_image_data
+
+
+def broadcast_for_gpu_delegate(
+    *,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+    **kwargs: dict,
+):
+    """Tensor broadcast when optimizing to GPU Delegate.
+    'MUL requires one tensor that not less than second in all dimensions.'
+
+    Returns
+    ----------
+    tiled_x: Any
+        Broadcasted input_tensor1
+
+    tiled_y: Any
+        Broadcasted input_tensor2
+    """
+    optimization_for_gpu_delegate: bool = \
+        kwargs['optimization_for_gpu_delegate']
+    if not optimization_for_gpu_delegate:
+        return input_tensor_1, input_tensor_2
+    xshapes = input_tensor_1.shape
+    xshape_list = [int(dim) for dim in input_tensor_1.shape]
+    xshapes_rank = len(xshapes)
+    yshapes = input_tensor_2.shape
+    yshape_list = [int(dim) for dim in input_tensor_2.shape]
+    yshapes_rank = len(yshape_list)
+    xshape_part_list = []
+    if xshapes_rank > 0 and yshapes_rank > 0:
+        if xshapes_rank > yshapes_rank:
+            tile_counts = np.asarray([1] * xshapes_rank, dtype=np.int64)
+            tile_counts_part_list = list(tile_counts)
+            tile_counts_part_list = list(tile_counts[-yshapes_rank:])
+            xshape_part_list = list(xshapes[-yshapes_rank:])
+            for axis, (xshape, yshape) in enumerate(zip(xshape_part_list, yshape_list)):
+                if xshape is not None and yshape is not None and xshape < yshape:
+                    tile_counts_part_list[axis] = yshape
+            tile_counts[-yshapes_rank:] = tile_counts_part_list
+            tiled_x = tf.tile(input_tensor_1, list(tile_counts))
+            return tiled_x, input_tensor_2
+
+        elif xshapes_rank < yshapes_rank:
+            tile_counts = np.asarray([1] * yshapes_rank, dtype=np.int64)
+            tile_counts_part_list = list(tile_counts)
+            tile_counts_part_list = list(tile_counts[-xshapes_rank:])
+            yshape_part_list = list(yshapes[-xshapes_rank:])
+            for axis, (xshape, yshape) in enumerate(zip(xshape_list, yshape_part_list)):
+                if xshape is not None and yshape is not None and xshape > yshape:
+                    tile_counts_part_list[axis] = xshape
+            tile_counts[-xshapes_rank:] = tile_counts_part_list
+            tiled_y = tf.tile(input_tensor_2, list(tile_counts))
+            return input_tensor_1, tiled_y
+
+        elif xshapes_rank == yshapes_rank:
+            pass
+    return input_tensor_1, input_tensor_2
