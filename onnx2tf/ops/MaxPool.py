@@ -8,8 +8,6 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
-    calc_pads_same_pooling,
-    pad_input,
     remove_dilations,
     print_node_info,
     inverted_operation_enable_disable,
@@ -17,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    calc_tf_pooling_pads,
 )
 from onnx2tf.utils.colors import Color
 
@@ -65,109 +64,99 @@ def make_node(
     )
 
     if len(graph_node.outputs) > 1:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
-            f'MaxPoolWithArgmax is not yet implemented. '+
-            f'Pull requests are welcome. \n'+
-            f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n'+
-            f'graph_node.name: {graph_node.name}'
-        )
-        sys.exit(1)
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
+                    f'MaxPoolWithArgmax is not yet implemented. ' \
+                    f'Pull requests are welcome. \n' \
+                    f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n' \
+                    f'graph_node.name: {graph_node.name}'
+        print(error_msg)
+        raise NotImplementedError(error_msg)
 
     filter = None
-    strides = None
-    dilations = None
-    kernel_shape = None
-    ceil_mode = None
 
-    # 0: False, 1: True
+    auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))
-    # 0: False, 1: True
-    count_include_pad = bool(graph_node.attrs.get('count_include_pad', 0))
     kernel_shape = graph_node.attrs['kernel_shape']
     spatial_size = len(kernel_shape)
-    x_rank = spatial_size + 2
-    strides = graph_node.attrs.get('strides', [1] * spatial_size)
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    is_known_shape = input_tensor.shape.is_fully_defined()
-    input_tensor_shape = input_tensor.shape
+    pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
+    storage_order = graph_node.attrs.get('storage_order', 0)
+    strides = graph_node.attrs.get('strides', [1] * spatial_size)
+
+    input_tensor_shape = input_tensor.shape.as_list()
+    is_known_shape = None not in input_tensor_shape[1:]
     input_tensor_dtype = input_tensor.dtype
 
-    pads = graph_node.attrs.get('auto_pad', 'NOTSET')
-    if pads == 'NOTSET':
-        pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
-        # if is_known_shape and pads != [0] * spatial_size * 2:
-        if pads != [0] * spatial_size * 2:
-            in_shape = input_tensor.shape
-            same_paddings = calc_pads_same_pooling(
-                in_spatial_shape=in_shape[1:x_rank - 1],
-                kernel_shape=kernel_shape,
-                strides=strides,
-                dilations=dilations,
-                padding='SAME_UPPER',
-                is_known_shape=is_known_shape,
-            )
-            if pads == same_paddings:
-                pads = 'SAME_UPPER'
+    if storage_order:
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'storage_order option is not implemented yet.'
+        print(error_msg)
+        raise NotImplementedError(error_msg)
 
-    is_explicit_padding = type(pads) is list
-    padding_ = ''
+    # default tensorflow action is 'SAME_UPPER' mode (extra padding in the end for odd numbers)
+    # explicit pad layer is added for tensorflow incompatible cases
+    tf_pad_mode = 'VALID'
+    is_explicit_padding = False
+    func = math.ceil if ceil_mode else math.floor
+    tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
+                                   kernel=kernel_shape,
+                                   strides=strides,
+                                   func=func)
 
-    if is_explicit_padding or pads == 'SAME_LOWER' or (pads == 'SAME_UPPER' and count_include_pad):
-        # pad the input
-        padded_tensor = pad_input(
-            input_tensor=input_tensor,
-            is_known_shape=is_known_shape,
-            kernel_shape=kernel_shape,
-            ceil_mode=ceil_mode,
-            spatial_size=spatial_size,
-            strides=strides,
-            dilations=dilations,
-            padding=pads,
-            padding_constant=0,
+    # onnx padding value is ignored if auto_pad is not 'NOTSET'
+    if auto_pad == 'NOTSET':
+
+        # check if onnx padding is same with tensorflow padding mode 'SAME'
+        # this is to avoid flex operations since tflite has no builtin pooling with manual padding value
+        if is_known_shape and pads != [0] * spatial_size * 2 and tf_pads == pads:
+            auto_pad = 'SAME_UPPER'
+            tf_pad_mode = 'SAME'
+
+        else:
+            auto_pad = 'VALID'
+            is_explicit_padding = True
+            tf_pads = pads
+
+    elif auto_pad == 'SAME_UPPER':
+        tf_pad_mode = 'SAME'
+
+    elif auto_pad == 'SAME_LOWER':
+        is_explicit_padding = True
+
+    elif auto_pad == 'VALID':
+        tf_pads = [0] * spatial_size * 2
+
+    else:
+        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong auto_pad parameter in MaxPool: {auto_pad}.'
+        raise ValueError(error_msg)
+
+    # add extra pad layer if needed
+    if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
+        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                      f'Tensorflow incompatible padding detected. ' \
+                      f'Extra pad layer is inserted automatically. '
+        print(warning_msg)
+
+        if auto_pad == 'SAME_LOWER':
+            # switch the order of pads
+            tf_pads = [i for tup in zip(tf_pads[1::2], tf_pads[::2]) for i in tup]
+
+        # convert to tensorflow padding format
+        tf_pads = [[0, 0]] + \
+                  [list(i) for i in zip(tf_pads[::2], tf_pads[1::2])] + \
+                  [[0, 0]]
+
+        # explicit padding value should be negative infinite since this is max pooling
+        padded_tensor = tf.pad(
+            tensor=input_tensor,
+            paddings=tf_pads,
+            mode='CONSTANT',
+            constant_values=-np.inf
         )
-        padding_ = 'VALID'
-
-    elif pads == 'SAME_UPPER':
-        padded_tensor = input_tensor
-        padding_ = 'SAME'
 
     else:
         padded_tensor = input_tensor
-        padding_ = 'SAME'
-
-    # Workaround pads
-    # Thanks, MPolaris/onnx2tflite
-    # Ref: https://github.com/MPolaris/onnx2tflite/blob/24b6647c97ca0a74fb8965e0929e4e0bf6775bb4/layers/common_layers.py#L128-L142
-    # Ref: https://github.com/MPolaris/onnx2tflite/blob/a1bbae47c31a2174919a7d596427fb41a9bce113/layers/common_layers.py#L130-L139
-    calc_pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
-    func = math.floor if ceil_mode == 0 else math.ceil
-    for i in range(spatial_size):
-        pad_shape = calc_pads[i] + calc_pads[i+spatial_size]
-        output_shape_raw = (input_tensor_shape[1+i]+pad_shape-((kernel_shape[i]-1)*dilations[i]+1))/strides[i]+1
-        if func(output_shape_raw) != input_tensor_shape[1+i]:
-            padding_ = "VALID"
-            break
-
-    if padding_ == "VALID" and calc_pads is not None and np.sum(calc_pads) > 0:
-        tmp_pad = \
-            [[0,0]] + \
-            [
-                [pad_begin, pad_end] \
-                    for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
-            ] + \
-            [[0,0]]
-        # Padding in `SYMMETRIC` mode will cause an error if the padding size is larger than the input size,
-        # so replace `CONSTANT` with `SYMMETRIC`
-        symmetric_enable_check = [
-            True if pad_size[0] <= input_tensor.shape[dim+1] and pad_size[1] <= input_tensor.shape[dim+1] else False \
-                for dim, pad_size in enumerate(tmp_pad[1:spatial_size])
-        ]
-        padded_tensor = tf.pad(
-            tensor=input_tensor,
-            paddings=tmp_pad,
-            mode='SYMMETRIC' if False not in symmetric_enable_check else 'CONSTANT',
-        )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -186,7 +175,7 @@ def make_node(
 
         # tf.nn.dilation2d only support data_format='NHWC'
         filter = tf.zeros(
-            [kernel_shape[0], kernel_shape[1], input_tensor_shape[1]],
+            [kernel_shape[0], kernel_shape[1], input_tensor_shape[-1]],
             input_tensor_dtype,
         )
         pooled_tensor = tf.nn.dilation2d(
@@ -194,7 +183,8 @@ def make_node(
             filters=filter,
             strides=strides,
             dilations=dilations,
-            padding=padding_,
+            padding=tf_pad_mode.upper(),
+            data_format="NHWC",
         )
         tf_op_type = tf.nn.dilation2d
 
@@ -207,17 +197,17 @@ def make_node(
                 window_shape=kernel_shape,
                 dilations=dilations,
                 strides=strides,
-                padding=padding_,
+                padding=tf_pad_mode.upper(),
                 pooling_type='MAX',
             )
             tf_op_type = tf.nn.pool
         else:
-            # othwerwise check the pooling_type and use the correct op
+            # otherwise check the pooling_type and use the correct op
             pooled_tensor = tf.nn.max_pool(
                 input=padded_tensor,
                 ksize=kernel_shape,
                 strides=strides,
-                padding=padding_,
+                padding=tf_pad_mode.upper(),
             )
             tf_op_type = tf.nn.max_pool
     # in any other case we use custom implementation _remove_dilations
@@ -226,20 +216,7 @@ def make_node(
     # applying the strides and dilations. Then use tf.nn.pool with
     # strides = kernel_shape and no dilations
     else:
-        padded_tensor = input_tensor
-        if padding_ == 'SAME':
-            # pad the input
-            padded_tensor = pad_input(
-                input_tensor=input_tensor,
-                is_known_shape=is_known_shape,
-                kernel_shape=kernel_shape,
-                ceil_mode=ceil_mode,
-                spatial_size=spatial_size,
-                strides=strides,
-                dilations=dilations,
-                padding=pads,
-                padding_constant=0,
-            )
+        # TODO: dilated pool need fixed
         input_tensor = remove_dilations(
             input_tensor=padded_tensor,
             kernel_shape=kernel_shape,
@@ -247,12 +224,12 @@ def make_node(
             strides=strides,
             dilations=dilations,
         )
-        padding_ = 'VALID'
+        tf_pad_mode = 'VALID'
         pooled_tensor = tf.nn.pool(
             input=input_tensor,
             window_shape=kernel_shape,
             strides=kernel_shape,
-            padding=padding_,
+            padding=tf_pad_mode.upper(),
             pooling_type='MAX',
         )
         tf_op_type = tf.nn.pool
@@ -278,7 +255,7 @@ def make_node(
                     'kernel_shape': kernel_shape,
                     'strides': strides,
                     'dilations': dilations,
-                    'padding': padding_,
+                    'padding': tf_pads if tf_pad_mode != 'same' else tf_pad_mode,
                     'ceil_mode': ceil_mode,
                 },
                 'tf_outputs': {
