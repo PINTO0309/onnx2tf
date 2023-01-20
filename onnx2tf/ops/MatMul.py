@@ -2,6 +2,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -81,13 +82,37 @@ def make_node(
         **kwargs,
     )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.matmul(
-            a=input_tensor_1,
-            b=input_tensor_2,
-            output_type=dtype,
-            name=graph_node.name,
-        )
+    try:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.matmul(
+                a=input_tensor_1,
+                b=input_tensor_2,
+                output_type=dtype,
+                name=graph_node.name,
+            )
+    except Exception as ex1:
+        # Shape Unmatch Error Mitigation Measures
+        # Search for and transpose shapes that do not cause shape unmatch errors
+        tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+        tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+        for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                try:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.matmul(
+                            a=tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition),
+                            b=tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition),
+                            output_type=dtype,
+                            name=graph_node.name,
+                        )
+                    break
+                except Exception as ex2:
+                    pass
+            else:
+                continue
+            break
+        if 'tf_node' not in tf_layers_dict[graph_node_output.name]:
+            raise ex1
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
