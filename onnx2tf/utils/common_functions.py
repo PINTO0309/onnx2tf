@@ -1916,7 +1916,7 @@ def remove_dilations(
         output_size = (
             ((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1
         ) * kernel_shape[dim]
-        output_shape[dim + 2] = output_size
+        output_shape[dim + 1] = output_size
 
         # initialize the output dimension index with the range of the
         # dimension output size (e.g. 4): [0, 1, 2, 3]
@@ -1934,7 +1934,7 @@ def remove_dilations(
         # convert to column vector
         dim_ind = tf.expand_dims(dim_ind, 1)
 
-        if (dim == spatial_size - 1):
+        if dim == spatial_size - 1:
             gather_ind = dim_ind
         else:
             # "combine" current dimension indices with the previous dimensions
@@ -1949,15 +1949,15 @@ def remove_dilations(
     # m is the width.
 
     # set the channels count in the output_shape
-    output_shape[1] = channels_count
+    output_shape[-1] = channels_count
     # create the channel indices
     channel_ind = tf.range(channels_count, dtype=tf.int64)
     # convert to column vector
     channel_ind = tf.expand_dims(channel_ind, 1)
     # "combine" channel indices with the result from the loop
     gather_ind = tf_product(
-        a=channel_ind,
-        b=gather_ind,
+        a=gather_ind,
+        b=channel_ind,
     )
 
     # expand the dimensions to match the input dimensions + 1
