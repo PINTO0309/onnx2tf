@@ -90,13 +90,11 @@ def make_node(
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
-
         # check if onnx padding is same with tensorflow padding mode 'SAME'
-        # this is to avoid flex operations since tflite has no builtin pooling with manual padding value
+        # this is to avoid flex operations since tflite builtin pooling operator does not support manual padding
         if is_known_shape and pads != [0] * spatial_size * 2 and tf_pads == pads:
             auto_pad = 'SAME_UPPER'
             tf_pad_mode = 'SAME'
-
         else:
             auto_pad = 'VALID'
             is_explicit_padding = True
@@ -118,6 +116,10 @@ def make_node(
 
     # add extra pad layer if needed
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
+        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                      f'Tensorflow incompatible padding detected. ' \
+                      f'Extra pad layer is inserted automatically. '
+        print(warning_msg)
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
@@ -200,11 +202,17 @@ def make_node(
             f'AveragePool supports only 1D, 2D, and 3D. ' +\
             f'opname: {graph_node.name} Type: AveragePool{len(kernel_shape)}D'
         print(error_msg)
-        assert False, error_msg
+        raise AssertionError(error_msg)
 
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124
     if average_multiplier != [1] * spatial_size * 2:
+        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                      f'Tensorflow incompatible action detected. ' \
+                      f'Some additional layers are inserted to reproduce same output. ' \
+                      f'Please refer to the following link for more information: ' \
+                      f'https://github.com/PINTO0309/onnx2tf/issues/124'
+        print(warning_msg)
 
         pooled_tensor_shape = pooled_tensor.shape.as_list()
         # split, multiply, concat except batch and channel dimension
