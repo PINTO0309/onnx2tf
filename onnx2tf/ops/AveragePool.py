@@ -222,13 +222,19 @@ def make_node(
                       f'https://github.com/PINTO0309/onnx2tf/issues/124'
         print(warning_msg)
 
-        pooled_tensor_shape = pooled_tensor.shape.as_list()
-        # split, multiply, concat except batch and channel dimension
-        for axis, shape in enumerate(pooled_tensor_shape[1:-1], start=1):
-            begin, body, end = tf.split(pooled_tensor, [1, shape - 2, 1], axis=axis)
-            begin *= average_multiplier[(axis - 1) * 2]
-            end *= average_multiplier[(axis - 1) * 2 + 1]
-            pooled_tensor = tf.concat([begin, body, end], axis=axis)
+        padded_slice_begin = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
+        padded_slice_end = pooled_tensor[:, -1:, ...] * average_multiplier[1]
+        pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, 1:-1, ...], padded_slice_end], axis=1)
+
+        if len(kernel_shape) >= 2:
+            padded_slice_begin = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
+            padded_slice_end = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
+            pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, :, 1:-1, ...], padded_slice_end], axis=2)
+
+        if len(kernel_shape) >= 3:
+            padded_slice_begin = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
+            padded_slice_end = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
+            pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, :, :, 1:-1, ...], padded_slice_end], axis=3)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
