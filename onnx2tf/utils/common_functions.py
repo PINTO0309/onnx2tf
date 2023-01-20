@@ -3296,10 +3296,11 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
     Returns
     -------
     same_pads: List
-        onnx formatted padding, [x1_begin, x1_end, ... xn_begin, xn_end]
+        onnx formatted padding, [x1_begin, x2_begin, ..., xn_begin, x1_end, x2_end, ..., xn_end]
     """
 
     same_pads = []
+    same_pads_end = []
 
     # calculate how much padding is needed except batch and channel dimension
     for i, k, s in zip(input_shape[1:-1], kernel, strides):
@@ -3314,8 +3315,10 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
         same_pads.append(axis_pads // 2)
         # pads to end more for odd number padding
         if axis_pads % 2:
-            same_pads.append(axis_pads // 2 + 1)
+            same_pads_end.append(axis_pads // 2 + 1)
         else:
-            same_pads.append(axis_pads // 2)
+            same_pads_end.append(axis_pads // 2)
+
+    same_pads.extend(same_pads_end)
 
     return same_pads
