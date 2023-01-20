@@ -220,7 +220,13 @@ def make_node(
     # applying the strides and dilations. Then use tf.nn.pool with
     # strides = kernel_shape and no dilations
     else:
-        # TODO: dilated pool need fixed
+        # TODO: Dilated MaxPool with strides is broken for 3D and above, need to be fixed
+        if spatial_size >= 3:
+            error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
+                        f'Dilated MaxPool with strides is not supported for 3D and above for now. '
+            print(error_msg)
+            raise NotImplementedError(error_msg)
+
         input_tensor = remove_dilations(
             input_tensor=padded_tensor,
             kernel_shape=kernel_shape,
