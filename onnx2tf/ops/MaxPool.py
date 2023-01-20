@@ -144,11 +144,11 @@ def make_node(
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
-            tf_pads = [i for tup in zip(tf_pads[1::2], tf_pads[::2]) for i in tup]
+            tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
 
         # convert to tensorflow padding format
         tf_pads = [[0, 0]] + \
-                  [list(i) for i in zip(tf_pads[::2], tf_pads[1::2])] + \
+                  [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
                   [[0, 0]]
 
         # explicit padding value should be negative infinite since this is max pooling

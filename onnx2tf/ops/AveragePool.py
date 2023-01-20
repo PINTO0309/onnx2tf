@@ -123,23 +123,27 @@ def make_node(
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
-            tf_pads = [i for tup in zip(tf_pads[1::2], tf_pads[::2]) for i in tup]
+            tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
 
         if not count_include_pad:
             # if last step is smaller than kernel, it will be dropped
             last_step = [
                 (tensor_shape + p_begin + p_end - k) % s
                 for tensor_shape, p_begin, p_end, k, s
-                in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
+                in zip(input_tensor_shape[1:-1],
+                       tf_pads[:len(tf_pads) // 2],
+                       tf_pads[len(tf_pads) // 2:],
+                       kernel_shape,
+                       strides)
             ]
-            average_multiplier_begin = [k / (k - p) for p, k in zip(tf_pads[::2], kernel_shape)]
+            average_multiplier_begin = [k / (k - p) for p, k in zip(tf_pads[:len(tf_pads) // 2], kernel_shape)]
             average_multiplier_end = [k / (k - (p - l)) if l < p else 1
-                                      for p, k, l in zip(tf_pads[1::2], kernel_shape, last_step)]
+                                      for p, k, l in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step)]
             average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
 
         # convert to tensorflow padding format
         tf_pads = [[0, 0]] + \
-                  [list(i) for i in zip(tf_pads[::2], tf_pads[1::2])] + \
+                  [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
                   [[0, 0]]
 
         padded_tensor = tf.pad(
@@ -156,11 +160,15 @@ def make_node(
             last_step = [
                 (tensor_shape + p_begin + p_end - k) % s
                 for tensor_shape, p_begin, p_end, k, s
-                in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
+                in zip(input_tensor_shape[1:-1],
+                       tf_pads[:len(tf_pads) // 2],
+                       tf_pads[len(tf_pads) // 2:],
+                       kernel_shape,
+                       strides)
             ]
-            average_multiplier_begin = [(k - p) / k for p, k in zip(tf_pads[::2], kernel_shape)]
+            average_multiplier_begin = [(k - p) / k for p, k in zip(tf_pads[:len(tf_pads) // 2], kernel_shape)]
             average_multiplier_end = [(k - (p - l)) / k if l < p else 1
-                                      for p, k, l in zip(tf_pads[1::2], kernel_shape, last_step)]
+                                      for p, k, l in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step)]
             average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
 
     # Preserving Graph Structure (Dict)
