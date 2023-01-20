@@ -98,8 +98,12 @@ def make_node(
     tf_pad_mode = 'VALID'
     is_explicit_padding = False
     func = math.ceil if ceil_mode else math.floor
+    dilated_kernel_shape = kernel_shape
+    if dilations != [1] * spatial_size:
+        dilated_kernel_shape = [(k - 1) * d for k, d in zip(kernel_shape, dilations)]
+
     tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
-                                   kernel=kernel_shape,
+                                   kernel=dilated_kernel_shape,
                                    strides=strides,
                                    func=func)
 
