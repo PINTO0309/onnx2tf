@@ -3,6 +3,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+from typing import List, Any
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -129,13 +130,15 @@ def make_node(
     else:
         # Perform inference using a dummy input tensor to attempt to estimate the output shape.
         try:
+            import onnx
             import onnxruntime as ort
+            from sne4onnx import extraction
         except Exception as ex:
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +\
                 f'The information needed to estimate the output shape of the ConvTranspose ' +\
                 f'was missing and must be estimated using onnxruntime. ' +\
-                f'Install onnxruntime. pip install onnxruntime'
+                f'Install sne4onnx and onnxruntime. pip install sne4onnx onnxruntime'
             )
             sys.exit(1)
         onnx_graph = kwargs['onnx_graph']
