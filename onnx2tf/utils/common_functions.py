@@ -1901,7 +1901,7 @@ def remove_dilations(
     strides,
     dilations,
 ):
-    input_shape = tf_shape(input_tensor)
+    input_shape = tf_shape(input_tensor=input_tensor)
     in_spatial_shape = input_shape[1:len(kernel_shape)+1]
     channels_count = input_shape[-1]
 
