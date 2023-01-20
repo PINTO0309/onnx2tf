@@ -126,11 +126,10 @@ def make_node(
         if not count_include_pad:
             # if last step is smaller than kernel, it will be dropped
             last_step = [
-                (tensor_shape + p_begin + p_end - (k - 1) - 1) % s
+                (tensor_shape + p_begin + p_end - k) % s
                 for tensor_shape, p_begin, p_end, k, s
                 in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
             ]
-
             average_multiplier_begin = [k / (k - p) for p, k in zip(tf_pads[::2], kernel_shape)]
             average_multiplier_end = [k / (k - (p - l)) if l < p else 1
                                       for p, k, l in zip(tf_pads[1::2], kernel_shape, last_step)]
@@ -153,7 +152,7 @@ def make_node(
         if count_include_pad:
             # if last step is smaller than kernel, it will be dropped
             last_step = [
-                (tensor_shape + p_begin + p_end - (k - 1) - 1) % s
+                (tensor_shape + p_begin + p_end - k) % s
                 for tensor_shape, p_begin, p_end, k, s
                 in zip(input_tensor_shape[1:-1], tf_pads[::2], tf_pads[1::2], kernel_shape, strides)
             ]
@@ -207,25 +206,13 @@ def make_node(
     # https://github.com/PINTO0309/onnx2tf/issues/124
     if average_multiplier != [1] * spatial_size * 2:
 
+        pooled_tensor_shape = pooled_tensor.shape.as_list()
         # split, multiply, concat except batch and channel dimension
-        padded_slice_1 = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
-        padded_slice_2 = pooled_tensor[:, -1:, ...] * average_multiplier[1]
-        pooled_tensor = tf.concat([padded_slice_1, pooled_tensor[:, 1:-1, ...], padded_slice_2], axis=1)
-
-        if len(kernel_shape) >= 2:
-
-            padded_slice_3 = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
-            padded_slice_4 = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
-            pooled_tensor = tf.concat([padded_slice_3, pooled_tensor[:, :, 1:-1, ...], padded_slice_4], axis=2)
-
-        if len(kernel_shape) >= 3:
-
-            padded_slice_5 = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
-            padded_slice_6 = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
-            pooled_tensor = tf.concat([padded_slice_5, pooled_tensor[:, :, :, 1:-1, ...], padded_slice_6], axis=3)
-
-
-
+        for axis, shape in enumerate(pooled_tensor_shape[1:-1], start=1):
+            begin, body, end = tf.split(pooled_tensor, [1, shape - 2, 1], axis=axis)
+            begin *= average_multiplier[(axis - 1) * 2]
+            end *= average_multiplier[(axis - 1) * 2 + 1]
+            pooled_tensor = tf.concat([begin, body, end], axis=axis)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
