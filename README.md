@@ -35,7 +35,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 - [x] Only for `opset=11` or higher
 - [x] If you do not like the generated TFLite OP name, edit it using [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite).
 - [x] The generated Keras models cannot be used for retraining. If you want to train, you must build your own model.
-- [x] When converting to TensorFlow.js, CoreML, etc., please generate saved_model with the `--output_signaturedefs` option and use the generated saved_model to convert with various converters. [tensorflowjs_converter](https://github.com/tensorflow/tfjs), [coremltools](https://github.com/apple/coremltools), [edgetpu_compilier](https://coral.ai/docs/edgetpu/compiler/)
+- [x] When converting to TensorFlow.js, CoreML, etc., please generate saved_model with the `--output_signaturedefs` option and use the generated saved_model to convert with various converters. [tensorflowjs_converter](https://github.com/tensorflow/tfjs), [coremltools](https://github.com/apple/coremltools), [edgetpu_compilier](https://coral.ai/docs/edgetpu/compiler/), etc...
 - [x] There are many OPs on ONNX that do not support EdgeTPU. Therefore, if you need to generate an EdgeTPU model, please specify `--replace_***_to_pseudo_***` to convert your model. onnx2tf will attempt to replace the OP with an EdgeTPU-compatible OP whenever possible.
 - [x] The main factors that cause accuracy degradation after model conversion are as follows
 1. differences in Padding specifications
