@@ -458,7 +458,7 @@ def get_weights_constant_or_variable(
         """
         convertion_table = [i for i in range(2, kernel_size + 2)] + [1, 0]
         values = values.transpose(convertion_table)
-        return values
+        return tf.convert_to_tensor(values)
     elif hasattr(const_or_var, 'inputs') \
         and hasattr(const_or_var.inputs[0], 'attrs') \
         and 'value' in const_or_var.inputs[0].attrs \
@@ -482,7 +482,7 @@ def get_weights_constant_or_variable(
         values = values.transpose(convertion_table).astype(np.float32)
         if isinstance(values, np.ndarray) and values.dtype in (tf.int8, tf.uint8):
             values = values.astype(np.float32)
-        return values
+        return tf.convert_to_tensor(values)
     elif isinstance(const_or_var.i(), gs.Constant) \
         and hasattr(const_or_var.i(), 'values'):
         values = const_or_var.i().values
@@ -504,7 +504,7 @@ def get_weights_constant_or_variable(
         values = values.transpose(convertion_table).astype(np.float32)
         if isinstance(values, np.ndarray) and values.dtype in (tf.int8, tf.uint8):
             values = values.astype(np.float32)
-        return values
+        return tf.convert_to_tensor(values)
     else:
         return const_or_var
 
