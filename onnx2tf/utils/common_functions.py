@@ -324,7 +324,8 @@ def print_node_info(func):
             )
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
-                f'If the input OP of ONNX before conversion is NHWC, use the -kt option.'
+                f'If the input OP of ONNX before conversion is NHWC or ' +
+                f'an irregular channel arrangement other than NCHW, use the -kt or -kat option.'
             )
             sys.exit(1)
     return print_wrapper_func
