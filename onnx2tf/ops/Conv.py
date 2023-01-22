@@ -136,8 +136,18 @@ def make_node(
         print(error_msg)
         assert False, error_msg
 
-
-    depthwise = (input_tensor_rank == 4 and len(input_weights_shape) == 4 and group != 1 and not (None in input_weights_shape))
+    # DepthwiseConv2D
+    #   1. rank=4
+    #   2. group>1
+    #   3. No undefined dimension
+    #   4. All strides spatial shape are the same number
+    depthwise = (
+        input_tensor_rank == 4 \
+        and len(input_weights_shape) == 4 \
+        and group != 1 \
+        and not (None in input_weights_shape) \
+        and sum([1 if s == strides[0] else 0 for s in strides]) == len(strides)
+    )
     if depthwise and input_tensor_shape[-1] != None:
         depthwise = bool(group == input_tensor_shape[-1])
 
