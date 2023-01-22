@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "model": "https://github.com/PINTO0309/onnx2tf/files/10474146/japan_PP-OCRv3_rec_infer.onnx.zip",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/14",
+  "operations": [
+    {
+      "op_name": "Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,3,1,4]
+    },
+    {
+      "op_name": "Transpose_4",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [2,0,3,1,4]
+    }
+  ]
+}
