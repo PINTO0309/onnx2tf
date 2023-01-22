@@ -1082,6 +1082,8 @@ def convert(
             #   output_names,
             #         :
             # ]
+
+            # Output OP extended to all ONNX nodes
             if check_onnx_tf_outputs_elementwise_close_full:
                 ops_output_names = []
                 for graph_node in graph.nodes:
@@ -1091,6 +1093,28 @@ def convert(
                     ops_output_names.extend(ops_output_names_sub)
             else:
                 ops_output_names = output_names
+
+            # Rebuild model for validation
+            del model
+            outputs = [
+                layer_info['tf_node'] \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names \
+                            and not hasattr(layer_info['tf_node'], 'numpy')
+            ]
+            exclude_output_names = [
+                opname \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names \
+                            and hasattr(layer_info['tf_node'], 'numpy')
+            ]
+            model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+            # Exclude output OPs not subject to validation
+            ops_output_names = [
+                ops_output_name for ops_output_name in ops_output_names \
+                    if ops_output_name not in exclude_output_names
+            ]
 
             # download test data
             all_four_dim = sum(
@@ -1125,20 +1149,6 @@ def convert(
                 test_data_nhwc=test_data_nhwc,
             )
             # TF dummy inference
-            del model
-            outputs = [
-                layer_info['tf_node'] \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and not hasattr(layer_info['tf_node'], 'numpy')
-            ]
-            exclude_output_names = [
-                opname \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and hasattr(layer_info['tf_node'], 'numpy')
-            ]
-            model = tf.keras.Model(inputs=inputs, outputs=outputs)
             dummy_tf_outputs: List[Any] = dummy_tf_inference(
                 model=model,
                 inputs=inputs,
@@ -1153,8 +1163,11 @@ def convert(
             # Validation
             onnx_tensor_infos = {
                 output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs) \
-                        if output_name not in exclude_output_names
+                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+            }
+            tf_tensor_infos = {
+                output_name: dummy_tf_output \
+                    for output_name, dummy_tf_output in zip(ops_output_names, dummy_tf_outputs)
             }
             """
             np.allclose(
@@ -1176,7 +1189,7 @@ def convert(
             """
             check_results = onnx_tf_tensor_validation(
                 onnx_tensor_infos=onnx_tensor_infos,
-                tf_tensors=dummy_tf_outputs,
+                tf_tensor_infos=tf_tensor_infos,
                 rtol=check_onnx_tf_outputs_elementwise_close_rtol,
                 atol=check_onnx_tf_outputs_elementwise_close_atol,
             )
