@@ -1182,7 +1182,7 @@ def convert(
                 {
                     onnx_output_name: [
                         onnx_tensor,
-                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
+                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
                         max_abs_err,
                     ]
                 }
@@ -1210,7 +1210,7 @@ def convert(
                 elif matched_flg == 2:
                     message = \
                         f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                        f'{Color.REVERCE}{Color.BLUE} Skipped {Color.RESET}'
+                        f'{Color.REVERCE}{Color.BLUE} Skipped (Deleted or Shape Unmatched) {Color.RESET}'
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
                     f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+

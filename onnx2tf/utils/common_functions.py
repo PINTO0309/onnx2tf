@@ -2974,7 +2974,7 @@ def onnx_tf_tensor_validation(
         {
             onnx_output_name: [
                 onnx_tensor,
-                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped,
+                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched),
                 max_abs_err,
             ]
         }
@@ -3052,6 +3052,7 @@ def onnx_tf_tensor_validation(
             # Tensors deleted from the TensorFlow model structure during
             # the model optimization process are not comparable,
             # so the status is rewritten to Skip.
+            # If there was no match between ONNX and TensorFlow output shapes.
             check_results[onnx_output_name][1] = 2
             check_results[onnx_output_name][2] = max_abs_err
         else:
