@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -96,7 +97,8 @@ def make_node(
     argmined_tensor = tf.math.argmin(
         input=reversed_tensor,
         axis=axis,
-        output_type=dtype,
+        output_type=NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+            if isinstance(dtype, np.dtype) else dtype,
         name=f'{graph_node.name}_argmin',
     )
     if keepdims:
