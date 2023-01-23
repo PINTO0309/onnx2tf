@@ -1,9 +1,7 @@
 import sys
 import random
-
 random.seed(0)
 import numpy as np
-
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
@@ -24,40 +22,63 @@ from tensorflow.python.ops import gen_image_ops
 from tensorflow.python.util import dispatch
 
 
-@dispatch.add_dispatch_support
-def non_max_suppression(
-    boxes,
-    scores,
-    max_output_size,
-    iou_threshold=0.5,
-    score_threshold=float('-inf'),
-    name=None,
-):
-    with ops.name_scope(name, 'non_max_suppression'):
-        selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
-            boxes=boxes,
-            scores=scores,
-            max_output_size=max_output_size \
-                if not isinstance(max_output_size, np.ndarray) \
-                    else tf.convert_to_tensor(
-                        value=max_output_size,
-                        name='max_output_size'
-                    ),
-            iou_threshold=iou_threshold \
-                if not isinstance(iou_threshold, np.ndarray) \
-                    else tf.convert_to_tensor(
-                        value=iou_threshold,
-                        name='iou_threshold',
-                    ),
-            score_threshold=score_threshold \
-                if not isinstance(score_threshold, np.ndarray) \
-                    else tf.convert_to_tensor(
-                        value=score_threshold,
-                        name='score_threshold',
-                    ),
-            pad_to_max_output_size=False,
+class NMSLayer(tf.keras.layers.Layer):
+    def __init__(self):
+        super(NMSLayer, self).__init__()
+
+    @dispatch.add_dispatch_support
+    def non_max_suppression(
+        self,
+        boxes,
+        scores,
+        max_output_size,
+        iou_threshold=0.5,
+        score_threshold=float('-inf'),
+        name=None,
+    ):
+        with ops.name_scope(name, 'non_max_suppression'):
+            selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
+                boxes=boxes,
+                scores=scores,
+                max_output_size=max_output_size \
+                    if not isinstance(max_output_size, np.ndarray) \
+                        else tf.convert_to_tensor(
+                            value=max_output_size,
+                            name='max_output_size'
+                        ),
+                iou_threshold=iou_threshold \
+                    if not isinstance(iou_threshold, np.ndarray) \
+                        else tf.convert_to_tensor(
+                            value=iou_threshold,
+                            name='iou_threshold',
+                        ),
+                score_threshold=score_threshold \
+                    if not isinstance(score_threshold, np.ndarray) \
+                        else tf.convert_to_tensor(
+                            value=score_threshold,
+                            name='score_threshold',
+                        ),
+                pad_to_max_output_size=False,
+            )
+            return selected_indices[:num_valid]
+
+    def call(
+        self,
+        boxes,
+        scores,
+        max_output_size,
+        iou_threshold=0.5,
+        score_threshold=float('-inf'),
+        name=None,
+    ):
+        return self.non_max_suppression(
+            boxes,
+            scores,
+            max_output_size,
+            iou_threshold,
+            score_threshold,
+            name,
         )
-        return selected_indices[:num_valid]
 
 
 @print_node_info
@@ -257,8 +278,8 @@ def make_node(
             # get scores in class_j for batch_i only
             tf_scores = tf.squeeze(tf.gather(batch_i_scores, [class_j]), axis=0)
             # get the selected boxes indices
-
-            selected_indices = non_max_suppression(
+            nms = NMSLayer()
+            selected_indices = nms(
                 boxes=tf_boxes,
                 scores=tf_scores,
                 max_output_size=max_output_boxes_per_class,
