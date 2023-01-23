@@ -136,8 +136,8 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.clip_by_value(
                     t=features,
-                    clip_value_min=min_value,
-                    clip_value_max=max_value,
+                    clip_value_min=tf.convert_to_tensor(min_value),
+                    clip_value_max=tf.convert_to_tensor(max_value),
                 )
             tf_op_type = tf.clip_by_value
         elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
@@ -145,7 +145,7 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(
                     x=features,
-                    y=min_value,
+                    y=tf.convert_to_tensor(min_value),
                 )
             tf_op_type = tf.maximum
         elif (min_value is None or min_value.shape is None) \
@@ -153,7 +153,7 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.minimum(
                     x=features,
-                    y=max_value,
+                    y=tf.convert_to_tensor(max_value),
                 )
             tf_op_type = tf.minimum
 
