@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install pip -U \
     && pip install -U onnx \
-    && pip install -U onnx-simplifier \
+    && pip install -U onnxruntime \
+    && pip install -U onnxsim \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnx2tf \
     && pip install -U onnx2tf \
