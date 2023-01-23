@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -71,6 +72,9 @@ def make_node(
         'dtype': dtype,
     }
 
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
     # Generation of TF OP
     if None not in input_tensor_shape:
         max_eye_shape_ub = input_tensor_shape[1] \
@@ -84,7 +88,7 @@ def make_node(
         tensor = tf.eye(
             eye_shape,
             num_columns=eye_shape,
-            dtype=dtype,
+            dtype=output_dtype,
         )
         if offset > 0:
             tb_paddings = [
@@ -129,7 +133,7 @@ def make_node(
             tensor = tf.eye(
                 eye_shape,
                 num_columns=eye_shape,
-                dtype=dtype,
+                dtype=output_dtype,
             )
             if offset > 0:
                 tb_paddings = [

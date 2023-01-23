@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -120,6 +121,8 @@ def make_node(
         max_value = np.asarray([max_value])
 
     tf_op_type = None
+    features_dtype = NUMPY_DTYPES_TO_TF_DTYPES[features.dtype] \
+        if isinstance(features.dtype, np.dtype) else features.dtype
     if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
         and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -136,8 +139,10 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.clip_by_value(
                     t=features,
-                    clip_value_min=min_value,
-                    clip_value_max=max_value,
+                    clip_value_min=tf.convert_to_tensor(min_value, dtype=features_dtype) \
+                        if isinstance(min_value, np.ndarray) else min_value,
+                    clip_value_max=tf.convert_to_tensor(max_value, dtype=features_dtype) \
+                        if isinstance(max_value, np.ndarray) else max_value,
                 )
             tf_op_type = tf.clip_by_value
         elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
@@ -145,7 +150,8 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(
                     x=features,
-                    y=min_value,
+                    y=tf.convert_to_tensor(min_value, dtype=features_dtype) \
+                        if isinstance(min_value, np.ndarray) else min_value,
                 )
             tf_op_type = tf.maximum
         elif (min_value is None or min_value.shape is None) \
@@ -153,7 +159,8 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.minimum(
                     x=features,
-                    y=max_value,
+                    y=tf.convert_to_tensor(max_value, dtype=features_dtype) \
+                        if isinstance(max_value, np.ndarray) else max_value,
                 )
             tf_op_type = tf.minimum
 

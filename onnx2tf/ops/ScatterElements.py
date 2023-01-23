@@ -17,6 +17,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -177,7 +178,9 @@ def make_node(
         indices=indices,
         updates=updates,
     )
-    output = tf.cast(output, input_tensor.dtype)
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
+    output = tf.cast(output, output_dtype)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = output
 

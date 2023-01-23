@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -73,12 +74,15 @@ def make_node(
     input_tensor_3 = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.range(
             start=input_tensor_1,
             limit=input_tensor_2,
             delta=input_tensor_3,
-            dtype=dtype,
+            dtype=output_dtype,
             name=graph_node.name,
         )
 

@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -125,11 +126,14 @@ def make_node(
         b_zero_point = tf.cast(b_zero_point, tf.int32)
         casted_input_tensor_2 = tf.subtract(casted_input_tensor_2, b_zero_point)
 
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.matmul(
             a=casted_input_tensor_1,
             b=casted_input_tensor_2,
-            output_type=dtype,
+            output_type=output_dtype,
             name=graph_node.name,
         )
 

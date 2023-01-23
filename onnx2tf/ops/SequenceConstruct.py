@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -35,7 +36,11 @@ def make_node(
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1
 
-    input_sequence = tf.ragged.constant([], dtype=graph_node.inputs[0].dtype)
+    input_sequence = tf.ragged.constant(
+        [],
+        dtype=NUMPY_DTYPES_TO_TF_DTYPES[graph_node.inputs[0].dtype] \
+            if isinstance(graph_node.inputs[0].dtype, np.dtype) else graph_node.inputs[0].dtype
+    )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape

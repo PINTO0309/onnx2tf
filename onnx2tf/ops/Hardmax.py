@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -121,7 +122,8 @@ def make_node(
             axis=-1,
         ),
         depth=depth,
-        dtype=x.dtype,
+        dtype=NUMPY_DTYPES_TO_TF_DTYPES[x.dtype] \
+            if isinstance(x.dtype, np.dtype) else x.dtype,
         name=graph_node.name,
     )
 

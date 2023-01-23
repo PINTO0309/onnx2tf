@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -82,12 +83,15 @@ def make_node(
         **kwargs,
     )
 
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
     try:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.matmul(
                 a=input_tensor_1,
                 b=input_tensor_2,
-                output_type=dtype,
+                output_type=output_dtype,
                 name=graph_node.name,
             )
     except Exception as ex1:
@@ -102,7 +106,7 @@ def make_node(
                         tf.matmul(
                             a=tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition),
                             b=tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition),
-                            output_type=dtype,
+                            output_type=output_dtype,
                             name=graph_node.name,
                         )
                     break

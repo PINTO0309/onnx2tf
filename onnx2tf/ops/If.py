@@ -86,7 +86,8 @@ def make_node(
             tf_layers_dict[output.name]['tf_node'] = \
                 tf.constant(
                     output.values,
-                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype],
+                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype] \
+                        if isinstance(output.values.dtype, np.dtype) else output.values.dtype,
                 )
     then_branch_ops = []
     for then_branch_graph_output in then_branch_graph_outputs:
@@ -127,7 +128,8 @@ def make_node(
             tf_layers_dict[output.name]['tf_node'] = \
                 tf.constant(
                     output.values,
-                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype],
+                    dtype=NUMPY_DTYPES_TO_TF_DTYPES[output.values.dtype] \
+                        if isinstance(output.values.dtype, np.dtype) else output.values.dtype,
                 )
     else_branch_ops = []
     for else_branch_graph_output in else_branch_graph_outputs:
