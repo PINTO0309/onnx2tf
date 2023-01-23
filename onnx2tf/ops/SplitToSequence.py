@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -121,8 +122,11 @@ def make_node(
                 tf.squeeze(split_input) for split_input in split_inputs
             ]
 
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
     # create an empty sequence next
-    input_sequence = tf.ragged.constant([], dtype=dtype)
+    input_sequence = tf.ragged.constant([], dtype=output_dtype)
 
     # insert tensors at the end of sequence
     for i in range(len(split_inputs)):
