@@ -115,7 +115,7 @@ def make_node(
         axes = axes \
             if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends_dtype)
     elif isinstance(axes, list):
-        axes = np.asarray(axes, dtype=ends_dtype) \
+        axes = np.asarray(axes, dtype=ends.dtype) \
             if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends_dtype)
     elif axes is not None:
         axes = axes \
@@ -129,9 +129,9 @@ def make_node(
         )
     steps = tf_layers_dict[steps.name]['tf_node'] \
         if isinstance(steps, gs.Variable) else steps
-    steps_dtype = NUMPY_DTYPES_TO_TF_DTYPES[steps.dtype] \
-        if isinstance(steps.dtype, np.dtype) else steps.dtype
     if isinstance(steps, np.ndarray):
+        steps_dtype = NUMPY_DTYPES_TO_TF_DTYPES[steps.dtype] \
+            if isinstance(steps.dtype, np.dtype) else steps.dtype
         steps = tf.constant(steps, dtype=steps_dtype)
 
     axes = graph_node.attrs.get('axes', axes)
@@ -151,14 +151,14 @@ def make_node(
             before_op_output_shape_trans=before_op_output_shape_trans,
         )
     if isinstance(axes, list):
-        axes = np.asarray(axes)
+        axes = tf.convert_to_tensor(np.asarray(axes))
 
     starts = graph_node.attrs.get('starts', starts)
     if isinstance(starts, list):
-        starts = np.asarray(starts)
+        starts = tf.convert_to_tensor(np.asarray(starts))
     ends = graph_node.attrs.get('ends', ends)
     if isinstance(ends, list):
-        ends = np.asarray(ends)
+        ends = tf.convert_to_tensor(np.asarray(ends))
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
