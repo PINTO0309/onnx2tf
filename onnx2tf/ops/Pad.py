@@ -154,6 +154,8 @@ def make_node(
                 for new_idx, idx in enumerate(convertion_table):
                     new_values[new_idx] = paddings[idx]
                 paddings = np.asarray(new_values, dtype=paddings.dtype)
+            paddings = tf.convert_to_tensor(paddings) \
+                if isinstance(paddings, np.ndarray) else paddings
 
     mode = graph_node.attrs.get('mode', 'constant')
 

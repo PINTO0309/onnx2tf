@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -87,7 +88,8 @@ def make_node(
         **kwargs,
     )
 
-    input_tensor_x_dtype = x.dtype
+    input_tensor_x_dtype = NUMPY_DTYPES_TO_TF_DTYPES[x.dtype] \
+        if isinstance(x.dtype, np.dtype) else x.dtype
     x = tf.keras.layers.Flatten()(x)
     # The Flatten API changes data type from tf.float64 to tf.float32
     # so we need the following line to get the original type back

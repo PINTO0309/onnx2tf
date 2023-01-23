@@ -17,6 +17,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -134,7 +135,11 @@ def make_node(
         )
         mul = tf.math.multiply(
             indices_tensor,
-            tf.cast(axis_step, dtype=indices_tensor.dtype),
+            tf.cast(
+                axis_step,
+                dtype= NUMPY_DTYPES_TO_TF_DTYPES[indices_tensor.dtype] \
+                    if isinstance(indices_tensor.dtype, np.dtype) else indices_tensor.dtype,
+            ),
         )
         indices_flat = tf.reduce_sum(
             mul,

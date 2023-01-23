@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -94,12 +95,14 @@ def make_node(
             # Clip if end is still < 0
             end = 0 if end < 0 else end
 
+    out_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
     if start is not None and end is not None:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.slice(
                 tf.shape(
                     input=input_tensor,
-                    out_type=dtype,
+                    out_type=out_dtype,
                     name=graph_node.name,
                 ),
                 [start],
@@ -109,7 +112,7 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.shape(
                 input=input_tensor,
-                out_type=dtype,
+                out_type=out_dtype,
                 name=graph_node.name,
             )
 

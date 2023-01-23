@@ -13,11 +13,15 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 def process_neg_indices(depth, indices):
-    indices_dtype = indices.dtype
-    indices = tf.math.floormod(tf.add(tf.cast(indices, depth.dtype), depth), depth)
+    indices_dtype = NUMPY_DTYPES_TO_TF_DTYPES[indices.dtype] \
+        if isinstance(indices.dtype, np.dtype) else indices.dtype
+    depth_dtype = NUMPY_DTYPES_TO_TF_DTYPES[depth.dtype] \
+        if isinstance(depth.dtype, np.dtype) else depth.dtype
+    indices = tf.math.floormod(tf.add(tf.cast(indices, depth_dtype), depth), depth)
     return tf.cast(indices, indices_dtype)
 
 
@@ -133,12 +137,16 @@ def make_node(
     axis = axis if axis >= 0 else axis + len(indices.shape) + axis + 1
 
     # process tf.one_hot unsupported datatype for indices
-    indices = tf.cast(indices, indices_cast_map[indices.dtype]) \
-        if indices.dtype in indices_cast_map else indices
+    indices_dtype = NUMPY_DTYPES_TO_TF_DTYPES[indices.dtype] \
+        if isinstance(indices.dtype, np.dtype) else indices.dtype
+    indices = tf.cast(indices, indices_cast_map[indices_dtype]) \
+        if indices_dtype in indices_cast_map else indices
 
     # process tf.one_hot unsupported datatype for depth
-    depth = tf.cast(depth, depth_cast_map[depth.dtype]) \
-        if depth.dtype in depth_cast_map else depth
+    depth_dtype = NUMPY_DTYPES_TO_TF_DTYPES[depth.dtype] \
+        if isinstance(depth.dtype, np.dtype) else depth.dtype
+    depth = tf.cast(depth, depth_cast_map[depth_dtype]) \
+        if depth_dtype in depth_cast_map else depth
 
     depth = tf.squeeze(depth) if len(depth.shape) == 1 else depth
 

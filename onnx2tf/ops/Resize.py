@@ -23,6 +23,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 INF_INDEX_VALUE: int = 4294967296
 
@@ -213,11 +214,25 @@ def make_node(
             else:
                 h_w_scale = scales[1:input_tensor_rank-1]
                 h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
-                new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
+                new_size = tf.cast(
+                    h_w_scale * tf.cast(
+                        h_w_shape,
+                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                    ),
+                    tf.int32,
+                )
         else:
             h_w_scale = scales[1:input_tensor_rank-1]
             h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
-            new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
+            new_size = tf.cast(
+                h_w_scale * tf.cast(
+                    h_w_shape,
+                    NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                        if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                ),
+                tf.int32,
+            )
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value

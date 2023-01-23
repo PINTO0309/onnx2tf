@@ -56,9 +56,11 @@ def make_node(
     Values: gs.Variable = graph_node.outputs[0]
     Indices: gs.Variable = graph_node.outputs[1]
     Values_shape = Values.shape
-    Values_dtype = Values.dtype
+    Values_dtype = NUMPY_DTYPES_TO_TF_DTYPES[Values.dtype] \
+        if isinstance(Values.dtype, np.dtype) else Values.dtype
     Indices_shape = Indices.shape
-    Indices_dtype = Indices.dtype
+    Indices_dtype = NUMPY_DTYPES_TO_TF_DTYPES[Indices.dtype] \
+        if isinstance(Indices.dtype, np.dtype) else Indices.dtype
 
     input_tensor = tf_layers_dict[X.name]['tf_node'] \
         if isinstance(X, gs.Variable) else X
@@ -135,7 +137,7 @@ def make_node(
         topked_values = tf.negative(topked_values)
     topked_indices = tf.cast(
         x=topked_indices,
-        dtype=NUMPY_DTYPES_TO_TF_DTYPES[Indices_dtype],
+        dtype=Indices_dtype,
     )
 
     if axis != (tensor_rank-1):

@@ -34,15 +34,27 @@ def non_max_suppression(
     name=None,
 ):
     with ops.name_scope(name, 'non_max_suppression'):
-        iou_threshold = ops.convert_to_tensor(iou_threshold, name='iou_threshold')
-        score_threshold = ops.convert_to_tensor(
-            score_threshold, name='score_threshold')
         selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
             boxes=boxes,
             scores=scores,
-            max_output_size=max_output_size,
-            iou_threshold=iou_threshold,
-            score_threshold=score_threshold,
+            max_output_size=max_output_size \
+                if not isinstance(max_output_size, np.ndarray) \
+                    else tf.convert_to_tensor(
+                        value=max_output_size,
+                        name='max_output_size'
+                    ),
+            iou_threshold=iou_threshold \
+                if not isinstance(iou_threshold, np.ndarray) \
+                    else tf.convert_to_tensor(
+                        value=iou_threshold,
+                        name='iou_threshold',
+                    ),
+            score_threshold=score_threshold \
+                if not isinstance(score_threshold, np.ndarray) \
+                    else tf.convert_to_tensor(
+                        value=score_threshold,
+                        name='score_threshold',
+                    ),
             pad_to_max_output_size=False,
         )
         return selected_indices[:num_valid]

@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -114,7 +115,8 @@ def make_node(
         argmaxed_tensor = tf.math.argmax(
             input=reversed_tensor,
             axis=axis,
-            output_type=dtype,
+            output_type=NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+                if isinstance(dtype, np.dtype) else dtype,
             name=f'{graph_node.name}_argmax',
         )
         if keepdims:
@@ -146,7 +148,8 @@ def make_node(
             input_tensor=reversed_tensor,
             original_shape=graph_node.inputs[0].shape,
             axis=axis,
-            output_type=dtype,
+            output_type=NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+                if isinstance(dtype, np.dtype) else dtype,
             keepdims=keepdims,
             replace_argmax_to_fused_argmax_and_indicies_is_int64=replace_argmax_to_fused_argmax_and_indicies_is_int64,
             replace_argmax_to_fused_argmax_and_indicies_is_float32=replace_argmax_to_fused_argmax_and_indicies_is_float32,
@@ -156,7 +159,8 @@ def make_node(
         argmaxed_tensor = tf.math.argmax(
             input=reversed_tensor,
             axis=axis,
-            output_type=dtype,
+            output_type=NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+                if isinstance(dtype, np.dtype) else dtype,
             name=f'{graph_node.name}_argmax',
         )
         if keepdims:
