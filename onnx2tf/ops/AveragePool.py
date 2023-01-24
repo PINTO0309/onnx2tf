@@ -222,19 +222,23 @@ def make_node(
                       f'https://github.com/PINTO0309/onnx2tf/issues/124'
         print(warning_msg)
 
-        padded_slice_begin = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
-        padded_slice_end = pooled_tensor[:, -1:, ...] * average_multiplier[1]
-        pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, 1:-1, ...], padded_slice_end], axis=1)
+        if pooled_tensor.shape[1] >= 3:
+            padded_slice_begin = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
+            padded_slice_body = pooled_tensor[:, 1:-1, ...]
+            padded_slice_end = pooled_tensor[:, -1:, ...] * average_multiplier[1]
+            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=1)
 
-        if len(kernel_shape) >= 2:
+        if len(kernel_shape) >= 2 and pooled_tensor.shape[2] >= 3:
             padded_slice_begin = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
+            padded_slice_body = pooled_tensor[:, :, 1:-1, ...]
             padded_slice_end = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
-            pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, :, 1:-1, ...], padded_slice_end], axis=2)
+            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=2)
 
-        if len(kernel_shape) >= 3:
+        if len(kernel_shape) >= 3 and pooled_tensor.shape[3] >= 3:
             padded_slice_begin = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
+            padded_slice_body = pooled_tensor[:, :, :, 1:-1, ...]
             padded_slice_end = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
-            pooled_tensor = tf.concat([padded_slice_begin, pooled_tensor[:, :, :, 1:-1, ...], padded_slice_end], axis=3)
+            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=3)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
