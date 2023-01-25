@@ -2889,10 +2889,9 @@ def dummy_tf_inference(
 
     Returns
     ----------
-    outputs: np.ndarray or List[np.ndarray]
+    outputs: Dict[np.ndarray]
         Results of inference using dummy tensor.
-        Unlisted np.ndarray with one output.
-        List of np.ndarray when there are two or more outputs.
+        Dict of tensorflow node and corresponding ndarray output.
     """
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
@@ -2931,13 +2930,18 @@ def dummy_tf_inference(
         },
         training=False,
     )
-    return outputs
+
+    if not isinstance(outputs, list):
+        outputs = [outputs]
+
+    tf_output_dict = {tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)}
+
+    return tf_output_dict
 
 
 def onnx_tf_tensor_validation(
     *,
-    onnx_tensor_infos: Dict[str, np.ndarray],
-    tf_tensor_infos:  Dict[str, np.ndarray],
+    output_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
     rtol: float=1e-05,
     atol: float=1e-05,
 ) -> Dict[str, List]:
@@ -2945,21 +2949,13 @@ def onnx_tf_tensor_validation(
 
     Parameters
     ----------
-    onnx_tensor_infos: Dict[str, np.ndarray]
+    output_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]
         ONNX tensor to be verified
         {
-            output_name: np.ndarray,
-            output_name: np.ndarray,
+            (onnx_output_name, tf_output_name): (onnx_tensor, tf_tensor),
+            (onnx_output_name, tf_output_name): (onnx_tensor, tf_tensor),
                     :
         }
-
-    tf_tensors: List[np.ndarray]
-        TF tensor to be verified
-        [
-            np.ndarray,
-            np.ndarray,
-                :
-        ]
 
     rtol: float=1e-05
         The relative tolerance parameter
@@ -2980,47 +2976,21 @@ def onnx_tf_tensor_validation(
         }
     """
     check_results = {
-        onnx_output_name: [onnx_tensor, False, 0.0] \
-            for onnx_output_name, onnx_tensor in onnx_tensor_infos.items()
+        k: [v[0], False, 0.0] \
+            for k, v in output_pairs.items()
     }
 
-    for onnx_output_name, onnx_check_info in check_results.items():
-        onnx_tensor: np.ndarray = onnx_check_info[0] # onnx_tensor
-        tf_tensor: np.ndarray = tf_tensor_infos[onnx_output_name] # tf_tensor
+    for names_pair, (onnx_tensor, tf_tensor) in output_pairs.items():
+
         onnx_tensor_shape = onnx_tensor.shape
         max_abs_err = ONNX_INF_INDEX_VALUE
-        """
-        onnx_dummy_data: np.random.random_sample([1,3,224,224])
-        tf_dummy_data  : onnx_dummy_data.transpose([0,2,3,1]), len(tf_tensor.shape) == 4
-
-        tf_shape_transpose_perms:
-            [
-                (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 2, 3, 1), (0, 3, 1, 2),
-                (0, 3, 2, 1), (1, 0, 2, 3), (1, 0, 3, 2), (1, 2, 0, 3), (1, 2, 3, 0),
-                (1, 3, 0, 2), (1, 3, 2, 0), (2, 0, 1, 3), (2, 0, 3, 1), (2, 1, 0, 3),
-                (2, 1, 3, 0), (2, 3, 0, 1), (2, 3, 1, 0), (3, 0, 1, 2), (3, 0, 2, 1),
-                (3, 1, 0, 2), (3, 1, 2, 0), (3, 2, 0, 1), (3, 2, 1, 0)
-            ]
-
-        tf_target_transpose_perms:
-            [(0, 3, 1, 2), (0, 3, 2, 1)]
-        """
         tf_shape_transpose_perms = list(itertools.permutations(range(len(tf_tensor.shape))))
         tf_target_transpose_perms = [
             tf_shape_transpose_perm \
-                for tf_shape_transpose_perm in tf_shape_transpose_perms \
-                    if tf_tensor.transpose(tf_shape_transpose_perm).shape == onnx_tensor_shape
+            for tf_shape_transpose_perm in tf_shape_transpose_perms \
+            if tf_tensor.transpose(tf_shape_transpose_perm).shape == onnx_tensor_shape
         ]
-        # Validation
-        """
-        tf_check_infos:
-            {
-                [
-                    tf_target_transpose_perm, <--- tf_target_transpose_perms[idx]
-                    matched_flg, <--- True: Matched, False: Unmatched
-                ]
-            }
-        """
+
         validate_result = False
         tf_check_infos = [
             [tf_target_transpose_perm, 0] for tf_target_transpose_perm in tf_target_transpose_perms
@@ -3053,11 +3023,11 @@ def onnx_tf_tensor_validation(
             # the model optimization process are not comparable,
             # so the status is rewritten to Skip.
             # If there was no match between ONNX and TensorFlow output shapes.
-            check_results[onnx_output_name][1] = 2
-            check_results[onnx_output_name][2] = max_abs_err
+            check_results[names_pair][1] = 2
+            check_results[names_pair][2] = max_abs_err
         else:
-            check_results[onnx_output_name][1] = validate_result
-            check_results[onnx_output_name][2] = max_abs_err
+            check_results[names_pair][1] = validate_result
+            check_results[names_pair][2] = max_abs_err
 
     return check_results
 
