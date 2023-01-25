@@ -1902,7 +1902,7 @@ def remove_dilations(
     strides,
     dilations,
 ):
-    input_shape = tf_shape(input_tensor)
+    input_shape = tf_shape(input_tensor=input_tensor)
     in_spatial_shape = input_shape[1:len(kernel_shape)+1]
     channels_count = input_shape[-1]
 
@@ -1917,7 +1917,7 @@ def remove_dilations(
         output_size = (
             ((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1
         ) * kernel_shape[dim]
-        output_shape[dim + 2] = output_size
+        output_shape[dim + 1] = output_size
 
         # initialize the output dimension index with the range of the
         # dimension output size (e.g. 4): [0, 1, 2, 3]
@@ -1935,7 +1935,7 @@ def remove_dilations(
         # convert to column vector
         dim_ind = tf.expand_dims(dim_ind, 1)
 
-        if (dim == spatial_size - 1):
+        if dim == spatial_size - 1:
             gather_ind = dim_ind
         else:
             # "combine" current dimension indices with the previous dimensions
@@ -1950,15 +1950,15 @@ def remove_dilations(
     # m is the width.
 
     # set the channels count in the output_shape
-    output_shape[1] = channels_count
+    output_shape[-1] = channels_count
     # create the channel indices
     channel_ind = tf.range(channels_count, dtype=tf.int64)
     # convert to column vector
     channel_ind = tf.expand_dims(channel_ind, 1)
     # "combine" channel indices with the result from the loop
     gather_ind = tf_product(
-        a=channel_ind,
-        b=gather_ind,
+        a=gather_ind,
+        b=channel_ind,
     )
 
     # expand the dimensions to match the input dimensions + 1
@@ -3295,10 +3295,11 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
     Returns
     -------
     same_pads: List
-        onnx formatted padding, [x1_begin, x1_end, ... xn_begin, xn_end]
+        onnx formatted padding, [x1_begin, x2_begin, ..., xn_begin, x1_end, x2_end, ..., xn_end]
     """
 
     same_pads = []
+    same_pads_end = []
 
     # calculate how much padding is needed except batch and channel dimension
     for i, k, s in zip(input_shape[1:-1], kernel, strides):
@@ -3313,8 +3314,10 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
         same_pads.append(axis_pads // 2)
         # pads to end more for odd number padding
         if axis_pads % 2:
-            same_pads.append(axis_pads // 2 + 1)
+            same_pads_end.append(axis_pads // 2 + 1)
         else:
-            same_pads.append(axis_pads // 2)
+            same_pads_end.append(axis_pads // 2)
+
+    same_pads.extend(same_pads_end)
 
     return same_pads
