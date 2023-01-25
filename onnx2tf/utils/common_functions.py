@@ -2984,13 +2984,38 @@ def onnx_tf_tensor_validation(
 
         onnx_tensor_shape = onnx_tensor.shape
         max_abs_err = ONNX_INF_INDEX_VALUE
+        """
+        onnx_dummy_data: np.random.random_sample([1,3,224,224])
+        tf_dummy_data  : onnx_dummy_data.transpose([0,2,3,1]), len(tf_tensor.shape) == 4
+
+        tf_shape_transpose_perms:
+            [
+                (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 2, 3, 1), (0, 3, 1, 2),
+                (0, 3, 2, 1), (1, 0, 2, 3), (1, 0, 3, 2), (1, 2, 0, 3), (1, 2, 3, 0),
+                (1, 3, 0, 2), (1, 3, 2, 0), (2, 0, 1, 3), (2, 0, 3, 1), (2, 1, 0, 3),
+                (2, 1, 3, 0), (2, 3, 0, 1), (2, 3, 1, 0), (3, 0, 1, 2), (3, 0, 2, 1),
+                (3, 1, 0, 2), (3, 1, 2, 0), (3, 2, 0, 1), (3, 2, 1, 0)
+            ]
+
+        tf_target_transpose_perms:
+            [(0, 3, 1, 2), (0, 3, 2, 1)]
+        """
         tf_shape_transpose_perms = list(itertools.permutations(range(len(tf_tensor.shape))))
         tf_target_transpose_perms = [
             tf_shape_transpose_perm \
             for tf_shape_transpose_perm in tf_shape_transpose_perms \
             if tf_tensor.transpose(tf_shape_transpose_perm).shape == onnx_tensor_shape
         ]
-
+        # Validation
+        """
+        tf_check_infos:
+            {
+                [
+                    tf_target_transpose_perm, <--- tf_target_transpose_perms[idx]
+                    matched_flg, <--- True: Matched, False: Unmatched
+                ]
+            }
+        """
         validate_result = False
         tf_check_infos = [
             [tf_target_transpose_perm, 0] for tf_target_transpose_perm in tf_target_transpose_perms
