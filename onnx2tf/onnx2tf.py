@@ -35,7 +35,7 @@ tf.get_logger().setLevel(logging.FATAL)
 
 import onnx
 import onnx_graphsurgeon as gs
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from argparse import ArgumentParser
 
 import importlib
@@ -1158,25 +1158,15 @@ def convert(
                 test_data_nhwc=test_data_nhwc,
             )
             # TF dummy inference
-            dummy_tf_outputs: List[Any] = dummy_tf_inference(
+            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
                 model=model,
                 inputs=inputs,
                 test_data_nhwc=test_data_nhwc,
             )
-            if not isinstance(dummy_tf_outputs, list):
-                dummy_tf_outputs = [dummy_tf_outputs]
-            dummy_tf_outputs = [
-                dummy_tf_output.numpy() \
-                    for dummy_tf_output in dummy_tf_outputs
-            ]
             # Validation
             onnx_tensor_infos = {
                 output_name: dummy_onnx_output \
                     for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
-            }
-            tf_tensor_infos = {
-                output_name: dummy_tf_output \
-                    for output_name, dummy_tf_output in zip(ops_output_names, dummy_tf_outputs)
             }
             """
             np.allclose(
@@ -1196,13 +1186,16 @@ def convert(
                     ]
                 }
             """
+            input_names = [k.name for k in inputs]
+            onnx_tf_output_pairs = {(k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
+                                    for k, v in tf_layers_dict.items() if k not in input_names}
+
             check_results = onnx_tf_tensor_validation(
-                onnx_tensor_infos=onnx_tensor_infos,
-                tf_tensor_infos=tf_tensor_infos,
+                output_pairs=onnx_tf_output_pairs,
                 rtol=check_onnx_tf_outputs_elementwise_close_rtol,
                 atol=check_onnx_tf_outputs_elementwise_close_atol,
             )
-            for onnx_output_name, checked_value in check_results.items():
+            for (onnx_output_name, tf_output_name), checked_value in check_results.items():
                 validated_onnx_tensor: np.ndarray = checked_value[0]
                 matched_flg: int = checked_value[1]
                 max_abs_err: Any = checked_value[2]
@@ -1223,6 +1216,7 @@ def convert(
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
                     f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
+                    f'{Color.GREEN}tf_output_name{Color.RESET}: {tf_output_name} '+
                     f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
                     f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
                     f'{message}'
