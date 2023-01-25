@@ -136,7 +136,9 @@ def make_node(
                        kernel_shape,
                        strides)
             ]
-            average_multiplier_begin = [k / (k - p) for p, k in zip(tf_pads[:len(tf_pads) // 2], kernel_shape)]
+            average_multiplier_begin = [k / (k - p) if v + p >= k else k / v
+                                        for v, p, k
+                                        in zip(input_tensor_shape[1:-1], tf_pads[:len(tf_pads) // 2], kernel_shape)]
             average_multiplier_end = [k / (k - (p - l)) if l < p else 1
                                       for p, k, l in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step)]
             average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
@@ -166,7 +168,9 @@ def make_node(
                        kernel_shape,
                        strides)
             ]
-            average_multiplier_begin = [(k - p) / k for p, k in zip(tf_pads[:len(tf_pads) // 2], kernel_shape)]
+            average_multiplier_begin = [(k - p) / k if v + p >= k else v / k
+                                        for v, p, k
+                                        in zip(input_tensor_shape[1:-1], tf_pads[:len(tf_pads) // 2], kernel_shape)]
             average_multiplier_end = [(k - (p - l)) / k if l < p else 1
                                       for p, k, l in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step)]
             average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
@@ -222,23 +226,31 @@ def make_node(
                       f'https://github.com/PINTO0309/onnx2tf/issues/124'
         print(warning_msg)
 
-        if pooled_tensor.shape[1] >= 3:
+        if pooled_tensor.shape[1] >= 2:
             padded_slice_begin = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
             padded_slice_body = pooled_tensor[:, 1:-1, ...]
             padded_slice_end = pooled_tensor[:, -1:, ...] * average_multiplier[1]
             pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=1)
+        elif pooled_tensor.shape[1] == 1:
+            pooled_tensor = pooled_tensor * average_multiplier[0]
 
-        if len(kernel_shape) >= 2 and pooled_tensor.shape[2] >= 3:
-            padded_slice_begin = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
-            padded_slice_body = pooled_tensor[:, :, 1:-1, ...]
-            padded_slice_end = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
-            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=2)
+        if len(kernel_shape) >= 2:
+            if pooled_tensor.shape[2] >= 2:
+                padded_slice_begin = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
+                padded_slice_body = pooled_tensor[:, :, 1:-1, ...]
+                padded_slice_end = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
+                pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=2)
+            elif pooled_tensor.shape[2] == 1:
+                pooled_tensor = pooled_tensor * average_multiplier[2]
 
-        if len(kernel_shape) >= 3 and pooled_tensor.shape[3] >= 3:
-            padded_slice_begin = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
-            padded_slice_body = pooled_tensor[:, :, :, 1:-1, ...]
-            padded_slice_end = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
-            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=3)
+        if len(kernel_shape) >= 3:
+            if pooled_tensor.shape[3] >= 2:
+                padded_slice_begin = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
+                padded_slice_body = pooled_tensor[:, :, :, 1:-1, ...]
+                padded_slice_end = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
+                pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=3)
+            elif pooled_tensor.shape[3] == 1:
+                pooled_tensor = pooled_tensor * average_multiplier[4]
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
