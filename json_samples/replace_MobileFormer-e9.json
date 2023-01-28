@@ -1,5 +1,6 @@
 {
   "format_version": 1,
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/105",
   "operations": [
     {
       "op_name": "Reshape_247",
