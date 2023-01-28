@@ -3,6 +3,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import onnx
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -138,7 +139,7 @@ def make_node(
                 f'Install onnxruntime. pip install onnxruntime'
             )
             sys.exit(1)
-        onnx_graph = kwargs['onnx_graph']
+        onnx_graph: onnx.ModelProto = kwargs['onnx_graph']
         convtranspose_output = dummy_onnx_inference(
             onnx_graph=onnx_graph,
             output_names=[graph_node_output.name],

@@ -56,12 +56,6 @@
       "values": [1,2,0,3]
     },
     {
-      "op_name": "Softmax_126",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
-    },
-    {
       "op_name": "Transpose_129",
       "param_target": "attributes",
       "param_name": "perm",
@@ -72,12 +66,6 @@
       "param_target": "attributes",
       "param_name": "perm",
       "values": [1,2,0,3]
-    },
-    {
-      "op_name": "Softmax_297",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
     },
     {
       "op_name": "Transpose_300",
@@ -92,12 +80,6 @@
       "values": [1,2,0,3]
     },
     {
-      "op_name": "Softmax_468",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
-    },
-    {
       "op_name": "Transpose_471",
       "param_target": "attributes",
       "param_name": "perm",
@@ -108,12 +90,6 @@
       "param_target": "attributes",
       "param_name": "perm",
       "values": [1,2,0,3]
-    },
-    {
-      "op_name": "Softmax_638",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
     },
     {
       "op_name": "Transpose_641",
@@ -128,12 +104,6 @@
       "values": [1,2,0,3]
     },
     {
-      "op_name": "Softmax_809",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
-    },
-    {
       "op_name": "Transpose_812",
       "param_target": "attributes",
       "param_name": "perm",
@@ -144,12 +114,6 @@
       "param_target": "attributes",
       "param_name": "perm",
       "values": [1,2,0,3]
-    },
-    {
-      "op_name": "Softmax_979",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
     },
     {
       "op_name": "Transpose_982",
@@ -164,12 +128,6 @@
       "values": [1,2,0,3]
     },
     {
-      "op_name": "Softmax_1148",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
-    },
-    {
       "op_name": "Transpose_1151",
       "param_target": "attributes",
       "param_name": "perm",
@@ -182,12 +140,6 @@
       "values": [1,2,0,3]
     },
     {
-      "op_name": "Softmax_1319",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
-    },
-    {
       "op_name": "Transpose_1322",
       "param_target": "attributes",
       "param_name": "perm",
@@ -198,12 +150,6 @@
       "param_target": "attributes",
       "param_name": "perm",
       "values": [1,2,0,3]
-    },
-    {
-      "op_name": "Softmax_1449",
-      "param_target": "attributes",
-      "param_name": "axis",
-      "values": 3
     },
     {
       "op_name": "Transpose_1452",

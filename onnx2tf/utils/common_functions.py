@@ -2965,7 +2965,7 @@ def onnx_tf_tensor_validation(
 
     Returns
     ----------
-    check_results: Dict[str, List[np.ndarray, int]]
+    check_results: Dict[str, List[np.ndarray, int, float|int]]
         Tensor Comparison Results
         {
             onnx_output_name: [
@@ -3273,8 +3273,7 @@ def broadcast_for_gpu_delegate(
 
 
 def calc_tf_pooling_pads(input_shape, kernel, strides, func):
-    """
-    Calculate how much padding is needed for tensorflow mode 'SAME'
+    """Calculate how much padding is needed for tensorflow mode 'SAME'.
 
     Parameters
     ----------
@@ -3316,3 +3315,55 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
     same_pads.extend(same_pads_end)
 
     return same_pads
+
+
+def get_tf_model_inputs(
+    *,
+    tf_layers_dict: dict,
+) -> List[Any]:
+    """Get a list of input OPs for a TensorFlow model.
+
+    Parameters
+    ----------
+    tf_layers_dict: dict
+        Graph structure of TensorFlow models
+
+    Returns
+    -------
+    tf_model_inputs: List
+        List of input OPs for TensorFlow model
+    """
+    tf_model_inputs = [
+        layer_info['op'] \
+            for layer_info in tf_layers_dict.values() \
+                if layer_info['optype'] == 'Input'
+    ]
+    return tf_model_inputs
+
+
+def get_tf_model_outputs(
+    *,
+    tf_layers_dict: dict,
+    output_names: List[str],
+) -> List[Any]:
+    """Get a list of output OPs for a TensorFlow model.
+
+    Parameters
+    ----------
+    tf_layers_dict: dict
+        Graph structure of TensorFlow models
+
+    output_names: List[str]
+        Name of ONNX output OP to be extracted
+
+    Returns
+    -------
+    tf_model_outputs: List
+        List of output OPs for TensorFlow model
+    """
+    tf_model_outputs = [
+        layer_info['tf_node'] \
+            for opname, layer_info in tf_layers_dict.items() \
+                if opname in output_names
+    ]
+    return tf_model_outputs

@@ -9,7 +9,6 @@ with open(os.path.join(__path__[0], '__init__.py')) as f:
 import sys
 sys.setrecursionlimit(10000)
 import ast
-import copy
 import json
 import logging
 import warnings
@@ -45,6 +44,8 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
     weights_export,
     download_test_image_data,
+    get_tf_model_inputs,
+    get_tf_model_outputs,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -599,7 +600,7 @@ def convert(
             output_op_name \
                 for output_op_name in output_names_to_interrupt_model_conversion
         ]
-        onnx_graph = extraction(
+        onnx_graph: onnx.ModelProto = extraction(
             input_op_names=[graph_input.name for graph_input in graph.inputs],
             output_op_names=output_names,
             onnx_graph=onnx_graph,
@@ -720,16 +721,13 @@ def convert(
             )
 
         # List "optype"="Input"
-        inputs = [
-            layer_info['op'] \
-                for layer_info in tf_layers_dict.values() \
-                    if layer_info['optype'] == 'Input'
-        ]
-        outputs = [
-            layer_info['tf_node'] \
-                for opname, layer_info in tf_layers_dict.items() \
-                    if opname in output_names
-        ]
+        inputs = get_tf_model_inputs(
+            tf_layers_dict=tf_layers_dict,
+        )
+        outputs = get_tf_model_outputs(
+            tf_layers_dict=tf_layers_dict,
+            output_names=output_names,
+        )
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
@@ -1177,7 +1175,7 @@ def convert(
                 equal_nan=True,
             )
 
-            check_results: Dict[str, List[np.ndarray, bool]]
+            check_results: Dict[str, List[np.ndarray, int, float|int]]
                 {
                     onnx_output_name: [
                         onnx_tensor,
