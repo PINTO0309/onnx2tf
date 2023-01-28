@@ -1396,3 +1396,10 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 2. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
 3. https://github.com/onnx/models
 4. https://github.com/opencv/opencv_zoo
+
+## Contributors
+<a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pinto0309/onnx2tf" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
