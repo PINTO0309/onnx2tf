@@ -1,7 +1,9 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import onnx
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -14,7 +16,12 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    dummy_onnx_inference,
+    dummy_tf_inference,
+    get_tf_model_inputs,
+    onnx_tf_tensor_validation,
 )
+from typing import List, Any, Dict
 
 
 @print_node_info
@@ -98,11 +105,78 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
+    # Detect conversion errors in axis and identify the axis
+    # with the smallest possible error and replace it.
+    # ONNX dummy inference
+    min_abs_err = sys.maxsize
+    min_abs_err_axis: int = axis
+    try:
+        onnx_graph: onnx.ModelProto = kwargs['onnx_graph']
+        check_axes = reversed([idx for idx in range(tensor_rank)])
+        dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+            onnx_graph=onnx_graph,
+            output_names=[graph_node_output.name],
+        )
+        del onnx_graph
+        # Search for the axis with the smallest error
+        tf_model_inputs = get_tf_model_inputs(
+            tf_layers_dict=tf_layers_dict,
+        )
+        for check_axis in check_axes:
+            # TF dummy inference
+            val_model = tf.keras.Model(
+                inputs=tf_model_inputs,
+                outputs=[
+                    tf.nn.softmax(
+                        logits=input_tensor,
+                        axis=check_axis,
+                        name=graph_node.name,
+                    )
+                ],
+            )
+            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                model=val_model,
+                inputs=tf_model_inputs,
+            )
+            del val_model
+            # Validation
+            onnx_tensor_infos = {
+                output_name: dummy_onnx_output \
+                    for output_name, dummy_onnx_output in zip([graph_node_output.name], dummy_onnx_outputs)
+            }
+            onnx_tf_output_pairs = {
+                (oi[0], ti[0]): (oi[1], ti[1]) \
+                    for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+            }
+            """
+            check_results: Dict[str, List[np.ndarray, int, float|int]]
+                {
+                    onnx_output_name: [
+                        onnx_tensor,
+                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                        max_abs_err,
+                    ]
+                }
+            """
+            check_results = onnx_tf_tensor_validation(
+                output_pairs=onnx_tf_output_pairs,
+                rtol=0.0,
+                atol=0.0,
+            )
+            result_err = sum([val[2] for val in check_results.values()])
+            if result_err < min_abs_err:
+                min_abs_err = result_err
+                min_abs_err_axis = check_axis
+                if min_abs_err < 1e-3:
+                    break
+    except tf.errors.InvalidArgumentError as ex:
+        pass
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.softmax(
             logits=input_tensor,
-            axis=axis,
+            axis=min_abs_err_axis,
             name=graph_node.name,
         )
 
