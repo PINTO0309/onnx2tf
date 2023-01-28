@@ -594,78 +594,6 @@ def convert_reverse_axis(
     return converted_axis
 
 
-def simple_arithmetic_validity_check(
-    *,
-    op_type: str,
-    onnx_x: np.ndarray,
-    onnx_y: np.ndarray,
-    tf_x: np.ndarray,
-    tf_y: np.ndarray,
-):
-    """Search for the correct transposition method by brute force
-    when the two input shapes of ONNX and the two input shapes of
-    TF are different and the shape of TF cannot be determined to be NCHW.
-
-    Parameters
-    ----------
-    op_type: str
-        'Add' or 'Sub' or 'Mul' or 'Div'
-
-    onnx_x: np.ndarray
-        np.ndarray to be checked
-
-    onnx_y: np.ndarray
-        np.ndarray to be checked
-
-    tf_x: np.ndarray
-        np.ndarray to be checked
-
-    tf_y: np.ndarray
-        np.ndarray to be checked
-
-    Returns
-    -------
-    matched_perm: tuple[int]
-        Correct shape prediction results for TF.
-    """
-    copy_onnx_x = onnx_x.copy()
-    copy_onnx_y = onnx_y.copy()
-    copy_tf_x = tf_x.copy()
-    copy_tf_y = tf_y.copy()
-
-    tf_y_shape = copy_tf_y.shape
-    tf_y_rank = len(tf_y_shape)
-    # All permutations of inverted patterns used for brute force checks
-    # Transpose and compute tf_y repeatedly in the pattern of all permutations,
-    # and repeat until the results match the results of onnx_x and onnx_y operations
-    test_perm_list = list(itertools.permutations(range(tf_y_rank)))
-
-    NP_CALC_FUNCS = {
-        'Add': np.add,
-        'Sub': np.subtract,
-        'Mul': np.multiply,
-        'Div': np.divide,
-    }
-
-    matched_perm = None
-    for perm in test_perm_list:
-        trans_copy_tf_y = copy_tf_y.transpose(perm)
-        onnx_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_onnx_x, copy_onnx_y)
-        try:
-            tf_result: np.ndarray = NP_CALC_FUNCS[op_type](copy_tf_x, trans_copy_tf_y)
-            flat_onnx_result = np.sort(onnx_result.flatten())
-            flat_tf_result = np.sort(tf_result.flatten())
-            if flat_onnx_result.shape[0] == flat_tf_result.shape[0] \
-                and np.isclose(flat_onnx_result, flat_tf_result, equal_nan=True).all():
-                matched_perm = perm
-                break
-        except:
-            pass
-    if matched_perm is None:
-        # Exception throw
-        pass
-
-
 def broadcast_validity_check(
     shape1: Union[np.ndarray, List],
     shape2: Union[np.ndarray, List],
@@ -915,25 +843,6 @@ def explicit_broadcast(
 
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
-            # # Check output values by brute force only if the shape of const_or_var_2
-            # # is different between const_or_var_1 and const_or_var_2 in dimensions other than 1
-            # const_or_var_1_shape_not_none = [
-            #     i if not isinstance(i, str) else 1 for i in const_or_var_1_shape
-            # ]
-            # for var1_shape, var2_shape in zip(const_or_var_1_shape_not_none, const_or_var_2.shape):
-            #     if var2_shape != 1 and var1_shape != 1 and var1_shape != var2_shape:
-            #         dummy_data_onnx = np.random.random_sample(graph_node.inputs[0].shape)
-            #         dummy_data_onnx = dummy_data_onnx.astype(graph_node.inputs[0].dtype)
-            #         dummy_data_tf = dummy_data_onnx.copy()
-            #         dummy_data_tf = dummy_data_tf.reshape(const_or_var_1_shape).astype(graph_node.inputs[0].dtype)
-            #         simple_arithmetic_validity_check(
-            #             op_type=graph_node.op,
-            #             onnx_x=dummy_data_onnx,
-            #             onnx_y=graph_node.inputs[1].values,
-            #             tf_x=dummy_data_tf,
-            #             tf_y=const_or_var_2,
-            #         )
-            #         break
 
         elif isinstance(const_or_var_2, tf.Tensor) \
             or (
