@@ -2812,7 +2812,7 @@ def dummy_onnx_inference(
             # reduce all axes except batch axis
             gs_graph.nodes[i].attrs['axes'] = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
-            ]
+            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
 
     # instead, modify onnx graph manually
     gs_graph.outputs = []
