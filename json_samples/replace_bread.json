@@ -1,5 +1,6 @@
 {
   "format_version": 1,
+  "model": "https://github.com/PINTO0309/PINTO_model_zoo/tree/main/348_Bread",
   "operations": [
     {
       "op_name": "/Split",
