@@ -645,6 +645,7 @@ def convert(
             f'The optimization process for shape estimation is skipped ' +
             f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
         )
+        print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
 
     if not non_verbose:
         print('')
@@ -1197,6 +1198,7 @@ def convert(
                     f'The accuracy error measurement process was skipped ' +
                     f'because the standard onnxruntime contains OPs that cannot be inferred.'
                 )
+                print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
             else:
                 # TF dummy inference
                 tf_tensor_infos: Dict[Any] = dummy_tf_inference(
