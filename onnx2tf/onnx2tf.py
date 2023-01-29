@@ -1210,8 +1210,10 @@ def convert(
                 }
             """
             input_names = [k.name for k in inputs]
-            onnx_tf_output_pairs = {(k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
-                                    for k, v in tf_layers_dict.items() if k not in input_names}
+            onnx_tf_output_pairs = {
+                (k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
+                    for k, v in tf_layers_dict.items() if k not in input_names and not hasattr(v['tf_node'], 'numpy')
+            }
 
             check_results = onnx_tf_tensor_validation(
                 output_pairs=onnx_tf_output_pairs,
