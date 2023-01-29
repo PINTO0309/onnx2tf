@@ -15,7 +15,7 @@ jobs:
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
       with:
-        swap-size-gb: 20
+        swap-size-gb: 15
     - name: Checkout onnx2tf
       uses: actions/checkout@v3
     - uses: actions/setup-python@v4
