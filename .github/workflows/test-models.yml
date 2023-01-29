@@ -15,7 +15,7 @@ jobs:
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
       with:
-        swap-size-gb: 12
+        swap-size-gb: 13
     - name: Checkout onnx2tf
       uses: actions/checkout@v3
     - uses: actions/setup-python@v4
@@ -38,8 +38,9 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release download 1.1.28 -p '*.onnx' -D models
-        ls -l models
+        curl "https://s3.us-central-1.wasabisys.com/onnx2tf-en/models/resources.tar.gz" -o resources.tar.gz
+        tar -zxvf resources.tar.gz
+        rm resources.tar.gz
     - name: Run Model Convert Tests
       run: |
         python tests/test_model_convert.py -m models -o wiki -v
