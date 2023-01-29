@@ -609,6 +609,34 @@ def convert(
         del graph
         graph = gs.import_onnx(onnx_graph)
 
+    # ONNX dummy inference
+    # Generate output for all OPs.
+    # Used to verify the output error of each OP in the TensorFlow model.
+    full_ops_output_names = []
+    for graph_node in graph.nodes:
+        full_ops_output_names_sub = []
+        for graph_node_output in graph_node.outputs:
+            full_ops_output_names_sub.append(graph_node_output.name)
+        full_ops_output_names.extend(full_ops_output_names_sub)
+    onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
+        onnx_graph=onnx_graph,
+        output_names=full_ops_output_names,
+    )
+    """
+    onnx_tensor_infos_for_validation:
+        {
+            onnx_output_name: np.ndarray,
+            onnx_output_name: np.ndarray,
+            onnx_output_name: np.ndarray,
+                        :
+        }
+    """
+    onnx_tensor_infos_for_validation = {
+        ops_output_name: onnx_output_for_validation \
+            for ops_output_name, onnx_output_for_validation \
+                in zip(full_ops_output_names, onnx_outputs_for_validation)
+    }
+
     if not non_verbose:
         print('')
         print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
@@ -644,6 +672,7 @@ def convert(
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
+        'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
     }
 
     tf_layers_dict = {}
@@ -1091,13 +1120,9 @@ def convert(
             # ]
 
             # Output OP extended to all ONNX nodes
+            ops_output_names = []
             if check_onnx_tf_outputs_elementwise_close_full:
-                ops_output_names = []
-                for graph_node in graph.nodes:
-                    ops_output_names_sub = []
-                    for graph_node_output in graph_node.outputs:
-                        ops_output_names_sub.append(graph_node_output.name)
-                    ops_output_names.extend(ops_output_names_sub)
+                ops_output_names = full_ops_output_names
             else:
                 ops_output_names = output_names
 

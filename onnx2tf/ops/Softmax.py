@@ -107,17 +107,16 @@ def make_node(
 
     # Detect conversion errors in axis and identify the axis
     # with the smallest possible error and replace it.
-    # ONNX dummy inference
     min_abs_err = sys.maxsize
     min_abs_err_axis: int = axis
     try:
-        onnx_graph: onnx.ModelProto = kwargs['onnx_graph']
+        onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+            kwargs['onnx_tensor_infos_for_validation']
+        onnx_tensor_infos = {
+            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+        }
+        del onnx_tensor_infos_for_validation
         check_axes = reversed([idx for idx in range(tensor_rank)])
-        dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
-            onnx_graph=onnx_graph,
-            output_names=[graph_node_output.name],
-        )
-        del onnx_graph
         # Search for the axis with the smallest error
         tf_model_inputs = get_tf_model_inputs(
             tf_layers_dict=tf_layers_dict,
@@ -140,10 +139,6 @@ def make_node(
             )
             del val_model
             # Validation
-            onnx_tensor_infos = {
-                output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip([graph_node_output.name], dummy_onnx_outputs)
-            }
             onnx_tf_output_pairs = {
                 (oi[0], ti[0]): (oi[1], ti[1]) \
                     for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
