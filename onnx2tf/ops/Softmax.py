@@ -112,58 +112,59 @@ def make_node(
     try:
         onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
             kwargs['onnx_tensor_infos_for_validation']
-        onnx_tensor_infos = {
-            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
-        }
-        del onnx_tensor_infos_for_validation
-        check_axes = reversed([idx for idx in range(tensor_rank)])
-        # Search for the axis with the smallest error
-        tf_model_inputs = get_tf_model_inputs(
-            tf_layers_dict=tf_layers_dict,
-        )
-        for check_axis in check_axes:
-            # TF dummy inference
-            val_model = tf.keras.Model(
-                inputs=tf_model_inputs,
-                outputs=[
-                    tf.nn.softmax(
-                        logits=input_tensor,
-                        axis=check_axis,
-                        name=graph_node.name,
-                    )
-                ],
-            )
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=val_model,
-                inputs=tf_model_inputs,
-            )
-            del val_model
-            # Validation
-            onnx_tf_output_pairs = {
-                (oi[0], ti[0]): (oi[1], ti[1]) \
-                    for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+        if onnx_tensor_infos_for_validation is not None:
+            onnx_tensor_infos = {
+                graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
             }
-            """
-            check_results: Dict[str, List[np.ndarray, int, float|int]]
-                {
-                    onnx_output_name: [
-                        onnx_tensor,
-                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
-                        max_abs_err,
-                    ]
-                }
-            """
-            check_results = onnx_tf_tensor_validation(
-                output_pairs=onnx_tf_output_pairs,
-                rtol=0.0,
-                atol=0.0,
+            del onnx_tensor_infos_for_validation
+            check_axes = reversed([idx for idx in range(tensor_rank)])
+            # Search for the axis with the smallest error
+            tf_model_inputs = get_tf_model_inputs(
+                tf_layers_dict=tf_layers_dict,
             )
-            result_err = sum([val[2] for val in check_results.values()])
-            if result_err < min_abs_err:
-                min_abs_err = result_err
-                min_abs_err_axis = check_axis
-                if min_abs_err < 1e-3:
-                    break
+            for check_axis in check_axes:
+                # TF dummy inference
+                val_model = tf.keras.Model(
+                    inputs=tf_model_inputs,
+                    outputs=[
+                        tf.nn.softmax(
+                            logits=input_tensor,
+                            axis=check_axis,
+                            name=graph_node.name,
+                        )
+                    ],
+                )
+                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    model=val_model,
+                    inputs=tf_model_inputs,
+                )
+                del val_model
+                # Validation
+                onnx_tf_output_pairs = {
+                    (oi[0], ti[0]): (oi[1], ti[1]) \
+                        for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                }
+                """
+                check_results: Dict[str, List[np.ndarray, int, float|int]]
+                    {
+                        onnx_output_name: [
+                            onnx_tensor,
+                            matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                            max_abs_err,
+                        ]
+                    }
+                """
+                check_results = onnx_tf_tensor_validation(
+                    output_pairs=onnx_tf_output_pairs,
+                    rtol=0.0,
+                    atol=0.0,
+                )
+                result_err = sum([val[2] for val in check_results.values()])
+                if result_err < min_abs_err:
+                    min_abs_err = result_err
+                    min_abs_err_axis = check_axis
+                    if min_abs_err < 1e-3:
+                        break
     except tf.errors.InvalidArgumentError as ex:
         pass
 
