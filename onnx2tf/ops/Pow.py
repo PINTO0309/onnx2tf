@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -53,13 +54,13 @@ def make_node(
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
-    dtype = graph_node_output.dtype
+    output_dtype = graph_node_output.dtype
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
         'shape': shape,
-        'dtype': dtype,
+        'dtype': output_dtype,
         'nhwc': tf_layers_dict[graph_node_input_1.name]['nhwc'] \
             if isinstance(graph_node_input_1, gs.Variable) \
                 and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
@@ -118,6 +119,11 @@ def make_node(
                 y=input_tensor_2,
                 name=graph_node.name,
             )
+    powed_tensor = tf.cast(
+        powed_tensor,
+        dtype=NUMPY_DTYPES_TO_TF_DTYPES[output_dtype] \
+            if isinstance(output_dtype, np.dtype) else output_dtype
+    )
     tf_layers_dict[graph_node_output.name]['tf_node'] = powed_tensor
 
     # Post-process transpose

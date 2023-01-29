@@ -15,7 +15,7 @@ jobs:
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
       with:
-        swap-size-gb: 10
+        swap-size-gb: 12
     - name: Checkout onnx2tf
       uses: actions/checkout@v3
     - uses: actions/setup-python@v4
@@ -29,10 +29,10 @@ jobs:
         pip install tensorflow==2.10.0
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
-        pip install onnxruntime
         pip install protobuf==3.20.3
         pip install onnxsim
         pip install sng4onnx
+        pip install onnxruntime==1.13.1
         pip install -e .
     - name: Download models
       env:
