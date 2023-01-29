@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install pip -U \
     && pip install -U onnx \
-    && pip install -U onnxruntime \
     && pip install -U onnxsim \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnx2tf \
@@ -21,6 +20,7 @@ RUN pip install pip -U \
     && pip install tensorflow==2.10.0 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
+    && pip install -U onnxruntime==1.13.1 \
     && python -m pip cache purge
 
 ENV USERNAME=user

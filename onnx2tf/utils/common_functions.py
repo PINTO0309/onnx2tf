@@ -23,6 +23,7 @@ from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
     TF_DTYPES_TO_NUMPY_DTYPES,
+    NUMPY_DTYPES_TO_TF_DTYPES,
 )
 
 INF_INDEX_VALUE: int = 4294967296
@@ -2939,7 +2940,9 @@ def onnx_tf_tensor_validation(
                     break
                 else:
                     # Unmatched
-                    if onnx_tensor.shape == tf_transposed_tensor.shape:
+                    dtype = NUMPY_DTYPES_TO_TF_DTYPES[tf_transposed_tensor.dtype] \
+                        if isinstance(tf_transposed_tensor.dtype, np.dtype) else tf_transposed_tensor.dtype
+                    if onnx_tensor.shape == tf_transposed_tensor.shape and dtype != tf.bool:
                         error_value = np.max(np.abs(onnx_tensor - tf_transposed_tensor))
                         max_abs_err = error_value if error_value < max_abs_err else max_abs_err
             else:

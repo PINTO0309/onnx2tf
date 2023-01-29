@@ -78,6 +78,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - onnx
+- onnxruntime
 - onnx-simplifier
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
@@ -96,6 +97,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ pip install -U onnx \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
+  && pip install -U onnxruntime \
   && pip install -U onnxsim \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
@@ -126,6 +128,7 @@ or
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
+    && python3.9 -m pip install -U onnxruntime \
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
