@@ -38,7 +38,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        curl "https://s3.ap-northeast-2.wasabisys.com/onnx2tf/models/resources.tar.gz" -o resources.tar.gz
+        curl "https://s3.us-central-1.wasabisys.com/onnx2tf-en/models/resources.tar.gz" -o resources.tar.gz
         tar -zxvf resources.tar.gz
         rm resources.tar.gz
     - name: Run Model Convert Tests
