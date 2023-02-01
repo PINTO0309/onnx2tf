@@ -115,9 +115,9 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
-    if min_value is not None and isinstance(min_value, float):
+    if min_value is not None and (isinstance(min_value, float) or isinstance(min_value, tf.Tensor)):
         min_value = np.asarray([min_value])
-    if max_value is not None and isinstance(max_value, float):
+    if max_value is not None and (isinstance(max_value, float) or isinstance(max_value, tf.Tensor)):
         max_value = np.asarray([max_value])
 
     tf_op_type = None
