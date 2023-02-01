@@ -144,6 +144,11 @@ def make_node(
         #   the two operations are disabled at the same time.
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
+    elif 'unnecessary_gather' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['unnecessary_gather'] == True:
+        # Remove useless gather/unsqueeze combinations
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
     elif len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
