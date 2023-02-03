@@ -60,7 +60,7 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
-    replace_abs_to_pseudo_abs = kwargs['replace_abs_to_pseudo_abs']
+    replace_abs_to_pseudo_abs = "abs" in kwargs['replace_to_pseudo_operators']
 
     # Pre-process transpose
     before_trans_shape = input_tensor.shape

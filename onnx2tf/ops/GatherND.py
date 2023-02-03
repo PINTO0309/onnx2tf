@@ -87,7 +87,7 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
-    replace_gathernd_to_pseudo_gathernd = kwargs['replace_gathernd_to_pseudo_gathernd']
+    replace_gathernd_to_pseudo_gathernd = "gathernd" in kwargs['replace_to_pseudo_operators']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

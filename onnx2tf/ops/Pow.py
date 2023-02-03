@@ -93,7 +93,8 @@ def make_node(
         **kwargs,
     )
 
-    replace_power_to_pseudo_power = kwargs['replace_power_to_pseudo_power']
+    replace_power_to_pseudo_power = "power" in kwargs['replace_to_pseudo_operators'] \
+                                    or "pow" in kwargs['replace_to_pseudo_operators']
 
     if not replace_power_to_pseudo_power:
         powed_tensor = \

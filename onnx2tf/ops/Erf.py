@@ -58,7 +58,7 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
-    replace_erf_to_pseudo_erf = kwargs['replace_erf_to_pseudo_erf']
+    replace_erf_to_pseudo_erf = "erf" in kwargs['replace_to_pseudo_operators']
 
     # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \

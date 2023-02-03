@@ -435,35 +435,11 @@ optional arguments:
     0.0 < fused_argmax_scale_ratio <= 1.0
     Default: 0.5
 
-  -rasin, --replace_asin_to_pseudo_asin
-    Replace Asin with a pseudo Asin.
-
-  -racos, --replace_acos_to_pseudo_acos
-    Replace Acos with a pseudo Acos.
-
-  -rabs, --replace_abs_to_pseudo_abs
-    Replace Abs with a pseudo Abs.
-
-  -rpr, --replace_prelu_to_pseudo_prelu
-    Replace PReLU with a pseudo PReLU.
-
-  -rlr, --replace_leakyrelu_to_pseudo_leakyrelu
-    Replace LeakyReLU with a pseudo LeakyReLU.
-
-  -rpw, --replace_power_to_pseudo_power
-    Replace Power with a pseudo Power.
-
-  -rgn, --replace_gathernd_to_pseudo_gathernd
-    Replace GatherND with a pseudo GatherND.
-
-  -rng, --replace_neg_to_pseudo_neg
-    Replace Neg with a pseudo Neg.
-
-  -rhs, --replace_hardswish_to_pseudo_hardswish
-    Replace HardSwish with a pseudo HardSwish.
-
-  -rerf, --replace_erf_to_pseudo_erf
-    Replace Erf with a pseudo Erf.
+  -rtpo, --replace_to_pseudo_operators
+    Replace list of operators to pseudo operators.
+    Full name of the target operators should be given.
+    Currently supported operators :
+    Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
@@ -616,16 +592,7 @@ convert(
   replace_argmax_to_fused_argmax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_fused_argmax_and_indicies_is_float32: Union[bool, NoneType] = False,
   fused_argmax_scale_ratio: Union[float, NoneType] = 0.5,
-  replace_asin_to_pseudo_asin: Union[bool, NoneType] = False,
-  replace_acos_to_pseudo_acos: Union[bool, NoneType] = False,
-  replace_abs_to_pseudo_abs: Union[bool, NoneType] = False,
-  replace_prelu_to_pseudo_prelu: Union[bool, NoneType] = False,
-  replace_leakyrelu_to_pseudo_leakyrelu: Union[bool, NoneType] = False,
-  replace_power_to_pseudo_power: Optional[bool] = False,
-  replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
-  replace_neg_to_pseudo_neg: Optional[bool] = False,
-  replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
-  replace_erf_to_pseudo_erf: Optional[bool] = False,
+  replace_to_pseudo_operators: List[str] = None,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   check_gpu_delegate_compatibility: Optional[bool] = False,
@@ -856,35 +823,11 @@ convert(
       0.0 < fused_argmax_scale_ratio <= 1.0
       Default: 0.5
 
-    replace_asin_to_pseudo_asin: Optional[bool]
-      Replace Asin with a pseudo Asin.
-
-    replace_acos_to_pseudo_acos: Optional[bool]
-      Replace Acos with a pseudo Acos.
-
-    replace_acbs_to_pseudo_abs: Optional[bool]
-      Replace Abs with a pseudo Abs.
-
-    replace_prelu_to_pseudo_prelu: Optional[bool]
-      Replace PReLU with a pseudo PReLU.
-
-    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
-      Replace LeakyReLU with a pseudo LeakyReLU.
-
-    replace_power_to_pseudo_power: Optional[bool]
-      Replace Power with a pseudo Power.
-
-    replace_gathernd_to_pseudo_gathernd: Optional[bool]
-      Replace GatherND with a pseudo GatherND.
-
-    replace_neg_to_pseudo_neg: Optional[bool]
-      Replace Neg with a pseudo Neg.
-
-    replace_hardswish_to_pseudo_hardswish: Optional[bool]
-      Replace HardSwish with a pseudo HardSwish.
-
-    replace_erf_to_pseudo_erf: Optional[bool]
-      Replace Erf with a pseudo Erf.
+    replace_to_pseudo_operators: List[str]
+      Replace list of operators to pseudo operators. \n
+      Full name of the target operators should be given. \n
+      Currently supported operators :
+      Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.

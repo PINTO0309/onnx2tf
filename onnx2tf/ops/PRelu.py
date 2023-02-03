@@ -58,7 +58,7 @@ def make_node(
     slope = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    replace_prelu_to_pseudo_prelu = kwargs['replace_prelu_to_pseudo_prelu']
+    replace_prelu_to_pseudo_prelu = "prelu" in kwargs['replace_to_pseudo_operators']
 
     _, slope = pre_explicit_broadcast(
         input_tensor_1=input_tensor,
