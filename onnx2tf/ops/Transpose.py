@@ -88,24 +88,28 @@ def make_node(
             onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
             onnx_output_shape_none_count = onnx_output_shape.count(None)
             tf_input_shape = input_tensor_shape
+            tf_input_shape_none_count = [s for s in tf_input_shape].count(None)
             new_perm = [-1] * len(onnx_output_shape)
-            for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
-                matched_idxs = [
-                    idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
-                        if onnx_shape_value == tf_shape_value
-                ]
-                if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
-                    new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
-                elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
-                    new_perm = perm
-                elif len(matched_idxs) == 1:
-                    new_perm[matched_idxs[0]] = tf_shape_idx
-                else:
-                    for matched_idx in matched_idxs:
-                        if new_perm[matched_idx] == -1:
-                            new_perm[matched_idx] = tf_shape_idx
-                            break
-            perm = new_perm
+            if onnx_output_shape_none_count > 0 and tf_input_shape_none_count == 0:
+                pass
+            else:
+                for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
+                    matched_idxs = [
+                        idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
+                            if onnx_shape_value == tf_shape_value
+                    ]
+                    if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
+                        new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
+                    elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
+                        new_perm = perm
+                    elif len(matched_idxs) == 1:
+                        new_perm[matched_idxs[0]] = tf_shape_idx
+                    else:
+                        for matched_idx in matched_idxs:
+                            if new_perm[matched_idx] == -1:
+                                new_perm[matched_idx] = tf_shape_idx
+                                break
+                perm = new_perm
 
     elif perm is not None and isinstance(perm, np.ndarray) and len(perm.shape) == 0:
         if perm[0] == 0:
@@ -121,24 +125,28 @@ def make_node(
             onnx_output_shape = [s if not isinstance(s, str) else None for s in output_shape]
             onnx_output_shape_none_count = onnx_output_shape.count(None)
             tf_input_shape = input_tensor_shape
+            tf_input_shape_none_count = [s for s in tf_input_shape].count(None)
             new_perm = [-1] * len(onnx_output_shape)
-            for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
-                matched_idxs = [
-                    idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
-                        if onnx_shape_value == tf_shape_value
-                ]
-                if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
-                    new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
-                elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
-                    new_perm = perm
-                elif len(matched_idxs) == 1:
-                    new_perm[matched_idxs[0]] = tf_shape_idx
-                else:
-                    for matched_idx in matched_idxs:
-                        if new_perm[matched_idx] == -1:
-                            new_perm[matched_idx] = tf_shape_idx
-                            break
-            perm = new_perm
+            if onnx_output_shape_none_count > 0 and tf_input_shape_none_count == 0:
+                pass
+            else:
+                for tf_shape_idx, tf_shape_value in enumerate(tf_input_shape):
+                    matched_idxs = [
+                        idx for idx, onnx_shape_value in enumerate(onnx_output_shape) \
+                            if onnx_shape_value == tf_shape_value
+                    ]
+                    if len(matched_idxs) == 0 and onnx_output_shape_none_count <= 1:
+                        new_perm[tf_shape_idx] = onnx_output_shape.index(tf_shape_value)
+                    elif len(matched_idxs) == 0 and onnx_output_shape_none_count > 1:
+                        new_perm = perm
+                    elif len(matched_idxs) == 1:
+                        new_perm[matched_idxs[0]] = tf_shape_idx
+                    else:
+                        for matched_idx in matched_idxs:
+                            if new_perm[matched_idx] == -1:
+                                new_perm[matched_idx] = tf_shape_idx
+                                break
+                perm = new_perm
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
