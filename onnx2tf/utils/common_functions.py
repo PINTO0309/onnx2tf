@@ -328,6 +328,11 @@ def print_node_info(func):
                 f'If the input OP of ONNX before conversion is NHWC or ' +
                 f'an irregular channel arrangement other than NCHW, use the -kt or -kat option.'
             )
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'Also, for models that include NonMaxSuppression in the post-processing, ' +
+                f'try the -onwdt option.'
+            )
             sys.exit(1)
     return print_wrapper_func
 
