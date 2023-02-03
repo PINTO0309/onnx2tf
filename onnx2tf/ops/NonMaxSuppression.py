@@ -34,6 +34,7 @@ class NMSLayer(tf.keras.layers.Layer):
         max_output_size,
         iou_threshold=0.5,
         score_threshold=float('-inf'),
+        pad_to_max_output_size=False,
         name=None,
     ):
         with ops.name_scope(name, 'non_max_suppression'):
@@ -58,9 +59,13 @@ class NMSLayer(tf.keras.layers.Layer):
                             value=score_threshold,
                             name='score_threshold',
                         ),
-                pad_to_max_output_size=False,
+                pad_to_max_output_size=pad_to_max_output_size,
             )
-            return selected_indices[:num_valid]
+            if pad_to_max_output_size:
+                return selected_indices
+
+            else:
+                return selected_indices[:num_valid]
 
     def call(
         self,
@@ -69,6 +74,7 @@ class NMSLayer(tf.keras.layers.Layer):
         max_output_size,
         iou_threshold=0.5,
         score_threshold=float('-inf'),
+        pad_to_max_output_size=False,
         name=None,
     ):
         return self.non_max_suppression(
@@ -77,6 +83,7 @@ class NMSLayer(tf.keras.layers.Layer):
             max_output_size,
             iou_threshold,
             score_threshold,
+            pad_to_max_output_size,
             name,
         )
 
@@ -120,6 +127,9 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     scores = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    output_nms_with_dynamic_tensor: bool = \
+        kwargs['output_nms_with_dynamic_tensor']
 
     # Pre-process transpose
     boxes = pre_process_transpose(
@@ -327,6 +337,7 @@ def make_node(
                 max_output_size=max_output_boxes_per_class,
                 iou_threshold=iou_threshold,
                 score_threshold=score_threshold,
+                pad_to_max_output_size=not output_nms_with_dynamic_tensor,
             )
 
             # add batch and class information into the indices
