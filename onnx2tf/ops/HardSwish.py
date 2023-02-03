@@ -50,8 +50,7 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
-    replace_hardswish_to_pseudo_hardswish = \
-        kwargs['replace_hardswish_to_pseudo_hardswish']
+    replace_hardswish_to_pseudo_hardswish = "hardswish" in kwargs['replace_to_pseudo_operators']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

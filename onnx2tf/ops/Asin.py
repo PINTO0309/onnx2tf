@@ -48,7 +48,7 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    replace_asin_to_pseudo_asin = kwargs['replace_asin_to_pseudo_asin']
+    replace_asin_to_pseudo_asin = "asin" in kwargs['replace_to_pseudo_operators']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

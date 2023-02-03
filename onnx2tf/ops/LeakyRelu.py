@@ -48,8 +48,7 @@ def make_node(
     dtype = graph_node_output.dtype
 
     alpha = graph_node.attrs.get('alpha', 0.01)
-    replace_leakyrelu_to_pseudo_leakyrelu = \
-        kwargs['replace_leakyrelu_to_pseudo_leakyrelu']
+    replace_leakyrelu_to_pseudo_leakyrelu = "leakyrelu" in kwargs['replace_to_pseudo_operators']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
