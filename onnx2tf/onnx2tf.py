@@ -66,6 +66,7 @@ def convert(
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
+    output_nms_with_dynamic_tensor: Optional[bool] = False,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -216,6 +217,18 @@ def convert(
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
+
+    output_nms_with_dynamic_tensor: Optional[bool]
+        The number of bounding boxes in the NMS output results is\n
+        not fixed at the maximum number of max_output_boxes_per_class,\n
+        but rather at the smallest possible number of dynamic tensors.\n
+        If this option is disabled, NMS output is padded to the number\n
+        set in the max_output_boxes_per_class attribute.\n
+        e.g.\n
+        disable --output_nms_with_dynamic_tensor:\n
+            output_tensor_shape: [100, 7]\n
+        enable --output_nms_with_dynamic_tensor:\n
+            output_tensor_shape: [N, 7]
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
@@ -683,6 +696,7 @@ def convert(
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
+        'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
     }
 
     tf_layers_dict = {}
@@ -1438,6 +1452,22 @@ def main():
             'Ignores --batch_size if specified at the same time as --batch_size.'
     )
     parser.add_argument(
+        '-onwdt',
+        '--output_nms_with_dynamic_tensor',
+        action='store_true',
+        help=\
+            'The number of bounding boxes in the NMS output results is \n' +
+            'not fixed at the maximum number of max_output_boxes_per_class, \n' +
+            'but rather at the smallest possible number of dynamic tensors. \n' +
+            'If this option is disabled, NMS output is padded to the number \n' +
+            'set in the max_output_boxes_per_class attribute. \n' +
+            'e.g. \n' +
+            'disable --output_nms_with_dynamic_tensor: \n' +
+            '    output_tensor_shape: [100, 7] \n' +
+            'enable --output_nms_with_dynamic_tensor: \n' +
+            '    output_tensor_shape: [N, 7]'
+    )
+    parser.add_argument(
         '-k',
         '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
@@ -1785,6 +1815,7 @@ def main():
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
+        output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,

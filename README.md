@@ -90,7 +90,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.38
+  ghcr.io/pinto0309/onnx2tf:1.5.39
 
   or
 
@@ -191,6 +191,7 @@ usage: onnx2tf
 [-nuonag]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
+[-onwdt]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
@@ -331,6 +332,18 @@ optional arguments:
     A value of 1 or more must be specified.
     Numerical values other than dynamic dimensions are ignored.
     Ignores --batch_size if specified at the same time as --batch_size.
+
+  -onwdt, --output_nms_with_dynamic_tensor
+    The number of bounding boxes in the NMS output results is
+    not fixed at the maximum number of max_output_boxes_per_class,
+    but rather at the smallest possible number of dynamic tensors.
+    If this option is disabled, NMS output is padded to the number
+    set in the max_output_boxes_per_class attribute.
+    e.g.
+    disable --output_nms_with_dynamic_tensor:
+        output_tensor_shape: [100, 7]
+    enable --output_nms_with_dynamic_tensor:
+        output_tensor_shape: [N, 7]
 
   -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], \
       --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES \
@@ -588,6 +601,7 @@ convert(
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
+  output_nms_with_dynamic_tensor: Optional[bool] = False,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -738,6 +752,18 @@ convert(
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
       Ignores batch_size if specified at the same time as batch_size.
+
+    output_nms_with_dynamic_tensor: Optional[bool]
+        The number of bounding boxes in the NMS output results is
+        not fixed at the maximum number of max_output_boxes_per_class,
+        but rather at the smallest possible number of dynamic tensors.
+        If this option is disabled, NMS output is padded to the number
+        set in the max_output_boxes_per_class attribute.
+        e.g.
+        disable --output_nms_with_dynamic_tensor:
+            output_tensor_shape: [100, 7]
+        enable --output_nms_with_dynamic_tensor:
+            output_tensor_shape: [N, 7]
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
       Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
