@@ -315,7 +315,7 @@ def convert(
     replace_to_pseudo_operators: List[str]
         Replace list of operators to pseudo operators. \n
         Full name of the target operators should be given. \n
-        Currently supported operators :
+        Currently supported operators : \n
         Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
@@ -1586,7 +1586,7 @@ def main():
         help=\
             'Replace list of operators to pseudo operators. \n ' +
             'Full name of the target operators should be given. \n ' +
-            'Currently supported operators : ' +
+            'Currently supported operators : \n' +
             'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf'
     )
     parser.add_argument(
