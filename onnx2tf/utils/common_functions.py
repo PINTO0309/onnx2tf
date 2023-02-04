@@ -3116,8 +3116,7 @@ def download_test_image_data() -> np.ndarray:
     """
     DATA_COUNT = 20
     FILE_NAME = f'calibration_image_sample_data_{DATA_COUNT}x128x128x3_float32.npy'
-    DOWNLOAD_VER = '1.0.49'
-    URL = f'https://github.com/PINTO0309/onnx2tf/releases/download/{DOWNLOAD_VER}/{FILE_NAME}'
+    URL = f'https://s3.us-central-1.wasabisys.com/onnx2tf-en/datas/{FILE_NAME}'
     test_sample_images_npy = requests.get(URL).content
     test_image_data = None
     with io.BytesIO(test_sample_images_npy) as f:
