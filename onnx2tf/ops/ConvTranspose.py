@@ -3,6 +3,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -225,14 +226,39 @@ def make_node(
         split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
         if output_shape_ is None:
             # Normal ConvTranspose
-            conv_rs = conv_func(
-                input=input_tensor_split,
-                filters=weight_split,
-                output_shape=split_conv_output_shape,
-                strides=strides,
-                padding=pad_mode,
-                dilations=dilations,
-            )
+            try:
+                conv_rs = conv_func(
+                    input=input_tensor_split,
+                    filters=weight_split,
+                    output_shape=split_conv_output_shape,
+                    strides=strides,
+                    padding=pad_mode,
+                    dilations=dilations,
+                )
+            except Exception as ex1:
+                # Shape Unmatch Error Mitigation Measures
+                # Search for and transpose shapes that do not cause shape unmatch errors
+                tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_split.shape))))
+                tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(weight_split.shape))))
+                for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+                    for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                        try:
+                            conv_rs = conv_func(
+                                input=tf.transpose(a=input_tensor_split, perm=tensor_1_candidate_for_transposition),
+                                filters=tf.transpose(a=weight_split, perm=tensor_2_candidate_for_transposition),
+                                output_shape=split_conv_output_shape,
+                                strides=strides,
+                                padding=pad_mode,
+                                dilations=dilations,
+                            )
+                            break
+                        except Exception as ex2:
+                            pass
+                    else:
+                        continue
+                    break
+                if conv_rs is None:
+                    raise ex1
 
         else:
             # OP replacement
