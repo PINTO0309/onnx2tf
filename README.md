@@ -1356,10 +1356,8 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
 
 ## Acknowledgement
-1. [onnx2tflite](https://github.com/MPolaris/onnx2tflite)
-2. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-3. https://github.com/onnx/models
-4. https://github.com/opencv/opencv_zoo
+1. https://github.com/onnx/models
+2. https://github.com/opencv/opencv_zoo
 
 ## Contributors
 <a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
