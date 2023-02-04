@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    alternative_atan,
 )
 
 
@@ -57,6 +58,8 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
+    replace_atan_to_pseudo_atan = "atan" in kwargs['replace_to_pseudo_operators']
+
     # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
@@ -75,11 +78,19 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.atan(
-            x=input_tensor,
-            name=graph_node.name,
-        )
+    if not replace_atan_to_pseudo_atan:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.atan(
+                x=input_tensor,
+                name=graph_node.name,
+            )
+        tf_op_type = tf.math.atan
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            alternative_atan(
+                input_tensor=input_tensor,
+            )
+        tf_op_type = 'alternative_atan'
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
@@ -99,7 +110,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.math.atan,
+                'tf_op_type': tf_op_type,
                 'tf_inputs': {
                     'x': input_tensor,
                 },

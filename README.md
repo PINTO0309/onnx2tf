@@ -90,7 +90,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.40
+  ghcr.io/pinto0309/onnx2tf:1.5.41
 
   or
 
@@ -439,7 +439,7 @@ optional arguments:
     Replace list of operators to pseudo operators.
     Full name of the target operators should be given.
     Currently supported operators :
-    Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
@@ -824,10 +824,10 @@ convert(
       Default: 0.5
 
     replace_to_pseudo_operators: List[str]
-      Replace list of operators to pseudo operators. \n
-      Full name of the target operators should be given. \n
+      Replace list of operators to pseudo operators.
+      Full name of the target operators should be given.
       Currently supported operators :
-      Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.

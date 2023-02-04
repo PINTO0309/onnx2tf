@@ -316,7 +316,7 @@ def convert(
         Replace list of operators to pseudo operators. \n
         Full name of the target operators should be given. \n
         Currently supported operators :
-        Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -1581,12 +1581,13 @@ def main():
     parser.add_argument(
         '-rtpo',
         '--replace_to_pseudo_operators',
-        nargs="*",
+        nargs='*',
         default=[],
-        help='Replace list of operators to pseudo operators. \n ' +
-             'Full name of the target operators should be given. \n ' +
-             'Currently supported operators : ' +
-             'Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf'
+        help=\
+            'Replace list of operators to pseudo operators. \n ' +
+            'Full name of the target operators should be given. \n ' +
+            'Currently supported operators : ' +
+            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf'
     )
     parser.add_argument(
         '-me',

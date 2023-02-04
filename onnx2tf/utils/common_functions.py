@@ -1485,6 +1485,93 @@ def alternative_acos(
     return pseudo_acos
 
 
+# https://developer.download.nvidia.com/cg/atan2.html
+def alternative_atan2(
+    *,
+    input_tensor_y,
+    input_tensor_x,
+) -> Any:
+    """Replace Atan2 with a pseudo_Atan2.
+
+    Parameters
+    ----------
+    input_tensor_y: Tensor
+        Tensor to be processed.
+        Vector or scalar for numerator of ratio of which to determine the arctangent.
+
+    input_tensor_x: Tensor
+        Tensor to be processed.
+        Vector or scalar of denominator of ratio of which to determine the arctangent.
+
+    Returns
+    ----------
+    pseudo_atan2: Tensor
+        Converted Atan2
+    """
+    abs_x = tf.math.abs(input_tensor_x)
+    abs_y = tf.math.abs(input_tensor_y)
+    t3 = tf.math.abs(input_tensor_x)
+    t1 = tf.math.abs(input_tensor_y)
+    t0 = tf.maximum(t3, t1)
+    t1 = tf.minimum(t3, t1)
+    t3 = 1.0 / t0
+    t3 = t1 * t3
+    t4 = t3 * t3
+    t0 = -0.013480470
+    t0 = t0 * t4 + 0.057477314
+    t0 = t0 * t4 - 0.121239071
+    t0 = t0 * t4 + 0.195635925
+    t0 = t0 * t4 - 0.332994597
+    t0 = t0 * t4 + 0.999995630
+    t3 = t0 * t3
+    t3 = tf.where(
+        condition=tf.math.greater(abs_y, abs_x),
+        x=1.570796327 - t3,
+        y=t3,
+    )
+    t3 = tf.where(
+        condition=tf.math.less(input_tensor_x, 0),
+        x=3.141592654 - t3,
+        y=t3,
+    )
+    pseudo_atan2 = tf.where(
+        condition=tf.math.less(input_tensor_y, 0),
+        x=-t3,
+        y=t3,
+    )
+    # TODO: Switch to standard OP with TF v2.12.0 or later
+    # Skip TF v2.11.0 as it is heavily broken
+    # pseudo_atan2 = tf.math.atan2(
+    #     y=input_tensor_y,
+    #     x=input_tensor_x,
+    # )
+    return pseudo_atan2
+
+
+# https://developer.download.nvidia.com/cg/atan.html
+def alternative_atan(
+    *,
+    input_tensor,
+) -> Any:
+    """Replace Atan with a pseudo_Atan.
+
+    Parameters
+    ----------
+    input_tensor_x: Tensor
+        Tensor to be processed.
+        Vector or scalar of which to determine the arctangent.
+
+    Returns
+    ----------
+    pseudo_atan: Tensor
+        Converted Atan
+    """
+    return alternative_atan2(
+        input_tensor_y=input_tensor,
+        input_tensor_x=1.0,
+    )
+
+
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/pooling_helper.py
 pad_ops = namedtuple(
     "pad_ops",
