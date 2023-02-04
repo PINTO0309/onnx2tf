@@ -55,6 +55,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
+- [x] Add process to replace `Atan` with `pseudo-Atan`.
 - [x] Add process to replace `Abs` with `pseudo-Abs`.
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
