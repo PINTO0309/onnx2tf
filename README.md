@@ -55,6 +55,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Implement the `Resize` process for the 5D tensor.
 - [x] Add process to replace `Asin` with `pseudo-Asin`.
 - [x] Add process to replace `Acos` with `pseudo-Acos`.
+- [x] Add process to replace `Atan` with `pseudo-Atan`.
 - [x] Add process to replace `Abs` with `pseudo-Abs`.
 - [x] Add process to replace `GatherND` with `pseudo-GatherND`.
 - [x] Add process to replace `HardSwish` with `pseudo-HardSwish`.
@@ -90,7 +91,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.40
+  ghcr.io/pinto0309/onnx2tf:1.5.41
 
   or
 
@@ -203,16 +204,7 @@ usage: onnx2tf
 [-ofgd]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
 [-fasr FUSED_ARGMAX_SCALE_RATIO]
-[-rasin]
-[-racos]
-[-rabs]
-[-rpr]
-[-rlr]
-[-rpw]
-[-rgn]
-[-rng]
-[-rhs]
-[-rerf]
+[-rtpo REPLACE_TO_PSEUDO_OPERATORS [REPLACE_TO_PSEUDO_OPERATORS ...]]
 [-me MVN_EPSILON]
 [-prf PARAM_REPLACEMENT_FILE]
 [-cgdc]
@@ -439,7 +431,7 @@ optional arguments:
     Replace list of operators to pseudo operators.
     Full name of the target operators should be given.
     Currently supported operators :
-    Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
@@ -824,10 +816,10 @@ convert(
       Default: 0.5
 
     replace_to_pseudo_operators: List[str]
-      Replace list of operators to pseudo operators. \n
-      Full name of the target operators should be given. \n
+      Replace list of operators to pseudo operators.
+      Full name of the target operators should be given.
       Currently supported operators :
-      Asin, Acos, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.
