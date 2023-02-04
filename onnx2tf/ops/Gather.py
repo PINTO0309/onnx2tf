@@ -95,7 +95,11 @@ def make_node(
     else:
         cond = indices < 0
         indices = indices + tf.cast(
-            tf.where(cond, 1, 0) * tf.shape(input_tensor, out_type=out_dtype)[axis],
+            tf.where(
+                cond,
+                tf.convert_to_tensor(1, dtype=out_dtype),
+                tf.convert_to_tensor(0, dtype=out_dtype)
+            ) * tf.shape(input_tensor, out_type=out_dtype)[axis],
             dtype=out_dtype,
         )
 
