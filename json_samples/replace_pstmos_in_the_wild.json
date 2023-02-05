@@ -1,0 +1,81 @@
+{
+  "format_version": 1,
+  "model": "https://github.com/PINTO0309/PINTO_model_zoo/tree/main/350_P-STMO",
+  "cited": "https://github.com/paTRICK-swk/P-STMO",
+  "operations": [
+    {
+      "op_name": "flip_Transformer_reduce/model/layers.0/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transformer_reduce/model/layers.0/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "flip_Transformer_reduce/model/layers.1/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transformer_reduce/model/layers.1/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "flip_Transformer_reduce/model/layers.2/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transformer_reduce/model/layers.2/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "flip_Transformer_reduce/model/layers.3/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transformer_reduce/model/layers.3/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "flip_Transformer_reduce/model/layers.4/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transformer_reduce/model/layers.4/sublayer.1/Transpose",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+
+
+    {
+      "op_name": "flip_Transpose_3",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    },
+    {
+      "op_name": "noflip_Transpose_3",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    }
+  ]
+}
