@@ -1,3 +1,4 @@
+import sys
 import copy
 import random
 random.seed(0)
@@ -14,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -83,7 +85,12 @@ def make_node(
     # Transpose pads values
     paddings = None
     if len(graph_node.inputs) >= 2:
-        paddings = graph_node.inputs[1]
+        paddings = get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
+        paddings = tf_layers_dict[paddings.name]['tf_node'] \
+            if isinstance(paddings, gs.Variable) else paddings
     paddings = graph_node.attrs.get('pads', paddings)
     if isinstance(paddings, list):
         paddings = np.asarray(paddings)
@@ -156,6 +163,27 @@ def make_node(
                 paddings = np.asarray(new_values, dtype=paddings.dtype)
             paddings = tf.convert_to_tensor(paddings) \
                 if isinstance(paddings, np.ndarray) else paddings
+
+    elif tf.keras.backend.is_keras_tensor(paddings):
+        paddings = \
+            tf.transpose(
+                a=tf.reshape(
+                    tensor=paddings,
+                    shape=[2, tensor_rank]
+                )
+            )
+        paddings_rank = paddings.shape[0]
+        if paddings_rank > 2:
+            paddings = [
+                [begin, end] \
+                    for begin, end in paddings
+            ]
+            if before_op_output_shape_trans:
+                convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
+                new_values = [0] * tensor_rank
+                for new_idx, idx in enumerate(convertion_table):
+                    new_values[new_idx] = paddings[idx]
+                paddings = new_values
 
     mode = graph_node.attrs.get('mode', 'constant')
 
