@@ -87,7 +87,7 @@ def make_node(
     if len(graph_node.inputs) >= 2:
         paddings = get_constant_or_variable(
             graph_node.inputs[1],
-            before_op_output_shape_trans,
+            False,
         )
         paddings = tf_layers_dict[paddings.name]['tf_node'] \
             if isinstance(paddings, gs.Variable) else paddings
