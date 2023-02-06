@@ -947,7 +947,7 @@ Starting from `v1.3.0`, almost all OPs except for some special OPs support pre- 
 1. "A conversion error occurs."
 2. "Output results are wrong."
 
-Please don't post such low level questions as issues.
+Do not submit an issue that only contains an amount of information that cannot be reproduced.
 
 - convert option
   ```
