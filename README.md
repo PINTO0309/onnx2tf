@@ -107,7 +107,7 @@ $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold. Automatically determines before and after which OPs the tool's automatic conversion of the model failed. Know where dimensional compression, dimensional expansion, and dimensional transposition by `Reshape` and `Traspose` are failing. Once you have identified the problem area, you can refer to the tutorial on [Parameter replacement](#parameter-replacement) to modify the tool's behavior.
 
-`-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. 
+`-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
 ```
 $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ```
