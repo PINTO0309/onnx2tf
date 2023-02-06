@@ -955,6 +955,9 @@ Please don't post such low level questions as issues.
   ```
 
 - param_replacement.json
+
+  <details><summary>See a sample of replacement JSON</summary><div>
+
   ```yaml
   {
     "format_version": 1,
@@ -1024,6 +1027,9 @@ Please don't post such low level questions as issues.
     ]
   }
   ```
+
+  </div></details>
+
 - Replacement Supported OPs
 
   <details><summary>See list of replacement specifications</summary><div>
