@@ -1400,6 +1400,8 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 ## Acknowledgement
 1. https://github.com/onnx/models
 2. https://github.com/opencv/opencv_zoo
+3. https://pytorch.org/vision/stable/models.html
+4. https://tfhub.dev/
 
 ## Contributors
 <a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
