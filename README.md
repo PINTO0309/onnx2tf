@@ -1053,6 +1053,9 @@ Please don't post such low level questions as issues.
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
 - :heavy_check_mark:: Supported　**Help wanted**: Pull Request are welcome
+
+  <details><summary>See the list of supported layers</summary><div>
+
   |OP|Status|
   |:-|:-:|
   |Abs|:heavy_check_mark:|
@@ -1242,6 +1245,8 @@ Please don't post such low level questions as issues.
   |Where|:heavy_check_mark:|
   |Xor|:heavy_check_mark:|
 
+  </div></details>
+
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/0.0.33/yolov7_tiny_head_0.768_post_480x640.onnx
@@ -1272,8 +1277,11 @@ Please don't post such low level questions as issues.
 
   </div></details>
 
-## Validated model (without replacement.json)
+## Validated models (without replacement.json)
 ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
+
+<details><summary>See a list of verified models</summary><div>
+
 |No.|Model|Pass|
 |:-:|:-|:-:|
 |1|age_googlenet.onnx|:heavy_check_mark:|
@@ -1358,6 +1366,8 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |80|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
 |81|zero_dce_640_dele.onnx|:heavy_check_mark:|
 |82|zfnet512-12.onnx|:heavy_check_mark:|
+
+  </div></details>
 
 ## Related tools
 1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
