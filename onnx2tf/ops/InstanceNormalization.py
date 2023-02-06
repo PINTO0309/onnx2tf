@@ -13,6 +13,8 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
+
 INF_INDEX_VALUE: int = 4294967296
 
 
@@ -63,24 +65,34 @@ def make_node(
     )
 
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor.shape)
+    input_tensor_rank = len(input_tensor_shape)
 
     scale = get_constant_or_variable(
         graph_node.inputs[1],
         before_op_output_shape_trans,
         is_bias=True,
     )
+    scale_dtype = NUMPY_DTYPES_TO_TF_DTYPES[scale.dtype] \
+        if isinstance(scale.dtype, np.dtype) else scale.dtype
+    scale = tf.convert_to_tensor(scale, dtype=scale_dtype) \
+        if isinstance(scale, np.ndarray) else scale
+
     B = get_constant_or_variable(
         graph_node.inputs[2],
         before_op_output_shape_trans,
         is_bias=True,
     )
+    B_dtype = NUMPY_DTYPES_TO_TF_DTYPES[B.dtype] \
+        if isinstance(B.dtype, np.dtype) else B.dtype
+    B = tf.convert_to_tensor(B, dtype=B_dtype) \
+        if isinstance(B, np.ndarray) else B
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     epsilon = graph_node.attrs.get('epsilon', 1e-05)
+    epsilon = tf.convert_to_tensor(epsilon, dtype=tf.float32)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
