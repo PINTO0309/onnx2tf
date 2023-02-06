@@ -1245,17 +1245,32 @@ Please don't post such low level questions as issues.
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/0.0.33/yolov7_tiny_head_0.768_post_480x640.onnx
+
+  <details><summary>See the structure of the model</summary><div>
+
   |onnx2tf|onnx-tensorflow<br>(Super redundant + Broken)|
   |:-:|:-:|
   |![image](https://user-images.githubusercontent.com/33194443/198160732-47ef9770-ecca-40dd-8502-be41c941f8e3.png)|![image](https://user-images.githubusercontent.com/33194443/195248761-9d4f4446-3fb4-41ad-a5d4-a7d211b527c0.png)|
 
+  </div></details>
+
 - YOLACT-Edge MobileNetV2 with Post-Process (MultiClass-NMS) ONNX to TFLite Float32
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.11/yolact_edge_mobilenetv2_550x550.onnx
+
+  <details><summary>See the structure of the model</summary><div>
+
   ![image](https://user-images.githubusercontent.com/33194443/201506248-6ee1e04d-3b5a-4afb-a05c-bf8d5119297b.png)
+
+  </div></details>
 
 - MoveNet MultiPose ONNX to TFLite Float32 (`Cast` and `TrueDiv` standard OP support)
   https://github.com/PINTO0309/onnx2tf/releases/download/1.0.24/movenet_multipose_lightning_192x256_p6.onnx
+
+  <details><summary>See the structure of the model</summary><div>
+
   ![image](https://user-images.githubusercontent.com/33194443/198175219-b2db3ba3-65f8-464c-a0fd-411c4a62402e.png)
+
+  </div></details>
 
 ## Validated model (without replacement.json)
 ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
