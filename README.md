@@ -1025,6 +1025,9 @@ Please don't post such low level questions as issues.
   }
   ```
 - Replacement Supported OPs
+
+  <details><summary>See list of replacement specifications</summary><div>
+
   |No.|OP type|Remarks|
   |:-:|:-|:-|
   |1|Add|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Add operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Add operation with the perm specified as post-processing.|
@@ -1049,6 +1052,8 @@ Please don't post such low level questions as issues.
   |20|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
   |21|Tile|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Tile operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Tile operation with the perm specified as post-processing.|
   |22|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
+
+  </div></details>
 
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
