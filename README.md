@@ -952,6 +952,10 @@ Do not submit an issue that only contains an amount of information that cannot b
 - convert option
   ```
   --param_replacement_file param_replacement.json
+
+  or
+
+  -prf param_replacement.json
   ```
 
 - param_replacement.json
