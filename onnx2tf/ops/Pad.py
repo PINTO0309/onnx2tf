@@ -203,7 +203,7 @@ def make_node(
                 paddings=paddings,
                 mode=mode,
                 constant_values=constant_value,
-                name= graph_node.name,
+                name=graph_node.name,
             )
     else:
         # mode = 'edge'
