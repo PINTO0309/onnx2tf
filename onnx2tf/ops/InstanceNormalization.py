@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+INF_INDEX_VALUE: int = 4294967296
 
 
 @print_node_info
@@ -86,39 +87,54 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
 
-    # Generation of TF OP
-    moments_axes = list(range(input_tensor_rank))[1:-1]
-    channel_size = input_tensor_shape[-1] \
-        if input_tensor_shape[-1] is not None else scale.shape[0]
-    params_shape_broadcast = \
-        list([1] + [1 for _ in range(2, input_tensor_rank)] + [channel_size])
-    if input_tensor_rank == 3 and graph_node.i().op == 'Reshape':
-        params_shape_broadcast = [1, len(B), 1]
-        B = tf.reshape(tensor=B, shape=[1] + [len(B)] + [1])
-        scale = tf.reshape(tensor=scale, shape=[1] + [len(scale)] + [1])
-    beta = tf.reshape(B, params_shape_broadcast)
-    gamma = tf.reshape(scale, params_shape_broadcast)
+    # transpose
+    try:
+        if graph_node.i().op == 'Reshape':
+            onnx_input_shape = [
+                dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+            ]
+            tf_input_shape = [
+                dim if isinstance(dim, int) else None for dim in input_tensor_shape
+            ]
+            if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+                and onnx_input_shape == tf_input_shape:
 
-    # Calculate the moments (instance activations).
-    mean, variance = tf.nn.moments(
-        x=input_tensor,
-        axes=moments_axes,
+                shape_for_judging_skip = [
+                    dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+                ]
+                if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+                    if len(onnx_input_shape) == 3:
+                        # 1D
+                        input_tensor = tf.transpose(
+                            a=input_tensor,
+                            perm=[0,2,1],
+                        )
+                    elif len(onnx_input_shape) == 4:
+                        # 2D
+                        input_tensor = tf.transpose(
+                            a=input_tensor,
+                            perm=[0,2,3,1],
+                        )
+    except:
+        pass
+
+    # Generation of TF OP
+    axes = [idx for idx in range(1, input_tensor_rank - 1)]
+    mean = tf.reduce_mean(
+        input_tensor=input_tensor,
+        axis=axes,
         keepdims=True,
     )
-
-    # Compute instance normalization
+    variance = tf.math.reduce_variance(
+        input_tensor=input_tensor,
+        axis=axes,
+        keepdims=True,
+    )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.nn.batch_normalization(
-            x=input_tensor,
-            mean=mean,
-            variance=variance,
-            offset=beta,
-            scale=gamma,
-            variance_epsilon=epsilon,
-            name=graph_node.name,
-        )
+        (input_tensor - mean) / tf.math.sqrt(variance + epsilon) * scale + B
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -128,20 +144,17 @@ def make_node(
         **kwargs,
     )
 
-    if len(shape) == 3 and graph_node.o().op == 'Reshape':
-        tf_layers_dict[graph_node_output.name]['is_instance_norm_3d'] = True
-
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.nn.batch_normalization,
+                'tf_op_type': 'InstanceNormalization',
                 'tf_inputs': {
                     'x': input_tensor,
                     'mean': mean,
                     'variance': variance,
-                    'offset': beta,
-                    'scale': gamma,
+                    'offset': B,
+                    'scale': scale,
                     'variance_epsilon': epsilon,
                 },
                 'tf_outputs': {
