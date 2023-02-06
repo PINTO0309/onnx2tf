@@ -1273,10 +1273,10 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |10|convtranspose_6_5_5_8.onnx|:heavy_check_mark:|
 |11|convtranspose_7_1_3_4.onnx|:heavy_check_mark:|
 |12|damoyolo_tinynasL20_T_192x192_post.onnx|:heavy_check_mark:|
-|13|densenet-12.onnx|:heavy_check_mark:|
-|14|depth_to_spase_17.onnx|:heavy_check_mark:|
-|15|digits.onnx|:heavy_check_mark:|
-|16|deeplabv3_mobilenet_v3_large.onnx|:heavy_check_mark:|
+|13|deeplabv3_mobilenet_v3_large.onnx|:heavy_check_mark:|
+|14|densenet-12.onnx|:heavy_check_mark:|
+|15|depth_to_spase_17.onnx|:heavy_check_mark:|
+|16|digits.onnx|:heavy_check_mark:|
 |17|detr_demo.onnx|:heavy_check_mark:|
 |18|efficientformer_l1.onnx|:heavy_check_mark:|
 |19|efficientdet_lite2_detection_1.onnx|:heavy_check_mark:|
