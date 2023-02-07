@@ -651,7 +651,7 @@ convert(
     overwrite_input_shape: Optional[List[str]]
       Overwrite the input shape.
       The format is
-      ['i1:dim0,dim1,...,dimN' 'i2:dim0,dim1,...,dimN' 'i3:dim0,dim1,...,dimN']
+      ['i1:dim0,dim1,...,dimN', 'i2:dim0,dim1,...,dimN', 'i3:dim0,dim1,...,dimN']
       When there is only one input, for example,
       ['data:1,3,224,224']
       When there are multiple inputs, for example,
