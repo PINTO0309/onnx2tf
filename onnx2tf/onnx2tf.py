@@ -66,6 +66,7 @@ def convert(
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
+    no_large_tensor: Optional[bool] = False,
     output_nms_with_dynamic_tensor: Optional[bool] = False,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
@@ -208,6 +209,10 @@ def convert(
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
+
+    no_large_tensor: Optional[bool]
+        Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
+        See: https://github.com/daquexian/onnx-simplifier/issues/178
 
     output_nms_with_dynamic_tensor: Optional[bool]
         The number of bounding boxes in the NMS output results is\n
@@ -504,6 +509,8 @@ def convert(
             for _ in range(3):
                 append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
                     if overwrite_input_shape is not None else []
+                append_param = append_param + ['--no-large-tensor'] \
+                    if no_large_tensor else append_param
                 result = subprocess.check_output(
                     [
                         'onnxsim',
@@ -1413,6 +1420,14 @@ def main():
             'Ignores --batch_size if specified at the same time as --batch_size.'
     )
     parser.add_argument(
+        '-nlt',
+        '--no_large_tensor',
+        action='store_true',
+        help=\
+            'Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim. \n' +
+            'See: https://github.com/daquexian/onnx-simplifier/issues/178'
+    )
+    parser.add_argument(
         '-onwdt',
         '--output_nms_with_dynamic_tensor',
         action='store_true',
@@ -1731,6 +1746,7 @@ def main():
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
+        no_large_tensor=args.no_large_tensor,
         output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,

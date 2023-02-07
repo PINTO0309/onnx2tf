@@ -29,7 +29,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.5.45
+  ghcr.io/pinto0309/onnx2tf:1.6.0
 
   or
 
@@ -134,6 +134,7 @@ usage: onnx2tf
 [-nuonag]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
+[-nlt]
 [-onwdt]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
@@ -266,6 +267,10 @@ optional arguments:
     A value of 1 or more must be specified.
     Numerical values other than dynamic dimensions are ignored.
     Ignores --batch_size if specified at the same time as --batch_size.
+
+  -nlt, --no_large_tensor
+    Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
+    See: https://github.com/daquexian/onnx-simplifier/issues/178
 
   -onwdt, --output_nms_with_dynamic_tensor
     The number of bounding boxes in the NMS output results is
@@ -511,6 +516,7 @@ convert(
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
+  no_large_tensor: Optional[bool] = False,
   output_nms_with_dynamic_tensor: Optional[bool] = False,
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
@@ -653,6 +659,10 @@ convert(
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
       Ignores batch_size if specified at the same time as batch_size.
+
+    no_large_tensor: Optional[bool]
+        Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
+        See: https://github.com/daquexian/onnx-simplifier/issues/178
 
     output_nms_with_dynamic_tensor: Optional[bool]
         The number of bounding boxes in the NMS output results is
