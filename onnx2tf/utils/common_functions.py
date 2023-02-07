@@ -2936,7 +2936,9 @@ def dummy_tf_inference(
     if not isinstance(outputs, list):
         outputs = [outputs]
 
-    tf_output_dict = {tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)}
+    tf_output_dict = {
+        tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)
+    }
 
     return tf_output_dict
 
