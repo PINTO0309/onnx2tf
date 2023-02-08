@@ -3,6 +3,7 @@
   "issue": "https://github.com/PINTO0309/onnx2tf/issues/175",
   "citation": "https://github.com/wyhuai/DDNM",
   "model": "https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_175/ddnm.onnx",
+  "command": "onnx2tf -i ddnm.onnx -prf replace_ddnm.json -ois input1:1,3,256,256 input2:1 -cotof -cotoa 1e-4",
   "operations": [
     {
       "op_name": "/block.0_1/Mul",
@@ -28,8 +29,6 @@
       "param_name": "/block.1_1/Mul_1_output_0",
       "post_process_transpose_perm": [0,2,3,1]
     },
-
-
     {
       "op_name": "/attn.0/Transpose_1",
       "param_target": "attributes",
