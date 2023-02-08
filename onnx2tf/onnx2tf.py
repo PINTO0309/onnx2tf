@@ -488,6 +488,10 @@ def convert(
         try:
             with open(param_replacement_file, 'r') as f:
                 replacement_parameters = json.load(f)['operations']
+                for operations in replacement_parameters:
+                    operations['op_name'] = operations['op_name'].replace(':','_')
+                    if output_signaturedefs:
+                        operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
         except json.decoder.JSONDecodeError as ex:
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
