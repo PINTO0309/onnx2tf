@@ -1,5 +1,8 @@
 {
   "format_version": 1,
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/175",
+  "citation": "https://github.com/wyhuai/DDNM",
+  "model": "https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_175/ddnm.onnx",
   "operations": [
     {
       "op_name": "/block.0_1/Mul",
