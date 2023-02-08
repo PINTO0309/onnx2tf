@@ -1,0 +1,128 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/block.0_1/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.0_1/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.0_1/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/block.0_1/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.1_1/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.1_1/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.1_1/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/block.1_1/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+
+
+    {
+      "op_name": "/attn.0/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+    {
+      "op_name": "/attn.1/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+    {
+      "op_name": "/attn_1/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+    {
+      "op_name": "/attn.0_1/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+    {
+      "op_name": "/attn.1_1/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+    {
+      "op_name": "/attn.2/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,2,1]
+    },
+
+    {
+      "op_name": "/Concat_13",
+      "param_target": "inputs",
+      "param_name": "/block.1_1/Add_1_output_0",
+      "pre_process_transpose_perm": [0,3,1,2]
+    },
+
+
+    {
+      "op_name": "/block.0_10/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/block.0_10/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.1_10/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.1_10/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.1_10/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/block.1_10/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+
+
+    {
+      "op_name": "/Concat_15",
+      "param_target": "inputs",
+      "param_name": "/block.1_10/Add_1_output_0",
+      "pre_process_transpose_perm": [0,3,1,2]
+    },
+
+
+    {
+      "op_name": "/block.2_4/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/block.2_4/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.0_11/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.0_11/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.1_11/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.1_11/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/block.2_5/Mul",
+      "param_target": "outputs",
+      "param_name": "/block.2_5/Mul_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    }
+  ]
+}
