@@ -3,7 +3,6 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-import onnx
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -16,12 +15,11 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    dummy_onnx_inference,
     dummy_tf_inference,
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
 )
-from typing import List, Any, Dict
+from typing import Any, Dict
 
 
 @print_node_info
@@ -74,7 +72,10 @@ def make_node(
         'dtype': dtype,
         'nhwc': tf_layers_dict[graph_node_input.name]['nhwc'] \
             if isinstance(graph_node_input, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
+                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False,
+        'nwc_nhwc_ndhwc_keep': tf_layers_dict[graph_node_input.name]['nwc_nhwc_ndhwc_keep'] \
+            if isinstance(graph_node_input, gs.Variable) \
+                and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name].keys() else False,
     }
 
     # Param replacement

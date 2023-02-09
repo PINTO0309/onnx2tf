@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
         nano python3-pip python3-mock libpython3-dev \
-        libpython3-all-dev python-is-python3 wget \
+        libpython3-all-dev python-is-python3 wget curl \
         software-properties-common sudo flatbuffers-compiler \
     && sed -i 's/# set linenumbers/set linenumbers/g' /etc/nanorc \
     && apt clean \
