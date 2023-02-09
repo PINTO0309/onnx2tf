@@ -22,6 +22,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.10.0
+- flatbuffers-compiler
 
 ## Sample Usage
 - HostPC
@@ -29,7 +30,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.6.1
+  ghcr.io/pinto0309/onnx2tf:1.6.2
 
   or
 
@@ -58,6 +59,7 @@ or
   !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
   !sudo apt-get -y install python3.9-distutils
+  !sudo apt-get -y install flatbuffers-compiler
   !python3.9 -m pip install -U setuptools \
     && python3.9 -m pip install -U pip \
     && python3.9 -m pip install -U distlib
@@ -126,6 +128,7 @@ usage: onnx2tf
 [-osd]
 [-oh5]
 [-ow]
+[-coion]
 [-oiqt]
 [-qt {per-channel,per-tensor}]
 [-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
@@ -180,6 +183,17 @@ optional arguments:
 
   -ow, --output_weights
     Output weights in hdf5 format.
+
+  -coion, --copy_onnx_input_output_names_to_tflite
+    Copy the input/output OP name of ONNX to the input/output OP name of tflite.
+    Due to Tensorflow internal operating specifications,
+    the input/output order of ONNX does not necessarily match
+    the input/output order of tflite.
+    Be sure to check that the input/output OP names in the generated
+    tflite file have been converted as expected.
+    Also, this option generates a huge JSON file as a temporary file for processing.
+    Therefore, it is strongly discouraged to use it on large models of hundreds
+    of megabytes or more.
 
   -oiqt, --output_integer_quantized_tflite
     Output of integer quantized tflite.
@@ -508,6 +522,7 @@ convert(
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
   output_weights: Optional[bool] = False,
+  copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
   quant_type: Optional[str] = 'per-channel',
   quant_calib_input_op_name_np_data_path: Optional[List] = None,
@@ -571,6 +586,17 @@ convert(
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
+
+    copy_onnx_input_output_names_to_tflite: Optional[bool]
+      Copy the input/output OP name of ONNX to the input/output OP name of tflite.
+      Due to Tensorflow internal operating specifications,
+      the input/output order of ONNX does not necessarily match
+      the input/output order of tflite.
+      Be sure to check that the input/output OP names in the generated
+      tflite file have been converted as expected.
+      Also, this option generates a huge JSON file as a temporary file for processing.
+      Therefore, it is strongly discouraged to use it on large models of hundreds
+      of megabytes or more.
 
     output_integer_quantized_tflite: Optional[bool]
       Output of integer quantized tflite.

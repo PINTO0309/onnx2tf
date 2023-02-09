@@ -1,11 +1,14 @@
+import os
 import io
 import sys
 import copy
+import json
 import random
 import requests
 random.seed(0)
 import itertools
 import traceback
+import subprocess
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
@@ -3372,3 +3375,114 @@ def get_tf_model_outputs(
                 if opname in output_names
     ]
     return tf_model_outputs
+
+
+def rewrite_tflite_inout_opname(
+    *,
+    output_folder_path: str,
+    tflite_file_name: str,
+    onnx_input_names: List[str],
+    onnx_output_names: List[str],
+    non_verbose: bool = False,
+):
+    """Rewrite the input/output OP name of tflite to the input/output OP name of ONNX.
+    Pre-installation of flatc is required.
+
+    Parameters
+    ----------
+    output_folder_path: str
+        Path of the folder where the tflite file to be rewritten is stored
+
+    tflite_file_name: str
+        Name of tflite file to be rewritten
+
+    onnx_input_names: List[str]
+        List of ONNX input OP names
+
+    onnx_output_names: List[str]
+        List of ONNX output OP names
+
+    non_verbose: bool
+        Do not show all information logs. Only error logs are displayed.
+    """
+    try:
+        # Check to see if flatc is installed
+        result = subprocess.check_output(
+            [
+                'flatc', '--version'
+            ],
+            stderr=subprocess.PIPE
+        ).decode('utf-8')
+
+        # Download schema.fbs if it does not exist
+        if not os.path.isfile(f'{output_folder_path}/schema.fbs'):
+            result = subprocess.check_output(
+                [
+                    'curl',
+                    'https://raw.githubusercontent.com/tensorflow/tensorflow/v2.11.0/tensorflow/lite/schema/schema.fbs',
+                    '-o',
+                    f'{output_folder_path}/schema.fbs'
+                ],
+                stderr=subprocess.PIPE
+            ).decode('utf-8')
+
+        # tflite -> JSON
+        result = subprocess.check_output(
+            [
+                'flatc', '-t',
+                '--strict-json',
+                '--defaults-json',
+                '-o', f'{output_folder_path}',
+                f'{output_folder_path}/schema.fbs',
+                '--',
+                f'{output_folder_path}/{tflite_file_name}'
+            ],
+            stderr=subprocess.PIPE
+        ).decode('utf-8')
+
+        # Rewrite input OP name and output OP name
+        json_file_name = f'{os.path.splitext(os.path.basename(tflite_file_name))[0]}.json'
+        json_file_path = f'{output_folder_path}/{json_file_name}'
+        flat_json = None
+
+        with open(json_file_path, 'r') as f:
+            flat_json = json.load(f)
+            flat_subgraphs = flat_json['subgraphs'][0]
+            flat_tensors: List[Dict] = flat_subgraphs['tensors']
+            flat_input_nums: List[int] = flat_subgraphs['inputs']
+            flat_output_nums: List[int] = flat_subgraphs['outputs']
+            flat_input_infos = [flat_tensors[idx] for idx in flat_input_nums]
+            flat_output_infos = [flat_tensors[idx] for idx in flat_output_nums]
+            # INPUT
+            for idx, flat_input_info in enumerate(flat_input_infos):
+                flat_input_info['name'] = onnx_input_names[idx]
+            # OUTPUT
+            for idx, flat_output_info in enumerate(flat_output_infos):
+                flat_output_info['name'] = onnx_output_names[idx]
+
+        if flat_json is not None:
+            with open(json_file_path, 'w') as f:
+                json.dump(flat_json, f)
+            # JSON -> tflite
+            result = subprocess.check_output(
+                [
+                    'flatc',
+                    '-o', f'{output_folder_path}',
+                    '-b', f'{output_folder_path}/schema.fbs',
+                    f'{json_file_path}'
+                ],
+                stderr=subprocess.PIPE
+            ).decode('utf-8')
+            # Delete JSON
+            os.remove(f'{json_file_path}')
+
+    except Exception as ex:
+        if not non_verbose:
+            print(
+                f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                'If you want tflite input OP name and output OP name ' +
+                'to match ONNX input and output names, ' +
+                'convert them after installing "flatc". ' +
+                'Also, do not use symbols such as slashes in input/output OP names. ' +
+                'https://github.com/google/flatbuffers/releases'
+            )
