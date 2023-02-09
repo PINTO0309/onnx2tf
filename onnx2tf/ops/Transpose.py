@@ -58,12 +58,14 @@ def make_node(
         and tf_layers_dict[graph_node_input.name]['nwc_nhwc_ndhwc_keep'] == True:
         perm = [i for i in range(tensor_rank)]
 
+    nwc_nhwc_ndhwc_keep = False
     if isinstance(perm, list) or (isinstance(perm, np.ndarray) and len(perm.shape) > 0):
         if perm[0] == 0:
             try:
                 if graph_node.o().op == 'Softmax' \
                     and graph_node.o().inputs[0].shape == input_tensor_shape:
                     perm = [idx for idx in range(tensor_rank)]
+                    nwc_nhwc_ndhwc_keep = True
                 else:
                     perm = [
                         convert_axis(
@@ -153,6 +155,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': output_shape,
         'dtype': dtype,
+        'nwc_nhwc_ndhwc_keep': nwc_nhwc_ndhwc_keep,
     }
 
     perm = list(perm) if perm is not None else None
