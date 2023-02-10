@@ -22,7 +22,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.10.0
-- flatbuffers-compiler (Optional, Only when using the `-coion` option)
+- flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```
   Debian/Ubuntu: sudo apt-get install -y flatbuffers-compiler
   Other than Debian/Ubuntu: https://github.com/google/flatbuffers/releases
