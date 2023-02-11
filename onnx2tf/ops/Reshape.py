@@ -18,6 +18,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
 )
 from typing import Any, Dict, List
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -146,7 +147,8 @@ def make_node(
                 [dim for dim in transposed_tensor.shape]
             ],
             input_dtypes=[
-                transposed_tensor.dtype
+                NUMPY_DTYPES_TO_TF_DTYPES[transposed_tensor.dtype] \
+                    if isinstance(transposed_tensor.dtype, np.dtype) else transposed_tensor.dtype,
             ],
         )
 
@@ -177,12 +179,19 @@ def make_node(
         inputs=tf_partial_model_inputs,
         outputs=tf_partial_model_outputs,
     )
+    test_data = None
+    if not isinstance(graph_node_input_1, np.ndarray):
+        if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+            test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+        else:
+            test_data = None
+    else:
+        test_data = graph_node_input_1
     tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
         model=tf_partial_model,
         inputs=tf_partial_model_inputs,
         verification_datas=[
-            tf_layers_dict[graph_node_input_1.name]['verification_data'] \
-                if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None
+            test_data
         ]
     )
     tf_layers_dict[graph_node_output.name]['verification_data'] = \

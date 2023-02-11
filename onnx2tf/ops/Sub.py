@@ -21,6 +21,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
 )
 from typing import Any, Dict, List
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -148,8 +149,10 @@ def make_node(
                 [dim for dim in input_tensor_2.shape],
             ],
             input_dtypes=[
-                input_tensor_1.dtype,
-                input_tensor_2.dtype,
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_1.dtype] \
+                    if isinstance(input_tensor_1.dtype, np.dtype) else input_tensor_1.dtype,
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_2.dtype] \
+                    if isinstance(input_tensor_2.dtype, np.dtype) else input_tensor_2.dtype,
             ],
         )
 
@@ -173,14 +176,28 @@ def make_node(
         inputs=tf_partial_model_inputs,
         outputs=tf_partial_model_outputs,
     )
+    test_data1 = None
+    if not isinstance(graph_node_input_1, np.ndarray):
+        if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+            test_data1 = tf_layers_dict[graph_node_input_1.name]['verification_data']
+        else:
+            test_data1 = None
+    else:
+        test_data1 = graph_node_input_1
+    test_data2 = None
+    if not isinstance(graph_node_input_2, np.ndarray):
+        if 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+            test_data2 = tf_layers_dict[graph_node_input_2.name]['verification_data']
+        else:
+            test_data2 = None
+    else:
+        test_data2 = graph_node_input_2
     tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
         model=tf_partial_model,
         inputs=tf_partial_model_inputs,
         verification_datas=[
-            tf_layers_dict[graph_node_input_1.name]['verification_data'] \
-                if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None,
-            tf_layers_dict[graph_node_input_2.name]['verification_data'] \
-                if 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys() else None,
+            test_data1,
+            test_data2,
         ]
     )
     tf_layers_dict[graph_node_output.name]['verification_data'] = \

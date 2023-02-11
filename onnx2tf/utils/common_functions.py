@@ -3534,18 +3534,14 @@ def make_tf_partial_model_inputs(
     """
     inputs: List[tf.keras.Input] = []
     input = None
+    for idx, input_shape in enumerate(input_shapes):
+        if isinstance(input_shape, list) and len(input_shape) == 0:
+            input_shapes[idx] = [1]
     for input_shape, input_dtype in zip(input_shapes, input_dtypes):
-        if not isinstance(input_shape, list):
-            input_shape = [input_shape]
         if len(input_shape) == 1:
             input = tf.keras.Input(
-                shape=[1],
-                batch_size=input_shape[0] if isinstance(input_shape[0], int) else None,
+                shape=input_shape[0] if isinstance(input_shape[0], int) else None,
                 dtype=input_dtype,
-            )
-            input = tf.squeeze(
-                input=input,
-                axis=1,
             )
         elif len(input_shape) >= 1:
             input = tf.keras.Input(

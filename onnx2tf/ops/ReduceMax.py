@@ -17,8 +17,9 @@ from onnx2tf.utils.common_functions import (
     make_tf_partial_model_inputs,
     dummy_tf_inference,
 )
-from onnx2tf.utils.colors import Color
 from typing import Any, Dict, List
+from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -135,7 +136,8 @@ def make_node(
                 [dim for dim in input_tensor.shape]
             ],
             input_dtypes=[
-                input_tensor.dtype
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                    if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
             ],
         )
 
