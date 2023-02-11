@@ -169,6 +169,26 @@ def make_node(
     except tf.errors.InvalidArgumentError as ex:
         pass
 
+    # It seems that TensorFlow only behaves incorrectly when processing
+    # Reducemax() -> Subtract() -> Softmax() in that order.
+    # Work around a bug in TensorFlow's model optimizer.
+    # https://github.com/PINTO0309/onnx2tf/issues/182
+    try:
+        if graph_node.i().op == 'Sub':
+            sub_op: gs.Node = graph_node.i()
+            if sub_op.i(tensor_idx=0).op == 'ReduceMax' \
+                or sub_op.i(tensor_idx=1).op == 'ReduceMax':
+                input_tensor = \
+                    tf.math.subtract(
+                        x=tf.math.add(
+                            x=input_tensor,
+                            y=tf.constant(1e-7, dtype=tf.float32)
+                        ),
+                        y=tf.constant(1e-7, dtype=tf.float32)
+                    )
+    except Exception as ex:
+        pass
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.softmax(
