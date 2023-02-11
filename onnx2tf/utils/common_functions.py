@@ -323,6 +323,11 @@ def print_node_info(func):
                     f'{Color.RED}ERROR:{Color.RESET} ' +
                     f'{input_onnx_file_path}'
                 )
+            if graph_node is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'onnx_op_name: {graph_node.name}'
+                )
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
                 f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
