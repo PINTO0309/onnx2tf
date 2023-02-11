@@ -182,9 +182,9 @@ def make_node(
                     tf.math.subtract(
                         x=tf.math.add(
                             x=input_tensor,
-                            y=tf.constant(1e-7, dtype=tf.float32)
+                            y=tf.constant(1e-7, dtype=input_tensor.dtype)
                         ),
-                        y=tf.constant(1e-7, dtype=tf.float32)
+                        y=tf.constant(1e-7, dtype=input_tensor.dtype)
                     )
     except Exception as ex:
         pass
