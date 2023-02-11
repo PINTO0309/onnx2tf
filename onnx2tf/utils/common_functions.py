@@ -3369,11 +3369,10 @@ def get_tf_model_outputs(
     tf_model_outputs: List
         List of output OPs for TensorFlow model
     """
-    tf_model_outputs = [
-        layer_info['tf_node'] \
-            for opname, layer_info in tf_layers_dict.items() \
-                if opname in output_names
-    ]
+    tf_model_outputs = []
+    for name in output_names:
+       op = tf_layers_dict[name]
+       tf_model_outputs.append(op['tf_node'])
     return tf_model_outputs
 
 
