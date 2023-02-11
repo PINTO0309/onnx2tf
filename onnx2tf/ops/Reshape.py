@@ -197,6 +197,9 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['verification_data'] = \
         list(tf_partial_model_result_infos.values())[0]
     del tf_partial_model
+    del tf_partial_model_inputs
+    del tf_partial_model_outputs
+    del test_data
 
     # Special support for ShuffleNet patterns
     # 5D Reshape -> 5D Transpose -> 4D Reshape
