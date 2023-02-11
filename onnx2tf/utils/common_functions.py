@@ -3557,11 +3557,3 @@ def make_tf_partial_model_inputs(
             )
         inputs.append(input)
     return inputs
-
-
-def tf_single_op_inference(
-    *,
-    input_data: np.ndarray,
-    tf_op,
-):
-    pass
