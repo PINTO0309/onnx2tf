@@ -225,7 +225,8 @@ def make_node(
     tf_partial_model_outputs = \
         [
             tf.nn.softmax(
-                logits=tf_partial_model_tensors,
+                logits=tf_partial_model_tensors \
+                    if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
                 axis=min_abs_err_axis,
             )
         ]
