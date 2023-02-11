@@ -321,7 +321,7 @@ def print_node_info(func):
             if input_onnx_file_path is not None:
                 print(
                     f'{Color.RED}ERROR:{Color.RESET} ' +
-                    f'{input_onnx_file_path}'
+                    f'input_onnx_file_path: {input_onnx_file_path}'
                 )
             if graph_node is not None:
                 print(

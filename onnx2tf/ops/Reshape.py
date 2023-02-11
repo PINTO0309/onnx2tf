@@ -141,16 +141,18 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_shapes=[
-                [dim for dim in transposed_tensor.shape]
-            ],
-            input_dtypes=[
-                NUMPY_DTYPES_TO_TF_DTYPES[transposed_tensor.dtype] \
-                    if isinstance(transposed_tensor.dtype, np.dtype) else transposed_tensor.dtype,
-            ],
-        )
+    tf_partial_model_input_shape = [dim for dim in transposed_tensor.shape]
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_shapes=[
+                    tf_partial_model_input_shape
+                ],
+                input_dtypes=[
+                    NUMPY_DTYPES_TO_TF_DTYPES[transposed_tensor.dtype] \
+                        if isinstance(transposed_tensor.dtype, np.dtype) else transposed_tensor.dtype,
+                ],
+            )
 
     # Reshape
     has_undefined_outputshape = output_shape is None
@@ -167,39 +169,40 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    tf_partial_model_outputs = \
-        [
-            tf.reshape(
-                tensor=tf_partial_model_inputs[0],
-                shape=transposed_reshape_shape \
-                    if has_undefined_outputshape else output_shape,
-            )
-        ]
-    tf_partial_model = tf.keras.Model(
-        inputs=tf_partial_model_inputs,
-        outputs=tf_partial_model_outputs,
-    )
-    test_data = None
-    if not isinstance(graph_node_input_1, np.ndarray):
-        if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-            test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_outputs = \
+            [
+                tf.reshape(
+                    tensor=tf_partial_model_inputs[0],
+                    shape=transposed_reshape_shape \
+                        if has_undefined_outputshape else output_shape,
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(graph_node_input_1, np.ndarray):
+            if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+                test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+            else:
+                test_data = None
         else:
-            test_data = None
-    else:
-        test_data = graph_node_input_1
-    tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
-        model=tf_partial_model,
-        inputs=tf_partial_model_inputs,
-        verification_datas=[
-            test_data
-        ]
-    )
-    tf_layers_dict[graph_node_output.name]['verification_data'] = \
-        list(tf_partial_model_result_infos.values())[0]
-    del tf_partial_model
-    del tf_partial_model_inputs
-    del tf_partial_model_outputs
-    del test_data
+            test_data = graph_node_input_1
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                test_data
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # Special support for ShuffleNet patterns
     # 5D Reshape -> 5D Transpose -> 4D Reshape
@@ -231,8 +234,9 @@ def make_node(
                         perm=[0,2,3,1],
                     )
                 ### Partial model
-                tf_layers_dict[graph_node_output.name]['verification_data'] = \
-                    tf_layers_dict[graph_node_output.name]['verification_data'].transpose([0,2,3,1])
+                if None not in tf_partial_model_input_shape:
+                    tf_layers_dict[graph_node_output.name]['verification_data'] = \
+                        tf_layers_dict[graph_node_output.name]['verification_data'].transpose([0,2,3,1])
             else:
                 pass
     except:

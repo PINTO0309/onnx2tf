@@ -130,16 +130,18 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_shapes=[
-                [dim for dim in input_tensor.shape]
-            ],
-            input_dtypes=[
-                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
-                    if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
-            ],
-        )
+    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_shapes=[
+                    tf_partial_model_input_shape
+                ],
+                input_dtypes=[
+                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
+                ],
+            )
 
     # Generation of TF OP
     ### Overall model
@@ -152,29 +154,41 @@ def make_node(
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducemaxed_tensor
     ### Partial model
-    tf_partial_model_outputs = \
-        [
-            tf.math.reduce_max(
-                input_tensor=tf_partial_model_inputs[0],
-                axis=axes,
-                keepdims=keepdims,
-            )
-        ]
-    tf_partial_model = tf.keras.Model(
-        inputs=tf_partial_model_inputs,
-        outputs=tf_partial_model_outputs,
-    )
-    tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
-        model=tf_partial_model,
-        inputs=tf_partial_model_inputs,
-        verification_datas=[
-            tf_layers_dict[graph_node_input_1.name]['verification_data'] \
-                if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None
-        ]
-    )
-    tf_layers_dict[graph_node_output.name]['verification_data'] = \
-        list(tf_partial_model_result_infos.values())[0]
-    del tf_partial_model
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_outputs = \
+            [
+                tf.math.reduce_max(
+                    input_tensor=tf_partial_model_inputs[0],
+                    axis=axes,
+                    keepdims=keepdims,
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(graph_node_input_1, np.ndarray):
+            if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+                test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+            else:
+                test_data = None
+        else:
+            test_data = graph_node_input_1
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                tf_layers_dict[graph_node_input_1.name]['verification_data'] \
+                    if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
 
     # Post-process transpose
