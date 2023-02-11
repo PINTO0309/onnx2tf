@@ -662,6 +662,7 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
+        'input_onnx_file_path': input_onnx_file_path if input_onnx_file_path is not None else None,
         'onnx_graph': onnx_graph,
         'opset': graph.opset,
         'batch_size': batch_size,

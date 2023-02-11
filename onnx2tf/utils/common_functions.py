@@ -243,6 +243,7 @@ def make_tf_node_info(**kwargs):
 def print_node_info(func):
     @wraps(func)
     def print_wrapper_func(*args, **kwargs):
+        input_onnx_file_path: str = kwargs.get('input_onnx_file_path', None)
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
         tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
@@ -317,6 +318,11 @@ def print_node_info(func):
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
+            if input_onnx_file_path is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'{input_onnx_file_path}'
+                )
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
                 f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
