@@ -18,8 +18,9 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
+    make_tf_partial_model_inputs,
 )
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 @print_node_info
@@ -106,6 +107,19 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_shapes=[
+                [dim for dim in input_tensor.shape]
+            ],
+            input_dtypes=[
+                input_tensor.dtype
+            ],
+        )
+    tf_partial_model_tensors = None
+
     # Detect conversion errors in axis and identify the axis
     # with the smallest possible error and replace it.
     min_abs_err = sys.maxsize
@@ -178,6 +192,7 @@ def make_node(
             sub_op: gs.Node = graph_node.i()
             if sub_op.i(tensor_idx=0).op == 'ReduceMax' \
                 or sub_op.i(tensor_idx=1).op == 'ReduceMax':
+                # Overall model
                 input_tensor = \
                     tf.math.subtract(
                         x=tf.math.add(
@@ -186,16 +201,49 @@ def make_node(
                         ),
                         y=tf.constant(1e-7, dtype=input_tensor.dtype)
                     )
+                # Partial model
+                tf_partial_model_tensors = \
+                    tf.math.subtract(
+                        x=tf.math.add(
+                            x=tf_partial_model_inputs[0],
+                            y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                        ),
+                        y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                    )
     except Exception as ex:
         pass
 
     # Generation of TF OP
+    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.softmax(
             logits=input_tensor,
             axis=min_abs_err_axis,
             name=graph_node.name,
         )
+    ### Partial model
+    tf_partial_model_outputs = \
+        [
+            tf.nn.softmax(
+                logits=tf_partial_model_tensors,
+                axis=min_abs_err_axis,
+            )
+        ]
+    tf_partial_model = tf.keras.Model(
+        inputs=tf_partial_model_inputs,
+        outputs=tf_partial_model_outputs,
+    )
+    tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+        model=tf_partial_model,
+        inputs=tf_partial_model_inputs,
+        verification_datas=[
+            tf_layers_dict[graph_node_input.name]['verification_data'] \
+                if 'verification_data' in tf_layers_dict[graph_node_input.name].keys() else None
+        ]
+    )
+    tf_layers_dict[graph_node_output.name]['verification_data'] = \
+        list(tf_partial_model_result_infos.values())[0]
+    del tf_partial_model
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape

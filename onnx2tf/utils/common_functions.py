@@ -2878,6 +2878,7 @@ def dummy_tf_inference(
     model: tf.keras.Model,
     inputs: List[tf.keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
+    verification_datas: Optional[List[np.ndarray]] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -2917,18 +2918,28 @@ def dummy_tf_inference(
     input_sizes = new_input_sizes
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     dummy_datas = {}
-    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        if test_data_nhwc is None:
-            dummy_datas[input_name] = np.ones(
-                input_size,
-                dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-            )
-        else:
-            dummy_datas[input_name] = \
-                tf.image.resize(
-                    images=test_data_nhwc,
-                    size=[input_size[1],input_size[2]],
-                ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    if verification_datas is None:
+        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            if test_data_nhwc is None:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
+            else:
+                dummy_datas[input_name] = \
+                    tf.image.resize(
+                        images=test_data_nhwc,
+                        size=[input_size[1],input_size[2]],
+                    ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    else:
+        for input_name, input_size, input_dtype, verification_data in zip(input_names, input_sizes, input_dtypes, verification_datas):
+            if verification_data is not None:
+                dummy_datas[input_name] = verification_data
+            else:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
     outputs = model(
         inputs={
             input.name: dummy_datas[input.name] for input in inputs
@@ -3487,3 +3498,70 @@ def rewrite_tflite_inout_opname(
                 'debian/ubuntu: apt install -y flatbuffers-compiler ' +
                 'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
             )
+
+
+def make_tf_partial_model_inputs(
+    *,
+    input_shapes: List[List[Any]],
+    input_dtypes: List[Any],
+) -> List[tf.keras.Input]:
+    """Generate input OPs for TensorFlow subgraph generation.
+
+    Parameters
+    ----------
+    input_shapes: List[List[Any]]
+        List of input OP shapes.\n
+        e.g.\n
+        [
+            [1,224,224,3],
+            [1,2,3],
+            [1],
+        ]
+
+    input_dtypes: List[Any]
+        List of input OP types\n
+        e.g.\n
+        [
+            tf.float32,
+            tf.float16,
+            tf.int64,
+        ]
+
+    Returns
+    -------
+    inputs: List[tf.keras.Input]
+        List of tf.keras.Input
+    """
+    inputs: List[tf.keras.Input] = []
+    input = None
+    for input_shape, input_dtype in zip(input_shapes, input_dtypes):
+        if not isinstance(input_shape, list):
+            input_shape = [input_shape]
+        if len(input_shape) == 1:
+            input = tf.keras.Input(
+                shape=[1],
+                batch_size=input_shape[0] if isinstance(input_shape[0], int) else None,
+                dtype=input_dtype,
+            )
+            input = tf.squeeze(
+                input=input,
+                axis=1,
+            )
+        elif len(input_shape) >= 1:
+            input = tf.keras.Input(
+                shape=[
+                    inp if isinstance(inp, int) else None for inp in input_shape[1:]
+                ],
+                batch_size=input_shape[0] if isinstance(input_shape[0], int) else None,
+                dtype=input_dtype,
+            )
+        inputs.append(input)
+    return inputs
+
+
+def tf_single_op_inference(
+    *,
+    input_data: np.ndarray,
+    tf_op,
+):
+    pass

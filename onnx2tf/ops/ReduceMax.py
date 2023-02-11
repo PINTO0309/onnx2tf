@@ -14,8 +14,11 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
 from onnx2tf.utils.colors import Color
+from typing import Any, Dict, List
 
 
 @print_node_info
@@ -124,6 +127,20 @@ def make_node(
         **kwargs,
     )
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_shapes=[
+                [dim for dim in input_tensor.shape]
+            ],
+            input_dtypes=[
+                input_tensor.dtype
+            ],
+        )
+
+    # Generation of TF OP
+    ### Overall model
     reducemaxed_tensor = input_tensor
     reducemaxed_tensor = tf.math.reduce_max(
         input_tensor=reducemaxed_tensor,
@@ -132,6 +149,31 @@ def make_node(
         name=f'{graph_node.name}',
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = reducemaxed_tensor
+    ### Partial model
+    tf_partial_model_outputs = \
+        [
+            tf.math.reduce_max(
+                input_tensor=tf_partial_model_inputs[0],
+                axis=axes,
+                keepdims=keepdims,
+            )
+        ]
+    tf_partial_model = tf.keras.Model(
+        inputs=tf_partial_model_inputs,
+        outputs=tf_partial_model_outputs,
+    )
+    tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+        model=tf_partial_model,
+        inputs=tf_partial_model_inputs,
+        verification_datas=[
+            tf_layers_dict[graph_node_input_1.name]['verification_data'] \
+                if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None
+        ]
+    )
+    tf_layers_dict[graph_node_output.name]['verification_data'] = \
+        list(tf_partial_model_result_infos.values())[0]
+    del tf_partial_model
+
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
