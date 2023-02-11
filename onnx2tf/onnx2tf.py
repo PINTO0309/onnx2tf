@@ -773,6 +773,10 @@ def convert(
             output_names=output_names,
         )
 
+        # Bring back output names from ONNX model
+        for output, name in zip(outputs, output_names):
+            output.node.layer._name = name
+
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
             print('')
