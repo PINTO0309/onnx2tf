@@ -145,9 +145,8 @@ def make_node(
 
     # Generation of TF OP
     ### Overall model
-    reducemaxed_tensor = input_tensor
     reducemaxed_tensor = tf.math.reduce_max(
-        input_tensor=reducemaxed_tensor,
+        input_tensor=input_tensor,
         axis=axes,
         keepdims=keepdims,
         name=f'{graph_node.name}',
@@ -168,13 +167,13 @@ def make_node(
             outputs=tf_partial_model_outputs,
         )
         test_data = None
-        if not isinstance(graph_node_input_1, np.ndarray):
+        if not isinstance(input_tensor, np.ndarray):
             if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-                test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+                test_data: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
             else:
                 test_data = None
         else:
-            test_data = graph_node_input_1
+            test_data = input_tensor
         tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
             model=tf_partial_model,
             inputs=tf_partial_model_inputs,
