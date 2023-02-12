@@ -2948,7 +2948,10 @@ def dummy_tf_inference(
 
             if verification_data is not None:
                 if len(input_size) != len(verification_data.shape):
-                    dummy_datas[input_name] = verification_data.reshape(input_size)
+                    if len(verification_data.shape) == 0:
+                        dummy_datas[input_name] = verification_data
+                    else:
+                        dummy_datas[input_name] = verification_data.reshape(input_size)
                 else:
                     dummy_datas[input_name] = verification_data
             else:
