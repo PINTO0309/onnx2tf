@@ -177,7 +177,7 @@ def make_node(
             )
 
     # Generation of TF OP
-    # Overall model
+    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.subtract(
             x=input_tensor_1,

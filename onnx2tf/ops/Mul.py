@@ -18,7 +18,11 @@ from onnx2tf.utils.common_functions import (
     disable_unnecessary_transpose,
     shape_unmatched_special_avoidance_workaround,
     broadcast_for_gpu_delegate,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -71,6 +75,22 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    # Acquisition of test data for validation
+    if not isinstance(graph_node_input_1, np.ndarray) \
+        and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+        test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
+    elif isinstance(graph_node_input_1, np.ndarray):
+        test_data1: np.ndarray = graph_node_input_1
+    else:
+        test_data1 = None
+    if not isinstance(graph_node_input_2, np.ndarray) \
+        and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+        test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
+    elif isinstance(graph_node_input_2, np.ndarray):
+        test_data2: np.ndarray = graph_node_input_2
+    else:
+        test_data2 = None
 
     # Disable unnecessary Transpose
     #   1. If both x and y are gs.Variable
@@ -144,13 +164,69 @@ def make_node(
         **kwargs,
     )
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shape_1 = [dim for dim in input_tensor_1.shape]
+    tf_partial_model_input_shape_2 = [dim for dim in input_tensor_2.shape]
+    if None not in tf_partial_model_input_shape_1 \
+        and None not in tf_partial_model_input_shape_2:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_shapes=[
+                    tf_partial_model_input_shape_1,
+                    tf_partial_model_input_shape_2,
+                ],
+                input_dtypes=[
+                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_1.dtype] \
+                        if isinstance(input_tensor_1.dtype, np.dtype) else input_tensor_1.dtype,
+                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_2.dtype] \
+                        if isinstance(input_tensor_2.dtype, np.dtype) else input_tensor_2.dtype,
+                ],
+            )
+
     # Generation of TF OP
+    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.multiply(
             x=input_tensor_1,
             y=input_tensor_2,
             name=graph_node.name,
         )
+    ### Partial model
+    if None not in tf_partial_model_input_shape_1 \
+        and None not in tf_partial_model_input_shape_2:
+        tf_partial_model_outputs = \
+            [
+                tf.math.multiply(
+                    x=tf_partial_model_inputs[0],
+                    y=tf_partial_model_inputs[1],
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data1 = None
+        if isinstance(input_tensor_1, np.ndarray):
+            test_data1 = input_tensor_1
+        test_data2 = None
+        if isinstance(input_tensor_2, np.ndarray):
+            test_data2 = input_tensor_2
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                test_data1,
+                test_data2,
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data1
+        del test_data2
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
