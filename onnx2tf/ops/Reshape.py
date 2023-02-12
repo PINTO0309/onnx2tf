@@ -106,12 +106,12 @@ def make_node(
     test_data = None
     if not isinstance(input_tensor, np.ndarray):
         if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-            test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+            test_data: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
             test_data = test_data.transpose(list(perm) if perm is not None else None)
         else:
             test_data = None
     else:
-        test_data = graph_node_input_1.transpose(list(perm) if perm is not None else None)
+        test_data = input_tensor.transpose(list(perm) if perm is not None else None)
 
     if isinstance(reshape_shape, np.ndarray):
         perm_shape = [
