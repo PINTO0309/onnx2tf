@@ -70,11 +70,26 @@ def make_node(
         'dtype': dtype,
     }
 
-    # Generation of TF OP
     input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    # Acquisition of test data for validation
+    if not isinstance(graph_node_input_1, np.ndarray) \
+        and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+        test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
+    elif isinstance(graph_node_input_1, np.ndarray):
+        test_data1: np.ndarray = graph_node_input_1
+    else:
+        test_data1 = None
+    if not isinstance(graph_node_input_2, np.ndarray) \
+        and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+        test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
+    elif isinstance(graph_node_input_2, np.ndarray):
+        test_data2: np.ndarray = graph_node_input_2
+    else:
+        test_data2 = None
 
     # Disable unnecessary Transpose
     #   1. If both x and y are gs.Variable
@@ -170,20 +185,10 @@ def make_node(
             outputs=tf_partial_model_outputs,
         )
         test_data1 = None
-        if not isinstance(input_tensor_1, np.ndarray):
-            if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-                test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
-            else:
-                test_data1 = None
-        else:
+        if isinstance(input_tensor_1, np.ndarray):
             test_data1 = input_tensor_1
         test_data2 = None
-        if not isinstance(input_tensor_2, np.ndarray):
-            if 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
-                test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
-            else:
-                test_data2 = None
-        else:
+        if isinstance(input_tensor_2, np.ndarray):
             test_data2 = input_tensor_2
         tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
             model=tf_partial_model,
