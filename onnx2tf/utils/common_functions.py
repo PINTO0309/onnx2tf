@@ -2943,9 +2943,14 @@ def dummy_tf_inference(
                         size=[input_size[1],input_size[2]],
                     ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
     else:
-        for input_name, input_size, input_dtype, verification_data in zip(input_names, input_sizes, input_dtypes, verification_datas):
+        for input_name, input_size, input_dtype, verification_data \
+            in zip(input_names, input_sizes, input_dtypes, verification_datas):
+
             if verification_data is not None:
-                dummy_datas[input_name] = verification_data
+                if len(input_size) != len(verification_data.shape):
+                    dummy_datas[input_name] = verification_data.reshape(input_size)
+                else:
+                    dummy_datas[input_name] = verification_data
             else:
                 dummy_datas[input_name] = np.ones(
                     input_size,

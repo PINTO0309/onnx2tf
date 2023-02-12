@@ -171,9 +171,9 @@ def make_node(
         tf_model_inputs = get_tf_model_inputs(
             tf_layers_dict=tf_layers_dict,
         )
-        try:
-            for check_axis in check_axes:
-                # Search for the axis with the smallest error
+        # Search for the axis with the smallest error
+        for check_axis in check_axes:
+            try:
                 if None not in tf_partial_model_input_shape:
                     ### Partial model check
                     tf_partial_model_outputs = \
@@ -253,8 +253,8 @@ def make_node(
                     min_abs_err_axis = check_axis
                     if min_abs_err < 1e-3:
                         break
-        except tf.errors.InvalidArgumentError as ex:
-            pass
+            except tf.errors.InvalidArgumentError as ex:
+                pass
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \

@@ -97,10 +97,22 @@ def make_node(
             before_op_output_shape_trans=before_op_output_shape_trans,
         ) for idx in range(tensor_rank)
     ]
+
+    # NHWC -> HCHW
     transposed_tensor = tf.transpose(
         a=input_tensor,
         perm=list(perm) if perm is not None else None,
     )
+    test_data = None
+    if not isinstance(input_tensor, np.ndarray):
+        if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+            test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+            test_data = test_data.transpose(list(perm) if perm is not None else None)
+        else:
+            test_data = None
+    else:
+        test_data = graph_node_input_1.transpose(list(perm) if perm is not None else None)
+
     if isinstance(reshape_shape, np.ndarray):
         perm_shape = [
             convert_axis(
@@ -182,14 +194,6 @@ def make_node(
             inputs=tf_partial_model_inputs,
             outputs=tf_partial_model_outputs,
         )
-        test_data = None
-        if not isinstance(graph_node_input_1, np.ndarray):
-            if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-                test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
-            else:
-                test_data = None
-        else:
-            test_data = graph_node_input_1
         tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
             model=tf_partial_model,
             inputs=tf_partial_model_inputs,
