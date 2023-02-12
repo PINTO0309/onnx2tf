@@ -234,7 +234,7 @@ def make_node(
         tf_partial_model_result: np.ndarray = list(tf_partial_model_result_infos.values())[0]
         if xy_is_integer and dtype in target_cast_dtype:
             cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[dtype] \
-                if isinstance(dtype, tf.dtypes) else dtype
+                if isinstance(dtype, tf.dtypes.DType) else dtype
             tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
         tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
         del tf_partial_model
