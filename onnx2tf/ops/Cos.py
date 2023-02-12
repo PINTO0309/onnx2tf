@@ -106,7 +106,7 @@ def make_node(
         tf_partial_model_outputs = \
             [
                 tf.math.cos(
-                    x=input_tensor,
+                    x=tf_partial_model_inputs[0],
                 )
             ]
         tf_partial_model = tf.keras.Model(
