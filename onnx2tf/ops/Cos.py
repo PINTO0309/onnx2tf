@@ -119,7 +119,7 @@ def make_node(
                 and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
                 test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
             elif isinstance(graph_node_input, np.ndarray):
-                test_data: np.ndarray = input_tensor
+                test_data: np.ndarray = graph_node_input
             else:
                 test_data = None
         else:

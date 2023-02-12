@@ -189,16 +189,11 @@ def make_node(
                         outputs=tf_partial_model_outputs,
                     )
                     test_data = None
-                    if not isinstance(graph_node_input, np.ndarray):
-                        if not isinstance(graph_node_input, np.ndarray) \
-                            and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                    if not isinstance(graph_node_input, np.ndarray) \
+                        and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
                             test_data = tf_layers_dict[graph_node_input.name]['verification_data']
-                        elif isinstance(graph_node_input, np.ndarray):
-                            test_data: np.ndarray = graph_node_input
-                        else:
-                            test_data = None
                     else:
-                        test_data = graph_node_input
+                        test_data: np.ndarray = graph_node_input
                     # TF dummy inference
                     tf_tensor_infos: Dict[Any] = dummy_tf_inference(
                         model=tf_partial_model,
