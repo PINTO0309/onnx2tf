@@ -3371,8 +3371,9 @@ def get_tf_model_outputs(
     """
     tf_model_outputs = []
     for name in output_names:
-        op = tf_layers_dict[name]
-        tf_model_outputs.append(op['tf_node'])
+        if name in tf_layers_dict:
+            op = tf_layers_dict[name]
+            tf_model_outputs.append(op['tf_node'])
     return tf_model_outputs
 
 
