@@ -776,7 +776,9 @@ def convert(
 
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
-            output.node.layer._name = name
+            output.node.layer._name = name.replace(':','_')
+            if output_signaturedefs:
+                output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
