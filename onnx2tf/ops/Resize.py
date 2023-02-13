@@ -347,6 +347,22 @@ def make_node(
         **kwargs,
     )
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_shapes=[
+                    tf_partial_model_input_shape
+                ],
+                input_dtypes=[
+                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
+                ],
+            )
+    tf_partial_model_outputs = None
+
     resized_tensor = None
     boxes = None
     box_indices = None
@@ -386,35 +402,6 @@ def make_node(
                         extrapolation_value=extrapolation_value,
                     )
                 ]
-            tf_partial_model = tf.keras.Model(
-                inputs=tf_partial_model_inputs,
-                outputs=tf_partial_model_outputs,
-            )
-            test_data = None
-            if not isinstance(input_tensor, np.ndarray):
-                if not isinstance(graph_node_input, np.ndarray) \
-                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-                elif isinstance(graph_node_input, np.ndarray):
-                    test_data: np.ndarray = graph_node_input
-                else:
-                    test_data = None
-            else:
-                test_data = input_tensor
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=tf_partial_model,
-                inputs=tf_partial_model_inputs,
-                verification_datas=[
-                    test_data
-                ]
-            )
-            tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-            cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-                if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-            tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-            tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-            del tf_partial_model
 
     elif coordinate_transformation_mode == "align_corners":
         align_corners = True
@@ -446,35 +433,6 @@ def make_node(
                         if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
                     )
                 ]
-            tf_partial_model = tf.keras.Model(
-                inputs=tf_partial_model_inputs,
-                outputs=tf_partial_model_outputs,
-            )
-            test_data = None
-            if not isinstance(input_tensor, np.ndarray):
-                if not isinstance(graph_node_input, np.ndarray) \
-                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-                elif isinstance(graph_node_input, np.ndarray):
-                    test_data: np.ndarray = graph_node_input
-                else:
-                    test_data = None
-            else:
-                test_data = input_tensor
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=tf_partial_model,
-                inputs=tf_partial_model_inputs,
-                verification_datas=[
-                    test_data
-                ]
-            )
-            tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-            cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-                if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-            tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-            tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-            del tf_partial_model
 
     elif coordinate_transformation_mode == "asymmetric":
         align_corners = False
@@ -506,35 +464,6 @@ def make_node(
                         if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
                     )
                 ]
-            tf_partial_model = tf.keras.Model(
-                inputs=tf_partial_model_inputs,
-                outputs=tf_partial_model_outputs,
-            )
-            test_data = None
-            if not isinstance(input_tensor, np.ndarray):
-                if not isinstance(graph_node_input, np.ndarray) \
-                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-                elif isinstance(graph_node_input, np.ndarray):
-                    test_data: np.ndarray = graph_node_input
-                else:
-                    test_data = None
-            else:
-                test_data = input_tensor
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=tf_partial_model,
-                inputs=tf_partial_model_inputs,
-                verification_datas=[
-                    test_data
-                ]
-            )
-            tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-            cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-                if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-            tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-            tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-            del tf_partial_model
 
     elif coordinate_transformation_mode == "half_pixel":
         align_corners = False
@@ -566,35 +495,6 @@ def make_node(
                         if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
                     )
                 ]
-            tf_partial_model = tf.keras.Model(
-                inputs=tf_partial_model_inputs,
-                outputs=tf_partial_model_outputs,
-            )
-            test_data = None
-            if not isinstance(input_tensor, np.ndarray):
-                if not isinstance(graph_node_input, np.ndarray) \
-                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-                elif isinstance(graph_node_input, np.ndarray):
-                    test_data: np.ndarray = graph_node_input
-                else:
-                    test_data = None
-            else:
-                test_data = input_tensor
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=tf_partial_model,
-                inputs=tf_partial_model_inputs,
-                verification_datas=[
-                    test_data
-                ]
-            )
-            tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-            cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-                if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-            tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-            tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-            del tf_partial_model
 
     else:
         ### Overall model
@@ -614,38 +514,43 @@ def make_node(
                             if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
                         size=new_size,
                         method=mode,
-                        name=graph_node.name,
                     )
                 ]
-            tf_partial_model = tf.keras.Model(
-                inputs=tf_partial_model_inputs,
-                outputs=tf_partial_model_outputs,
-            )
-            test_data = None
-            if not isinstance(input_tensor, np.ndarray):
-                if not isinstance(graph_node_input, np.ndarray) \
-                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-                elif isinstance(graph_node_input, np.ndarray):
-                    test_data: np.ndarray = graph_node_input
-                else:
-                    test_data = None
+
+    ### Partial model
+    if tf_partial_model_outputs is not None:
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(graph_node_input, np.ndarray) \
+                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
+            elif isinstance(graph_node_input, np.ndarray):
+                test_data: np.ndarray = graph_node_input
             else:
-                test_data = input_tensor
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=tf_partial_model,
-                inputs=tf_partial_model_inputs,
-                verification_datas=[
-                    test_data
-                ]
-            )
-            tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-            cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-                if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-            tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-            tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-            del tf_partial_model
+                test_data = None
+        else:
+            test_data = input_tensor
+        # TF dummy inference
+        tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                test_data
+            ]
+        )
+        tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
+        cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
+            if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
+        tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
+        tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # TensorFlow's Resize operation casts to Float32 on its own,
     # so we have to change it back to the original type.

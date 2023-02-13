@@ -13,7 +13,11 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     transpose_with_flexing_deterrence,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -174,6 +178,23 @@ def make_node(
         **kwargs,
     )
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_shapes=[
+                    tf_partial_model_input_shape
+                ],
+                input_dtypes=[
+                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
+                ],
+            )
+
+    # Generation of TF OP
+    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
@@ -182,6 +203,46 @@ def make_node(
             name=graph_node.name,
             **kwargs,
         )
+    ### Partial model
+    if None not in tf_partial_model_input_shape:
+        tf_partial_model_outputs = \
+            [
+                transpose_with_flexing_deterrence(
+                    input_tensor=tf_partial_model_inputs[0],
+                    perm=perm,
+                    output_shape=output_shape,
+                    **kwargs,
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(graph_node_input, np.ndarray) \
+                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
+            elif isinstance(graph_node_input, np.ndarray):
+                test_data: np.ndarray = graph_node_input
+            else:
+                test_data = None
+        else:
+            test_data = input_tensor
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                tf_layers_dict[graph_node_input.name]['verification_data'] \
+                    if 'verification_data' in tf_layers_dict[graph_node_input.name].keys() else None
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
