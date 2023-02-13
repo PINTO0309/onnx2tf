@@ -82,18 +82,11 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
-    if None not in tf_partial_model_input_shape:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_shapes=[
-                    tf_partial_model_input_shape
-                ],
-                input_dtypes=[
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
-                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
-                ],
-            )
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[input_tensor]
+        )
+    tf_partial_model_outputs = None
 
     # Generation of TF OP
     ### Overall model
@@ -103,7 +96,7 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    if None not in tf_partial_model_input_shape:
+    if tf_partial_model_inputs is not None:
         tf_partial_model_outputs = \
             [
                 tf.nn.sigmoid(

@@ -3521,42 +3521,46 @@ def rewrite_tflite_inout_opname(
 
 def make_tf_partial_model_inputs(
     *,
-    input_shapes: List[List[Any]],
-    input_dtypes: List[Any],
+    input_tensors: List[Any],
 ) -> List[tf.keras.Input]:
     """Generate input OPs for TensorFlow subgraph generation.
 
     Parameters
     ----------
-    input_shapes: List[List[Any]]
-        List of input OP shapes.\n
-        e.g.\n
-        [
-            [1,224,224,3],
-            [1,2,3],
-            [1],
-        ]
-
-    input_dtypes: List[Any]
-        List of input OP types\n
-        e.g.\n
-        [
-            tf.float32,
-            tf.float16,
-            tf.int64,
-        ]
+    input_tensors: List[Any]
+        List of input tensor
 
     Returns
     -------
     inputs: List[tf.keras.Input]
         List of tf.keras.Input
     """
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shapes = []
+    tf_partial_model_input_dtypes = []
+    for input_tensor in input_tensors:
+        if input_tensor.shape is None \
+            or input_tensor.shape == tf.TensorShape(None):
+            return None
+        else:
+            tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+            if None in tf_partial_model_input_shape:
+                return None
+            tf_partial_model_input_shapes.append(
+                tf_partial_model_input_shape
+            )
+            tf_partial_model_input_dtypes.append(
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                    if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
+            )
+
     inputs: List[tf.keras.Input] = []
     input = None
-    for idx, input_shape in enumerate(input_shapes):
+    for idx, input_shape in enumerate(tf_partial_model_input_shapes):
         if isinstance(input_shape, list) and len(input_shape) == 0:
-            input_shapes[idx] = [1]
-    for input_shape, input_dtype in zip(input_shapes, input_dtypes):
+            tf_partial_model_input_shapes[idx] = [1]
+    for input_shape, input_dtype in zip(tf_partial_model_input_shapes, tf_partial_model_input_dtypes):
         if len(input_shape) == 1:
             input = tf.keras.Input(
                 shape=input_shape[0] if isinstance(input_shape[0], int) else None,

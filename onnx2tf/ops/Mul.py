@@ -166,23 +166,14 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_input_shape_1 = [dim for dim in input_tensor_1.shape]
-    tf_partial_model_input_shape_2 = [dim for dim in input_tensor_2.shape]
-    if None not in tf_partial_model_input_shape_1 \
-        and None not in tf_partial_model_input_shape_2:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_shapes=[
-                    tf_partial_model_input_shape_1,
-                    tf_partial_model_input_shape_2,
-                ],
-                input_dtypes=[
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_1.dtype] \
-                        if isinstance(input_tensor_1.dtype, np.dtype) else input_tensor_1.dtype,
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor_2.dtype] \
-                        if isinstance(input_tensor_2.dtype, np.dtype) else input_tensor_2.dtype,
-                ],
-            )
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[
+                input_tensor_1,
+                input_tensor_2,
+            ]
+        )
+    tf_partial_model_outputs = None
 
     # Generation of TF OP
     ### Overall model
@@ -193,8 +184,7 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    if None not in tf_partial_model_input_shape_1 \
-        and None not in tf_partial_model_input_shape_2:
+    if tf_partial_model_inputs is not None:
         tf_partial_model_outputs = \
             [
                 tf.math.multiply(

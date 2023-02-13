@@ -111,19 +111,12 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
-    if None not in tf_partial_model_input_shape:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_shapes=[
-                    tf_partial_model_input_shape
-                ],
-                input_dtypes=[
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
-                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
-                ],
-            )
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[input_tensor]
+        )
     tf_partial_model_tensors = None
+    tf_partial_model_outputs = None
 
     # It seems that TensorFlow only behaves incorrectly when processing
     # Reducemax() -> Subtract() -> Softmax() in that order.
@@ -144,7 +137,7 @@ def make_node(
                         y=tf.constant(1e-7, dtype=input_tensor.dtype)
                     )
                 # Partial model
-                if None not in tf_partial_model_input_shape:
+                if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         tf.math.subtract(
                             x=tf.math.add(
@@ -174,7 +167,7 @@ def make_node(
         # Search for the axis with the smallest error
         for check_axis in check_axes:
             try:
-                if None not in tf_partial_model_input_shape:
+                if tf_partial_model_inputs is not None:
                     ### Partial model check
                     tf_partial_model_outputs = \
                         [

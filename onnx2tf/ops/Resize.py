@@ -71,19 +71,12 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
-    if None not in tf_partial_model_input_shape:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_shapes=[
-                    tf_partial_model_input_shape
-                ],
-                input_dtypes=[
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
-                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
-                ],
-            )
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[input_tensor]
+        )
     tf_partial_model_tensors = None
+    tf_partial_model_outputs = None
 
     # Workaround to avoid as many Resize failures as possible
     # for models with useless Transpose immediately before them.
@@ -112,7 +105,7 @@ def make_node(
                 )
                 before_op_output_shape_trans = True
                 # 2D - Partial model
-                if None not in tf_partial_model_input_shape:
+                if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         tf.transpose(
                             a=tf_partial_model_inputs[0],
@@ -126,7 +119,7 @@ def make_node(
                 )
                 before_op_output_shape_trans = True
                 # 3D - Partial model
-                if None not in tf_partial_model_input_shape:
+                if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         tf.transpose(
                             a=tf_partial_model_inputs[0],
@@ -347,22 +340,6 @@ def make_node(
         **kwargs,
     )
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
-    if None not in tf_partial_model_input_shape:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_shapes=[
-                    tf_partial_model_input_shape
-                ],
-                input_dtypes=[
-                    NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
-                        if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype,
-                ],
-            )
-    tf_partial_model_outputs = None
-
     resized_tensor = None
     boxes = None
     box_indices = None
@@ -389,7 +366,7 @@ def make_node(
         )
         tf_op_type = tf.image.crop_and_resize
         ### Partial model
-        if None not in tf_partial_model_input_shape:
+        if tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     tf.image.crop_and_resize(
@@ -418,7 +395,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if None not in tf_partial_model_input_shape:
+        if tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -449,7 +426,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if None not in tf_partial_model_input_shape:
+        if tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -480,7 +457,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if None not in tf_partial_model_input_shape:
+        if tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -506,7 +483,7 @@ def make_node(
         )
         tf_op_type = tf.image.resize
         ### Partial model
-        if None not in tf_partial_model_input_shape:
+        if tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     tf.image.resize(
@@ -518,7 +495,7 @@ def make_node(
                 ]
 
     ### Partial model
-    if tf_partial_model_outputs is not None:
+    if tf_partial_model_inputs is not None:
         tf_partial_model = tf.keras.Model(
             inputs=tf_partial_model_inputs,
             outputs=tf_partial_model_outputs,
