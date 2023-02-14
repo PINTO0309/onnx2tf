@@ -126,7 +126,7 @@ def make_node(
             sub_op: gs.Node = graph_node.i()
             if sub_op.i(tensor_idx=0).op == 'ReduceMax' \
                 or sub_op.i(tensor_idx=1).op == 'ReduceMax':
-                # Overall model
+                ### Overall model
                 input_tensor = \
                     tf.math.subtract(
                         x=tf.math.add(
@@ -135,7 +135,7 @@ def make_node(
                         ),
                         y=tf.constant(1e-7, dtype=input_tensor.dtype)
                     )
-                # Partial model
+                ### Partial model
                 if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         tf.math.subtract(

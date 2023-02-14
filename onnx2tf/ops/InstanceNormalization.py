@@ -12,7 +12,10 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 INF_INDEX_VALUE: int = 4294967296
@@ -103,6 +106,8 @@ def make_node(
     }
 
     # transpose
+    tf_transposed_perm = None
+    test_data_transposed_perm = None
     try:
         if graph_node.i().op == 'Reshape':
             onnx_input_shape = [
@@ -124,17 +129,34 @@ def make_node(
                             a=input_tensor,
                             perm=[0,2,1],
                         )
+                        tf_transposed_perm = [0,2,1]
                     elif len(onnx_input_shape) == 4:
                         # 2D
                         input_tensor = tf.transpose(
                             a=input_tensor,
                             perm=[0,2,3,1],
                         )
+                        tf_transposed_perm = [0,2,3,1]
+                else:
+                    if len(onnx_input_shape) == 3:
+                        test_data_transposed_perm = [0,2,1]
+                    elif len(onnx_input_shape) == 4:
+                        test_data_transposed_perm = [0,2,3,1]
     except:
         pass
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[input_tensor]
+        )
+    tf_partial_model_outputs = None
+
+
     # Generation of TF OP
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
+    ### Overall model
     mean = tf.reduce_mean(
         input_tensor=input_tensor,
         axis=axes,
@@ -147,6 +169,58 @@ def make_node(
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         (input_tensor - mean) / tf.math.sqrt(variance + epsilon) * scale + B
+    ### Partial model
+    if tf_partial_model_inputs is not None:
+        mean = tf.reduce_mean(
+            input_tensor=tf_partial_model_inputs[0],
+            axis=axes,
+            keepdims=True,
+        )
+        variance = tf.math.reduce_variance(
+            input_tensor=tf_partial_model_inputs[0],
+            axis=axes,
+            keepdims=True,
+        )
+        pre_instance_norm = (tf_partial_model_inputs[0] - mean) / tf.math.sqrt(variance + epsilon)
+        tf_partial_model_outputs = \
+            [
+                pre_instance_norm * scale + B
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(graph_node_input, np.ndarray) \
+                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
+            elif isinstance(graph_node_input, np.ndarray):
+                test_data: np.ndarray = graph_node_input
+            else:
+                test_data = None
+        else:
+            test_data = input_tensor
+        if tf_transposed_perm is not None \
+            and isinstance(test_data, np.ndarray):
+            test_data = test_data.transpose(tf_transposed_perm)
+        elif test_data_transposed_perm is not None \
+            and isinstance(test_data, np.ndarray) \
+            and tf_input_shape != list(test_data.shape):
+            test_data = test_data.transpose(test_data_transposed_perm)
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                test_data
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

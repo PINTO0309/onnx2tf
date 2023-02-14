@@ -14,7 +14,10 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
 
 
 @print_node_info
@@ -136,12 +139,61 @@ def make_node(
         value if len(value.shape) > 0 else tf.reshape(value, [1]) for value in values
     ]
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=values
+        )
+    tf_partial_model_outputs = None
+
+    # Generation of TF OP
+    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.concat(
             values=values,
             axis=axis,
             name=graph_node.name,
         )
+    ### Partial model
+    if tf_partial_model_inputs is not None:
+        tf_partial_model_outputs = \
+            [
+                tf.concat(
+                    values=tf_partial_model_inputs,
+                    axis=axis,
+                    name=graph_node.name,
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_datas = []
+        for graph_node_input, value in zip(graph_node.inputs, values):
+            test_data = None
+            if not isinstance(value, np.ndarray):
+                if not isinstance(graph_node_input, np.ndarray) \
+                    and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                    test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
+                elif isinstance(graph_node_input, np.ndarray):
+                    test_data: np.ndarray = graph_node_input
+                else:
+                    test_data = None
+            else:
+                test_data = value
+            test_datas.append(test_data)
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=test_datas
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
