@@ -157,18 +157,6 @@ def make_node(
         )
     ### Partial model
     if tf_partial_model_inputs is not None:
-        tf_partial_model_outputs = \
-            [
-                tf.concat(
-                    values=tf_partial_model_inputs,
-                    axis=axis,
-                    name=graph_node.name,
-                )
-            ]
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
         test_datas = []
         for graph_node_input, value in zip(graph_node.inputs, values):
             test_data = None
@@ -183,6 +171,34 @@ def make_node(
             else:
                 test_data = value
             test_datas.append(test_data)
+        new_test_datas = []
+        is_expanded = False
+        for tf_partial_model_input, test_data in zip(tf_partial_model_inputs, test_datas):
+            if isinstance(test_data, np.ndarray) \
+                and len(test_data.shape) == 1 \
+                and len(tf_partial_model_input.shape) == 2:
+                test_data = np.expand_dims(test_data, 0)
+                is_expanded = True
+            new_test_datas.append(test_data)
+        test_datas = new_test_datas
+        tf_partial_model_outputs = \
+            [
+                tf.concat(
+                    values=tf_partial_model_inputs,
+                    axis=axis,
+                ) if not is_expanded else \
+                tf.squeeze(
+                    input=tf.concat(
+                        values=tf_partial_model_inputs,
+                        axis=axis if not is_expanded else axis+1,
+                    ),
+                    axis=0,
+                )
+            ]
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
         tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
             model=tf_partial_model,
             inputs=tf_partial_model_inputs,

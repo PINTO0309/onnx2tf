@@ -3564,6 +3564,7 @@ def make_tf_partial_model_inputs(
         if len(input_shape) == 1:
             input = tf.keras.Input(
                 shape=input_shape[0] if isinstance(input_shape[0], int) else None,
+                batch_size=1,
                 dtype=input_dtype,
             )
         elif len(input_shape) >= 2:
