@@ -219,7 +219,8 @@ def make_node(
                 input_tensor,
             ]
         )
-    tf_partial_model_tensors = tf_partial_model_inputs[0]
+    tf_partial_model_tensors = tf_partial_model_inputs[0] \
+        if tf_partial_model_inputs is not None else None
     tf_partial_model_outputs = None
 
     def tf_partial_model_inference(
