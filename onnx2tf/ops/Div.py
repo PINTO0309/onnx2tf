@@ -21,10 +21,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
 )
 from typing import Any, Dict, List
-from onnx2tf.utils.enums import (
-    NUMPY_DTYPES_TO_TF_DTYPES,
-    TF_DTYPES_TO_NUMPY_DTYPES,
-)
+from onnx2tf.utils.enums import TF_DTYPES_TO_NUMPY_DTYPES
 
 
 @print_node_info

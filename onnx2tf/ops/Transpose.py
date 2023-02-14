@@ -17,7 +17,6 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
 )
 from typing import Any, Dict, List
-from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
