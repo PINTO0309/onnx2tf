@@ -250,7 +250,8 @@ def make_node(
             and isinstance(test_data, np.ndarray) \
             and tf_input_shape != list(test_data.shape):
             test_data = test_data.transpose(test_data_transposed_perm)
-        if padded:
+        if padded \
+            and isinstance(test_data, np.ndarray):
             test_data = get_padding_as_op(
                 x=test_data,
                 pads=pads,
