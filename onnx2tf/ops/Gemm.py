@@ -219,7 +219,9 @@ def make_node(
     tf_partial_z = tf_partial_model_inputs[2] \
         if tf_partial_model_inputs is not None else None
     if tf_partial_model_inputs is not None:
-        if isinstance(test_data3, np.ndarray) and len(test_data3.shape) == 1 and len(tf_partial_z.shape) == 2:
+        if isinstance(test_data3, np.ndarray) \
+            and len(test_data3.shape) == 1 \
+            and len(tf_partial_z.shape) == 2:
             test_data3 = np.expand_dims(test_data3, 0)
     tf_partial_model_outputs = None
 
