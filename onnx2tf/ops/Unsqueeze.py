@@ -238,8 +238,7 @@ def make_node(
             model=tf_partial_model,
             inputs=tf_partial_model_inputs,
             verification_datas=[
-                tf_layers_dict[graph_node_input_1.name]['verification_data'] \
-                    if 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys() else None
+                test_data
             ]
         )
         tf_layers_dict[graph_node_output.name]['verification_data'] = \

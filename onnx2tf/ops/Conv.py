@@ -16,7 +16,10 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
 from onnx2tf.utils.colors import Color
 
 INF_INDEX_VALUE: int = 4294967296
@@ -45,7 +48,7 @@ def make_node(
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1
 
-    input_tensor = get_constant_or_variable(
+    graph_node_input = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
@@ -66,8 +69,8 @@ def make_node(
     output_tensor_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
-        if isinstance(input_tensor, gs.Variable) else input_tensor
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_weights = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_weights, gs.Variable) else input_weights
     input_bias = tf_layers_dict[input_bias.name]['tf_node'] \
@@ -106,6 +109,7 @@ def make_node(
     """
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
+    padded = False
     if auto_pad == 'NOTSET':
         if input_tensor_rank >=2 \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
@@ -116,6 +120,7 @@ def make_node(
                 pads=pads,
             )
             pad_mode = 'VALID'
+            padded = True
         else:
             pad_mode = 'VALID'
     # Then we use auto_pad to setup pad_mode
@@ -168,6 +173,8 @@ def make_node(
     tf_input_shape = [
         dim if isinstance(dim, int) else None for dim in input_tensor_shape
     ]
+    tf_transposed_perm = None
+    test_data_transposed_perm = None
     if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
 
@@ -176,23 +183,91 @@ def make_node(
         ]
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 3:
-                # 1D
+                # 1D - Overall model
                 input_tensor = tf.transpose(
                     a=input_tensor,
                     perm=[0,2,1],
                 )
+                tf_transposed_perm = [0,2,1]
             elif len(onnx_input_shape) == 4:
-                # 2D
+                # 2D - Overall model
                 input_tensor = tf.transpose(
                     a=input_tensor,
                     perm=[0,2,3,1],
                 )
+                tf_transposed_perm = [0,2,3,1]
             elif len(onnx_input_shape) == 5:
-                # 3D
+                # 3D - Overall model
                 input_tensor = tf.transpose(
                     a=input_tensor,
                     perm=[0,2,3,4,1],
                 )
+                tf_transposed_perm = [0,2,3,4,1]
+    else:
+        if len(onnx_input_shape) == 3:
+            test_data_transposed_perm = [0,2,1]
+        elif len(onnx_input_shape) == 4:
+            test_data_transposed_perm = [0,2,3,1]
+        elif len(onnx_input_shape) == 5:
+            test_data_transposed_perm = [0,2,3,4,1]
+
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[
+                input_tensor,
+            ]
+        )
+    tf_partial_model_tensors = tf_partial_model_inputs[0]
+    tf_partial_model_outputs = None
+
+    def tf_partial_model_inference(
+        *,
+        tf_partial_model_inputs,
+        tf_partial_model_outputs,
+        tf_layers_dict,
+    ):
+        tf_partial_model = tf.keras.Model(
+            inputs=tf_partial_model_inputs,
+            outputs=tf_partial_model_outputs,
+        )
+        test_data = None
+        if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(graph_node_input, np.ndarray) \
+                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
+            elif isinstance(graph_node_input, np.ndarray):
+                test_data: np.ndarray = graph_node_input
+            else:
+                test_data = None
+        else:
+            test_data = input_tensor
+        if tf_transposed_perm is not None \
+            and isinstance(test_data, np.ndarray):
+            test_data = test_data.transpose(tf_transposed_perm)
+        elif test_data_transposed_perm is not None \
+            and isinstance(test_data, np.ndarray) \
+            and tf_input_shape != list(test_data.shape):
+            test_data = test_data.transpose(test_data_transposed_perm)
+        if padded:
+            test_data = get_padding_as_op(
+                x=test_data,
+                pads=pads,
+            )
+        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+            model=tf_partial_model,
+            inputs=tf_partial_model_inputs,
+            verification_datas=[
+                test_data
+            ]
+        )
+        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+            list(tf_partial_model_result_infos.values())[0]
+        del tf_partial_model
+        del tf_partial_model_inputs
+        del tf_partial_model_outputs
+        del test_data
 
     # Conv
     tf_op_type = None
@@ -200,6 +275,7 @@ def make_node(
         if not depthwise:
             if group == 1:
                 # Conv1D, Conv2D, Conv3D - Bias Add
+                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.add(
                         tf.nn.convolution(
@@ -212,6 +288,27 @@ def make_node(
                         input_bias,
                     )
                 tf_op_type = tf.nn.convolution
+                ### Partial model
+                if tf_partial_model_inputs is not None:
+                    tf_partial_model_outputs = \
+                        [
+                            tf.add(
+                                tf.nn.convolution(
+                                    input=tf_partial_model_tensors,
+                                    filters=input_weights,
+                                    strides=strides,
+                                    padding=pad_mode,
+                                    dilations=dilations,
+                                ),
+                                input_bias,
+                            )
+                        ]
+                    tf_partial_model_inference(
+                        tf_partial_model_inputs=tf_partial_model_inputs,
+                        tf_partial_model_outputs=tf_partial_model_outputs,
+                        tf_layers_dict=tf_layers_dict,
+                    )
+
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
                     print(
@@ -222,6 +319,7 @@ def make_node(
                     )
                 # GroupedConvolution - Conv1D, Conv2D, Conv3D - Bias Add
                 if kernel_size == 1 and not disable_group_convolution:
+                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.add(
                             x=Conv1D(
@@ -238,7 +336,33 @@ def make_node(
                             y=input_bias,
                         )
                     tf_op_type = 'GroupedConvolution1D'
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        tf_partial_model_outputs = \
+                            [
+                                tf.add(
+                                    x=Conv1D(
+                                        filters=input_weights.shape[-1],
+                                        kernel_size=input_weights.shape[:1],
+                                        strides=strides,
+                                        padding=pad_mode.lower(),
+                                        dilation_rate=dilations,
+                                        groups=group,
+                                        use_bias=False,
+                                        kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                        name=graph_node.name,
+                                    )(tf_partial_model_tensors),
+                                    y=input_bias,
+                                )
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
+
                 elif kernel_size == 2 and not disable_group_convolution:
+                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.add(
                             x=Conv2D(
@@ -255,9 +379,35 @@ def make_node(
                             y=input_bias,
                         )
                     tf_op_type = 'GroupedConvolution2D'
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        tf_partial_model_outputs = \
+                            [
+                                tf.add(
+                                    x=Conv2D(
+                                        filters=input_weights.shape[-1],
+                                        kernel_size=input_weights.shape[:2],
+                                        strides=strides,
+                                        padding=pad_mode.lower(),
+                                        dilation_rate=dilations,
+                                        groups=group,
+                                        use_bias=False,
+                                        kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                        name=graph_node.name,
+                                    )(tf_partial_model_tensors),
+                                    y=input_bias,
+                                )
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
+
                 # TODO: As of TensorFlow Lite v2.10.0, GroupedConvolution3D is converted to FlexConv3D.
                 # TODO: Uncomment out when TensorFlow Lite officially supports GroupedConvolution3D.
                 # elif kernel_size == 3 and not disable_group_convolution:
+                #     ### Overall model
                 #     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 #         tf.add(
                 #             x=Conv3D(
@@ -274,8 +424,34 @@ def make_node(
                 #             y=input_bias,
                 #         )
                 #     tf_op_type = 'GroupedConvolution3D'
+                #     ### Partial model
+                #     if tf_partial_model_inputs is not None:
+                #         tf_partial_model_outputs = \
+                #             [
+                #                 tf.add(
+                #                     x=Conv3D(
+                #                         filters=input_weights.shape[-1],
+                #                         kernel_size=input_weights.shape[:3],
+                #                         strides=strides,
+                #                         padding=pad_mode.lower(),
+                #                         dilation_rate=dilations,
+                #                         groups=group,
+                #                         use_bias=False,
+                #                         kernel_initializer=tf.keras.initializers.constant(input_weights),
+                #                         name=graph_node.name,
+                #                     )(tf_partial_model_tensors),
+                #                     y=input_bias,
+                #                 )
+                #             ]
+                #         tf_partial_model_inference(
+                #             tf_partial_model_inputs=tf_partial_model_inputs,
+                #             tf_partial_model_outputs=tf_partial_model_outputs,
+                #             tf_layers_dict=tf_layers_dict,
+                #         )
+
                 else:
                     # SeparableConv
+                    ### Overall model
                     input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
                     weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -295,9 +471,37 @@ def make_node(
                             input_bias,
                         )
                     tf_op_type = tf.nn.convolution
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        partial_input_tensor_splits = tf.split(tf_partial_model_tensors, num_or_size_splits=group, axis=-1)
+                        partial_weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                        tf_partial_model_outputs = \
+                            [
+                                tf.add(
+                                    tf.concat(
+                                        values=[
+                                            tf.nn.convolution(
+                                                input=partial_input_tensor_split,
+                                                filters=partial_weight_split,
+                                                padding=pad_mode,
+                                                strides=strides,
+                                                dilations=dilations,
+                                            ) for (partial_input_tensor_split, partial_weight_split) in zip(partial_input_tensor_splits, partial_weight_splits)
+                                        ],
+                                        axis=-1
+                                    ),
+                                    input_bias,
+                                )
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
 
         else:
             # DepthwiseConv2D
+            ### Overall model
             strides = [1] + strides + [1]
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.add(
@@ -311,10 +515,32 @@ def make_node(
                     input_bias,
                 )
             tf_op_type = tf.nn.depthwise_conv2d
+            ### Partial model
+            if tf_partial_model_inputs is not None:
+                tf_partial_model_outputs = \
+                    [
+                        tf.add(
+                            tf.nn.depthwise_conv2d(
+                                input=tf_partial_model_tensors,
+                                filter=input_weights,
+                                padding=pad_mode,
+                                strides=strides,
+                                dilations=dilations,
+                            ),
+                            input_bias,
+                        )
+                    ]
+                tf_partial_model_inference(
+                    tf_partial_model_inputs=tf_partial_model_inputs,
+                    tf_partial_model_outputs=tf_partial_model_outputs,
+                    tf_layers_dict=tf_layers_dict,
+                )
+
     else:
         if not depthwise:
             if group == 1:
                 # Conv1D, Conv2D, Conv3D - No Bias
+                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.nn.convolution(
                         input=input_tensor,
@@ -324,6 +550,24 @@ def make_node(
                         dilations=dilations,
                     )
                 tf_op_type = tf.nn.convolution
+                ### Partial model
+                if tf_partial_model_inputs is not None:
+                    tf_partial_model_outputs = \
+                        [
+                            tf.nn.convolution(
+                                input=tf_partial_model_tensors,
+                                filters=input_weights,
+                                strides=strides,
+                                padding=pad_mode,
+                                dilations=dilations,
+                            )
+                        ]
+                    tf_partial_model_inference(
+                        tf_partial_model_inputs=tf_partial_model_inputs,
+                        tf_partial_model_outputs=tf_partial_model_outputs,
+                        tf_layers_dict=tf_layers_dict,
+                    )
+
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
                     print(
@@ -333,6 +577,7 @@ def make_node(
                         f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
                     )
                 # GroupedConvolution - Conv1D, Conv2D, Conv3D - No Bias
+                ### Overall model
                 if kernel_size == 1 and not disable_group_convolution:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         Conv1D(
@@ -347,7 +592,30 @@ def make_node(
                             name=graph_node.name,
                         )(input_tensor)
                     tf_op_type = 'GroupedConvolution1D'
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        tf_partial_model_outputs = \
+                            [
+                                Conv1D(
+                                    filters=input_weights.shape[-1],
+                                    kernel_size=input_weights.shape[:1],
+                                    strides=strides,
+                                    padding=pad_mode.lower(),
+                                    dilation_rate=dilations,
+                                    groups=group,
+                                    use_bias=False,
+                                    kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                    name=graph_node.name,
+                                )(tf_partial_model_tensors)
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
+
                 elif kernel_size == 2 and not disable_group_convolution:
+                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         Conv2D(
                             filters=input_weights.shape[-1],
@@ -361,9 +629,32 @@ def make_node(
                             name=graph_node.name,
                         )(input_tensor)
                     tf_op_type = 'GroupedConvolution2D'
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        tf_partial_model_outputs = \
+                            [
+                                Conv2D(
+                                    filters=input_weights.shape[-1],
+                                    kernel_size=input_weights.shape[:2],
+                                    strides=strides,
+                                    padding=pad_mode.lower(),
+                                    dilation_rate=dilations,
+                                    groups=group,
+                                    use_bias=False,
+                                    kernel_initializer=tf.keras.initializers.constant(input_weights),
+                                    name=graph_node.name,
+                                )(tf_partial_model_tensors)
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
+
                 # TODO: As of TensorFlow Lite v2.10.0, GroupedConvolution3D is converted to FlexConv3D.
                 # TODO: Uncomment out when TensorFlow Lite officially supports GroupedConvolution3D.
                 # elif kernel_size == 3 and not disable_group_convolution:
+                #     ### Overall model
                 #     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 #         Conv3D(
                 #             filters=input_weights.shape[-1],
@@ -377,8 +668,31 @@ def make_node(
                 #             name=graph_node.name,
                 #         )(input_tensor)
                 #     tf_op_type = 'GroupedConvolution3D'
+                #     ### Partial model
+                #     if tf_partial_model_inputs is not None:
+                #         tf_partial_model_outputs = \
+                #             [
+                #                 Conv3D(
+                #                     filters=input_weights.shape[-1],
+                #                     kernel_size=input_weights.shape[:3],
+                #                     strides=strides,
+                #                     padding=pad_mode.lower(),
+                #                     dilation_rate=dilations,
+                #                     groups=group,
+                #                     use_bias=False,
+                #                     kernel_initializer=tf.keras.initializers.constant(input_weights),
+                #                     name=graph_node.name,
+                #                 )(tf_partial_model_tensors)
+                #             ]
+                #         tf_partial_model_inference(
+                #             tf_partial_model_inputs=tf_partial_model_inputs,
+                #             tf_partial_model_outputs=tf_partial_model_outputs,
+                #             tf_layers_dict=tf_layers_dict,
+                #         )
+
                 else:
                     # SeparableConv
+                    ### Overall model
                     input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
                     weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -395,8 +709,34 @@ def make_node(
                             axis=-1
                         )
                     tf_op_type = tf.nn.convolution
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        partial_input_tensor_splits = tf.split(tf_partial_model_tensors, num_or_size_splits=group, axis=-1)
+                        partial_weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+                        tf_partial_model_outputs = \
+                            [
+                                tf.concat(
+                                    values=[
+                                        tf.nn.convolution(
+                                            input=partial_input_tensor_split,
+                                            filters=partial_weight_split,
+                                            padding=pad_mode,
+                                            strides=strides,
+                                            dilations=dilations,
+                                        ) for (partial_input_tensor_split, partial_weight_split) in zip(partial_input_tensor_splits, partial_weight_splits)
+                                    ],
+                                    axis=-1
+                                )
+                            ]
+                        tf_partial_model_inference(
+                            tf_partial_model_inputs=tf_partial_model_inputs,
+                            tf_partial_model_outputs=tf_partial_model_outputs,
+                            tf_layers_dict=tf_layers_dict,
+                        )
+
         else:
             # DepthwiseConv2D
+            ### Overall model
             strides = [1] + strides + [1]
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.nn.depthwise_conv2d(
@@ -407,6 +747,23 @@ def make_node(
                     dilations=dilations,
                 )
             tf_op_type = tf.nn.depthwise_conv2d
+            ### Partial model
+            if tf_partial_model_inputs is not None:
+                tf_partial_model_outputs = \
+                    [
+                        tf.nn.depthwise_conv2d(
+                            input=tf_partial_model_tensors,
+                            filter=input_weights,
+                            padding=pad_mode,
+                            strides=strides,
+                            dilations=dilations,
+                        )
+                    ]
+                tf_partial_model_inference(
+                    tf_partial_model_inputs=tf_partial_model_inputs,
+                    tf_partial_model_outputs=tf_partial_model_outputs,
+                    tf_layers_dict=tf_layers_dict,
+                )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
