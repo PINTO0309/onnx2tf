@@ -243,6 +243,7 @@ def make_tf_node_info(**kwargs):
 def print_node_info(func):
     @wraps(func)
     def print_wrapper_func(*args, **kwargs):
+        input_onnx_file_path: str = kwargs.get('input_onnx_file_path', None)
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
         tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
@@ -317,6 +318,16 @@ def print_node_info(func):
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
+            if input_onnx_file_path is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'input_onnx_file_path: {input_onnx_file_path}'
+                )
+            if graph_node is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'onnx_op_name: {graph_node.name}'
+                )
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
                 f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
@@ -2878,6 +2889,7 @@ def dummy_tf_inference(
     model: tf.keras.Model,
     inputs: List[tf.keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
+    verification_datas: Optional[List[np.ndarray]] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -2917,18 +2929,36 @@ def dummy_tf_inference(
     input_sizes = new_input_sizes
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     dummy_datas = {}
-    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        if test_data_nhwc is None:
-            dummy_datas[input_name] = np.ones(
-                input_size,
-                dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-            )
-        else:
-            dummy_datas[input_name] = \
-                tf.image.resize(
-                    images=test_data_nhwc,
-                    size=[input_size[1],input_size[2]],
-                ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    if verification_datas is None:
+        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            if test_data_nhwc is None:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
+            else:
+                dummy_datas[input_name] = \
+                    tf.image.resize(
+                        images=test_data_nhwc,
+                        size=[input_size[1],input_size[2]],
+                    ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    else:
+        for input_name, input_size, input_dtype, verification_data \
+            in zip(input_names, input_sizes, input_dtypes, verification_datas):
+
+            if verification_data is not None:
+                if len(input_size) != len(verification_data.shape):
+                    if len(verification_data.shape) <= 1:
+                        dummy_datas[input_name] = verification_data
+                    else:
+                        dummy_datas[input_name] = verification_data.reshape(input_size)
+                else:
+                    dummy_datas[input_name] = verification_data
+            else:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
     outputs = model(
         inputs={
             input.name: dummy_datas[input.name] for input in inputs
@@ -3487,3 +3517,63 @@ def rewrite_tflite_inout_opname(
                 'debian/ubuntu: apt install -y flatbuffers-compiler ' +
                 'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
             )
+
+
+def make_tf_partial_model_inputs(
+    *,
+    input_tensors: List[Any],
+) -> List[tf.keras.Input]:
+    """Generate input OPs for TensorFlow subgraph generation.
+
+    Parameters
+    ----------
+    input_tensors: List[Any]
+        List of input tensor
+
+    Returns
+    -------
+    inputs: List[tf.keras.Input]
+        List of tf.keras.Input
+    """
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shapes = []
+    tf_partial_model_input_dtypes = []
+    for input_tensor in input_tensors:
+        if input_tensor.shape is None \
+            or input_tensor.shape == tf.TensorShape(None):
+            return None
+        else:
+            tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+            if None in tf_partial_model_input_shape:
+                return None
+            tf_partial_model_input_shapes.append(
+                tf_partial_model_input_shape
+            )
+            tf_partial_model_input_dtypes.append(
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                    if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
+            )
+
+    inputs: List[tf.keras.Input] = []
+    input = None
+    for idx, input_shape in enumerate(tf_partial_model_input_shapes):
+        if isinstance(input_shape, list) and len(input_shape) == 0:
+            tf_partial_model_input_shapes[idx] = [1]
+    for input_shape, input_dtype in zip(tf_partial_model_input_shapes, tf_partial_model_input_dtypes):
+        if len(input_shape) == 1:
+            input = tf.keras.Input(
+                shape=input_shape[0] if isinstance(input_shape[0], int) else None,
+                batch_size=1,
+                dtype=input_dtype,
+            )
+        elif len(input_shape) >= 2:
+            input = tf.keras.Input(
+                shape=[
+                    inp if isinstance(inp, int) else None for inp in input_shape[1:]
+                ],
+                batch_size=input_shape[0] if isinstance(input_shape[0], int) else None,
+                dtype=input_dtype,
+            )
+        inputs.append(input)
+    return inputs

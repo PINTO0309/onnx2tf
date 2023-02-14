@@ -13,7 +13,10 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    make_tf_partial_model_inputs,
+    dummy_tf_inference,
 )
+from typing import Any, Dict, List
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
@@ -87,6 +90,17 @@ def make_node(
         if isinstance(dtype, np.dtype) else dtype
 
     try:
+        # Generate input OPs for TensorFlow subgraphs
+        # For inference testing on OP stand-alone
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[
+                    input_tensor_1,
+                    input_tensor_2,
+                ]
+            )
+        tf_partial_model_outputs = None
+        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.matmul(
                 a=input_tensor_1,
@@ -94,6 +108,42 @@ def make_node(
                 output_type=output_dtype,
                 name=graph_node.name,
             )
+        ### Partial model
+        if tf_partial_model_inputs is not None:
+            tf_partial_model_outputs = \
+                [
+                    tf.matmul(
+                        a=tf_partial_model_inputs[0],
+                        b=tf_partial_model_inputs[1],
+                        output_type=output_dtype,
+                    )
+                ]
+            tf_partial_model = tf.keras.Model(
+                inputs=tf_partial_model_inputs,
+                outputs=tf_partial_model_outputs,
+            )
+            test_data1 = None
+            if isinstance(input_tensor_1, np.ndarray):
+                test_data1 = input_tensor_1
+            test_data2 = None
+            if isinstance(input_tensor_2, np.ndarray):
+                test_data2 = input_tensor_2
+            tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+                model=tf_partial_model,
+                inputs=tf_partial_model_inputs,
+                verification_datas=[
+                    test_data1,
+                    test_data2,
+                ]
+            )
+            tf_layers_dict[graph_node_output.name]['verification_data'] = \
+                list(tf_partial_model_result_infos.values())[0]
+            del tf_partial_model
+            del tf_partial_model_inputs
+            del tf_partial_model_outputs
+            del test_data1
+            del test_data2
+
     except Exception as ex1:
         # Shape Unmatch Error Mitigation Measures
         # Search for and transpose shapes that do not cause shape unmatch errors
@@ -102,6 +152,17 @@ def make_node(
         for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
             for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                 try:
+                    # Generate input OPs for TensorFlow subgraphs
+                    # For inference testing on OP stand-alone
+                    tf_partial_model_inputs: List[tf.keras.Input] = \
+                            make_tf_partial_model_inputs(
+                                input_tensors=[
+                                    np.asarray(input_tensor_1.shape)[tensor_1_candidate_for_transposition],
+                                    np.asarray(input_tensor_2.shape)[tensor_2_candidate_for_transposition],
+                                ]
+                            )
+                    tf_partial_model_outputs = None
+                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.matmul(
                             a=tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition),
@@ -109,6 +170,41 @@ def make_node(
                             output_type=output_dtype,
                             name=graph_node.name,
                         )
+                    ### Partial model
+                    if tf_partial_model_inputs is not None:
+                        tf_partial_model_outputs = \
+                            [
+                                tf.matmul(
+                                    a=tf.transpose(tf_partial_model_inputs[0], perm=tensor_1_candidate_for_transposition),
+                                    b=tf.transpose(tf_partial_model_inputs[1], perm=tensor_2_candidate_for_transposition),
+                                    output_type=output_dtype,
+                                )
+                            ]
+                        tf_partial_model = tf.keras.Model(
+                            inputs=tf_partial_model_inputs,
+                            outputs=tf_partial_model_outputs,
+                        )
+                        test_data1 = None
+                        if isinstance(input_tensor_1, np.ndarray):
+                            test_data1 = input_tensor_1
+                        test_data2 = None
+                        if isinstance(input_tensor_2, np.ndarray):
+                            test_data2 = input_tensor_2
+                        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
+                            model=tf_partial_model,
+                            inputs=tf_partial_model_inputs,
+                            verification_datas=[
+                                test_data1,
+                                test_data2,
+                            ]
+                        )
+                        tf_layers_dict[graph_node_output.name]['verification_data'] = \
+                            list(tf_partial_model_result_infos.values())[0]
+                        del tf_partial_model
+                        del tf_partial_model_inputs
+                        del tf_partial_model_outputs
+                        del test_data1
+                        del test_data2
                     break
                 except Exception as ex2:
                     pass

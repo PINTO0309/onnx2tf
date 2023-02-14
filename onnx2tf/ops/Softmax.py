@@ -1,4 +1,5 @@
 import sys
+import copy
 import random
 random.seed(0)
 import numpy as np
@@ -18,8 +19,9 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
+    make_tf_partial_model_inputs,
 )
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 @print_node_info
@@ -106,40 +108,120 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_inputs: List[tf.keras.Input] = \
+        make_tf_partial_model_inputs(
+            input_tensors=[input_tensor]
+        )
+    tf_partial_model_tensors = None
+    tf_partial_model_outputs = None
+
+    # It seems that TensorFlow only behaves incorrectly when processing
+    # Reducemax() -> Subtract() -> Softmax() in that order.
+    # Work around a bug in TensorFlow's model optimizer.
+    # https://github.com/PINTO0309/onnx2tf/issues/182
+    try:
+        if graph_node.i().op == 'Sub':
+            sub_op: gs.Node = graph_node.i()
+            if sub_op.i(tensor_idx=0).op == 'ReduceMax' \
+                or sub_op.i(tensor_idx=1).op == 'ReduceMax':
+                ### Overall model
+                input_tensor = \
+                    tf.math.subtract(
+                        x=tf.math.add(
+                            x=input_tensor,
+                            y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                        ),
+                        y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                    )
+                ### Partial model
+                if tf_partial_model_inputs is not None:
+                    tf_partial_model_tensors = \
+                        tf.math.subtract(
+                            x=tf.math.add(
+                                x=tf_partial_model_inputs[0],
+                                y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                            ),
+                            y=tf.constant(1e-7, dtype=input_tensor.dtype)
+                        )
+    except Exception as ex:
+        pass
+
     # Detect conversion errors in axis and identify the axis
     # with the smallest possible error and replace it.
     min_abs_err = sys.maxsize
     min_abs_err_axis: int = axis
-    try:
-        onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
-            kwargs['onnx_tensor_infos_for_validation']
-        if onnx_tensor_infos_for_validation is not None:
-            onnx_tensor_infos = {
-                graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
-            }
-            del onnx_tensor_infos_for_validation
-            check_axes = reversed([idx for idx in range(tensor_rank)])
-            # Search for the axis with the smallest error
-            tf_model_inputs = get_tf_model_inputs(
-                tf_layers_dict=tf_layers_dict,
-            )
-            for check_axis in check_axes:
-                # TF dummy inference
-                val_model = tf.keras.Model(
-                    inputs=tf_model_inputs,
-                    outputs=[
-                        tf.nn.softmax(
-                            logits=input_tensor,
-                            axis=check_axis,
-                            name=graph_node.name,
-                        )
-                    ],
-                )
-                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                    model=val_model,
-                    inputs=tf_model_inputs,
-                )
-                del val_model
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+        kwargs['onnx_tensor_infos_for_validation']
+    if onnx_tensor_infos_for_validation is not None:
+        onnx_tensor_infos = {
+            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+        }
+        del onnx_tensor_infos_for_validation
+        check_axes = reversed([idx for idx in range(tensor_rank)])
+        tf_model_inputs = get_tf_model_inputs(
+            tf_layers_dict=tf_layers_dict,
+        )
+        # Search for the axis with the smallest error
+        for check_axis in check_axes:
+            try:
+                if tf_partial_model_inputs is not None:
+                    ### Partial model check
+                    tf_partial_model_outputs = \
+                        [
+                            tf.nn.softmax(
+                                logits=tf_partial_model_tensors \
+                                    if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
+                                axis=check_axis,
+                            )
+                        ]
+                    tf_partial_model = tf.keras.Model(
+                        inputs=tf_partial_model_inputs,
+                        outputs=tf_partial_model_outputs,
+                    )
+                    test_data = None
+                    if not isinstance(graph_node_input, np.ndarray):
+                        if not isinstance(graph_node_input, np.ndarray) \
+                            and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
+                            test_data = tf_layers_dict[graph_node_input.name]['verification_data']
+                        elif isinstance(graph_node_input, np.ndarray):
+                            test_data: np.ndarray = graph_node_input
+                        else:
+                            test_data = None
+                    else:
+                        test_data: np.ndarray = graph_node_input
+                    # TF dummy inference
+                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                        model=tf_partial_model,
+                        inputs=tf_partial_model_inputs,
+                        verification_datas=[
+                            test_data
+                        ]
+                    )
+                    tf_layers_dict[graph_node_output.name]['verification_data'] = \
+                        list(tf_tensor_infos.values())[0]
+                    del tf_partial_model
+
+                else:
+                    ### Overall model check
+                    val_model = tf.keras.Model(
+                        inputs=tf_model_inputs,
+                        outputs=[
+                            tf.nn.softmax(
+                                logits=input_tensor,
+                                axis=check_axis,
+                                name=graph_node.name,
+                            )
+                        ],
+                    )
+                    # TF dummy inference
+                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                        model=val_model,
+                        inputs=tf_model_inputs,
+                    )
+                    del val_model
+
                 # Validation
                 onnx_tf_output_pairs = {
                     (oi[0], ti[0]): (oi[1], ti[1]) \
@@ -166,28 +248,8 @@ def make_node(
                     min_abs_err_axis = check_axis
                     if min_abs_err < 1e-3:
                         break
-    except tf.errors.InvalidArgumentError as ex:
-        pass
-
-    # It seems that TensorFlow only behaves incorrectly when processing
-    # Reducemax() -> Subtract() -> Softmax() in that order.
-    # Work around a bug in TensorFlow's model optimizer.
-    # https://github.com/PINTO0309/onnx2tf/issues/182
-    try:
-        if graph_node.i().op == 'Sub':
-            sub_op: gs.Node = graph_node.i()
-            if sub_op.i(tensor_idx=0).op == 'ReduceMax' \
-                or sub_op.i(tensor_idx=1).op == 'ReduceMax':
-                input_tensor = \
-                    tf.math.subtract(
-                        x=tf.math.add(
-                            x=input_tensor,
-                            y=tf.constant(1e-7, dtype=input_tensor.dtype)
-                        ),
-                        y=tf.constant(1e-7, dtype=input_tensor.dtype)
-                    )
-    except Exception as ex:
-        pass
+            except tf.errors.InvalidArgumentError as ex:
+                pass
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
