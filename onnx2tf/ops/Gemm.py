@@ -212,9 +212,12 @@ def make_node(
                 z,
             ]
         )
-    tf_partial_x = tf_partial_model_inputs[0]
-    tf_partial_y = tf_partial_model_inputs[1]
-    tf_partial_z = tf_partial_model_inputs[2]
+    tf_partial_x = tf_partial_model_inputs[0] \
+        if tf_partial_model_inputs is not None else None
+    tf_partial_y = tf_partial_model_inputs[1] \
+        if tf_partial_model_inputs is not None else None
+    tf_partial_z = tf_partial_model_inputs[2] \
+        if tf_partial_model_inputs is not None else None
     if isinstance(test_data3, np.ndarray) and len(test_data3.shape) == 1 and len(tf_partial_z.shape) == 2:
         test_data3 = np.expand_dims(test_data3, 0)
     tf_partial_model_outputs = None
