@@ -69,7 +69,7 @@ or
     && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.10.0 \
+  !python3.9 -m pip install tensorflow==2.12.0rc0 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
