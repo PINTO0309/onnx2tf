@@ -3564,8 +3564,15 @@ def detect_conversion_errors(
         tf_layers_dict[graph_node_output_name].get('verification_data', None)
 
     if mode == 'axis':
+        # Softmax, Concat, ArgMax, ArgMin, ReduceXX, ...
         pass
     elif mode == 'tensor':
-        # 1. Shape Match Checking
-        # 2. Absolute error check of tensor values
+        # 1. Absolute error check of tensor values
+        # 2. Judge
+        #   3-1.
+        #       If the absolute error is less than 1e-3, the process terminates without any action.
+        #   3-2.
+        #       If the absolute error is greater than 1e-3, repeat the transposition to minimize the absolute error to find the correct perm.
+        #       Regenerate tf_layers_dict[graph_node_output_name]['tf_node'] by the input value transposed by the appropriate perm of the generated OP.
+        #       This means that the shape of the tensor is corrected by extrapolating the appropriate Transpose OP immediately before the relevant OP.
         pass
