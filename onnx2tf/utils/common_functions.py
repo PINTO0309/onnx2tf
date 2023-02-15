@@ -3548,116 +3548,24 @@ def make_tf_partial_model_inputs(
     return inputs
 
 
-# def detect_conversion_errors(
-#     *,
-#     graph_node_inputs: List[Any],
-#     graph_node_outputs: List[gs.Variable],
-#     mode: str, # tensor, axis
-#     axis: int = None,
-#     **kwargs: dict,
-# ):
-#     onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
-#         kwargs['onnx_tensor_infos_for_validation']
-#     min_abs_err = sys.maxsize
+# First, only single outputs will be supported on an experimental basis.
+def detect_conversion_errors(
+    *,
+    graph_node_output_name: str,
+    tf_layers_dict: dict,
+    mode: str = 'tensor', # tensor or axis
+    **kwargs: dict,
+):
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+        kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_data: np.ndarray = \
+        onnx_tensor_infos_for_validation[graph_node_output_name]
+    tf_tensor_data: np.ndarray = \
+        tf_layers_dict[graph_node_output_name].get('verification_data', None)
 
-
-#     if mode == 'axis':
-#         # Detect conversion errors in axis and identify the axis
-#         # with the smallest possible error and replace it.
-#         min_abs_err_axis: int = axis
-#         if onnx_tensor_infos_for_validation is not None:
-#             onnx_tensor_infos = {
-#                 graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
-#             }
-#             del onnx_tensor_infos_for_validation
-#             check_axes = reversed([idx for idx in range(tensor_rank)])
-#             tf_model_inputs = get_tf_model_inputs(
-#                 tf_layers_dict=tf_layers_dict,
-#             )
-#             # Search for the axis with the smallest error
-#             for check_axis in check_axes:
-#                 try:
-#                     if tf_partial_model_inputs is not None:
-#                         ### Partial model check
-#                         tf_partial_model_outputs = \
-#                             [
-#                                 tf.nn.softmax(
-#                                     logits=tf_partial_model_tensors \
-#                                         if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
-#                                     axis=check_axis,
-#                                 )
-#                             ]
-#                         tf_partial_model = tf.keras.Model(
-#                             inputs=tf_partial_model_inputs,
-#                             outputs=tf_partial_model_outputs,
-#                         )
-#                         test_data = None
-#                         if not isinstance(graph_node_input, np.ndarray):
-#                             if not isinstance(graph_node_input, np.ndarray) \
-#                                 and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-#                                 test_data = tf_layers_dict[graph_node_input.name]['verification_data']
-#                             elif isinstance(graph_node_input, np.ndarray):
-#                                 test_data: np.ndarray = graph_node_input
-#                             else:
-#                                 test_data = None
-#                         else:
-#                             test_data: np.ndarray = graph_node_input
-#                         # TF dummy inference
-#                         tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-#                             model=tf_partial_model,
-#                             inputs=tf_partial_model_inputs,
-#                             verification_datas=[
-#                                 test_data
-#                             ]
-#                         )
-#                         tf_layers_dict[graph_node_output.name]['verification_data'] = \
-#                             list(tf_tensor_infos.values())[0]
-#                         del tf_partial_model
-
-#                     else:
-#                         ### Overall model check
-#                         val_model = tf.keras.Model(
-#                             inputs=tf_model_inputs,
-#                             outputs=[
-#                                 tf.nn.softmax(
-#                                     logits=input_tensor,
-#                                     axis=check_axis,
-#                                     name=graph_node.name,
-#                                 )
-#                             ],
-#                         )
-#                         # TF dummy inference
-#                         tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-#                             model=val_model,
-#                             inputs=tf_model_inputs,
-#                         )
-#                         del val_model
-
-#                     # Validation
-#                     onnx_tf_output_pairs = {
-#                         (oi[0], ti[0]): (oi[1], ti[1]) \
-#                             for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
-#                     }
-#                     """
-#                     check_results: Dict[str, List[np.ndarray, int, float|int]]
-#                         {
-#                             onnx_output_name: [
-#                                 onnx_tensor,
-#                                 matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
-#                                 max_abs_err,
-#                             ]
-#                         }
-#                     """
-#                     check_results = onnx_tf_tensor_validation(
-#                         output_pairs=onnx_tf_output_pairs,
-#                         rtol=0.0,
-#                         atol=0.0,
-#                     )
-#                     result_err = sum([val[2] for val in check_results.values()])
-#                     if result_err < min_abs_err:
-#                         min_abs_err = result_err
-#                         min_abs_err_axis = check_axis
-#                         if min_abs_err < 1e-3:
-#                             break
-#                 except tf.errors.InvalidArgumentError as ex:
-#                     pass
+    if mode == 'axis':
+        pass
+    elif mode == 'tensor':
+        # 1. Shape Match Checking
+        # 2. Absolute error check of tensor values
+        pass
