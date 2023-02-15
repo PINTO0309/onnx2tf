@@ -21,7 +21,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.10.0
+- tensorflow==2.12.0rc0
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```
   Debian/Ubuntu: sudo apt-get install -y flatbuffers-compiler
@@ -29,12 +29,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   ```
 
 ## Sample Usage
+### [Note] v1.7.x implements an extensive additional mechanism that will be needed in the future to avoid post-conversion accuracy errors, so problems may occur that were not reproduced in v1.6.7. If you have any inconvenience in using the tool, I recommend using v1.6.7.
 - HostPC
   ```
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.6.7
+  ghcr.io/pinto0309/onnx2tf:1.7.0
 
   or
 
@@ -69,7 +70,7 @@ or
     && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.10.0 \
+  !python3.9 -m pip install tensorflow==2.12.0rc0 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
@@ -131,6 +132,7 @@ usage: onnx2tf
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-oh5]
+[-okv3]
 [-ow]
 [-coion]
 [-oiqt]
@@ -184,6 +186,9 @@ optional arguments:
 
   -oh5, --output_h5
     Output model in Keras (hdf5) format.
+
+  -okv3, --output_keras_v3
+    Output model in Keras (keras_v3) format.
 
   -ow, --output_weights
     Output weights in hdf5 format.
@@ -525,6 +530,7 @@ convert(
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
+  output_keras_v3: Optional[bool] = False,
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
@@ -587,6 +593,9 @@ convert(
 
     output_h5: Optional[bool]
       Output model in Keras H5 format.
+
+    output_keras_v3: Optional[bool]
+      Output model in Keras (keras_v3) format.
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
