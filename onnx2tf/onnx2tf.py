@@ -57,6 +57,7 @@ def convert(
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
+    output_keras_v3: Optional[bool] = False,
     output_weights: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
@@ -118,6 +119,9 @@ def convert(
 
     output_h5: Optional[bool]
         Output model in Keras (hdf5) format.
+
+    output_keras_v3: Optional[bool]
+        Output model in Keras (keras_v3) format.
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
@@ -786,13 +790,21 @@ def convert(
             model.summary(line_length=140)
             print('')
 
-        # Output in Keras H5 format
+        # Output in Keras h5 format
         if output_h5:
             if not non_verbose:
                 print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
             model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
             if not non_verbose:
                 print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+
+        # Output in Keras keras_v3 format
+        if output_keras_v3:
+            if not non_verbose:
+                print(f'{Color.REVERCE}keras_v3 output started{Color.RESET}', '=' * 61)
+            model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
+            if not non_verbose:
+                print(f'{Color.GREEN}keras_v3 output complete!{Color.RESET}')
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
@@ -1371,6 +1383,13 @@ def main():
             'Output model in Keras (hdf5) format.'
     )
     parser.add_argument(
+        '-okv3',
+        '--output_keras_v3',
+        action='store_true',
+        help=\
+            'Output model in Keras (keras_v3) format.'
+    )
+    parser.add_argument(
         '-ow',
         '--output_weights',
         action='store_true',
@@ -1831,6 +1850,7 @@ def main():
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
+        output_keras_v3=args.output_keras_v3,
         output_weights=args.output_weights,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
