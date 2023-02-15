@@ -76,7 +76,7 @@ def convert(
     disable_group_convolution: Optional[bool] = False,
     enable_batchmatmul_unfold: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
-    number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
+    number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
     optimization_for_gpu_delegate: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
@@ -279,7 +279,7 @@ def convert(
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
-        Default: 5
+        Default: 6
 
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those\n
@@ -1612,10 +1612,10 @@ def main():
         '-nodafc',
         '--number_of_dimensions_after_flextranspose_compression',
         type=int,
-        default=5,
+        default=6,
         help=\
             'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
-            'Default: 5'
+            'Default: 6'
     )
     parser.add_argument(
         '-ofgd',

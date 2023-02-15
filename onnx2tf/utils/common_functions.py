@@ -1522,43 +1522,10 @@ def alternative_atan2(
     pseudo_atan2: Tensor
         Converted Atan2
     """
-    abs_x = tf.math.abs(input_tensor_x)
-    abs_y = tf.math.abs(input_tensor_y)
-    t3 = tf.math.abs(input_tensor_x)
-    t1 = tf.math.abs(input_tensor_y)
-    t0 = tf.maximum(t3, t1)
-    t1 = tf.minimum(t3, t1)
-    t3 = 1.0 / t0
-    t3 = t1 * t3
-    t4 = t3 * t3
-    t0 = -0.013480470
-    t0 = t0 * t4 + 0.057477314
-    t0 = t0 * t4 - 0.121239071
-    t0 = t0 * t4 + 0.195635925
-    t0 = t0 * t4 - 0.332994597
-    t0 = t0 * t4 + 0.999995630
-    t3 = t0 * t3
-    t3 = tf.where(
-        condition=tf.math.greater(abs_y, abs_x),
-        x=1.570796327 - t3,
-        y=t3,
+    pseudo_atan2 = tf.math.atan2(
+        y=input_tensor_y,
+        x=input_tensor_x,
     )
-    t3 = tf.where(
-        condition=tf.math.less(input_tensor_x, 0),
-        x=3.141592654 - t3,
-        y=t3,
-    )
-    pseudo_atan2 = tf.where(
-        condition=tf.math.less(input_tensor_y, 0),
-        x=-t3,
-        y=t3,
-    )
-    # TODO: Switch to standard OP with TF v2.12.0 or later
-    # Skip TF v2.11.0 as it is heavily broken
-    # pseudo_atan2 = tf.math.atan2(
-    #     y=input_tensor_y,
-    #     x=input_tensor_x,
-    # )
     return pseudo_atan2
 
 
@@ -1582,7 +1549,7 @@ def alternative_atan(
     """
     return alternative_atan2(
         input_tensor_y=input_tensor,
-        input_tensor_x=1.0,
+        input_tensor_x=tf.broadcast_to(1.0, shape=input_tensor.shape),
     )
 
 
@@ -2432,6 +2399,8 @@ def replace_max_values_negative_values(
     return index_list
 
 
+# https://github.com/tensorflow/tensorflow/releases/tag/v2.12.0-rc0
+# Transpose v5->v6, 5D->6D
 def transpose_with_flexing_deterrence(
     *,
     input_tensor: Any,
@@ -2496,8 +2465,8 @@ def transpose_with_flexing_deterrence(
         # Obtain a shape with the dimension with 1 element removed
         squeezed_original_shapes = squeezed_original_x.shape
 
-        if input_tensor_rank >= 6 \
-            and len(squeezed_original_shapes) <= 5 \
+        if input_tensor_rank >= 7 \
+            and len(squeezed_original_shapes) <= 6 \
             and x_shape_none_dims_count < 2 \
             and output_shape is not None:
             # Special Transpose.1
@@ -2525,7 +2494,7 @@ def transpose_with_flexing_deterrence(
                         dim if not isinstance(dim, str) else -1 for dim in output_shape
                     ],
                 )
-        elif input_tensor_rank >= 6 and x_shape_none_dims_count == 0:
+        elif input_tensor_rank >= 7 and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 6 or more dimensions into FlexTransposes.
