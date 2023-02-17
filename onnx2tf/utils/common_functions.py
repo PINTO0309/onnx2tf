@@ -2497,7 +2497,9 @@ def transpose_with_flexing_deterrence(
                     ],
                 )
         elif input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0 \
-            or number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE and x_shape_none_dims_count == 0:
+            or number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
+                and number_of_dimensions_after_flextranspose_compression >= 2 \
+                and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 6 or more dimensions into FlexTransposes.
