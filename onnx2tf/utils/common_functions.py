@@ -3549,10 +3549,12 @@ def make_tf_partial_model_inputs(
 
 
 # First, only single outputs will be supported on an experimental basis.
-def detect_conversion_errors(
+def correction_of_conversion_errors(
     *,
     graph_node_output_name: str,
     tf_layers_dict: dict,
+    operation: Any,
+    operation_parameters: dict,
     mode: str = 'tensor', # tensor or axis
     **kwargs: dict,
 ):
@@ -3562,6 +3564,11 @@ def detect_conversion_errors(
         onnx_tensor_infos_for_validation[graph_node_output_name]
     tf_tensor_data: np.ndarray = \
         tf_layers_dict[graph_node_output_name].get('verification_data', None)
+
+    # Validation
+    onnx_tf_output_pairs = {
+        (graph_node_output_name, graph_node_output_name): (onnx_tensor_data, tf_tensor_data)
+    }
 
     if mode == 'axis':
         # Softmax, Concat, ArgMax, ArgMin, ReduceXX, ...
@@ -3576,3 +3583,19 @@ def detect_conversion_errors(
         #       Regenerate tf_layers_dict[graph_node_output_name]['tf_node'] by the input value transposed by the appropriate perm of the generated OP.
         #       This means that the shape of the tensor is corrected by extrapolating the appropriate Transpose OP immediately before the relevant OP.
         pass
+
+    """
+    check_results: Dict[str, List[np.ndarray, int, float|int]]
+        {
+            onnx_output_name: [
+                onnx_tensor,
+                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                max_abs_err,
+            ]
+        }
+    """
+    check_results = onnx_tf_tensor_validation(
+        output_pairs=onnx_tf_output_pairs,
+        rtol=0.0,
+        atol=0.0,
+    )
