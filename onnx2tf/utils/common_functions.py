@@ -2438,6 +2438,8 @@ def transpose_with_flexing_deterrence(
         kwargs['disable_suppression_flextranspose']
     number_of_dimensions_after_flextranspose_compression: int = \
         kwargs['number_of_dimensions_after_flextranspose_compression']
+    COMPRESSION_DEFAULT_VALUE = 6
+
     tensor_after_transposition = input_tensor
 
     if disable_suppression_flextranspose:
@@ -2465,8 +2467,8 @@ def transpose_with_flexing_deterrence(
         # Obtain a shape with the dimension with 1 element removed
         squeezed_original_shapes = squeezed_original_x.shape
 
-        if input_tensor_rank >= 7 \
-            and len(squeezed_original_shapes) <= 6 \
+        if input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) \
+            and len(squeezed_original_shapes) <= COMPRESSION_DEFAULT_VALUE \
             and x_shape_none_dims_count < 2 \
             and output_shape is not None:
             # Special Transpose.1
@@ -2494,7 +2496,10 @@ def transpose_with_flexing_deterrence(
                         dim if not isinstance(dim, str) else -1 for dim in output_shape
                     ],
                 )
-        elif input_tensor_rank >= 7 and x_shape_none_dims_count == 0:
+        elif input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0 \
+            or number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
+                and number_of_dimensions_after_flextranspose_compression >= 2 \
+                and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 6 or more dimensions into FlexTransposes.
