@@ -18,6 +18,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 from onnx2tf.utils.colors import Color
@@ -184,22 +185,22 @@ def make_node(
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 3:
                 # 1D - Overall model
-                input_tensor = tf.transpose(
-                    a=input_tensor,
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
                     perm=[0,2,1],
                 )
                 tf_transposed_perm = [0,2,1]
             elif len(onnx_input_shape) == 4:
                 # 2D - Overall model
-                input_tensor = tf.transpose(
-                    a=input_tensor,
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
                     perm=[0,2,3,1],
                 )
                 tf_transposed_perm = [0,2,3,1]
             elif len(onnx_input_shape) == 5:
                 # 3D - Overall model
-                input_tensor = tf.transpose(
-                    a=input_tensor,
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
                 )
                 tf_transposed_perm = [0,2,3,4,1]

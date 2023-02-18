@@ -233,8 +233,8 @@ def make_node(
                 # ShuffleNet patterns - 4D only
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.transpose(
-                        a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                    transpose_with_flexing_deterrence(
+                        input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                         perm=[0,2,3,1],
                     )
                 ### Partial model

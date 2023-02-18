@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
 
@@ -140,20 +141,20 @@ def make_node(
     y0 = tf.math.floor(ygrid)
     y1 = y0 + 1
 
-    wa = tf.transpose(
-        a=(x1 - xgrid) * (y1 - ygrid),
+    wa = transpose_with_flexing_deterrence(
+        input_tensor=(x1 - xgrid) * (y1 - ygrid),
         perm=[3, 0, 1, 2],
     )
-    wb = tf.transpose(
-        a=(x1 - xgrid) * (ygrid - y0),
+    wb = transpose_with_flexing_deterrence(
+        input_tensor=(x1 - xgrid) * (ygrid - y0),
         perm=[3, 0, 1, 2],
     )
-    wc = tf.transpose(
-        a=(xgrid - x0) * (y1 - ygrid),
+    wc = transpose_with_flexing_deterrence(
+        input_tensor=(xgrid - x0) * (y1 - ygrid),
         perm=[3, 0, 1, 2],
     )
-    wd = tf.transpose(
-        a=(xgrid - x0) * (ygrid - y0),
+    wd = transpose_with_flexing_deterrence(
+        input_tensor=(xgrid - x0) * (ygrid - y0),
         perm=[3, 0, 1, 2],
     )
 
@@ -211,8 +212,8 @@ def make_node(
         tensor=temp_gather_wa,
         shape=[-1, temp_gather_wa.shape[3]],
     )
-    temp_traspose_wa = tf.transpose(
-        a=temp_reshape1_wa,
+    temp_traspose_wa = transpose_with_flexing_deterrence(
+        input_tensor=temp_reshape1_wa,
         perm=[1,0],
     )
     temp_reshape2_wa = tf.reshape(
@@ -237,8 +238,8 @@ def make_node(
         tensor=temp_gather_wb,
         shape=[-1, temp_gather_wb.shape[3]],
     )
-    temp_traspose_wb = tf.transpose(
-        a=temp_reshape1_wb,
+    temp_traspose_wb = transpose_with_flexing_deterrence(
+        input_tensor=temp_reshape1_wb,
         perm=[1,0],
     )
     temp_reshape2_wb = tf.reshape(
@@ -263,8 +264,8 @@ def make_node(
         tensor=temp_gather_wc,
         shape=[-1, temp_gather_wc.shape[3]],
     )
-    temp_traspose_wc = tf.transpose(
-        a=temp_reshape1_wc,
+    temp_traspose_wc = transpose_with_flexing_deterrence(
+        input_tensor=temp_reshape1_wc,
         perm=[1,0],
     )
     temp_reshape2_wc = tf.reshape(
@@ -289,8 +290,8 @@ def make_node(
         tensor=temp_gather_wd,
         shape=[-1, temp_gather_wd.shape[3]],
     )
-    temp_traspose_wd = tf.transpose(
-        a=temp_reshape1_wd,
+    temp_traspose_wd = transpose_with_flexing_deterrence(
+        input_tensor=temp_reshape1_wd,
         perm=[1,0],
     )
     temp_reshape2_wd = tf.reshape(
@@ -306,8 +307,8 @@ def make_node(
     ### wa + wb + wc + wd
     output_tensor = temp_wa + temp_wb + temp_wc + temp_wd
 
-    output_tensor = tf.transpose(
-        a=output_tensor,
+    output_tensor = transpose_with_flexing_deterrence(
+        input_tensor=output_tensor,
         perm=[1,2,3,0],
     )
     mask = tf.tile(

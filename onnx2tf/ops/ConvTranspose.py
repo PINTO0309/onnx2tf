@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     calc_output_shape_conv_transpose,
     dummy_onnx_inference,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
 
@@ -244,8 +245,8 @@ def make_node(
                     for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                         try:
                             conv_rs = conv_func(
-                                input=tf.transpose(a=input_tensor_split, perm=tensor_1_candidate_for_transposition),
-                                filters=tf.transpose(a=weight_split, perm=tensor_2_candidate_for_transposition),
+                                input=transpose_with_flexing_deterrence(input_tensor=input_tensor_split, perm=tensor_1_candidate_for_transposition),
+                                filters=transpose_with_flexing_deterrence(input_tensor=weight_split, perm=tensor_2_candidate_for_transposition),
                                 output_shape=split_conv_output_shape,
                                 strides=strides,
                                 padding=pad_mode,

@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
@@ -160,7 +161,7 @@ def make_node(
     for dim in dim_expanded_idx_tensors_per_axis:
         if dim is not None and len([i for i in dim.shape if i is None]) == len(dim.shape)-1 and dim.shape[-1] == 1 and len(dim.shape) == 5:
             new_dim_expanded_idx_tensors_per_axis.append(
-                tf.transpose(a=dim, perm=[0,2,3,1,4])
+                transpose_with_flexing_deterrence(input_tensor=dim, perm=[0,2,3,1,4])
             )
         else:
             new_dim_expanded_idx_tensors_per_axis.append(dim)

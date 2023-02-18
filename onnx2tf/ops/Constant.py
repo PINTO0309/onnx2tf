@@ -9,6 +9,7 @@ from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
     print_node_info,
     make_tf_node_info,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -27,22 +28,22 @@ def _make_tf_constant(
     transposed_tensor = None
     if len(value.shape) == 3:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,1],
                 name=name,
             )
     elif len(value.shape) == 4:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,3,1],
                 name=name,
             )
     elif len(value.shape) == 5:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,3,4,1],
                 name=name,
             )

@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 
@@ -82,11 +83,11 @@ def make_node(
         for same_input_shape_as_onnx, nhwc_flag, value in zip(same_input_shape_as_onnxs, nhwc_flags, values):
             if same_input_shape_as_onnx and not nhwc_flag:
                 if len(value.shape) == 3:
-                    new_values.append(tf.transpose(a=value, perm=[0,2,1]))
+                    new_values.append(transpose_with_flexing_deterrence(input_tensor=value, perm=[0,2,1]))
                 elif len(value.shape) == 4:
-                    new_values.append(tf.transpose(a=value, perm=[0,2,3,1]))
+                    new_values.append(transpose_with_flexing_deterrence(input_tensor=value, perm=[0,2,3,1]))
                 elif len(value.shape) == 5:
-                    new_values.append(tf.transpose(a=value, perm=[0,2,3,4,1]))
+                    new_values.append(transpose_with_flexing_deterrence(input_tensor=value, perm=[0,2,3,4,1]))
                 else:
                     new_values.append(value)
             else:
