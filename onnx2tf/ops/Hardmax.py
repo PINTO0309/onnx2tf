@@ -104,6 +104,7 @@ def make_node(
             x = transpose_with_flexing_deterrence(
                 input_tensor=input_tensor,
                 perm=perm,
+                **kwargs,
             )
         else:
             cal_shape = (

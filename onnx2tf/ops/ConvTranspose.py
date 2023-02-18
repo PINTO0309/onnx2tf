@@ -245,8 +245,16 @@ def make_node(
                     for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                         try:
                             conv_rs = conv_func(
-                                input=transpose_with_flexing_deterrence(input_tensor=input_tensor_split, perm=tensor_1_candidate_for_transposition),
-                                filters=transpose_with_flexing_deterrence(input_tensor=weight_split, perm=tensor_2_candidate_for_transposition),
+                                input=transpose_with_flexing_deterrence(
+                                    input_tensor=input_tensor_split,
+                                    perm=tensor_1_candidate_for_transposition,
+                                    **kwargs,
+                                ),
+                                filters=transpose_with_flexing_deterrence(
+                                    input_tensor=weight_split,
+                                    perm=tensor_2_candidate_for_transposition,
+                                    **kwargs,
+                                ),
                                 output_shape=split_conv_output_shape,
                                 strides=strides,
                                 padding=pad_mode,

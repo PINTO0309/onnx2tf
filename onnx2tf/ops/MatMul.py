@@ -169,10 +169,12 @@ def make_node(
                             a=transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_1,
                                 perm=tensor_1_candidate_for_transposition,
+                                **kwargs,
                             ),
                             b=transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_2,
                                 perm=tensor_2_candidate_for_transposition,
+                                **kwargs,
                             ),
                             output_type=output_dtype,
                             name=graph_node.name,
@@ -184,11 +186,13 @@ def make_node(
                                 tf.matmul(
                                     a=transpose_with_flexing_deterrence(
                                         input_tensor=tf_partial_model_inputs[0],
-                                        perm=tensor_1_candidate_for_transposition
+                                        perm=tensor_1_candidate_for_transposition,
+                                        **kwargs,
                                     ),
                                     b=transpose_with_flexing_deterrence(
                                         input_tensor=tf_partial_model_inputs[1],
-                                        perm=tensor_2_candidate_for_transposition
+                                        perm=tensor_2_candidate_for_transposition,
+                                        **kwargs,
                                     ),
                                     output_type=output_dtype,
                                 )

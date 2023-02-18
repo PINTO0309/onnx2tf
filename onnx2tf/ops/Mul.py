@@ -102,6 +102,7 @@ def make_node(
             graph_node_input_2=graph_node_input_2,
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
+            **kwargs,
         )
 
     input_tensor_1, input_tensor_2 = pre_explicit_broadcast(
@@ -126,6 +127,7 @@ def make_node(
         input_tensor_1=input_tensor_1,
         input_tensor_2=input_tensor_2,
         tf_layers_dict=tf_layers_dict,
+        **kwargs,
     )
 
     # broadcast_for_gpu_delegate

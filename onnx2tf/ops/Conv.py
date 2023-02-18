@@ -188,6 +188,7 @@ def make_node(
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,1],
+                    **kwargs,
                 )
                 tf_transposed_perm = [0,2,1]
             elif len(onnx_input_shape) == 4:
@@ -195,6 +196,7 @@ def make_node(
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,1],
+                    **kwargs,
                 )
                 tf_transposed_perm = [0,2,3,1]
             elif len(onnx_input_shape) == 5:
@@ -202,6 +204,7 @@ def make_node(
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
+                    **kwargs,
                 )
                 tf_transposed_perm = [0,2,3,4,1]
     else:

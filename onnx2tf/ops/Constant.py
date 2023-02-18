@@ -19,6 +19,7 @@ def _make_tf_constant(
     value,
     dtype,
     name,
+    kwargs,
 ):
     constant_tensor = tf.constant(
         value=value,
@@ -32,6 +33,7 @@ def _make_tf_constant(
                 input_tensor=constant_tensor,
                 perm=[0,2,1],
                 name=name,
+                **kwargs,
             )
     elif len(value.shape) == 4:
         transposed_tensor = \
@@ -39,6 +41,7 @@ def _make_tf_constant(
                 input_tensor=constant_tensor,
                 perm=[0,2,3,1],
                 name=name,
+                **kwargs,
             )
     elif len(value.shape) == 5:
         transposed_tensor = \
@@ -46,6 +49,7 @@ def _make_tf_constant(
                 input_tensor=constant_tensor,
                 perm=[0,2,3,4,1],
                 name=name,
+                **kwargs,
             )
     else:
         transposed_tensor = constant_tensor
@@ -140,6 +144,7 @@ def make_node(
                     value=value,
                     dtype=const_dtype,
                     name=graph_node.name,
+                    kwargs=kwargs,
                 )
             # Generation of Debug Info
             tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
@@ -202,6 +207,7 @@ def make_node(
                         value=value,
                         dtype=const_dtype,
                         name=graph_node.name,
+                        kwargs=kwargs,
                     )
                 # Generation of Debug Info
                 tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
@@ -273,6 +279,7 @@ def make_node(
                 value=value,
                 dtype=const_dtype,
                 name=graph_node.name,
+                kwargs=kwargs,
             )
         # Generation of Debug Info
         tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

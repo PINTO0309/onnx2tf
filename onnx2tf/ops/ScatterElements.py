@@ -161,7 +161,11 @@ def make_node(
     for dim in dim_expanded_idx_tensors_per_axis:
         if dim is not None and len([i for i in dim.shape if i is None]) == len(dim.shape)-1 and dim.shape[-1] == 1 and len(dim.shape) == 5:
             new_dim_expanded_idx_tensors_per_axis.append(
-                transpose_with_flexing_deterrence(input_tensor=dim, perm=[0,2,3,1,4])
+                transpose_with_flexing_deterrence(
+                    input_tensor=dim,
+                    perm=[0,2,3,1,4],
+                    **kwargs,
+                )
             )
         else:
             new_dim_expanded_idx_tensors_per_axis.append(dim)

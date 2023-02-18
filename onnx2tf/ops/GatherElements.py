@@ -112,10 +112,12 @@ def make_node(
         data_swaped = transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
             perm=axis_perm,
+            **kwargs,
         )
         index_swaped = transpose_with_flexing_deterrence(
             input_tensor=indices_tensor,
             perm=axis_perm,
+            **kwargs,
         )
 
     idx_tensors_per_axis = [
@@ -140,6 +142,7 @@ def make_node(
         transpose_with_flexing_deterrence(
             input_tensor=gathered,
             perm=axis_perm,
+            **kwargs,
         )
 
     # Post-process transpose

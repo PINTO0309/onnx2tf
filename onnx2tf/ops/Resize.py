@@ -103,6 +103,7 @@ def make_node(
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,1],
+                    **kwargs,
                 )
                 before_op_output_shape_trans = True
                 # 2D - Partial model
@@ -111,12 +112,14 @@ def make_node(
                         transpose_with_flexing_deterrence(
                             input_tensor=tf_partial_model_inputs[0],
                             perm=[0,2,3,1],
+                            **kwargs,
                         )
             elif len(onnx_input_shape) == 5:
                 # 3D - Overall model
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
+                    **kwargs,
                 )
                 before_op_output_shape_trans = True
                 # 3D - Partial model
@@ -125,6 +128,7 @@ def make_node(
                         transpose_with_flexing_deterrence(
                             input_tensor=tf_partial_model_inputs[0],
                             perm=[0,2,3,4,1],
+                            **kwargs,
                         )
 
     roi = None

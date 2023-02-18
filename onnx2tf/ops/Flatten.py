@@ -136,6 +136,7 @@ def make_node(
     input_tensor = transpose_with_flexing_deterrence(
         input_tensor=input_tensor,
         perm=list(perm) if perm is not None else None,
+        **kwargs,
     )
 
     if cal_shape is not None:
