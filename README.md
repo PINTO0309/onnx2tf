@@ -351,7 +351,8 @@ optional arguments:
 
   -nodafc, --number_of_dimensions_after_flextranspose_compression
     Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
-    Default: 5
+    Also suppress the creation of the Transpose itself by specifying 2.
+    Default: 6
 
   -ofgd, --optimization_for_gpu_delegate
     Replace operations that do not support gpu delegate with those
@@ -756,7 +757,8 @@ convert(
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
       Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
-      Default: 5
+      Also suppress the creation of the Transpose itself by specifying 2.
+      Default: 6
 
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those
