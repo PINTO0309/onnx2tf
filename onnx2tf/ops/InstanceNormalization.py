@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
@@ -125,16 +126,18 @@ def make_node(
                 if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
                     if len(onnx_input_shape) == 3:
                         # 1D
-                        input_tensor = tf.transpose(
-                            a=input_tensor,
+                        input_tensor = transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor,
                             perm=[0,2,1],
+                            **kwargs,
                         )
                         tf_transposed_perm = [0,2,1]
                     elif len(onnx_input_shape) == 4:
                         # 2D
-                        input_tensor = tf.transpose(
-                            a=input_tensor,
+                        input_tensor = transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor,
                             perm=[0,2,3,1],
+                            **kwargs,
                         )
                         tf_transposed_perm = [0,2,3,1]
                 else:

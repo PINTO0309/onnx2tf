@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
@@ -165,8 +166,16 @@ def make_node(
                     ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.matmul(
-                            a=tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition),
-                            b=tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition),
+                            a=transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_1,
+                                perm=tensor_1_candidate_for_transposition,
+                                **kwargs,
+                            ),
+                            b=transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_2,
+                                perm=tensor_2_candidate_for_transposition,
+                                **kwargs,
+                            ),
                             output_type=output_dtype,
                             name=graph_node.name,
                         )
@@ -175,8 +184,16 @@ def make_node(
                         tf_partial_model_outputs = \
                             [
                                 tf.matmul(
-                                    a=tf.transpose(tf_partial_model_inputs[0], perm=tensor_1_candidate_for_transposition),
-                                    b=tf.transpose(tf_partial_model_inputs[1], perm=tensor_2_candidate_for_transposition),
+                                    a=transpose_with_flexing_deterrence(
+                                        input_tensor=tf_partial_model_inputs[0],
+                                        perm=tensor_1_candidate_for_transposition,
+                                        **kwargs,
+                                    ),
+                                    b=transpose_with_flexing_deterrence(
+                                        input_tensor=tf_partial_model_inputs[1],
+                                        perm=tensor_2_candidate_for_transposition,
+                                        **kwargs,
+                                    ),
                                     output_type=output_dtype,
                                 )
                             ]

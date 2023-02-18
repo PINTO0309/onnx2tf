@@ -283,6 +283,7 @@ def convert(
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
+        Also suppress the creation of the Transpose itself by specifying 2.\n
         Default: 6
 
     optimization_for_gpu_delegate: Optional[bool]
@@ -1634,6 +1635,7 @@ def main():
         default=6,
         help=\
             'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
+            'Also suppress the creation of the Transpose itself by specifying 2. \n' +
             'Default: 6'
     )
     parser.add_argument(

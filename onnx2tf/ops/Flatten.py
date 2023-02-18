@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -132,9 +133,10 @@ def make_node(
             before_op_output_shape_trans=before_op_output_shape_trans,
         ) for idx in range(input_tensor_rank)
     ]
-    input_tensor = tf.transpose(
-        a=input_tensor,
+    input_tensor = transpose_with_flexing_deterrence(
+        input_tensor=input_tensor,
         perm=list(perm) if perm is not None else None,
+        **kwargs,
     )
 
     if cal_shape is not None:

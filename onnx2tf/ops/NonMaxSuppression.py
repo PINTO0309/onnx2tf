@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
 
@@ -253,7 +254,11 @@ def make_node(
 
     # Generation of TF OP
     if center_point_box == 1:
-        boxes_t = tf.transpose(boxes, perm=[0, 2, 1])
+        boxes_t = transpose_with_flexing_deterrence(
+            input_tensor=boxes,
+            perm=[0, 2, 1],
+            **kwargs,
+        )
         x_centers = tf.slice(boxes_t, [0, 0, 0], [-1, 1, -1])
         y_centers = tf.slice(boxes_t, [0, 1, 0], [-1, 1, -1])
         widths = tf.slice(boxes_t, [0, 2, 0], [-1, 1, -1])
@@ -263,7 +268,11 @@ def make_node(
         y2 = tf.add(y_centers, tf.divide(heights, 2))
         x2 = tf.add(x_centers, tf.divide(widths, 2))
         boxes_t = tf.concat([y1, x1, y2, x2], 1)
-        boxes = tf.transpose(boxes_t, perm=[0, 2, 1])
+        boxes = transpose_with_flexing_deterrence(
+            input_tensor=boxes_t,
+            perm=[0, 2, 1],
+            **kwargs,
+        )
 
     num_batches = boxes.shape[0]
 

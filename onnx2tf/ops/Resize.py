@@ -23,6 +23,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 from onnx2tf.utils.colors import Color
@@ -99,31 +100,35 @@ def make_node(
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 4:
                 # 2D - Overall model
-                input_tensor = tf.transpose(
-                    a=input_tensor,
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
                     perm=[0,2,3,1],
+                    **kwargs,
                 )
                 before_op_output_shape_trans = True
                 # 2D - Partial model
                 if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
-                        tf.transpose(
-                            a=tf_partial_model_inputs[0],
+                        transpose_with_flexing_deterrence(
+                            input_tensor=tf_partial_model_inputs[0],
                             perm=[0,2,3,1],
+                            **kwargs,
                         )
             elif len(onnx_input_shape) == 5:
                 # 3D - Overall model
-                input_tensor = tf.transpose(
-                    a=input_tensor,
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
+                    **kwargs,
                 )
                 before_op_output_shape_trans = True
                 # 3D - Partial model
                 if tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
-                        tf.transpose(
-                            a=tf_partial_model_inputs[0],
+                        transpose_with_flexing_deterrence(
+                            input_tensor=tf_partial_model_inputs[0],
                             perm=[0,2,3,4,1],
+                            **kwargs,
                         )
 
     roi = None
