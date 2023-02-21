@@ -83,6 +83,7 @@ def make_node(
     else:
         test_data1 = None
     if not isinstance(graph_node_input_2, np.ndarray) \
+        and not (isinstance(graph_node_input_2, int) and graph_node_input_2 == 0) \
         and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
         test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
     elif isinstance(graph_node_input_2, np.ndarray):
@@ -90,6 +91,7 @@ def make_node(
     else:
         test_data2 = None
     if not isinstance(graph_node_input_3, np.ndarray) \
+        and not (isinstance(graph_node_input_3, int) and graph_node_input_3 == 0) \
         and 'verification_data' in tf_layers_dict[graph_node_input_3.name].keys():
         test_data3: np.ndarray = tf_layers_dict[graph_node_input_3.name]['verification_data']
     elif isinstance(graph_node_input_3, np.ndarray):
@@ -110,12 +112,13 @@ def make_node(
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
-    z = pre_process_transpose(
-        value_before_transpose=z,
-        param_target='inputs',
-        param_name=graph_node.inputs[2].name,
-        **kwargs,
-    )
+    if len(graph_node.inputs) > 2:
+        z = pre_process_transpose(
+            value_before_transpose=z,
+            param_target='inputs',
+            param_name=graph_node.inputs[2].name,
+            **kwargs,
+        )
 
     input_tensor_x_dtype = NUMPY_DTYPES_TO_TF_DTYPES[x.dtype] \
         if isinstance(x.dtype, np.dtype) else x.dtype
@@ -161,12 +164,13 @@ def make_node(
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
-    z = replace_parameter(
-        value_before_replacement=z,
-        param_target='inputs',
-        param_name=graph_node.inputs[2].name,
-        **kwargs,
-    )
+    if len(graph_node.inputs) > 2:
+        z = replace_parameter(
+            value_before_replacement=z,
+            param_target='inputs',
+            param_name=graph_node.inputs[2].name,
+            **kwargs,
+        )
     alpha = replace_parameter(
         value_before_replacement=alpha,
         param_target='attributes',
@@ -209,18 +213,19 @@ def make_node(
             input_tensors=[
                 x,
                 y,
-                z,
-            ]
+            ] + ([z] if len(graph_node.inputs) > 2 else [])
         )
     tf_partial_x = tf_partial_model_inputs[0] \
         if tf_partial_model_inputs is not None else None
     tf_partial_y = tf_partial_model_inputs[1] \
         if tf_partial_model_inputs is not None else None
     tf_partial_z = tf_partial_model_inputs[2] \
-        if tf_partial_model_inputs is not None else None
+        if tf_partial_model_inputs is not None \
+            and len(tf_partial_model_inputs) > 2 else None
     if tf_partial_model_inputs is not None:
         if isinstance(test_data3, np.ndarray) \
             and len(test_data3.shape) == 1 \
+            and tf_partial_z is not None \
             and len(tf_partial_z.shape) == 2:
             test_data3 = np.expand_dims(test_data3, 0)
     tf_partial_model_outputs = None
@@ -249,8 +254,7 @@ def make_node(
                 verification_datas=[
                     test_data1,
                     test_data2,
-                    test_data3,
-                ]
+                ] + ([test_data3] if len(graph_node.inputs) > 2 else [])
             )
             tf_layers_dict[graph_node_output.name]['verification_data'] = \
                 list(tf_partial_model_result_infos.values())[0]
@@ -274,13 +278,22 @@ def make_node(
             test_data3 = tf.cast(test_data3, tf.float32)
         if not optimization_for_gpu_delegate:
             ### Overall model
-            result = alpha * tf.matmul(x, y) + beta * z
+            if z is not None:
+                result = alpha * tf.matmul(x, y) + beta * z
+            else:
+                result = alpha * tf.matmul(x, y) + beta
             ### Partial model
             if tf_partial_model_inputs is not None:
-                tf_partial_model_outputs = \
-                    [
-                        alpha * tf.matmul(tf_partial_x, tf_partial_y) + beta * tf_partial_z
-                    ]
+                if tf_partial_z is not None:
+                    tf_partial_model_outputs = \
+                        [
+                            alpha * tf.matmul(tf_partial_x, tf_partial_y) + beta * tf_partial_z
+                        ]
+                else:
+                    tf_partial_model_outputs = \
+                        [
+                            alpha * tf.matmul(tf_partial_x, tf_partial_y) + beta
+                        ]
                 tf_partial_model = tf.keras.Model(
                     inputs=tf_partial_model_inputs,
                     outputs=tf_partial_model_outputs,
@@ -291,8 +304,7 @@ def make_node(
                     verification_datas=[
                         test_data1,
                         test_data2,
-                        test_data3,
-                    ]
+                    ] + ([test_data3] if len(graph_node.inputs) > 2 else [])
                 )
                 tf_layers_dict[graph_node_output.name]['verification_data'] = \
                     list(tf_partial_model_result_infos.values())[0]
