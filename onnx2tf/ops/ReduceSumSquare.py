@@ -68,7 +68,7 @@ def make_node(
 
     axes = graph_node.attrs.get('axes', axes)
     noop_with_empty_axes = bool(graph_node.attrs.get('noop_with_empty_axes', 0))
-    if noop_with_empty_axes:
+    if noop_with_empty_axes and axes is None:
         error_msg = f'' +\
             f'{Color.RED}ERROR:{Color.RESET} ' +\
             f'TensorFlow does not support noop_with_empty_axes=1 (True).'

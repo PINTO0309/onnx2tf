@@ -86,22 +86,39 @@ def make_node(
     # tensorflow gather supports only positive indices
     out_dtype = NUMPY_DTYPES_TO_TF_DTYPES[indices.dtype] \
         if isinstance(indices.dtype, np.dtype) else indices.dtype
+
     if not optimization_for_gpu_delegate:
         cond = tf.cast(indices < 0, dtype=out_dtype)
-        indices = tf.cast(
-            indices + cond * tf.shape(input_tensor, out_type=out_dtype)[axis],
-            dtype=out_dtype,
-        )
+        plus_values = cond * tf.shape(input_tensor, out_type=out_dtype)[axis]
+        if hasattr(plus_values, "_inferred_value") \
+            and plus_values._inferred_value is not None:
+            plus_values_inferred_value = np.asarray(plus_values._inferred_value)
+            plus_values = plus_values_inferred_value.flatten()
+            if None not in plus_values.shape \
+                and len(plus_values) != sum([1 if plus_value is not None else 0 for plus_value in plus_values]):
+                plus_values = tf.constant([0], dtype=out_dtype)
+        data = indices + plus_values
+        if data.dtype != out_dtype:
+            indices = tf.cast(
+                data,
+                dtype=out_dtype,
+            )
+        else:
+            indices = data
     else:
         cond = indices < 0
-        indices = indices + tf.cast(
-            tf.where(
-                cond,
-                tf.convert_to_tensor(1, dtype=out_dtype),
-                tf.convert_to_tensor(0, dtype=out_dtype)
-            ) * tf.shape(input_tensor, out_type=out_dtype)[axis],
-            dtype=out_dtype,
-        )
+        data = tf.where(
+            cond,
+            tf.convert_to_tensor(1, dtype=out_dtype),
+            tf.convert_to_tensor(0, dtype=out_dtype)
+        ) * tf.shape(input_tensor, out_type=out_dtype)[axis]
+        if data.dtype != out_dtype:
+            indices = indices + tf.cast(
+                data,
+                dtype=out_dtype,
+            )
+        else:
+            indices = indices + data
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -187,7 +204,9 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather(
                 params=input_tensor,
-                indices=indices,
+                indices=indices._inferred_value \
+                    if hasattr(indices, "_inferred_value") \
+                        and indices._inferred_value is not None else indices,
                 axis=axis,
                 name=graph_node.name,
             )
