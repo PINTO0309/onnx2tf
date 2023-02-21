@@ -149,7 +149,15 @@ def make_node(
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
-    shape_replaced_flg = transposed_reshape_shape != replaced_shape
+    shape_replaced_flg = False
+    if ((isinstance(transposed_reshape_shape, list) and isinstance(replaced_shape, list)) \
+        or (isinstance(transposed_reshape_shape, np.ndarray) and isinstance(replaced_shape, np.ndarray))) \
+        and transposed_reshape_shape != replaced_shape:
+        shape_replaced_flg = True
+    elif (not isinstance(transposed_reshape_shape, list) and not isinstance(transposed_reshape_shape, np.ndarray)) \
+        and tf.keras.backend.is_keras_tensor(transposed_reshape_shape) \
+        and (isinstance(replaced_shape, list) or isinstance(replaced_shape, np.ndarray)):
+        shape_replaced_flg = True
     if shape_replaced_flg:
         transposed_reshape_shape = replaced_shape
 
