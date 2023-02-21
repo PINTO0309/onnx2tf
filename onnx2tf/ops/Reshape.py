@@ -143,12 +143,15 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
-    transposed_reshape_shape = replace_parameter(
+    replaced_shape = replace_parameter(
         value_before_replacement=transposed_reshape_shape,
         param_target='inputs',
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
+    shape_replaced_flg = transposed_reshape_shape != replaced_shape
+    if shape_replaced_flg:
+        transposed_reshape_shape = replaced_shape
 
     # Pre-process transpose
     transposed_tensor = pre_process_transpose(
@@ -177,7 +180,7 @@ def make_node(
         tf.reshape(
             tensor=transposed_tensor,
             shape=transposed_reshape_shape \
-                if has_undefined_outputshape else output_shape,
+                if (has_undefined_outputshape or shape_replaced_flg) else output_shape,
             name=graph_node.name,
         )
     ### Partial model
