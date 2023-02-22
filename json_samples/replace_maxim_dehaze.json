@@ -1,6 +1,7 @@
 {
   "pullrequest": "https://github.com/opencv/opencv_zoo/tree/189e835a0e00f242dfcf924f2592bfe56651ba65/models/dehaze_maxim",
   "model": "https://github.com/opencv/opencv_zoo/blob/189e835a0e00f242dfcf924f2592bfe56651ba65/models/dehaze_maxim/dehaze_maxim_2022aug.onnx",
+  "optimized_model": "https://github.com/PINTO0309/PINTO_model_zoo/tree/main/352_MAXIM", 
   "command": "onnx2tf -i dehaze_maxim_2022aug_opt_sim.onnx -prf replace_maxim_dehaze.json -cotof",
   "format_version": 1,
   "operations": [
