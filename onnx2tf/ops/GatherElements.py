@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -108,8 +109,16 @@ def make_node(
             tf.constant([[0], [axis]]),
             tf.constant([axis, 0])
         )
-        data_swaped = tf.transpose(input_tensor, perm=axis_perm)
-        index_swaped = tf.transpose(indices_tensor, perm=axis_perm)
+        data_swaped = transpose_with_flexing_deterrence(
+            input_tensor=input_tensor,
+            perm=axis_perm,
+            **kwargs,
+        )
+        index_swaped = transpose_with_flexing_deterrence(
+            input_tensor=indices_tensor,
+            perm=axis_perm,
+            **kwargs,
+        )
 
     idx_tensors_per_axis = [
         tf.range(tf.shape(index_swaped, index_swaped.dtype)[i]) \
@@ -130,7 +139,11 @@ def make_node(
     gathered = tf.gather_nd(data_swaped, index_expanded)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.transpose(gathered, perm=axis_perm)
+        transpose_with_flexing_deterrence(
+            input_tensor=gathered,
+            perm=axis_perm,
+            **kwargs,
+        )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

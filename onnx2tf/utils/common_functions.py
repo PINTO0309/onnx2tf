@@ -2059,6 +2059,7 @@ def disable_unnecessary_transpose(
     graph_node_input_2: Any,
     input_tensor_1: Any,
     input_tensor_2: Any,
+    **kwargs: dict,
 ) -> Tuple[Any, Any, Any, Any]:
     """Remove unnecessary Transpose to NHWC.
 
@@ -2146,9 +2147,10 @@ def disable_unnecessary_transpose(
                             unmatch = True
                             break
                 if unmatch:
-                    input_tensor_2 = tf.transpose(
-                        a=input_tensor_2,
+                    input_tensor_2 = transpose_with_flexing_deterrence(
+                        input_tensor=input_tensor_2,
                         perm=reverse_perm,
+                        **kwargs,
                     )
     return graph_node_input_1, graph_node_input_2, input_tensor_1, input_tensor_2
 
@@ -2160,6 +2162,7 @@ def shape_unmatched_special_avoidance_workaround(
     input_tensor_1: Any,
     input_tensor_2: Any,
     tf_layers_dict: dict,
+    **kwargs: dict,
 ) -> Tuple[Any, Any]:
     """Force correction of the shape mismatch between input X and input Y to NHWC format
     only if the output of the immediately preceding OP is definitively NHWC.
@@ -2243,11 +2246,23 @@ def shape_unmatched_special_avoidance_workaround(
         for idx, (same_input_shape_as_onnx, nhwc_flag) in enumerate(zip(same_input_shape_as_onnxs, nhwc_flags)):
             if same_input_shape_as_onnx and not nhwc_flag:
                 if len(values[idx].shape) == 3:
-                    values[idx] = tf.transpose(a=values[idx], perm=[0,2,1])
+                    values[idx] = transpose_with_flexing_deterrence(
+                        input_tensor=values[idx],
+                        perm=[0,2,1],
+                        **kwargs,
+                    )
                 elif len(values[idx].shape) == 4:
-                    values[idx] = tf.transpose(a=values[idx], perm=[0,2,3,1])
+                    values[idx] = transpose_with_flexing_deterrence(
+                        input_tensor=values[idx],
+                        perm=[0,2,3,1],
+                        **kwargs,
+                    )
                 elif len(values[idx].shape) == 5:
-                    values[idx] = tf.transpose(a=values[idx], perm=[0,2,3,4,1])
+                    values[idx] = transpose_with_flexing_deterrence(
+                        input_tensor=values[idx],
+                        perm=[0,2,3,4,1],
+                        **kwargs,
+                    )
         input_tensor_1 = values[0]
         input_tensor_2 = values[1]
 
@@ -2438,6 +2453,8 @@ def transpose_with_flexing_deterrence(
         kwargs['disable_suppression_flextranspose']
     number_of_dimensions_after_flextranspose_compression: int = \
         kwargs['number_of_dimensions_after_flextranspose_compression']
+    COMPRESSION_DEFAULT_VALUE = 6
+
     tensor_after_transposition = input_tensor
 
     if disable_suppression_flextranspose:
@@ -2465,8 +2482,8 @@ def transpose_with_flexing_deterrence(
         # Obtain a shape with the dimension with 1 element removed
         squeezed_original_shapes = squeezed_original_x.shape
 
-        if input_tensor_rank >= 7 \
-            and len(squeezed_original_shapes) <= 6 \
+        if input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) \
+            and len(squeezed_original_shapes) <= COMPRESSION_DEFAULT_VALUE \
             and x_shape_none_dims_count < 2 \
             and output_shape is not None:
             # Special Transpose.1
@@ -2494,7 +2511,10 @@ def transpose_with_flexing_deterrence(
                         dim if not isinstance(dim, str) else -1 for dim in output_shape
                     ],
                 )
-        elif input_tensor_rank >= 7 and x_shape_none_dims_count == 0:
+        elif input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0 \
+            or number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
+                and number_of_dimensions_after_flextranspose_compression >= 2 \
+                and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 6 or more dimensions into FlexTransposes.

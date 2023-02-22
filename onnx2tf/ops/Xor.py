@@ -79,6 +79,7 @@ def make_node(
         input_tensor_1=input_tensor_1,
         input_tensor_2=input_tensor_2,
         tf_layers_dict=tf_layers_dict,
+        **kwargs,
     )
 
     # Pre-process transpose

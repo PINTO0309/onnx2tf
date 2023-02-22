@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 
@@ -98,10 +99,13 @@ def make_node(
     ]
 
     # NHWC -> HCHW
-    transposed_tensor = tf.transpose(
-        a=input_tensor,
-        perm=list(perm) if perm is not None else None,
-    )
+    transposed_tensor = transpose_with_flexing_deterrence(
+            input_tensor=input_tensor,
+            perm=list(perm) if perm is not None else None,
+            output_shape=output_shape,
+            name=graph_node.name,
+            **kwargs,
+        )
     test_data = None
     if not isinstance(input_tensor, np.ndarray):
         if not isinstance(graph_node_input_1, np.ndarray) \
@@ -139,12 +143,23 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
-    transposed_reshape_shape = replace_parameter(
+    replaced_shape = replace_parameter(
         value_before_replacement=transposed_reshape_shape,
         param_target='inputs',
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
+    shape_replaced_flg = False
+    if ((isinstance(transposed_reshape_shape, list) and isinstance(replaced_shape, list)) \
+        or (isinstance(transposed_reshape_shape, np.ndarray) and isinstance(replaced_shape, np.ndarray))) \
+        and transposed_reshape_shape != replaced_shape:
+        shape_replaced_flg = True
+    elif (not isinstance(transposed_reshape_shape, list) and not isinstance(transposed_reshape_shape, np.ndarray)) \
+        and tf.keras.backend.is_keras_tensor(transposed_reshape_shape) \
+        and (isinstance(replaced_shape, list) or isinstance(replaced_shape, np.ndarray)):
+        shape_replaced_flg = True
+    if shape_replaced_flg:
+        transposed_reshape_shape = replaced_shape
 
     # Pre-process transpose
     transposed_tensor = pre_process_transpose(
@@ -173,7 +188,7 @@ def make_node(
         tf.reshape(
             tensor=transposed_tensor,
             shape=transposed_reshape_shape \
-                if has_undefined_outputshape else output_shape,
+                if (has_undefined_outputshape or shape_replaced_flg) else output_shape,
             name=graph_node.name,
         )
     ### Partial model
@@ -229,9 +244,10 @@ def make_node(
                 # ShuffleNet patterns - 4D only
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.transpose(
-                        a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                    transpose_with_flexing_deterrence(
+                        input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                         perm=[0,2,3,1],
+                        **kwargs,
                     )
                 ### Partial model
                 if tf_partial_model_inputs is not None:

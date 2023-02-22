@@ -9,6 +9,7 @@ from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
     print_node_info,
     make_tf_node_info,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -18,6 +19,7 @@ def _make_tf_constant(
     value,
     dtype,
     name,
+    kwargs,
 ):
     constant_tensor = tf.constant(
         value=value,
@@ -27,24 +29,27 @@ def _make_tf_constant(
     transposed_tensor = None
     if len(value.shape) == 3:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,1],
                 name=name,
+                **kwargs,
             )
     elif len(value.shape) == 4:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,3,1],
                 name=name,
+                **kwargs,
             )
     elif len(value.shape) == 5:
         transposed_tensor = \
-            tf.transpose(
-                a=constant_tensor,
+            transpose_with_flexing_deterrence(
+                input_tensor=constant_tensor,
                 perm=[0,2,3,4,1],
                 name=name,
+                **kwargs,
             )
     else:
         transposed_tensor = constant_tensor
@@ -139,6 +144,7 @@ def make_node(
                     value=value,
                     dtype=const_dtype,
                     name=graph_node.name,
+                    kwargs=kwargs,
                 )
             # Generation of Debug Info
             tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
@@ -201,6 +207,7 @@ def make_node(
                         value=value,
                         dtype=const_dtype,
                         name=graph_node.name,
+                        kwargs=kwargs,
                     )
                 # Generation of Debug Info
                 tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
@@ -272,6 +279,7 @@ def make_node(
                 value=value,
                 dtype=const_dtype,
                 name=graph_node.name,
+                kwargs=kwargs,
             )
         # Generation of Debug Info
         tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
