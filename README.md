@@ -23,9 +23,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - simple_onnx_processing_tools
 - tensorflow==2.12.0rc0
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
-  ```
-  Debian/Ubuntu: sudo apt-get install -y flatbuffers-compiler
-  Other than Debian/Ubuntu: https://github.com/google/flatbuffers/releases
+  ```bash
+  # Custom flatc binary for Ubuntu 20.04+
+  # https://github.com/PINTO0309/onnx2tf/issues/196
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && chmod +x flatc \
+    && mv flatc /usr/bin/
   ```
 
 ## Sample Usage
@@ -35,7 +39,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.3
+  ghcr.io/pinto0309/onnx2tf:1.7.4
 
   or
 

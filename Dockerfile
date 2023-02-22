@@ -6,7 +6,7 @@ RUN apt-get update \
     && apt-get install -y \
         nano python3-pip python3-mock libpython3-dev \
         libpython3-all-dev python-is-python3 wget curl \
-        software-properties-common sudo flatbuffers-compiler \
+        software-properties-common sudo \
     && sed -i 's/# set linenumbers/set linenumbers/g' /etc/nanorc \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
@@ -23,6 +23,14 @@ RUN pip install pip -U \
     && pip install h5py==3.7.0 \
     && pip install -U onnxruntime==1.13.1 \
     && python -m pip cache purge
+
+# Re-release flatc with some customizations of our own to address
+# the lack of arithmetic precision of the quantization parameters
+# https://github.com/PINTO0309/onnx2tf/issues/196
+RUN wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && chmod +x flatc \
+    && mv flatc /usr/bin/
 
 ENV USERNAME=user
 RUN echo "root:root" | chpasswd \
