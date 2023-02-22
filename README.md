@@ -68,7 +68,10 @@ or
   !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
   !sudo apt-get -y install python3.9-distutils
-  !sudo apt-get -y install flatbuffers-compiler
+  !wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && chmod +x flatc \
+    && mv flatc /usr/bin/
   !python3.9 -m pip install -U setuptools \
     && python3.9 -m pip install -U pip \
     && python3.9 -m pip install -U distlib
