@@ -1,0 +1,649 @@
+{
+  "pullrequest": "https://github.com/opencv/opencv_zoo/tree/189e835a0e00f242dfcf924f2592bfe56651ba65/models/dehaze_maxim",
+  "model": "https://github.com/opencv/opencv_zoo/blob/189e835a0e00f242dfcf924f2592bfe56651ba65/models/dehaze_maxim/dehaze_maxim_2022aug.onnx",
+  "command": "onnx2tf -i dehaze_maxim_2022aug_opt_sim.onnx -prf replace_maxim_dehaze.json -cotof",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Transpose__4978",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__4996",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5008",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5016",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5590",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5594",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5862",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5040",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_3/Conv_0/Conv2D__1281",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+
+
+    {
+      "op_name": "Transpose__5606",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5610",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5866",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5070",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_7/Conv_0/Conv2D__1247",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_1/Conv_0/Conv2D__1251",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+
+    {
+      "op_name": "Transpose__5622",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5626",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5870",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+    {
+      "op_name": "Transpose__5106",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5136",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_8/Conv_0/Conv2D__1241",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_5/Conv_0/Conv2D__1243",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+
+    {
+      "op_name": "Transpose__5126",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5110",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5648",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5884",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5966",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5150",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5662",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5888",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5972",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5160",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5168",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5172",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_12/Conv_0/Conv2D__1798",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_16/Conv_0/Conv2D__1563",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_14/Conv_0/Conv2D__1540",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+
+    {
+      "op_name": "Transpose__5196",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5672",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5676",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5902",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+    {
+      "op_name": "Transpose__5210",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5232",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5222",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5692",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5696",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5906",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+
+    {
+      "op_name": "Transpose__5260",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5288",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5268",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5712",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5716",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5910",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5302",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5314",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5328",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5732",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5744",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5914",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5350",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5356",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5748",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5760",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5918",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5386",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5400",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_19/Conv_0/Conv2D__3028",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+
+    {
+      "op_name": "Transpose__5764",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5768",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5922",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5422",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5428",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5492",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_23/Conv_0/Conv2D__3020",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_25/Conv_0/Conv2D__3024",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_26/Conv_0/Conv2D__3018",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+
+    {
+      "op_name": "Transpose__5472",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5482",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5780",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5926",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5980",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5442",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5804",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5950",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5986",
+      "param_target": "inputs",
+      "param_name": "new_shape__6216",
+      "values": [1,64,80,1]
+    },
+    {
+      "op_name": "Transpose__5462",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5500",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5504",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+
+
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_33/Conv_0/Conv2D__3114",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,3,0,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_28/Conv_0/Conv2D__3186",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+    {
+      "op_name": "jax2tf_predict_/MAXIM/UpSampleRatio_29/Conv_0/Conv2D__3161",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,3,2]
+    },
+
+    {
+      "op_name": "Transpose__5524",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5814",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5826",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5954",
+      "param_target": "inputs",
+      "param_name": "new_shape__6052",
+      "values": [1,128,160,1]
+    },
+    {
+      "op_name": "Transpose__5962",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5538",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5830",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5834",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5958",
+      "param_target": "inputs",
+      "param_name": "new_shape__6112",
+      "values": [1,256,320,1]
+    },
+    {
+      "op_name": "Transpose__5846",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5850",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    },
+    {
+      "op_name": "Transpose__5576",
+      "param_target": "inputs",
+      "param_name": "new_shape__6163",
+      "values": [1,512,640,1]
+    }
+  ]
+}
