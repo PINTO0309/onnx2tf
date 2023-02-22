@@ -28,8 +28,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   # https://github.com/PINTO0309/onnx2tf/issues/196
   wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
     && tar -zxvf flatc.tar.gz \
-    && chmod +x flatc \
-    && mv flatc /usr/bin/
+    && sudo chmod +x flatc \
+    && sudo mv flatc /usr/bin/
   ```
 
 ## Sample Usage
