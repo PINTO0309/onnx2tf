@@ -2812,12 +2812,48 @@ def dummy_onnx_inference(
     """
     # Separate onnx at specified output_names position
     gs_graph = gs.import_onnx(onnx_graph)
+
+    # reduce all axes except batch axis
     for i, node in enumerate(gs_graph.nodes):
-        if "Reduce" in gs_graph.nodes[i].op and 'axes' not in node.attrs:
-            # reduce all axes except batch axis
+        if gs_graph.opset <= 17 \
+            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+            and 'axes' not in node.attrs:
             gs_graph.nodes[i].attrs['axes'] = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
             ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+
+        elif gs_graph.opset > 17 \
+            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+            and len(gs_graph.nodes[i].inputs) == 1:
+            const_axes = [
+                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
+            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+            gs_graph.nodes[i].inputs.append(
+                gs.Constant(
+                    f'{gs_graph.nodes[i].name}_axes',
+                    values=np.asarray(const_axes, dtype=np.int64)
+                )
+            )
+
+        elif gs_graph.opset <= 12 \
+            and gs_graph.nodes[i].op in ['ReduceSum'] \
+            and 'axes' not in node.attrs:
+            gs_graph.nodes[i].attrs['axes'] = [
+                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
+            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+
+        elif gs_graph.opset > 12 \
+            and gs_graph.nodes[i].op in ['ReduceSum'] \
+            and len(gs_graph.nodes[i].inputs) == 1:
+            const_axes = [
+                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
+            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+            gs_graph.nodes[i].inputs.append(
+                gs.Constant(
+                    f'{gs_graph.nodes[i].name}_axes',
+                    values=np.asarray(const_axes, dtype=np.int64)
+                )
+            )
 
     # instead, modify onnx graph manually
     gs_graph.outputs = []
@@ -2936,6 +2972,8 @@ def dummy_tf_inference(
             in zip(input_names, input_sizes, input_dtypes, verification_datas):
 
             if verification_data is not None:
+                verification_data = verification_data.numpy() \
+                    if hasattr(verification_data, "numpy") else verification_data
                 if len(input_size) != len(verification_data.shape):
                     if len(verification_data.shape) <= 1:
                         dummy_datas[input_name] = verification_data
