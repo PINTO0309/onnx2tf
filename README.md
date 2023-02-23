@@ -1383,7 +1383,7 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |82|zero_dce_640_dele.onnx|:heavy_check_mark:|
 |83|zfnet512-12.onnx|:heavy_check_mark:|
 
-  </div></details>
+</div></details>
 
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
