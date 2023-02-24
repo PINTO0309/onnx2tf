@@ -64,11 +64,12 @@ def make_node(
     )
 
     if len(graph_node.outputs) > 1:
-        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
-                    f'MaxPoolWithArgmax is not yet implemented. ' \
-                    f'Pull requests are welcome. \n' \
-                    f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n' \
-                    f'graph_node.name: {graph_node.name}'
+        error_msg = \
+            f'{Color.RED}ERROR:{Color.RESET} ' \
+            f'MaxPoolWithArgmax is not yet implemented. ' \
+            f'Pull requests are welcome. \n' \
+            f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n' \
+            f'graph_node.name: {graph_node.name}'
         print(error_msg)
         raise NotImplementedError(error_msg)
 
@@ -102,10 +103,12 @@ def make_node(
     if dilations != [1] * spatial_size:
         dilated_kernel_shape = [(k - 1) * d for k, d in zip(kernel_shape, dilations)]
 
-    tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
-                                   kernel=dilated_kernel_shape,
-                                   strides=strides,
-                                   func=func)
+    tf_pads = calc_tf_pooling_pads(
+        input_shape=input_tensor_shape,
+        kernel=dilated_kernel_shape,
+        strides=strides,
+        func=func,
+    )
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
@@ -137,9 +140,10 @@ def make_node(
 
     # add extra pad layer if needed
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
-        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-                      f'Tensorflow incompatible padding detected. ' \
-                      f'Extra pad layer is inserted automatically. '
+        warning_msg = \
+            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+            f'Tensorflow incompatible padding detected. ' \
+            f'Extra pad layer is inserted automatically. '
         print(warning_msg)
 
         if auto_pad == 'SAME_LOWER':
@@ -147,9 +151,10 @@ def make_node(
             tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
 
         # convert to tensorflow padding format
-        tf_pads = [[0, 0]] + \
-                  [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
-                  [[0, 0]]
+        tf_pads = \
+            [[0, 0]] + \
+            [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
+            [[0, 0]]
 
         # explicit padding value should be negative infinite since this is max pooling
         padded_tensor = tf.pad(

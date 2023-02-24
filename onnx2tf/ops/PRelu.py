@@ -106,7 +106,12 @@ def make_node(
         neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
         tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
     else:
-        shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
+        if slope.shape is not None \
+            and len(slope.shape) > 0 \
+            and sum([1 if dim is not None and dim == 1 else 0 for dim in slope.shape]) == len(slope.shape):
+            shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 1)]
+        else:
+            shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
         tf_layers_dict[graph_node_output.name]['tf_node'] = PReLU(
             weights=slope,
             shared_axes=shared_axes,

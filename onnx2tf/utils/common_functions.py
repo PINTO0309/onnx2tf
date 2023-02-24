@@ -689,6 +689,14 @@ def pre_explicit_broadcast(
     # output:
     #   input_tensor_1: [1,2,3,4]
     #   input_tensor_2: [3,1]
+    #
+    # e.g.3
+    # input:
+    #   input_tensor_1: [1,2,3,4]
+    #   input_tensor_2: [1,1,1]
+    # output:
+    #   input_tensor_1: [1,2,3,4]
+    #   input_tensor_2: [1,1,1,1]
     if input_tensor_1.shape is not None \
         and input_tensor_2.shape is not None \
         and None not in input_tensor_1.shape \
@@ -740,6 +748,19 @@ def pre_explicit_broadcast(
                         input=input_tensor_1,
                         axis=-1,
                     )
+    elif input_tensor_1.shape is not None \
+        and input_tensor_2.shape is not None \
+        and None not in input_tensor_1.shape \
+        and None not in input_tensor_2.shape \
+        and len(input_tensor_1.shape) > len(input_tensor_2.shape) \
+        and sum([1 if not isinstance(dim, str) and dim == 1 else 0 for dim in input_tensor_2.shape]) == len(input_tensor_2.shape):
+        expand_count = len(input_tensor_1.shape) - len(input_tensor_2.shape)
+        for _ in range(expand_count):
+            input_tensor_2 = tf.expand_dims(
+                input=input_tensor_2,
+                axis=-1,
+            )
+
     return input_tensor_1, input_tensor_2
 
 
