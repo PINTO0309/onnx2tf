@@ -18,7 +18,10 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
-from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
+from onnx2tf.utils.enums import (
+    NUMPY_DTYPES_TO_TF_DTYPES,
+    TF_DTYPES_TO_NUMPY_DTYPES,
+)
 
 
 @print_node_info
@@ -158,8 +161,18 @@ def make_node(
                     tf_partial_model_inputs: List[tf.keras.Input] = \
                             make_tf_partial_model_inputs(
                                 input_tensors=[
-                                    np.asarray(input_tensor_1.shape)[tensor_1_candidate_for_transposition],
-                                    np.asarray(input_tensor_2.shape)[tensor_2_candidate_for_transposition],
+                                    np.zeros(
+                                        list(input_tensor_1.shape),
+                                        dtype=input_tensor_1.dtype \
+                                            if isinstance(input_tensor_1, np.ndarray) \
+                                                else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_1.dtype],
+                                    ).transpose(tensor_1_candidate_for_transposition),
+                                    np.zeros(
+                                        list(input_tensor_2.shape),
+                                        dtype=input_tensor_2.dtype \
+                                            if isinstance(input_tensor_2, np.ndarray) \
+                                                else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_2.dtype],
+                                    ).transpose(tensor_2_candidate_for_transposition),
                                 ]
                             )
                     tf_partial_model_outputs = None
@@ -168,12 +181,12 @@ def make_node(
                         tf.matmul(
                             a=transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_1,
-                                perm=tensor_1_candidate_for_transposition,
+                                perm=list(tensor_1_candidate_for_transposition),
                                 **kwargs,
                             ),
                             b=transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_2,
-                                perm=tensor_2_candidate_for_transposition,
+                                perm=list(tensor_2_candidate_for_transposition),
                                 **kwargs,
                             ),
                             output_type=output_dtype,
@@ -184,16 +197,8 @@ def make_node(
                         tf_partial_model_outputs = \
                             [
                                 tf.matmul(
-                                    a=transpose_with_flexing_deterrence(
-                                        input_tensor=tf_partial_model_inputs[0],
-                                        perm=tensor_1_candidate_for_transposition,
-                                        **kwargs,
-                                    ),
-                                    b=transpose_with_flexing_deterrence(
-                                        input_tensor=tf_partial_model_inputs[1],
-                                        perm=tensor_2_candidate_for_transposition,
-                                        **kwargs,
-                                    ),
+                                    a=tf_partial_model_inputs[0],
+                                    b=tf_partial_model_inputs[1],
                                     output_type=output_dtype,
                                 )
                             ]
@@ -203,10 +208,18 @@ def make_node(
                         )
                         test_data1 = None
                         if isinstance(input_tensor_1, np.ndarray):
-                            test_data1 = input_tensor_1
+                            test_data1 = transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_1,
+                                perm=list(tensor_1_candidate_for_transposition),
+                                **kwargs,
+                            )
                         test_data2 = None
                         if isinstance(input_tensor_2, np.ndarray):
-                            test_data2 = input_tensor_2
+                            test_data2 = transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_2,
+                                perm=list(tensor_2_candidate_for_transposition),
+                                **kwargs,
+                            )
                         tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
                             model=tf_partial_model,
                             inputs=tf_partial_model_inputs,

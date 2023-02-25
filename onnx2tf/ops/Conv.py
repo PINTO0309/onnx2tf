@@ -98,69 +98,6 @@ def make_node(
     }
 
     # Generation of TF OP
-    """
-    Conv1D
-    Conv2D
-    Conv3D
-    DepthwiseConv2D
-    GroupConv1D
-    GroupConv2D
-    GroupConv3D
-    SeparableConv
-    """
-    # Check auto_pad nonexistent or NOTSET first
-    pad_mode = 'VALID'
-    padded = False
-    if auto_pad == 'NOTSET':
-        if input_tensor_rank >=2 \
-            and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
-            pad_mode = "SAME"
-        elif pads != [0, 0] * spatial_size:
-            input_tensor = get_padding_as_op(
-                x=input_tensor,
-                pads=pads,
-            )
-            pad_mode = 'VALID'
-            padded = True
-        else:
-            pad_mode = 'VALID'
-    # Then we use auto_pad to setup pad_mode
-    elif auto_pad == "SAME_UPPER":
-        pad_mode = "SAME"
-    elif auto_pad == "VALID":
-        pad_mode = "VALID"
-    elif auto_pad == "SAME_LOWER":
-        error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
-            f'Invalid auto_pad attribute: {auto_pad}'
-        print(error_msg)
-        assert False, error_msg
-    else:
-        error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
-            f'Invalid auto_pad attribute: {auto_pad}'
-        print(error_msg)
-        assert False, error_msg
-
-
-    # DepthwiseConv2D
-    #   1. rank=4
-    #   2. group>1
-    #   3. No undefined dimension
-    #   4. All strides spatial shape are the same number
-    depthwise = (
-        input_tensor_rank == 4 \
-        and len(input_weights_shape) == 4 \
-        and group != 1 \
-        and not (None in input_weights_shape) \
-        and sum([1 if s == strides[0] else 0 for s in strides]) == len(strides)
-    )
-    if depthwise and input_tensor_shape[-1] != None:
-        depthwise = bool(group == input_tensor_shape[-1])
-
-    if depthwise is True:
-        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
-        input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     # Workaround to avoid as many conversion failures as possible
     # for models with useless Transpose immediately before them.
@@ -214,6 +151,69 @@ def make_node(
             test_data_transposed_perm = [0,2,3,1]
         elif len(onnx_input_shape) == 5:
             test_data_transposed_perm = [0,2,3,4,1]
+
+    """
+    Conv1D
+    Conv2D
+    Conv3D
+    DepthwiseConv2D
+    GroupConv1D
+    GroupConv2D
+    GroupConv3D
+    SeparableConv
+    """
+    # Check auto_pad nonexistent or NOTSET first
+    pad_mode = 'VALID'
+    padded = False
+    if auto_pad == 'NOTSET':
+        if input_tensor_rank >=2 \
+            and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
+            pad_mode = "SAME"
+        elif pads != [0, 0] * spatial_size:
+            input_tensor = get_padding_as_op(
+                x=input_tensor,
+                pads=pads,
+            )
+            pad_mode = 'VALID'
+            padded = True
+        else:
+            pad_mode = 'VALID'
+    # Then we use auto_pad to setup pad_mode
+    elif auto_pad == "SAME_UPPER":
+        pad_mode = "SAME"
+    elif auto_pad == "VALID":
+        pad_mode = "VALID"
+    elif auto_pad == "SAME_LOWER":
+        error_msg = f'' +\
+            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            f'Invalid auto_pad attribute: {auto_pad}'
+        print(error_msg)
+        assert False, error_msg
+    else:
+        error_msg = f'' +\
+            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            f'Invalid auto_pad attribute: {auto_pad}'
+        print(error_msg)
+        assert False, error_msg
+
+    # DepthwiseConv2D
+    #   1. rank=4
+    #   2. group>1
+    #   3. No undefined dimension
+    #   4. All strides spatial shape are the same number
+    depthwise = (
+        input_tensor_rank == 4 \
+        and len(input_weights_shape) == 4 \
+        and group != 1 \
+        and not (None in input_weights_shape) \
+        and sum([1 if s == strides[0] else 0 for s in strides]) == len(strides)
+    )
+    if depthwise and input_tensor_shape[-1] != None:
+        depthwise = bool(group == input_tensor_shape[-1])
+
+    if depthwise is True:
+        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
+        input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone

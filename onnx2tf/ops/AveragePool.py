@@ -219,11 +219,12 @@ def make_node(
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124
     if average_multiplier != [1] * spatial_size * 2:
-        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-                      f'Tensorflow incompatible action detected. ' \
-                      f'Some additional layers are inserted to reproduce same output. ' \
-                      f'Please refer to the following link for more information: ' \
-                      f'https://github.com/PINTO0309/onnx2tf/issues/124'
+        warning_msg = \
+            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+            f'Tensorflow incompatible action detected. ' \
+            f'Some additional layers are inserted to reproduce same output. ' \
+            f'Please refer to the following link for more information: ' \
+            f'https://github.com/PINTO0309/onnx2tf/issues/124'
         print(warning_msg)
 
         if pooled_tensor.shape[1] >= 2:
