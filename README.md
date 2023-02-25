@@ -228,6 +228,13 @@ print("[TFLite] Model Predictions:", tt_lite_output)
   }
 ```
 
+If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as we do not want to write byte arrays to the tflite file that are not essential to its operation.
+
+- Adding metadata to TensorFlow Lite models
+
+  https://www.tensorflow.org/lite/models/convert/metadata
+  ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
+
 ## CLI Parameter
 ```
 
