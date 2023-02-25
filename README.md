@@ -128,6 +128,106 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 
+If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-osd` option to output `saved_model`.　Ref: https://github.com/PINTO0309/onnx2tf/pull/185
+```python
+import torch
+import onnxruntime
+import numpy as np
+import onnx2tf
+import tensorflow as tf
+from tensorflow.lite.python import interpreter as tflite_interpreter
+
+class Model(torch.nn.Module):
+    def forward(self, x, y):
+        return {
+            "add": x + y,
+            "sub": x - y,
+        }
+
+# Let's double check what PyTorch gives us
+model = Model()
+pytorch_output = model.forward(10, 2)
+print("[PyTorch] Model Predictions:", pytorch_output)
+
+# First, export the above model to ONNX
+torch.onnx.export(
+    Model(),
+    {"x": 10, "y": 2},
+    "model.onnx",
+    opset_version=16,
+    input_names=["x", "y"],
+    output_names=["add", "sub"],
+)
+
+# And check its output
+session = onnxruntime.InferenceSession("model.onnx")
+onnx_output = session.run(["add", "sub"], {"x": np.array(10), "y": np.array(2)})
+print("[ONNX] Model Outputs:", [o.name for o in session.get_outputs()])
+print("[ONNX] Model Predictions:", onnx_output)
+
+# Now, let's convert the ONNX model to TF
+onnx2tf.convert(
+    input_onnx_file_path="model.onnx",
+    output_folder_path="model.tf",
+    output_signaturedefs=True,
+    non_verbose=True,
+)
+
+# Let's check TensorFlow model
+tf_model = tf.saved_model.load("model.tf")
+tf_output = tf_model.signatures["serving_default"](
+    x=tf.constant((10,), dtype=tf.int64),
+    y=tf.constant((2,), dtype=tf.int64),
+)
+print("[TF] Model Predictions:", tf_output)
+
+# Rerun TFLite conversion but from saved model
+converter = tf.lite.TFLiteConverter.from_saved_model("model.tf")
+converter.target_spec.supported_ops = [
+    tf.lite.OpsSet.TFLITE_BUILTINS,
+    tf.lite.OpsSet.SELECT_TF_OPS,
+]
+tf_lite_model = converter.convert()
+with open("model.tf/model_float32.tflite", "wb") as f:
+    f.write(tf_lite_model)
+
+# Now, test the newer TFLite model
+interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
+tf_lite_model = interpreter.get_signature_runner()
+tt_lite_output = tf_lite_model(
+    x=tf.constant((10,), dtype=tf.int64),
+    y=tf.constant((2,), dtype=tf.int64),
+)
+print("[TFLite] Model Predictions:", tt_lite_output)
+```
+```
+[PyTorch] Model Predictions:
+  {
+    'add': 12,
+    'sub': 8
+  }
+[ONNX] Model Outputs:
+  [
+    'add',
+    'sub'
+  ]
+[ONNX] Model Predictions:
+  [
+    array(12, dtype=int64),
+    array(8, dtype=int64)
+  ]
+[TF] Model Predictions:
+  {
+    'add': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([12])>,
+    'sub': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([8])>
+  }
+[TFLite] Model Predictions:
+  {
+    'add': array([12]),
+    'sub': array([8])
+  }
+```
+
 ## CLI Parameter
 ```
 
