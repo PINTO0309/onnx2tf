@@ -61,11 +61,21 @@ def make_node(
     tensor_rank = len(input_tensor.shape)
 
     axis = graph_node.attrs.get('axis', tensor_rank - 1)
+    pre_convert_axis = axis
     axis = convert_axis(
         axis=axis,
         tensor_rank=tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
+
+    # Determination to skip error check
+    # Skip error check if onnx and tensorflow input geometry
+    # is an exact match and axis is exactly the same.
+    # Also, skip the process of forced replacement of axis
+    error_check_unnecessary_flag = False
+    if pre_convert_axis == axis \
+        and graph_node_input.shape == input_tensor.shape:
+        error_check_unnecessary_flag = True
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -159,7 +169,11 @@ def make_node(
             graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
         }
         del onnx_tensor_infos_for_validation
-        check_axes = reversed([idx for idx in range(tensor_rank)])
+        check_axes = None
+        if not error_check_unnecessary_flag:
+            check_axes = reversed([idx for idx in range(tensor_rank)])
+        else:
+            check_axes = [axis]
         tf_model_inputs = get_tf_model_inputs(
             tf_layers_dict=tf_layers_dict,
         )
