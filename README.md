@@ -128,7 +128,7 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 
-If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-osd` / `--output_signaturedefs` option to output `saved_model`. Ref: https://github.com/PINTO0309/onnx2tf/pull/185
+If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-osd` / `--output_signaturedefs` option to output `saved_model`. This workaround has already been available since a much earlier version of onnx2tf. Ref: https://github.com/PINTO0309/onnx2tf/pull/185
 ```python
 import torch
 import onnxruntime
