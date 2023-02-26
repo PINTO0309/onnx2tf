@@ -13,9 +13,9 @@
 
   In other words, I am mainly interested in how interesting your project is to me and why you are in trouble and how big an impact it will have on your project. The issue template has all the required fields for the minimum information you want me to provide to motivate me. Please describe the information as politely and gentlemanly as possible without omission.
 
-- If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means.
+- If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means. The onnx files shared through private means will be used only to investigate the issue and will not be released to the public by me. The publicly available onnx files that you share with us in issues and pull requests may be included as part of the regression tests that we run automatically in GitHub Actions. Non-publishable onnx files and onnx files shared through private means will not be included in the regression test of GitHub Actions.
 - Also, never post logs or error messages displayed in the console in an abbreviated form. Omission makes it difficult to understand the situation.
-- I am not very impressed with issues that do not feel motivated. Therefore, if there is no response for more than 5 days after the last reply, the bot will automatically close the issue.
+- I am not very impressed with issues that do not feel motivated. Therefore, if there is no response for more than 5 days after the last reply, the bot will automatically close the issue. However, issues and pull requests to which I have assigned `TODO`, `discussion`, or `Bug` will be excluded from the bot decision.
 
 https://github.com/PINTO0309/onnx2tf/issues
 
