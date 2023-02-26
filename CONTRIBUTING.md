@@ -34,10 +34,14 @@ https://github.com/PINTO0309/onnx2tf/issues
     ```bash
     pip install -U pip \
     && pip install -U onnx \
-    && pip install -U onnx-simplifier \
-    && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
+    && pip install -U nvidia-pyindex \
+    && pip install -U onnx-graphsurgeon \
+    && pip install -U onnxruntime \
+    && pip install -U onnxsim \
     && pip install -U simple_onnx_processing_tools \
-    && pip install tensorflow==2.10.0
+    && pip install -U onnx2tf \
+    && pip install -U h5py==3.7.0
+    && pip install tensorflow==2.12.0rc0
     ```
   - Docker
     ```bash
