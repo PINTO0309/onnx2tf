@@ -30,6 +30,12 @@ https://github.com/PINTO0309/onnx2tf/issues
 - Pull requests from engineers other than the repository owner will always fail to post the [model conversion status to the Wiki](https://github.com/PINTO0309/onnx2tf/wiki/model_status) due to lack of permissions to reference secrets, but there is no need to be concerned about this.
 
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
+  - Docker
+    ```bash
+    git clone https://github.com/PINTO0309/onnx2tf && cd onnx2tf
+    docker build -t onnx2tf_develop .
+    ```
+  - VSCode devcontainer (Remote Container)
   - HostPC install
     ```bash
     pip install -U pip \
@@ -43,12 +49,6 @@ https://github.com/PINTO0309/onnx2tf/issues
     && pip install -U h5py==3.7.0
     && pip install tensorflow==2.12.0rc0
     ```
-  - Docker
-    ```bash
-    git clone https://github.com/PINTO0309/onnx2tf && cd onnx2tf
-    docker build -t onnx2tf_develop .
-    ```
-  - VSCode devcontainer (Remote Container)
 
 https://github.com/PINTO0309/onnx2tf/pulls
 
