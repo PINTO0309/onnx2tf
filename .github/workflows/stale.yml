@@ -25,7 +25,7 @@ jobs:
         stale-pr-message: 'If there is no activity within the next two days, this pr will be closed automatically.'
         stale-issue-label: 'no-issue-activity'
         stale-pr-label: 'no-pr-activity'
-        exempt-issue-labels: TODO,discussion
-        exempt-pr-labels: TODO,discussion
+        exempt-issue-labels: TODO,discussion,Bug
+        exempt-pr-labels: TODO,discussion,Bug
         days-before-stale: 5
         days-before-close: 1
