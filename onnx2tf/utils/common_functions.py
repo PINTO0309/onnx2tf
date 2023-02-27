@@ -1,3 +1,4 @@
+import math
 import os
 import io
 import sys
@@ -3358,7 +3359,7 @@ def broadcast_for_gpu_delegate(
     return input_tensor_1, input_tensor_2
 
 
-def calc_tf_pooling_pads(input_shape, kernel, strides, func):
+def calc_tf_pooling_pads(input_shape, kernel, strides):
     """Calculate how much padding is needed for tensorflow mode 'SAME'.
 
     Parameters
@@ -3369,8 +3370,6 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
         kernel shape from onnx
     strides: List
         strides from onnx
-    func: Callable
-        function for ceil or floor, depends on onnx option ceil_mode
 
     Returns
     -------
@@ -3383,10 +3382,10 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
 
     # calculate how much padding is needed except batch and channel dimension
     for i, k, s in zip(input_shape[1:-1], kernel, strides):
-        same_output_shape = func((i - 1) / s) + 1
+        same_output_shape = math.floor((i - 1) / s) + 1
         axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
 
-        padded_valid_output_shape = func((i + axis_pads - k) / s) + 1
+        padded_valid_output_shape = math.floor((i + axis_pads - k) / s) + 1
         error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
                     f'Wrong padding calculation.'
         assert same_output_shape == padded_valid_output_shape, error_msg
