@@ -45,7 +45,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.7
+  ghcr.io/pinto0309/onnx2tf:1.7.8
 
   or
 
@@ -1457,46 +1457,47 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |41|imageclassifier.onnx|:heavy_check_mark:|
 |42|inception-v2-9.onnx|:heavy_check_mark:|
 |43|inverse11.onnx|:heavy_check_mark:|
-|44|mnist-12.onnx|:heavy_check_mark:|
-|45|mobilenetv2-12.onnx|:heavy_check_mark:|
-|46|mosaic_11.onnx|:heavy_check_mark:|
-|47|mosaic-9.onnx|:heavy_check_mark:|
-|48|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
-|49|nanodet-plus-m_416.onnx|:heavy_check_mark:|
-|50|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
-|51|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
-|52|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
-|53|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
-|54|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
-|55|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|56|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|57|regnet_x_400mf.onnx|:heavy_check_mark:|
-|58|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|59|resnet18-v1-7.onnx|:heavy_check_mark:|
-|60|resnet50-v1-12.onnx|:heavy_check_mark:|
-|61|resnet50-v2-7.onnx|:heavy_check_mark:|
-|62|retinanet-9.onnx|:heavy_check_mark:|
-|63|sinet_320_op.onnx|:heavy_check_mark:|
-|64|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|65|super-resolution-10.onnx|:heavy_check_mark:|
-|66|swinir-m_64x64_12.onnx|:heavy_check_mark:|
-|67|tinyyolov2-8.onnx|:heavy_check_mark:|
-|68|version-RFB-640.onnx|:heavy_check_mark:|
-|69|vit-b-32_textual.onnx|:heavy_check_mark:|
-|70|vit-b-32_visual.onnx|:heavy_check_mark:|
-|71|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|72|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|73|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|74|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|75|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|76|yolov8n.onnx|:heavy_check_mark:|
-|77|yolov8n-seg.onnx|:heavy_check_mark:|
-|78|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|79|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|80|yolox_s.onnx|:heavy_check_mark:|
-|81|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|82|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|83|zfnet512-12.onnx|:heavy_check_mark:|
+|44|mhformer_NxFxKxXY_1x27x17x2.onnx|:heavy_check_mark:|
+|45|mnist-12.onnx|:heavy_check_mark:|
+|46|mobilenetv2-12.onnx|:heavy_check_mark:|
+|47|mosaic_11.onnx|:heavy_check_mark:|
+|48|mosaic-9.onnx|:heavy_check_mark:|
+|49|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|50|nanodet-plus-m_416.onnx|:heavy_check_mark:|
+|51|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|52|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|53|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|54|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
+|55|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
+|56|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|57|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|58|regnet_x_400mf.onnx|:heavy_check_mark:|
+|59|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|60|resnet18-v1-7.onnx|:heavy_check_mark:|
+|61|resnet50-v1-12.onnx|:heavy_check_mark:|
+|62|resnet50-v2-7.onnx|:heavy_check_mark:|
+|63|retinanet-9.onnx|:heavy_check_mark:|
+|64|sinet_320_op.onnx|:heavy_check_mark:|
+|65|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|66|super-resolution-10.onnx|:heavy_check_mark:|
+|67|swinir-m_64x64_12.onnx|:heavy_check_mark:|
+|68|tinyyolov2-8.onnx|:heavy_check_mark:|
+|69|version-RFB-640.onnx|:heavy_check_mark:|
+|70|vit-b-32_textual.onnx|:heavy_check_mark:|
+|71|vit-b-32_visual.onnx|:heavy_check_mark:|
+|72|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|73|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|74|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|75|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|76|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|77|yolov8n.onnx|:heavy_check_mark:|
+|78|yolov8n-seg.onnx|:heavy_check_mark:|
+|79|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|80|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|81|yolox_s.onnx|:heavy_check_mark:|
+|82|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|83|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|84|zfnet512-12.onnx|:heavy_check_mark:|
 
 </div></details>
 
