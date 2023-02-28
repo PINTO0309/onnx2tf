@@ -107,8 +107,12 @@ def make_node(
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.matmul(
-                a=input_tensor_1,
-                b=input_tensor_2,
+                a=input_tensor_1 \
+                    if not isinstance(input_tensor_1, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor_1),
+                b=input_tensor_2 \
+                    if not isinstance(input_tensor_2, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor_2),
                 output_type=output_dtype,
                 name=graph_node.name,
             )
@@ -180,12 +184,16 @@ def make_node(
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.matmul(
                             a=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_1,
+                                input_tensor=input_tensor_1 \
+                                    if not isinstance(input_tensor_1, np.ndarray) \
+                                        else tf.convert_to_tensor(input_tensor_1),
                                 perm=list(tensor_1_candidate_for_transposition),
                                 **kwargs,
                             ),
                             b=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_2,
+                                input_tensor=input_tensor_2 \
+                                    if not isinstance(input_tensor_2, np.ndarray) \
+                                        else tf.convert_to_tensor(input_tensor_2),
                                 perm=list(tensor_2_candidate_for_transposition),
                                 **kwargs,
                             ),

@@ -157,10 +157,18 @@ def make_node(
 
     tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
         x=input_tensor,
-        mean=mean,
-        variance=var,
-        offset=offset,
-        scale=scale,
+        mean=mean \
+            if not isinstance(mean, np.ndarray) \
+                else tf.convert_to_tensor(mean),
+        variance=var \
+            if not isinstance(var, np.ndarray) \
+                else tf.convert_to_tensor(var),
+        offset=offset \
+            if not isinstance(offset, np.ndarray) \
+                else tf.convert_to_tensor(offset),
+        scale=scale \
+            if not isinstance(scale, np.ndarray) \
+                else tf.convert_to_tensor(scale),
         variance_epsilon=epsilon,
     )
 
