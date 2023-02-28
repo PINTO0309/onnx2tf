@@ -3410,6 +3410,7 @@ def calc_extra_padding_with_ceil(
         strides: Union[np.ndarray, List]
 ) -> List:
     """
+    Calculate extra padding for ceil_mode enabled pooling layer
 
     Parameters
     ----------
