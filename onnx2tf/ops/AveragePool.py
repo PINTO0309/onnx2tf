@@ -20,6 +20,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     calc_tf_pooling_pads,
+    calc_extra_padding_with_ceil,
 )
 
 
@@ -71,7 +72,9 @@ def make_node(
     count_include_pad = bool(graph_node.attrs.get('count_include_pad', 0))
     kernel_shape = graph_node.attrs['kernel_shape']
     spatial_size = len(kernel_shape)
+    dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
     pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
+    extra_pads = [0] * spatial_size * 2
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
     input_tensor_shape = input_tensor.shape.as_list()
@@ -82,22 +85,45 @@ def make_node(
     # explicit pad layer is added for tensorflow incompatible cases
     tf_pad_mode = 'VALID'
     is_explicit_padding = False
-    func = math.ceil if ceil_mode else math.floor
     tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
                                    kernel=kernel_shape,
-                                   strides=strides,
-                                   func=func)
+                                   strides=strides)
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
+
         # check if onnx padding is same with tensorflow padding mode 'SAME'
         # this is to avoid flex operations since tflite builtin pooling operator does not support manual padding
         if is_known_shape and pads != [0] * spatial_size * 2 and tf_pads == pads:
             auto_pad = 'SAME_UPPER'
             tf_pad_mode = 'SAME'
+
         else:
             auto_pad = 'VALID'
             is_explicit_padding = True
+
+            # extra padding may be needed for ceiling
+            # this padding is added to end side (right, bottom) only
+            if ceil_mode:
+                # TODO: AveragePool does not work correctly when ceil_mode is True, need to be fixed
+                warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                              f'AveragePool does not work correctly when ceil_mode is True. ' \
+                              f'Please make a issue in github if you trying to convert model including this case.'
+                print(warning_msg)
+                extra_pads = \
+                    calc_extra_padding_with_ceil(input_shape=input_tensor_shape[1:-1],
+                                                 kernel=kernel_shape,
+                                                 pads=pads,
+                                                 dilations=dilations,
+                                                 strides=strides)
+
+                pads = pads[:len(pads) // 2] + [p + e for p, e in zip(pads[len(pads) // 2:], extra_pads)]
+                # if count_include_pad:
+                #     pads = pads[:len(pads) // 2] + [p + e for p, e in zip(pads[len(pads) // 2:], extra_pads)]
+                # else:
+                #     # this extra padding should not be included in calculation of average multiplier
+                #     extra_pads = [0] * spatial_size + extra_pads
+
             tf_pads = pads
 
     elif auto_pad == 'SAME_UPPER':
@@ -125,22 +151,30 @@ def make_node(
             # switch the order of pads
             tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
 
+        last_step = [
+            (tensor_shape + p_begin + p_end - k) % s
+            for tensor_shape, p_begin, p_end, k, s
+            in zip(input_tensor_shape[1:-1],
+                   tf_pads[:len(tf_pads) // 2],
+                   tf_pads[len(tf_pads) // 2:],
+                   kernel_shape,
+                   strides)
+        ]
+
         if not count_include_pad:
             # if last step is smaller than kernel, it will be dropped
-            last_step = [
-                (tensor_shape + p_begin + p_end - k) % s
-                for tensor_shape, p_begin, p_end, k, s
-                in zip(input_tensor_shape[1:-1],
-                       tf_pads[:len(tf_pads) // 2],
-                       tf_pads[len(tf_pads) // 2:],
-                       kernel_shape,
-                       strides)
-            ]
             average_multiplier_begin = [k / (k - p) if v + p >= k else k / v
                                         for v, p, k
                                         in zip(input_tensor_shape[1:-1], tf_pads[:len(tf_pads) // 2], kernel_shape)]
             average_multiplier_end = [k / (k - (p - l)) if l < p else 1
                                       for p, k, l in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step)]
+            average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
+
+        elif ceil_mode:
+            average_multiplier_begin = [1 for _ in input_tensor_shape[1:-1]]
+            average_multiplier_end = [k / (k - (p - e - l)) if l < p else 1
+                                      for p, k, l, e in
+                                      zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_step, extra_pads)]
             average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
 
         # convert to tensorflow padding format
