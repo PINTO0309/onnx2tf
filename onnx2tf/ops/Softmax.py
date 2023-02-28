@@ -197,6 +197,7 @@ def make_node(
                     test_data = None
                     if not isinstance(graph_node_input, np.ndarray):
                         if not isinstance(graph_node_input, np.ndarray) \
+                            and graph_node_input.name in tf_layers_dict \
                             and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
                             test_data = tf_layers_dict[graph_node_input.name]['verification_data']
                         elif isinstance(graph_node_input, np.ndarray):
