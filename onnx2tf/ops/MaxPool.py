@@ -167,12 +167,12 @@ def make_node(
             [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
             [[0, 0]]
 
-        # explicit padding value should be negative infinite since this is max pooling
+        # use minimum limit value of data type for explicit padding value since this is max pooling
         padded_tensor = tf.pad(
             tensor=input_tensor,
             paddings=tf_pads,
             mode='CONSTANT',
-            constant_values=-np.inf
+            constant_values=input_tensor.dtype.min
         )
 
     else:
