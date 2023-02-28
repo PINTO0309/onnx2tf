@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     calc_tf_pooling_pads,
+    calc_extra_padding_with_ceil,
 )
 from onnx2tf.utils.colors import Color
 
@@ -98,7 +99,6 @@ def make_node(
     # explicit pad layer is added for tensorflow incompatible cases
     tf_pad_mode = 'VALID'
     is_explicit_padding = False
-    func = math.ceil if ceil_mode else math.floor
     dilated_kernel_shape = kernel_shape
     if dilations != [1] * spatial_size:
         dilated_kernel_shape = [(k - 1) * d for k, d in zip(kernel_shape, dilations)]
@@ -121,6 +121,18 @@ def make_node(
         else:
             auto_pad = 'VALID'
             is_explicit_padding = True
+
+            # extra padding may be needed for ceiling
+            # this padding is added to end side (right, bottom) only
+            if ceil_mode:
+                extra_pads = \
+                    calc_extra_padding_with_ceil(input_shape=input_tensor_shape[1:-1],
+                                                 kernel=kernel_shape,
+                                                 pads=pads,
+                                                 dilations=dilations,
+                                                 strides=strides)
+                pads = pads[:len(pads) // 2] + [p + e for p, e in zip(pads[len(pads) // 2:], extra_pads)]
+
             tf_pads = pads
 
     elif auto_pad == 'SAME_UPPER':

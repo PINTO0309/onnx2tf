@@ -3402,6 +3402,68 @@ def calc_tf_pooling_pads(input_shape, kernel, strides):
     return same_pads
 
 
+def calc_extra_padding_with_ceil(
+        input_shape: Union[np.ndarray, List],
+        kernel: Union[np.ndarray, List],
+        pads: Union[np.ndarray, List],
+        dilations: Union[np.ndarray, List],
+        strides: Union[np.ndarray, List]
+) -> List:
+    """
+
+    Parameters
+    ----------
+    input_shape: Union[np.ndarray, List]
+        input tensor shape of pooling layer except batch and channel dimension
+    kernel: Union[np.ndarray, List]
+        kernel size of pooling layer
+    pads: Union[np.ndarray, List]
+        onnx formatted padding, [x1_begin, x2_begin, ..., xn_begin, x1_end, x2_end, ..., xn_end]
+    dilations: Union[np.ndarray, List]
+        dilations of pooling layer
+    strides: Union[np.ndarray, List]
+        strides of pooling layer
+
+    Returns
+    -------
+    extra_pads: List
+        extra padding value to match output shape between onnx and tensorflow when ceil_mode == 1
+
+    """
+
+    if not len(input_shape) == len(kernel) == len(pads) // 2 == len(dilations) == len(strides):
+        error_msg = f'' + \
+                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong input shapes for extra padding calculation.'
+        print(error_msg)
+        raise ValueError(error_msg)
+
+    pads_begin = pads[:len(pads) // 2]
+    pads_end = pads[len(pads) // 2:]
+    pads_along_axis = [i + j for i, j in zip(pads_begin, pads_end)]
+    extra_pads = [0, 0]
+
+    output_spatial_shape = [
+        (i + p - ((k - 1) * d + 1)) / s + 1
+        for i, p, k, d, s in zip(input_shape, pads_along_axis, kernel, dilations, strides)]
+
+    initial_diff = [math.ceil(i) - math.floor(i) for i in output_spatial_shape]
+
+    # calculate extra padding for each axis
+    for i, d in enumerate(initial_diff):
+        if d != 0:
+            diff = d
+            while diff > 0:
+                extra_pads[i] += 1
+                axis_spatial_shape = \
+                    (input_shape[i] + (pads_along_axis[i] + extra_pads[i]) - ((kernel[i] - 1) * dilations[i] + 1)) \
+                    / strides[i] + 1
+
+                diff = math.ceil(axis_spatial_shape) - math.floor(axis_spatial_shape)
+
+    return extra_pads
+
+
 def get_tf_model_inputs(
     *,
     tf_layers_dict: dict,
