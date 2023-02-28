@@ -24,6 +24,12 @@
       "param_target": "attributes",
       "param_name": "axis",
       "values": 1
+    },
+    {
+      "op_name": "/Gather_14",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
     }
   ]
 }
