@@ -110,7 +110,7 @@ def make_node(
             workaround_exec_flg = True
         if workaround_exec_flg \
             and graph_node.o().op == 'Unsqueeze' \
-            and (hasattr(graph_node.o(), 'attrs') and 'axes' in graph_node.o().attrs) or len(graph_node.o().inputs) >= 2:
+            and ((hasattr(graph_node.o(), 'attrs') and 'axes' in graph_node.o().attrs) or len(graph_node.o().inputs) >= 2):
             # Remove useless squeeze/unsqueeze combinations
             #   Only when squeeze and unsqueeze are consecutive
             #   and each is performing a useless process of
