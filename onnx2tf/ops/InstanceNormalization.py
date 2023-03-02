@@ -150,11 +150,12 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=[input_tensor]
-        )
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[input_tensor]
+            )
+        tf_partial_model_outputs = None
 
 
     # Generation of TF OP
@@ -173,7 +174,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         (input_tensor - mean) / tf.math.sqrt(variance + epsilon) * scale + B
     ### Partial model
-    if tf_partial_model_inputs is not None:
+    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
         mean = tf.reduce_mean(
             input_tensor=tf_partial_model_inputs[0],
             axis=axes,

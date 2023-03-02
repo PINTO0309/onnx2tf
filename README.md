@@ -45,7 +45,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.12
+  ghcr.io/pinto0309/onnx2tf:1.7.13
 
   or
 
@@ -53,7 +53,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U polygraphy \
-  && pip install -U onnxruntime \
+  && pip install -U onnxruntime==1.13.1 \
   && pip install -U onnxsim \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
@@ -89,7 +89,7 @@ or
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U polygraphy \
-    && python3.9 -m pip install -U onnxruntime \
+    && python3.9 -m pip install -U onnxruntime==1.13.1 \
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \

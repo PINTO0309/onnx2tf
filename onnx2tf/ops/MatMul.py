@@ -96,14 +96,15 @@ def make_node(
     try:
         # Generate input OPs for TensorFlow subgraphs
         # For inference testing on OP stand-alone
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[
-                    input_tensor_1,
-                    input_tensor_2,
-                ]
-            )
-        tf_partial_model_outputs = None
+        if kwargs['acc_check']:
+            tf_partial_model_inputs: List[tf.keras.Input] = \
+                make_tf_partial_model_inputs(
+                    input_tensors=[
+                        input_tensor_1,
+                        input_tensor_2,
+                    ]
+                )
+            tf_partial_model_outputs = None
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.matmul(
@@ -117,7 +118,7 @@ def make_node(
                 name=graph_node.name,
             )
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     tf.matmul(
@@ -181,24 +182,25 @@ def make_node(
                 try:
                     # Generate input OPs for TensorFlow subgraphs
                     # For inference testing on OP stand-alone
-                    tf_partial_model_inputs: List[tf.keras.Input] = \
-                            make_tf_partial_model_inputs(
-                                input_tensors=[
-                                    np.zeros(
-                                        list(input_tensor_1.shape),
-                                        dtype=input_tensor_1.dtype \
-                                            if isinstance(input_tensor_1, np.ndarray) \
-                                                else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_1.dtype],
-                                    ).transpose(tensor_1_candidate_for_transposition),
-                                    np.zeros(
-                                        list(input_tensor_2.shape),
-                                        dtype=input_tensor_2.dtype \
-                                            if isinstance(input_tensor_2, np.ndarray) \
-                                                else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_2.dtype],
-                                    ).transpose(tensor_2_candidate_for_transposition),
-                                ]
-                            )
-                    tf_partial_model_outputs = None
+                    if kwargs['acc_check']:
+                        tf_partial_model_inputs: List[tf.keras.Input] = \
+                                make_tf_partial_model_inputs(
+                                    input_tensors=[
+                                        np.zeros(
+                                            list(input_tensor_1.shape),
+                                            dtype=input_tensor_1.dtype \
+                                                if isinstance(input_tensor_1, np.ndarray) \
+                                                    else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_1.dtype],
+                                        ).transpose(tensor_1_candidate_for_transposition),
+                                        np.zeros(
+                                            list(input_tensor_2.shape),
+                                            dtype=input_tensor_2.dtype \
+                                                if isinstance(input_tensor_2, np.ndarray) \
+                                                    else TF_DTYPES_TO_NUMPY_DTYPES[input_tensor_2.dtype],
+                                        ).transpose(tensor_2_candidate_for_transposition),
+                                    ]
+                                )
+                        tf_partial_model_outputs = None
                     ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.matmul(
@@ -220,7 +222,7 @@ def make_node(
                             name=graph_node.name,
                         )
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         tf_partial_model_outputs = \
                             [
                                 tf.matmul(
