@@ -39,7 +39,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   ```
 
 ## Sample Usage
-### [Note] v1.7.x implements an extensive additional mechanism that will be needed in the future to avoid post-conversion accuracy errors, so problems may occur that were not reproduced in v1.6.7. https://github.com/PINTO0309/onnx2tf/pull/184. If you have any inconvenience in using the tool, I recommend using v1.6.7.
+
 - HostPC
   ```
   $ docker run --rm -it \
