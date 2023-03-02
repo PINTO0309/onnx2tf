@@ -107,8 +107,12 @@ def make_node(
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.matmul(
-                a=input_tensor_1,
-                b=input_tensor_2,
+                a=input_tensor_1 \
+                    if not isinstance(input_tensor_1, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor_1),
+                b=input_tensor_2 \
+                    if not isinstance(input_tensor_2, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor_2),
                 output_type=output_dtype,
                 name=graph_node.name,
             )
@@ -127,11 +131,30 @@ def make_node(
                 outputs=tf_partial_model_outputs,
             )
             test_data1 = None
-            if isinstance(input_tensor_1, np.ndarray):
+            if not isinstance(input_tensor_1, np.ndarray):
+                if not isinstance(graph_node_input_1, np.ndarray) \
+                    and graph_node_input_1.name in tf_layers_dict \
+                    and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+                    test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
+                elif isinstance(graph_node_input_1, np.ndarray):
+                    test_data1: np.ndarray = graph_node_input_1
+                else:
+                    test_data1 = None
+            else:
                 test_data1 = input_tensor_1
             test_data2 = None
-            if isinstance(input_tensor_2, np.ndarray):
+            if not isinstance(input_tensor_2, np.ndarray):
+                if not isinstance(graph_node_input_2, np.ndarray) \
+                    and graph_node_input_2.name in tf_layers_dict \
+                    and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+                    test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
+                elif isinstance(graph_node_input_2, np.ndarray):
+                    test_data2: np.ndarray = graph_node_input_2
+                else:
+                    test_data2 = None
+            else:
                 test_data2 = input_tensor_2
+
             tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
                 model=tf_partial_model,
                 inputs=tf_partial_model_inputs,
@@ -180,12 +203,16 @@ def make_node(
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.matmul(
                             a=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_1,
+                                input_tensor=input_tensor_1 \
+                                    if not isinstance(input_tensor_1, np.ndarray) \
+                                        else tf.convert_to_tensor(input_tensor_1),
                                 perm=list(tensor_1_candidate_for_transposition),
                                 **kwargs,
                             ),
                             b=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_2,
+                                input_tensor=input_tensor_2 \
+                                    if not isinstance(input_tensor_2, np.ndarray) \
+                                        else tf.convert_to_tensor(input_tensor_2),
                                 perm=list(tensor_2_candidate_for_transposition),
                                 **kwargs,
                             ),
@@ -197,8 +224,12 @@ def make_node(
                         tf_partial_model_outputs = \
                             [
                                 tf.matmul(
-                                    a=tf_partial_model_inputs[0],
-                                    b=tf_partial_model_inputs[1],
+                                    a=tf_partial_model_inputs[0] \
+                                        if not isinstance(tf_partial_model_inputs[0], np.ndarray) \
+                                            else tf.convert_to_tensor(tf_partial_model_inputs[0]),
+                                    b=tf_partial_model_inputs[1] \
+                                        if not isinstance(tf_partial_model_inputs[1], np.ndarray) \
+                                            else tf.convert_to_tensor(tf_partial_model_inputs[1]),
                                     output_type=output_dtype,
                                 )
                             ]
@@ -207,14 +238,48 @@ def make_node(
                             outputs=tf_partial_model_outputs,
                         )
                         test_data1 = None
-                        if isinstance(input_tensor_1, np.ndarray):
+                        if not isinstance(input_tensor_1, np.ndarray):
+                            if not isinstance(graph_node_input_1, np.ndarray) \
+                                and graph_node_input_1.name in tf_layers_dict \
+                                and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+                                test_data1: np.ndarray = transpose_with_flexing_deterrence(
+                                    input_tensor=tf_layers_dict[graph_node_input_1.name]['verification_data'],
+                                    perm=list(tensor_1_candidate_for_transposition),
+                                    **kwargs,
+                                )
+                            elif isinstance(graph_node_input_1, np.ndarray):
+                                test_data1: np.ndarray = transpose_with_flexing_deterrence(
+                                    input_tensor=graph_node_input_1,
+                                    perm=list(tensor_1_candidate_for_transposition),
+                                    **kwargs,
+                                )
+                            else:
+                                test_data1 = None
+                        else:
                             test_data1 = transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_1,
                                 perm=list(tensor_1_candidate_for_transposition),
                                 **kwargs,
                             )
                         test_data2 = None
-                        if isinstance(input_tensor_2, np.ndarray):
+                        if not isinstance(input_tensor_2, np.ndarray):
+                            if not isinstance(graph_node_input_2, np.ndarray) \
+                                and graph_node_input_2.name in tf_layers_dict \
+                                and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+                                test_data2: np.ndarray = transpose_with_flexing_deterrence(
+                                    input_tensor=tf_layers_dict[graph_node_input_2.name]['verification_data'],
+                                    perm=list(tensor_2_candidate_for_transposition),
+                                    **kwargs,
+                                )
+                            elif isinstance(graph_node_input_2, np.ndarray):
+                                test_data2: np.ndarray = transpose_with_flexing_deterrence(
+                                    input_tensor=graph_node_input_2,
+                                    perm=list(tensor_2_candidate_for_transposition),
+                                    **kwargs,
+                                )
+                            else:
+                                test_data2 = None
+                        else:
                             test_data2 = transpose_with_flexing_deterrence(
                                 input_tensor=input_tensor_2,
                                 perm=list(tensor_2_candidate_for_transposition),

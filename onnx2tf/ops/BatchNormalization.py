@@ -11,6 +11,8 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    explicit_broadcast,
+    pre_explicit_broadcast,
 )
 
 
@@ -97,16 +99,76 @@ def make_node(
         **kwargs,
     )
 
+    mean = input_mean.values \
+        if not isinstance(input_mean, gs.Variable) \
+            else tf_layers_dict[input_mean.name]['tf_node']
+    var = input_var.values \
+        if not isinstance(input_var, gs.Variable) \
+            else tf_layers_dict[input_var.name]['tf_node']
+    offset = B.values \
+        if not isinstance(B, gs.Variable) \
+            else tf_layers_dict[B.name]['tf_node']
+    scale = scale.values \
+        if not isinstance(scale, gs.Variable) \
+            else tf_layers_dict[scale.name]['tf_node']
+
+    # Broadcast
+    if len(input_tensor.shape) == 3:
+        input_tensor, mean = pre_explicit_broadcast(
+            input_tensor_1=input_tensor,
+            input_tensor_2=mean,
+        )
+        input_tensor, mean = explicit_broadcast(
+            const_or_var_1=input_tensor,
+            const_or_var_2=mean,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
+        input_tensor, var = pre_explicit_broadcast(
+            input_tensor_1=input_tensor,
+            input_tensor_2=var,
+        )
+        input_tensor, var = explicit_broadcast(
+            const_or_var_1=input_tensor,
+            const_or_var_2=var,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
+        input_tensor, offset = pre_explicit_broadcast(
+            input_tensor_1=input_tensor,
+            input_tensor_2=offset,
+        )
+        input_tensor, offset = explicit_broadcast(
+            const_or_var_1=input_tensor,
+            const_or_var_2=offset,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
+        input_tensor, scale = pre_explicit_broadcast(
+            input_tensor_1=input_tensor,
+            input_tensor_2=scale,
+        )
+        input_tensor, scale = explicit_broadcast(
+            const_or_var_1=input_tensor,
+            const_or_var_2=scale,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
+
     tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
         x=input_tensor,
-        mean=input_mean.values \
-            if not isinstance(input_mean, gs.Variable) else tf_layers_dict[input_mean.name]['tf_node'],
-        variance=input_var.values \
-            if not isinstance(input_var, gs.Variable) else tf_layers_dict[input_var.name]['tf_node'],
-        offset=B.values \
-            if not isinstance(B, gs.Variable) else tf_layers_dict[B.name]['tf_node'],
-        scale=scale.values \
-            if not isinstance(scale, gs.Variable) else tf_layers_dict[scale.name]['tf_node'],
+        mean=mean \
+            if not isinstance(mean, np.ndarray) \
+                else tf.convert_to_tensor(mean),
+        variance=var \
+            if not isinstance(var, np.ndarray) \
+                else tf.convert_to_tensor(var),
+        offset=offset \
+            if not isinstance(offset, np.ndarray) \
+                else tf.convert_to_tensor(offset),
+        scale=scale \
+            if not isinstance(scale, np.ndarray) \
+                else tf.convert_to_tensor(scale),
         variance_epsilon=epsilon,
     )
 

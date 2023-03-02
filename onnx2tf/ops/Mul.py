@@ -77,6 +77,7 @@ def make_node(
 
     # Acquisition of test data for validation
     if not isinstance(graph_node_input_1, np.ndarray) \
+        and graph_node_input_1.name in tf_layers_dict \
         and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
         test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
     elif isinstance(graph_node_input_1, np.ndarray):
@@ -84,6 +85,7 @@ def make_node(
     else:
         test_data1 = None
     if not isinstance(graph_node_input_2, np.ndarray) \
+        and graph_node_input_2.name in tf_layers_dict \
         and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
         test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
     elif isinstance(graph_node_input_2, np.ndarray):

@@ -14,14 +14,14 @@ RUN apt-get update \
 RUN pip install pip -U \
     && pip install -U onnx \
     && pip install -U onnxsim \
-    && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
+    && python3 -m pip install -U onnx_graphsurgeon polygraphy --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnx2tf \
     && pip install -U onnx2tf \
     && pip install -U simple_onnx_processing_tools \
     && pip install tensorflow==2.12.0rc0 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
-    && pip install -U onnxruntime==1.13.1 \
+    && pip install -U onnxruntime==1.14.0 \
     && python -m pip cache purge
 
 # Re-release flatc with some customizations of our own to address

@@ -80,6 +80,14 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
+    # Param replacement - axis
+    axis = replace_parameter(
+        value_before_replacement=axis,
+        param_target='attributes',
+        param_name='axis',
+        **kwargs,
+    )
+
     optimization_for_gpu_delegate: bool = \
         kwargs['optimization_for_gpu_delegate']
 

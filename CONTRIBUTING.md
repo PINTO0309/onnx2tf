@@ -13,9 +13,10 @@
 
   In other words, I am mainly interested in how interesting your project is to me and why you are in trouble and how big an impact it will have on your project. The issue template has all the required fields for the minimum information you want me to provide to motivate me. Please describe the information as politely and gentlemanly as possible without omission.
 
-- If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means.
+- If your project's policy does not allow you to share ONNX files owned by your project, you may still politely submit your assignment and share only the ONNX files via email or other private means. The onnx files shared through private means will be used only to investigate the issue and will not be released to the public by me. The publicly available onnx files that you share with us in issues and pull requests may be included as part of the regression tests that we run automatically in GitHub Actions. Non-publishable onnx files and onnx files shared through private means will not be included in the regression test of GitHub Actions. You and I both do not want to take the risk of a leak, so it would be very helpful if you could share the entire model, rather than sharing it, e.g., by generating a small ONNX file with the minimum amount of reproducibility of the problem. Like this.  https://github.com/PINTO0309/onnx2tf/issues/22, https://github.com/PINTO0309/onnx2tf/issues/182, https://github.com/PINTO0309/onnx2tf/issues/193
+- When submitting an issue, please submit as much reproducible information as possible. I do not own the same onnx files as you guys, so I am almost unable to reproduce the problems you guys are having at hand in most cases.
 - Also, never post logs or error messages displayed in the console in an abbreviated form. Omission makes it difficult to understand the situation.
-- I am not very impressed with issues that do not feel motivated. Therefore, if there is no response for more than 5 days after the last reply, the bot will automatically close the issue.
+- I am not very impressed with issues that do not feel motivated. Therefore, if there is no response for more than 5 days after the last reply, the bot will automatically close the issue. However, issues and pull requests to which I have assigned `TODO`, `discussion`, or `Bug` will be excluded from the bot decision.
 
 https://github.com/PINTO0309/onnx2tf/issues
 
@@ -29,19 +30,24 @@ https://github.com/PINTO0309/onnx2tf/issues
 - Pull requests from engineers other than the repository owner will always fail to post the [model conversion status to the Wiki](https://github.com/PINTO0309/onnx2tf/wiki/model_status) due to lack of permissions to reference secrets, but there is no need to be concerned about this.
 
 - To debug, tools must be installed as follows. If you do not want to destroy your environment, you can use [Docker](https://github.com/PINTO0309/onnx2tf/blob/main/Dockerfile).
-  - HostPC install
-    ```bash
-    pip install -U pip \
-    && pip install -U onnx \
-    && pip install -U onnx-simplifier \
-    && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U simple_onnx_processing_tools \
-    && pip install tensorflow==2.10.0
-    ```
   - Docker
     ```bash
     git clone https://github.com/PINTO0309/onnx2tf && cd onnx2tf
     docker build -t onnx2tf_develop .
+    ```
+  - VSCode devcontainer (Remote Container)
+  - HostPC install
+    ```bash
+    pip install -U pip \
+    && pip install -U onnx \
+    && pip install -U nvidia-pyindex \
+    && pip install -U onnx-graphsurgeon \
+    && pip install -U onnxruntime \
+    && pip install -U onnxsim \
+    && pip install -U simple_onnx_processing_tools \
+    && pip install -U onnx2tf \
+    && pip install -U h5py==3.7.0
+    && pip install tensorflow==2.12.0rc0
     ```
 
 https://github.com/PINTO0309/onnx2tf/pulls

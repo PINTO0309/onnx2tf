@@ -25,14 +25,14 @@ jobs:
       run: |
         pip install pip -U
         pip install cmake==3.22.5
-        pip install onnx==1.12.0
+        pip install onnx==1.13.1
         pip install tensorflow==2.12.0rc0
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
         pip install protobuf==3.20.3
         pip install onnxsim
         pip install sng4onnx
-        pip install onnxruntime==1.13.1
+        pip install onnxruntime==1.14.0
         pip install -e .
     - name: Download models
       env:

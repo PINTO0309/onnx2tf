@@ -18,12 +18,14 @@ jobs:
       pull-requests: write
 
     steps:
-    - uses: actions/stale@v5
+    - uses: actions/stale@v7
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         stale-issue-message: 'If there is no activity within the next two days, this issue will be closed automatically.'
         stale-pr-message: 'If there is no activity within the next two days, this pr will be closed automatically.'
         stale-issue-label: 'no-issue-activity'
         stale-pr-label: 'no-pr-activity'
+        exempt-issue-labels: TODO,discussion,Bug,feature request
+        exempt-pr-labels: TODO,discussion,Bug,feature request
         days-before-stale: 5
         days-before-close: 1
