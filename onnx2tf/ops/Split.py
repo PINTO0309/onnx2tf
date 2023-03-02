@@ -121,14 +121,59 @@ def make_node(
     )
 
     # Generation of TF OP
-    splited_tensors = \
-        tf.split(
-            value=input_tensor,
-            num_or_size_splits=split,
-            axis=axis,
-            num=num_outputs,
-            name=graph_node.name,
-        )
+    splited_tensors = None
+    if (
+            (isinstance(split, int) and split == 1) \
+                or \
+            (isinstance(split, np.ndarray) and len(list(split)) == 1 and split[0] == 1)
+        ) \
+        and isinstance(input_tensor.shape[axis], int) \
+        and input_tensor.shape[axis] == 1:
+        # Disable unnecessary splits
+        splited_tensors = \
+            [
+                tf.identity(
+                    input=input_tensor,
+                    name=graph_node.name,
+                )
+            ]
+    elif isinstance(split, np.ndarray) \
+        and len(list(split)) > 1 \
+        and np.prod(split) == 1 \
+        and isinstance(input_tensor.shape[axis], int) \
+        and input_tensor.shape[axis] == len(list(split)):
+        # strided_slice - Slice everything in size 1
+        # Suppression of FlexSplitV generation
+        splited_tensors = []
+        for split_idx in range(len(list(split))):
+            begin_ = [
+                split_idx if idx == axis else 0 for idx in range(input_tensor_rank)
+            ]
+            end_ = []
+            for idx in range(input_tensor_rank):
+                if idx == axis:
+                    end_.append(split_idx + 1)
+                elif input_tensor.shape[idx] is None:
+                    end_.append(-1)
+                else:
+                    end_.append(input_tensor.shape[idx])
+
+            splited_tensors.append(
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                )
+            )
+    else:
+        splited_tensors = \
+            tf.split(
+                value=input_tensor,
+                num_or_size_splits=split,
+                axis=axis,
+                num=num_outputs,
+                name=graph_node.name,
+            )
     for splited_tensor, graph_node_output in zip(splited_tensors, graph_node_outputs):
         tf_layers_dict[graph_node_output.name]['tf_node'] = splited_tensor
         # Post-process transpose
