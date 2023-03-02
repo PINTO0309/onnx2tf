@@ -72,12 +72,13 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=[input_tensor]
-        )
-    tf_partial_model_tensors = None
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[input_tensor]
+            )
+        tf_partial_model_tensors = None
+        tf_partial_model_outputs = None
 
     # Workaround to avoid as many Resize failures as possible
     # for models with useless Transpose immediately before them.
@@ -107,7 +108,7 @@ def make_node(
                 )
                 before_op_output_shape_trans = True
                 # 2D - Partial model
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         transpose_with_flexing_deterrence(
                             input_tensor=tf_partial_model_inputs[0],
@@ -123,7 +124,7 @@ def make_node(
                 )
                 before_op_output_shape_trans = True
                 # 3D - Partial model
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     tf_partial_model_tensors = \
                         transpose_with_flexing_deterrence(
                             input_tensor=tf_partial_model_inputs[0],
@@ -371,7 +372,7 @@ def make_node(
         )
         tf_op_type = tf.image.crop_and_resize
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     tf.image.crop_and_resize(
@@ -400,7 +401,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -431,7 +432,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -462,7 +463,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     Lambda(
@@ -488,7 +489,7 @@ def make_node(
         )
         tf_op_type = tf.image.resize
         ### Partial model
-        if tf_partial_model_inputs is not None:
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
                 [
                     tf.image.resize(
@@ -500,7 +501,7 @@ def make_node(
                 ]
 
     ### Partial model
-    if tf_partial_model_inputs is not None:
+    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
         tf_partial_model = tf.keras.Model(
             inputs=tf_partial_model_inputs,
             outputs=tf_partial_model_outputs,

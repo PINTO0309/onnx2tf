@@ -74,22 +74,23 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     # Acquisition of test data for validation
-    if not isinstance(graph_node_input_1, np.ndarray) \
-        and graph_node_input_1.name in tf_layers_dict \
-        and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-        test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
-    elif isinstance(graph_node_input_1, np.ndarray):
-        test_data1: np.ndarray = graph_node_input_1
-    else:
-        test_data1 = None
-    if not isinstance(graph_node_input_2, np.ndarray) \
-        and graph_node_input_2.name in tf_layers_dict \
-        and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
-        test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
-    elif isinstance(graph_node_input_2, np.ndarray):
-        test_data2: np.ndarray = graph_node_input_2
-    else:
-        test_data2 = None
+    if kwargs['acc_check']:
+        if not isinstance(graph_node_input_1, np.ndarray) \
+            and graph_node_input_1.name in tf_layers_dict \
+            and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
+            test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
+        elif isinstance(graph_node_input_1, np.ndarray):
+            test_data1: np.ndarray = graph_node_input_1
+        else:
+            test_data1 = None
+        if not isinstance(graph_node_input_2, np.ndarray) \
+            and graph_node_input_2.name in tf_layers_dict \
+            and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
+            test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
+        elif isinstance(graph_node_input_2, np.ndarray):
+            test_data2: np.ndarray = graph_node_input_2
+        else:
+            test_data2 = None
 
     # Disable unnecessary Transpose
     #   1. If both x and y are gs.Variable
@@ -146,14 +147,15 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=[
-                input_tensor_1,
-                input_tensor_2,
-            ]
-        )
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[
+                    input_tensor_1,
+                    input_tensor_2,
+                ]
+            )
+        tf_partial_model_outputs = None
 
     # Generation of TF OP
     ### Overall model
@@ -164,7 +166,7 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    if tf_partial_model_inputs is not None:
+    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
         tf_partial_model_outputs = \
             [
                 tf.math.add(
