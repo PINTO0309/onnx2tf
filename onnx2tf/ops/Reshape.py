@@ -172,11 +172,12 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=[transposed_tensor]
-        )
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[transposed_tensor]
+            )
+        tf_partial_model_outputs = None
 
     # Reshape
     has_undefined_outputshape = output_shape is None
@@ -193,7 +194,7 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    if tf_partial_model_inputs is not None:
+    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
         tf_partial_model_outputs = \
             [
                 tf.reshape(
@@ -251,7 +252,7 @@ def make_node(
                         **kwargs,
                     )
                 ### Partial model
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     tf_layers_dict[graph_node_output.name]['verification_data'] = \
                         tf_layers_dict[graph_node_output.name]['verification_data'].transpose([0,2,3,1])
             else:

@@ -32,7 +32,7 @@ jobs:
         pip install protobuf==3.20.3
         pip install onnxsim
         pip install sng4onnx
-        pip install onnxruntime==1.14.0
+        pip install onnxruntime==1.13.1
         pip install -e .
     - name: Download models
       env:

@@ -687,6 +687,7 @@ def convert(
         'output_signaturedefs': output_signaturedefs,
         'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+        'acc_check': False,
     }
 
     tf_layers_dict = {}
@@ -988,6 +989,18 @@ def convert(
                 calib_data: np.ndarray = download_test_image_data()
                 data_count = calib_data.shape[0]
                 for model_input in model.inputs:
+                    if model_input.dtype != tf.float32 \
+                        or len(model_input.shape) != 4 \
+                        or model_input.shape[-1] != 3:
+                        print(
+                            f'{Color.RED}ERROR:{Color.RESET} ' +
+                            f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
+                            f'using non-rgb-image input tensors, specify the calibration data with '+
+                            f'--quant_calib_input_op_name_np_data_path. '+
+                            f'model_input[n].shape: {model_input.shape}'
+                        )
+                        sys.exit(1)
+
                     calib_data_dict[model_input.name] = \
                         [
                             tf.image.resize(

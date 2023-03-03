@@ -21,7 +21,7 @@ RUN pip install pip -U \
     && pip install tensorflow==2.12.0rc0 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
-    && pip install -U onnxruntime==1.14.0 \
+    && pip install -U onnxruntime==1.13.1 \
     && python -m pip cache purge
 
 # Re-release flatc with some customizations of our own to address
