@@ -995,7 +995,7 @@ def convert(
                         print(
                             f'{Color.RED}ERROR:{Color.RESET} ' +
                             f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
-                            f'using non-image input tensors, specify the calibration data with '+
+                            f'using non-rgb-image input tensors, specify the calibration data with '+
                             f'--quant_calib_input_op_name_np_data_path. '+
                             f'model_input[n].shape: {model_input.shape}'
                         )
