@@ -300,6 +300,7 @@ def make_node(
             transpose_with_flexing_deterrence(
                 input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                 perm=flex_deterrent_perm_rev,
+                output_shape=after_trans_shape,
                 **kwargs,
             )
 
