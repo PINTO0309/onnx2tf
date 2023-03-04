@@ -230,7 +230,9 @@ def make_node(
             try:
                 conv_rs = conv_func(
                     input=input_tensor_split,
-                    filters=weight_split,
+                    filters=weight_split \
+                        if not isinstance(weight_split, np.ndarray) \
+                            else tf.convert_to_tensor(weight_split),
                     output_shape=split_conv_output_shape,
                     strides=strides,
                     padding=pad_mode,
@@ -251,7 +253,9 @@ def make_node(
                                     **kwargs,
                                 ),
                                 filters=transpose_with_flexing_deterrence(
-                                    input_tensor=weight_split,
+                                    input_tensor=weight_split \
+                                        if not isinstance(weight_split, np.ndarray) \
+                                            else tf.convert_to_tensor(weight_split),
                                     perm=tensor_2_candidate_for_transposition,
                                     **kwargs,
                                 ),
@@ -273,7 +277,9 @@ def make_node(
             # OP replacement
             conv_rs = conv_func(
                 input=input_tensor_splits,
-                filters=weight_splits,
+                filters=weight_splits \
+                    if not isinstance(weight_splits, np.ndarray) \
+                        else tf.convert_to_tensor(weight_splits),
                 output_shape=output_shape_,
                 strides=strides_,
                 padding=padding_,

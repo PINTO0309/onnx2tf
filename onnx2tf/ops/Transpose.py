@@ -191,7 +191,9 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
-            perm=perm,
+            perm=perm \
+                if not isinstance(perm, np.ndarray) \
+                    else tf.convert_to_tensor(perm),
             output_shape=output_shape,
             name=graph_node.name,
             **kwargs,
@@ -202,7 +204,9 @@ def make_node(
             [
                 transpose_with_flexing_deterrence(
                     input_tensor=tf_partial_model_inputs[0],
-                    perm=perm,
+                    perm=perm \
+                        if not isinstance(perm, np.ndarray) \
+                            else tf.convert_to_tensor(perm),
                     output_shape=output_shape,
                     **kwargs,
                 )

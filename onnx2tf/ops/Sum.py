@@ -57,7 +57,11 @@ def make_node(
         if isinstance(const_or_var, gs.Variable):
             values.append(tf_layers_dict[const_or_var.name]['tf_node'])
         else:
-            values.append(const_or_var)
+            values.append(
+                const_or_var \
+                    if not isinstance(const_or_var, np.ndarray) \
+                        else tf.convert_to_tensor(const_or_var)
+            )
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
