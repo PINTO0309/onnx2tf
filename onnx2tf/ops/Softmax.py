@@ -180,7 +180,7 @@ def make_node(
         # Search for the axis with the smallest error
         for check_axis in check_axes:
             try:
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     ### Partial model check
                     tf_partial_model_outputs = \
                         [
