@@ -280,9 +280,12 @@ def make_node(
         ] + [
             idx for idx in range(min_abs_err_axis, tensor_rank - 1)
         ]
+        transpose_output_shape = np.asarray(input_tensor.shape)[flex_deterrent_perm]
         input_tensor = transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
             perm=flex_deterrent_perm,
+            output_shape=transpose_output_shape \
+                if None not in transpose_output_shape else None,
             **kwargs,
         )
 
@@ -300,7 +303,8 @@ def make_node(
             transpose_with_flexing_deterrence(
                 input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                 perm=flex_deterrent_perm_rev,
-                output_shape=after_trans_shape,
+                output_shape=after_trans_shape \
+                    if None not in after_trans_shape else None,
                 **kwargs,
             )
 
