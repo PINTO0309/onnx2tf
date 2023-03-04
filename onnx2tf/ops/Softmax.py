@@ -20,6 +20,7 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
     make_tf_partial_model_inputs,
+    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
 
@@ -266,13 +267,41 @@ def make_node(
             except tf.errors.InvalidArgumentError as ex:
                 pass
 
+    # Suppress automatic Traspose extrapolation behavior by Softmax in TensorFlow
+    flex_deterrent_perm_rev = []
+    if min_abs_err_axis != tensor_rank - 1:
+        # 0,1,3,4,5,6,2
+        flex_deterrent_perm = [
+            idx for idx in range(tensor_rank) if idx != min_abs_err_axis
+        ] + [min_abs_err_axis]
+        # 0,1,3,4,5,6,2 -> 0,1,6,2,3,4,5
+        flex_deterrent_perm_rev = [
+            idx if idx != min_abs_err_axis else tensor_rank - 1 for idx in range(min_abs_err_axis + 1)
+        ] + [
+            idx for idx in range(min_abs_err_axis, tensor_rank - 1)
+        ]
+        input_tensor = transpose_with_flexing_deterrence(
+            input_tensor=input_tensor,
+            perm=flex_deterrent_perm,
+            **kwargs,
+        )
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.nn.softmax(
             logits=input_tensor,
-            axis=min_abs_err_axis,
+            axis=min_abs_err_axis if not flex_deterrent_perm_rev else tensor_rank - 1,
             name=graph_node.name,
         )
+
+    # Inversion of suppression of automatic Traspose extrapolation behavior by Softmax in TensorFlow
+    if flex_deterrent_perm_rev:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            transpose_with_flexing_deterrence(
+                input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
+                perm=flex_deterrent_perm_rev,
+                **kwargs,
+            )
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
