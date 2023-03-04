@@ -206,6 +206,16 @@ def make_node(
     )
 
     # Generation of TF OP
+    x = x \
+        if not isinstance(x, np.ndarray) \
+            else tf.convert_to_tensor(x)
+    y = y \
+        if not isinstance(y, np.ndarray) \
+            else tf.convert_to_tensor(y)
+    if z is not None:
+        z = z \
+            if not isinstance(z, np.ndarray) \
+                else tf.convert_to_tensor(z)
     if transA == True:
         x = tf.transpose(x)
         if kwargs['acc_check'] and test_data1 is not None:

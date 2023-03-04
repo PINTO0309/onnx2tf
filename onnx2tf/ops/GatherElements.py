@@ -93,6 +93,12 @@ def make_node(
     }
 
     # Generation of TF OP
+    input_tensor = input_tensor \
+        if not isinstance(input_tensor, np.ndarray) \
+            else tf.convert_to_tensor(input_tensor)
+    indices_tensor = indices_tensor \
+        if not isinstance(indices_tensor, np.ndarray) \
+            else tf.convert_to_tensor(indices_tensor)
     indices_tensor = process_neg_idx_along_axis(
         data=input_tensor,
         axis=axis,

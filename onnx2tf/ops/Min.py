@@ -77,9 +77,16 @@ def make_node(
     values = new_values
 
     # Generation of TF OP
-    minimumed_tesnor = values[0]
+    minimumed_tesnor = values[0] \
+        if not isinstance(values[0], np.ndarray) \
+            else tf.convert_to_tensor(values[0])
     for i in range(1, len(values)):
-        minimumed_tesnor = tf.minimum(minimumed_tesnor, values[i])
+        minimumed_tesnor = tf.minimum(
+            minimumed_tesnor,
+            values[i] \
+                if not isinstance(values[i], np.ndarray) \
+                    else tf.convert_to_tensor(values[i])
+        )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = minimumed_tesnor
 

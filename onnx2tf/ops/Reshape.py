@@ -185,12 +185,16 @@ def make_node(
         has_none_outputshape = None in output_shape
         has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
         has_undefined_outputshape = has_none_outputshape or has_str_outputshape
+    final_shape = transposed_reshape_shape \
+        if (has_undefined_outputshape or shape_replaced_flg) else output_shape
+    final_shape = final_shape \
+        if not isinstance(final_shape, np.ndarray) \
+            else tf.convert_to_tensor(final_shape)
     ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
             tensor=transposed_tensor,
-            shape=transposed_reshape_shape \
-                if (has_undefined_outputshape or shape_replaced_flg) else output_shape,
+            shape=final_shape,
             name=graph_node.name,
         )
     ### Partial model
@@ -199,8 +203,7 @@ def make_node(
             [
                 tf.reshape(
                     tensor=tf_partial_model_inputs[0],
-                    shape=transposed_reshape_shape \
-                        if has_undefined_outputshape else output_shape,
+                    shape=final_shape,
                 )
             ]
         tf_partial_model = tf.keras.Model(

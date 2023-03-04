@@ -162,8 +162,12 @@ def make_node(
     ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.mod(
-            x=input_tensor_1,
-            y=input_tensor_2,
+            x=input_tensor_1 \
+                if not isinstance(input_tensor_1, np.ndarray) \
+                    else tf.convert_to_tensor(input_tensor_1),
+            y=input_tensor_2 \
+                if not isinstance(input_tensor_2, np.ndarray) \
+                    else tf.convert_to_tensor(input_tensor_2),
             name=graph_node.name,
         )
     ### Partial model
@@ -171,8 +175,12 @@ def make_node(
         tf_partial_model_outputs = \
             [
                 tf.math.mod(
-                    x=tf_partial_model_inputs[0],
-                    y=tf_partial_model_inputs[1],
+                    x=tf_partial_model_inputs[0] \
+                        if not isinstance(tf_partial_model_inputs[0], np.ndarray) \
+                            else tf.convert_to_tensor(tf_partial_model_inputs[0]),
+                    y=tf_partial_model_inputs[1] \
+                        if not isinstance(tf_partial_model_inputs[1], np.ndarray) \
+                            else tf.convert_to_tensor(tf_partial_model_inputs[1]),
                 )
             ]
         tf_partial_model = tf.keras.Model(

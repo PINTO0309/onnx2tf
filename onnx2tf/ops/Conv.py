@@ -215,6 +215,13 @@ def make_node(
         depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
+    input_weights = input_weights \
+        if not isinstance(input_weights, np.ndarray) \
+            else tf.convert_to_tensor(input_weights)
+    input_bias = input_bias \
+        if not isinstance(input_bias, np.ndarray) \
+            else tf.convert_to_tensor(input_bias)
+
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
     if kwargs['acc_check']:

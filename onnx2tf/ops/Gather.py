@@ -200,7 +200,9 @@ def make_node(
         end_mask_ = begin_mask_
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.strided_slice(
-                input_=input_tensor,
+                input_=input_tensor \
+                    if not isinstance(input_tensor, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor),
                 begin=begin_,
                 end=end_,
                 begin_mask=begin_mask_,
@@ -209,12 +211,15 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['unnecessary_gather'] = True
     else:
         # No-replace
+        indices_values = indices._inferred_value \
+            if hasattr(indices, "_inferred_value") \
+                and indices._inferred_value is not None else indices
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather(
                 params=input_tensor,
-                indices=indices._inferred_value \
-                    if hasattr(indices, "_inferred_value") \
-                        and indices._inferred_value is not None else indices,
+                indices=indices_values \
+                    if not isinstance(indices_values, np.ndarray) \
+                        else tf.convert_to_tensor(indices_values),
                 axis=axis,
                 name=graph_node.name,
             )
