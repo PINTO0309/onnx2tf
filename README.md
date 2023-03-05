@@ -177,18 +177,9 @@ print("[ONNX] Model Predictions:", onnx_output)
 onnx2tf.convert(
     input_onnx_file_path="model.onnx",
     output_folder_path="model.tf",
-    output_signaturedefs=True,
     copy_onnx_input_output_names_to_tflite=True,
     non_verbose=True,
 )
-
-# Let's check TensorFlow model
-tf_model = tf.saved_model.load("model.tf")
-tf_output = tf_model.signatures["serving_default"](
-    x=tf.constant((10,), dtype=tf.int64),
-    y=tf.constant((2,), dtype=tf.int64),
-)
-print("[TF] Model Predictions:", tf_output)
 
 # Now, test the newer TFLite model
 interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
@@ -215,11 +206,6 @@ print("[TFLite] Model Predictions:", tt_lite_output)
     array(12, dtype=int64),
     array(8, dtype=int64)
   ]
-[TF] Model Predictions:
-  {
-    'add': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([12])>,
-    'sub': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([8])>
-  }
 [TFLite] Model Predictions:
   {
     'add': array([12]),
