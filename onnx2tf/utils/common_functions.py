@@ -3538,6 +3538,59 @@ def rewrite_tflite_inout_opname(
             for idx, flat_output_info in enumerate(flat_output_infos):
                 flat_output_info['name'] = onnx_output_names[idx]
 
+            # make signature_defs
+            """
+            "signature_defs": [
+                {
+                    "inputs": [
+                        {
+                            "name": "input",
+                            "tensor_index": 0
+                        }
+                    ],
+                    "outputs": [
+                        {
+                            "name": "boxes",
+                            "tensor_index": 208
+                        },
+                        {
+                            "name": "scores",
+                            "tensor_index": 190
+                        }
+                    ],
+                    "signature_key": "serving_default",
+                    "subgraph_index": 0
+                }
+            ]
+            """
+            signature_defs = {}
+            # signature_defs_inputs
+            signature_defs_inputs = []
+            for idx, flat_input_info in enumerate(flat_input_infos):
+                signature_defs_inputs.append(
+                    {
+                        'name': onnx_input_names[idx],
+                        'tensor_index': flat_input_info['buffer'] - 1,
+                    }
+                )
+            signature_defs['inputs'] = signature_defs_inputs
+            # signature_defs_outputs
+            signature_defs_outputs = []
+            for idx, flat_output_info in enumerate(flat_output_infos):
+                signature_defs_outputs.append(
+                    {
+                        'name': onnx_output_names[idx],
+                        'tensor_index': flat_output_info['buffer'] - 1,
+                    }
+                )
+            signature_defs['outputs'] = signature_defs_outputs
+            # signature_defs_inputs
+            signature_defs['signature_key'] = 'serving_default'
+            # subgraph_index
+            signature_defs['subgraph_index'] = 0
+            # update json
+            flat_json['signature_defs'] = [signature_defs]
+
         if flat_json is not None:
             with open(json_file_path, 'w') as f:
                 json.dump(flat_json, f)
