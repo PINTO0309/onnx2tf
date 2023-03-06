@@ -100,6 +100,7 @@ def make_node(
 
     # Generation of TF OP
     axes = list(axes) if axes is not None else None
+    tf_type = None
 
     try:
         workaround_exec_flg = False
@@ -133,6 +134,7 @@ def make_node(
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor)
                 tf_layers_dict[graph_node_output.name]['unnecessary_squeeze'] = True
+                tf_type = tf.identity
             else:
                 # Normal squeeze
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -141,6 +143,7 @@ def make_node(
                         axis=axes,
                         name=graph_node.name,
                     )
+                tf_type = tf.squeeze
         else:
             # Normal squeeze
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -149,6 +152,7 @@ def make_node(
                     axis=axes,
                     name=graph_node.name,
                 )
+            tf_type = tf.squeeze
     except Exception as ex:
         # Normal squeeze
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -157,8 +161,7 @@ def make_node(
                 axis=axes,
                 name=graph_node.name,
             )
-
-
+        tf_type = tf.squeeze
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -172,7 +175,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.squeeze,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'input': input_tensor,
                     'axis': axes,
