@@ -112,10 +112,11 @@ def make_node(
             shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 1)]
         else:
             shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
-        tf_layers_dict[graph_node_output.name]['tf_node'] = PReLU(
-            weights=slope,
-            shared_axes=shared_axes,
-        )(input_tensor)
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            PReLU(
+                weights=slope,
+                shared_axes=shared_axes,
+            )(input_tensor)
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
