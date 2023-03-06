@@ -3407,7 +3407,7 @@ def calc_extra_padding_with_ceil(
         kernel: Union[np.ndarray, List],
         pads: Union[np.ndarray, List],
         dilations: Union[np.ndarray, List],
-        strides: Union[np.ndarray, List]
+        strides: Union[np.ndarray, List],
 ) -> List:
     """
     Calculate extra padding for ceil_mode enabled pooling layer
@@ -3439,28 +3439,41 @@ def calc_extra_padding_with_ceil(
         print(error_msg)
         raise ValueError(error_msg)
 
+    warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                  f'Current pooling with ceil_mode = 1 follows pytorch implementation ' \
+                  f'since current onnx implementation generates nan values. ' \
+                  f'Please refer to https://github.com/PINTO0309/onnx2tf/issues/207.'
+    print(warning_msg)
+
     pads_begin = pads[:len(pads) // 2]
     pads_end = pads[len(pads) // 2:]
     pads_along_axis = [i + j for i, j in zip(pads_begin, pads_end)]
-    extra_pads = [0, 0]
 
     output_spatial_shape = [
-        (i + p - ((k - 1) * d + 1)) / s + 1
-        for i, p, k, d, s in zip(input_shape, pads_along_axis, kernel, dilations, strides)]
+        (i + p - d * (k - 1) - 1) / s + 1
+        for i, p, k, d, s in zip(input_shape, pads_along_axis, kernel, dilations, strides)
+    ]
 
-    initial_diff = [math.ceil(i) - math.floor(i) for i in output_spatial_shape]
+    output_shape_ceil = [math.ceil(output_shape) for output_shape in output_spatial_shape]
+    last_stride_starts = [(o - 1) * s for o, s in zip(output_shape_ceil, strides)]
 
-    # calculate extra padding for each axis
-    for i, d in enumerate(initial_diff):
-        if d != 0:
-            diff = d
-            while diff > 0:
-                extra_pads[i] += 1
-                axis_spatial_shape = \
-                    (input_shape[i] + (pads_along_axis[i] + extra_pads[i]) - ((kernel[i] - 1) * dilations[i] + 1)) \
-                    / strides[i] + 1
+    # If last step is smaller than padding (no valid tensor in kernel), it is dropped.
+    # This follows pytorch implementation since current onnx implementation generates nan values.
+    # Please refer to https://github.com/PINTO0309/onnx2tf/issues/207
+    # Determine whether the last stride contains any input or not
+    last_stride_validity = [
+        ls < (i + pb)
+        for ls, k, i, pb
+        in zip(last_stride_starts, kernel, input_shape, pads_begin)
+    ]
 
-                diff = math.ceil(axis_spatial_shape) - math.floor(axis_spatial_shape)
+    # Calculate extra pads to conduct one more stride if there is difference in output shape
+    extra_pads = [
+        ls + (k - 1) * d + 1 - (i + p)
+        if valid else 0
+        for valid, s, i, p, ls, k, d
+        in zip(last_stride_validity, strides, input_shape, pads_along_axis, last_stride_starts, kernel, dilations)
+    ]
 
     return extra_pads
 
