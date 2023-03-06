@@ -148,6 +148,7 @@ def make_node(
     test pattern.8 : axes=[3,6], [2,3,4,1,5,6,1,7]
     test pattern.9 : axes=[3,-1], [2,3,4,1,5,6,1,7]
     """
+    tf_type = None
     if 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_1.name] \
         and tf_layers_dict[graph_node_input_1.name]['unnecessary_squeeze'] == True:
         # Remove useless squeeze/unsqueeze combinations
@@ -158,6 +159,7 @@ def make_node(
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
+        tf_type = tf.identity
         ### Partial model
         if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
@@ -172,6 +174,7 @@ def make_node(
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
+        tf_type = tf.identity
         ### Partial model
         if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
@@ -191,6 +194,7 @@ def make_node(
                 axis=axes[0],
                 name=graph_node.name,
             )
+        tf_type = tf.expand_dims
         ### Partial model
         if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
@@ -208,6 +212,7 @@ def make_node(
                 shape=new_shape,
                 name=graph_node.name,
             )
+        tf_type = tf.reshape
         ### Partial model
         if kwargs['acc_check'] and tf_partial_model_inputs is not None:
             tf_partial_model_outputs = \
@@ -263,7 +268,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.reshape,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'tensor': input_tensor,
                     'shape': new_shape,
