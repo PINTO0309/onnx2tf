@@ -3706,6 +3706,7 @@ def merge_two_consecutive_identical_ops_into_one(
     # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
     # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
     # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
+    tf_type = None
     if tf_func == 'Mul':
         if (
             not isinstance(graph_node_input_1, np.ndarray) \
@@ -3735,6 +3736,7 @@ def merge_two_consecutive_identical_ops_into_one(
                 and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
+            tf_type = tf.math.multiply
         else:
             if isinstance(input_tensor_1, np.ndarray) \
                 or hasattr(input_tensor_1, 'numpy') \
@@ -3773,6 +3775,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = input_tensor_2 * next_graph_node_input_2
                             tf_layers_dict[graph_node_output.name]['merge_mul'] = True
+                            tf_type = tf.identity
 
                         elif next_graph_node_o_op == 'Div':
                             # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
@@ -3787,6 +3790,11 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = input_tensor_2 / next_graph_node_input_2
                             tf_layers_dict[graph_node_output.name]['merge_mul'] = True
+                            tf_type = tf.identity
+                        else:
+                            tf_type = tf.math.multiply
+                    else:
+                        tf_type = tf.math.multiply
 
                     ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -3812,6 +3820,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                     else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
+                    tf_type = tf.math.multiply
             else:
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -3824,6 +3833,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
+                tf_type = tf.math.multiply
 
     elif tf_func == 'Div':
         if (
@@ -3854,6 +3864,7 @@ def merge_two_consecutive_identical_ops_into_one(
                 and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
+            tf_type = tf.multiply
         else:
             if isinstance(input_tensor_1, np.ndarray) \
                 or hasattr(input_tensor_1, 'numpy') \
@@ -3903,6 +3914,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                             else tf.convert_to_tensor(input_tensor_2),
                                     name=graph_node.name,
                                 )
+                            tf_type = tf.identity
 
                         elif next_graph_node_o_op == 'Div':
                             # 4. `Div` -> `Div` to `Single-Nul` : `10 / 5 / 8 -> 10 * 0.025`
@@ -3928,6 +3940,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                             else tf.convert_to_tensor(input_tensor_2),
                                     name=graph_node.name,
                                 )
+                            tf_type = tf.identity
 
                         else:
                             ### Overall model
@@ -3941,6 +3954,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                             else tf.convert_to_tensor(input_tensor_2),
                                     name=graph_node.name,
                                 )
+                            tf_type = tf.math.divide
                     else:
                         ### Overall model
                         tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -3953,6 +3967,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                         else tf.convert_to_tensor(input_tensor_2),
                                 name=graph_node.name,
                             )
+                        tf_type = tf.math.divide
 
                 except Exception as ex:
                     ### Overall model
@@ -3966,6 +3981,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                     else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
+                    tf_type = tf.math.divide
             else:
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -3978,6 +3994,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
+                tf_type = tf.math.divide
 
     elif tf_func == 'Sub':
         if (
@@ -4008,6 +4025,7 @@ def merge_two_consecutive_identical_ops_into_one(
                 and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
+            tf_type = tf.math.subtract
         else:
             if isinstance(input_tensor_1, np.ndarray) \
                 or hasattr(input_tensor_1, 'numpy') \
@@ -4046,6 +4064,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 + next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_sub'] = True
+                            tf_type = tf.identity
 
                         elif next_graph_node_o_op == 'Add':
                             # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
@@ -4060,6 +4079,11 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 - next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_sub'] = True
+                            tf_type = tf.identity
+                        else:
+                            tf_type = tf.math.subtract
+                    else:
+                        tf_type = tf.math.subtract
 
                     ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -4085,6 +4109,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                     else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
+                    tf_type = tf.math.subtract
             else:
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -4097,6 +4122,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
+                tf_type = tf.math.subtract
 
     elif tf_func == 'Add':
         if (
@@ -4127,6 +4153,7 @@ def merge_two_consecutive_identical_ops_into_one(
                 and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
+            tf_type = tf.math.add
         else:
             if isinstance(input_tensor_1, np.ndarray) \
                 or hasattr(input_tensor_1, 'numpy') \
@@ -4165,6 +4192,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 + next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_add'] = True
+                            tf_type = tf.identity
 
                         elif next_graph_node_o_op == 'Sub':
                             # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
@@ -4179,6 +4207,11 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 - next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_add'] = True
+                            tf_type = tf.identity
+                        else:
+                            tf_type = tf.math.add
+                    else:
+                        tf_type = tf.math.add
 
                     ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -4204,6 +4237,7 @@ def merge_two_consecutive_identical_ops_into_one(
                                     else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
+                    tf_type = tf.math.add
             else:
                 ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -4216,5 +4250,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                 else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
+                tf_type = tf.math.add
 
-    return tf_layers_dict[graph_node_output.name]['tf_node']
+    return tf_layers_dict[graph_node_output.name]['tf_node'], tf_type

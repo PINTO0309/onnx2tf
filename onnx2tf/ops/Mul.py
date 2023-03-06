@@ -199,7 +199,7 @@ def make_node(
     # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
     # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
     # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
-    merge_two_consecutive_identical_ops_into_one(
+    _, tf_type = merge_two_consecutive_identical_ops_into_one(
         graph_node_input_1=graph_node_input_1,
         graph_node_input_2=graph_node_input_2,
         graph_node_output=graph_node_output,
@@ -262,7 +262,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.math.multiply,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'x': input_tensor_1,
                     'y': input_tensor_2,

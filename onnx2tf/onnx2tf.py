@@ -1317,6 +1317,10 @@ def convert(
                     }
                 """
                 input_names = [k.name for k in inputs]
+                for k, v in tf_layers_dict.items():
+                    if 'tf_node_info' in v:
+                        if v['tf_node_info']['tf_op_type'] == 'identity':
+                            tf_tensor_infos[v['tf_node'].name] = np.ndarray([0], dtype=np.int64)
                 onnx_tf_output_pairs = {
                     (k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
                         for k, v in tf_layers_dict.items() if k not in input_names and not hasattr(v['tf_node'], 'numpy')
