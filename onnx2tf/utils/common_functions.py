@@ -3690,7 +3690,44 @@ def merge_two_consecutive_identical_ops_into_one(
     graph_node: gs.Node,
     tf_layers_dict: Dict,
     tf_func: str,
-):
+) -> Tuple[dict, Any]:
+    """Merges two consecutive add/subtract operations into one.
+
+    Parameters
+    ----------
+    graph_node_input_1: Any
+        Input Node X of ONNX
+
+    graph_node_input_2: Any
+        Input Node Y of ONNX
+
+    graph_node_output: gs.Variable
+        Output of ONNX
+
+    before_op_output_shape_trans: bool
+        Flag to determine if the input tensor needs to be transposed
+
+    input_tensor_1: Any
+        Input Node X of TensorFlow
+
+    input_tensor_2: Any
+        Input Node Y of TensorFlow
+
+    graph_node: gs.Node
+        graph_surgeon Node
+
+    tf_layers_dict: Dict
+        TensorFlow pre-built graphs
+
+    tf_func: str
+        'Mul' or 'Div' or 'Add' or 'Sub'
+
+    Returns
+    -------
+    inputs: Tuple[dict, Any]
+        tf_layers_dict
+        tf_type: tf.identity or tf.math.multiply or tf.math.divide or tf.math.add or tf.math.subtract
+    """
     # Merge two consecutive identical OPs into one
     #   A constant is calculated in advance only
     #   when one of the operations of the current OP
@@ -3706,6 +3743,7 @@ def merge_two_consecutive_identical_ops_into_one(
     # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
     # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
     # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
+
     tf_type = None
     if tf_func == 'Mul':
         if (
