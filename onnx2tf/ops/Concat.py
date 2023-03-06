@@ -150,7 +150,11 @@ def make_node(
             param_name=graph_node_input.name,
             **kwargs,
         )
-        new_values.append(value)
+        new_values.append(
+            value \
+                if not isinstance(value, np.ndarray) \
+                    else tf.convert_to_tensor(value)
+        )
     values = new_values
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
