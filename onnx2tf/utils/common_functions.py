@@ -3892,6 +3892,17 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = 1 / (input_tensor_2 / next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_div'] = True
+                            ### Overall model
+                            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                                tf.math.multiply(
+                                    x=input_tensor_1 \
+                                        if not isinstance(input_tensor_1, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_1),
+                                    y=input_tensor_2 \
+                                        if not isinstance(input_tensor_2, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_2),
+                                    name=graph_node.name,
+                                )
 
                         elif next_graph_node_o_op == 'Div':
                             # 4. `Div` -> `Div` to `Single-Nul` : `10 / 5 / 8 -> 10 * 0.025`
@@ -3906,18 +3917,30 @@ def merge_two_consecutive_identical_ops_into_one(
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = 1 / (input_tensor_2 * next_graph_node_input_2)
                             tf_layers_dict[graph_node_output.name]['merge_div'] = True
+                            ### Overall model
+                            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                                tf.math.multiply(
+                                    x=input_tensor_1 \
+                                        if not isinstance(input_tensor_1, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_1),
+                                    y=input_tensor_2 \
+                                        if not isinstance(input_tensor_2, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_2),
+                                    name=graph_node.name,
+                                )
 
-                        ### Overall model
-                        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                            tf.math.multiply(
-                                x=input_tensor_1 \
-                                    if not isinstance(input_tensor_1, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_1),
-                                y=input_tensor_2 \
-                                    if not isinstance(input_tensor_2, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_2),
-                                name=graph_node.name,
-                            )
+                        else:
+                            ### Overall model
+                            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                                tf.math.divide(
+                                    x=input_tensor_1 \
+                                        if not isinstance(input_tensor_1, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_1),
+                                    y=input_tensor_2 \
+                                        if not isinstance(input_tensor_2, np.ndarray) \
+                                            else tf.convert_to_tensor(input_tensor_2),
+                                    name=graph_node.name,
+                                )
                     else:
                         ### Overall model
                         tf_layers_dict[graph_node_output.name]['tf_node'] = \
