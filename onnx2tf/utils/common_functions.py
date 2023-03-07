@@ -1,3 +1,4 @@
+import math
 import os
 import io
 import sys
@@ -3358,7 +3359,7 @@ def broadcast_for_gpu_delegate(
     return input_tensor_1, input_tensor_2
 
 
-def calc_tf_pooling_pads(input_shape, kernel, strides, func):
+def calc_tf_pooling_pads(input_shape, kernel, strides):
     """Calculate how much padding is needed for tensorflow mode 'SAME'.
 
     Parameters
@@ -3369,8 +3370,6 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
         kernel shape from onnx
     strides: List
         strides from onnx
-    func: Callable
-        function for ceil or floor, depends on onnx option ceil_mode
 
     Returns
     -------
@@ -3383,10 +3382,10 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
 
     # calculate how much padding is needed except batch and channel dimension
     for i, k, s in zip(input_shape[1:-1], kernel, strides):
-        same_output_shape = func((i - 1) / s) + 1
+        same_output_shape = math.floor((i - 1) / s) + 1
         axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
 
-        padded_valid_output_shape = func((i + axis_pads - k) / s) + 1
+        padded_valid_output_shape = math.floor((i + axis_pads - k) / s) + 1
         error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
                     f'Wrong padding calculation.'
         assert same_output_shape == padded_valid_output_shape, error_msg
@@ -3401,6 +3400,82 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, func):
     same_pads.extend(same_pads_end)
 
     return same_pads
+
+
+def calc_extra_padding_with_ceil(
+        input_shape: Union[np.ndarray, List],
+        kernel: Union[np.ndarray, List],
+        pads: Union[np.ndarray, List],
+        dilations: Union[np.ndarray, List],
+        strides: Union[np.ndarray, List],
+) -> List:
+    """
+    Calculate extra padding for ceil_mode enabled pooling layer
+
+    Parameters
+    ----------
+    input_shape: Union[np.ndarray, List]
+        input tensor shape of pooling layer except batch and channel dimension
+    kernel: Union[np.ndarray, List]
+        kernel size of pooling layer
+    pads: Union[np.ndarray, List]
+        onnx formatted padding, [x1_begin, x2_begin, ..., xn_begin, x1_end, x2_end, ..., xn_end]
+    dilations: Union[np.ndarray, List]
+        dilations of pooling layer
+    strides: Union[np.ndarray, List]
+        strides of pooling layer
+
+    Returns
+    -------
+    extra_pads: List
+        extra padding value to match output shape between onnx and tensorflow when ceil_mode == 1
+
+    """
+
+    if not len(input_shape) == len(kernel) == len(pads) // 2 == len(dilations) == len(strides):
+        error_msg = f'' + \
+                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f'Wrong input shapes for extra padding calculation.'
+        print(error_msg)
+        raise ValueError(error_msg)
+
+    warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                  f'Current pooling with ceil_mode = 1 follows pytorch implementation ' \
+                  f'since current onnx implementation generates nan values. ' \
+                  f'Please refer to https://github.com/PINTO0309/onnx2tf/issues/207.'
+    print(warning_msg)
+
+    pads_begin = pads[:len(pads) // 2]
+    pads_end = pads[len(pads) // 2:]
+    pads_along_axis = [i + j for i, j in zip(pads_begin, pads_end)]
+
+    output_spatial_shape = [
+        (i + p - d * (k - 1) - 1) / s + 1
+        for i, p, k, d, s in zip(input_shape, pads_along_axis, kernel, dilations, strides)
+    ]
+
+    output_shape_ceil = [math.ceil(output_shape) for output_shape in output_spatial_shape]
+    last_stride_starts = [(o - 1) * s for o, s in zip(output_shape_ceil, strides)]
+
+    # If last step is smaller than padding (no valid tensor in kernel), it is dropped.
+    # This follows pytorch implementation since current onnx implementation generates nan values.
+    # Please refer to https://github.com/PINTO0309/onnx2tf/issues/207
+    # Determine whether the last stride contains any input or not
+    last_stride_validity = [
+        ls < (i + pb)
+        for ls, k, i, pb
+        in zip(last_stride_starts, kernel, input_shape, pads_begin)
+    ]
+
+    # Calculate extra pads to conduct one more stride if there is difference in output shape
+    extra_pads = [
+        ls + (k - 1) * d + 1 - (i + p)
+        if valid else 0
+        for valid, s, i, p, ls, k, d
+        in zip(last_stride_validity, strides, input_shape, pads_along_axis, last_stride_starts, kernel, dilations)
+    ]
+
+    return extra_pads
 
 
 def get_tf_model_inputs(
