@@ -107,6 +107,7 @@ def make_node(
 
     input_tensor_shape = input_tensor.shape.as_list()
     is_known_shape = None not in input_tensor_shape[1:]
+    extra_pads = [0] * spatial_size
     average_multiplier = None
 
     # default tensorflow action is 'SAME_UPPER' mode (extra padding in the end for odd numbers)
@@ -137,8 +138,8 @@ def make_node(
             auto_pad = 'VALID'
             is_explicit_padding = True
 
-            # extra padding may be needed for ceiling
-            # this padding is added to end side (right, bottom) only
+            # extra padding to end side (right, bottom) may be needed when ceil_mode is True
+            # this extra padding should not be counted as padding when count_include_pad is True
             if ceil_mode:
                 extra_pads = \
                     calc_extra_padding_with_ceil(input_shape=input_tensor_shape[1:-1],
@@ -170,22 +171,31 @@ def make_node(
     for input_spatial_shape, output_size, kernel, dilation, stride, pads_begin, pads_end \
             in zip(input_tensor_shape[1:-1], output_spatial_shape, kernel_shape,
                    dilations, strides, pads[:len(pads) // 2], pads[len(pads) // 2:]):
-        sample_target = [0 for _ in range(pads_begin)] + \
-                        [1 for _ in range(input_spatial_shape)] + \
-                        [0 for _ in range(pads_end)]
+        sample_target = np.concatenate([
+            np.zeros(pads_begin),
+            np.ones(input_spatial_shape),
+            np.zeros(pads_end)]
+        )
         sample_kernel = np.zeros((kernel - 1) * dilation + 1)
         sample_kernel[::dilation] = 1
 
         counts = []
         for i in range(output_size):
             start = i * stride
-            counts.extend(np.convolve(sample_target[start:start+len(sample_kernel)], sample_kernel, mode='valid'))
+            stride_target = sample_target[start:start+len(sample_kernel)]
+            # pad target to match size
+            stride_target = np.concatenate([stride_target, np.zeros(len(sample_kernel) - len(stride_target))])
+            counts.extend(np.convolve(stride_target, sample_kernel, mode='valid'))
 
         non_zero_counts.append(counts)
 
     need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
 
-    # add extra pad layer if needed
+    # default tensorflow option for count_include_pad is True and cannot control
+    # average value should be compensated in cases below
+    # 1. when extra padding layer is added and count_include_pad is False
+    # 2. when extra padding layer is not added and count_include_pad is True
+    # 3. when last stride has extra padding due to ceil_mode and count_include_pad is True
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
         warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
                       f'Tensorflow incompatible padding detected. ' \
@@ -221,6 +231,18 @@ def make_node(
             for k, non_zero_count in zip(kernel_shape, non_zero_counts):
                 multiplier = [n / k for n in non_zero_count]
                 average_multiplier.append(multiplier)
+
+    if count_include_pad and extra_pads != [0] * spatial_size:
+        # extra padding in last stride should not be included in averaging
+        if average_multiplier is None:
+            average_multiplier = []
+            for k, non_zero_count, extra_pad in zip(kernel_shape, non_zero_counts, extra_pads):
+                multiplier = [1 for _ in non_zero_count]
+                multiplier[-1] = k / (k - extra_pad)
+                average_multiplier.append(multiplier)
+        else:
+            for i, k, non_zero_count, extra_pad in enumerate(zip(kernel_shape, non_zero_counts, extra_pads)):
+                average_multiplier[i][-1] = k / (k - extra_pad)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
