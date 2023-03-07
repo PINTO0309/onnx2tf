@@ -47,7 +47,7 @@ https://github.com/PINTO0309/onnx2tf/issues
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
     && pip install -U h5py==3.7.0
-    && pip install tensorflow==2.12.0rc0
+    && pip install tensorflow==2.12.0rc1
     ```
 
 https://github.com/PINTO0309/onnx2tf/pulls

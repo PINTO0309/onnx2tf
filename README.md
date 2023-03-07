@@ -22,7 +22,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx_graphsurgeon
 - polygraphy
 - simple_onnx_processing_tools
-- tensorflow==2.12.0rc0
+- tensorflow==2.12.0rc1
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
   # Custom flatc binary for Ubuntu 20.04+
@@ -84,7 +84,7 @@ or
     && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.12.0rc0 \
+  !python3.9 -m pip install tensorflow==2.12.0rc1 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \

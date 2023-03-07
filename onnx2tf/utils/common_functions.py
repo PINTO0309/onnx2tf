@@ -2436,7 +2436,7 @@ def replace_max_values_negative_values(
     return index_list
 
 
-# https://github.com/tensorflow/tensorflow/releases/tag/v2.12.0-rc0
+# https://github.com/tensorflow/tensorflow/releases/tag/v2.12.0-rc1
 # Transpose v5->v6, 5D->6D
 def transpose_with_flexing_deterrence(
     *,

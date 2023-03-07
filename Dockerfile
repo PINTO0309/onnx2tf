@@ -18,7 +18,7 @@ RUN pip install pip -U \
     && pip install -U onnx2tf \
     && pip install -U onnx2tf \
     && pip install -U simple_onnx_processing_tools \
-    && pip install tensorflow==2.12.0rc0 \
+    && pip install tensorflow==2.12.0rc1 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
     && pip install -U onnxruntime==1.13.1 \
