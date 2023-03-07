@@ -24,6 +24,35 @@ from onnx2tf.utils.common_functions import (
 )
 
 
+def summarize_multiplier(arr):
+    """
+    summarize consecutive numbers in average multiplier
+    Parameters
+    ----------
+    arr: List
+        average multiplier
+
+    Returns
+    -------
+    summary: List
+        summarized average multiplier
+    """
+    summary = []
+    for sub_arr in arr:
+        sub_summary = []
+        i = 0
+        while i < len(sub_arr):
+            start_index = i
+            value = sub_arr[i]
+            while i < len(sub_arr) - 1 and sub_arr[i] == sub_arr[i+1]:
+                i += 1
+            end_index = i
+            sub_summary.append((start_index, end_index, value))
+            i += 1
+        summary.append(sub_summary)
+    return summary
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -78,9 +107,7 @@ def make_node(
 
     input_tensor_shape = input_tensor.shape.as_list()
     is_known_shape = None not in input_tensor_shape[1:]
-    average_multiplier = [1] * spatial_size * 2
-    average_multiplier_begin = [1] * spatial_size
-    average_multiplier_end = [1] * spatial_size
+    average_multiplier = None
 
     # default tensorflow action is 'SAME_UPPER' mode (extra padding in the end for odd numbers)
     # explicit pad layer is added for tensorflow incompatible cases
@@ -96,34 +123,6 @@ def make_node(
         for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:],
                                       kernel_shape, dilations, strides)
     ]
-
-    last_stride_starts = [(o - 1) * s for o, s in zip(output_spatial_shape, strides)]
-
-    last_stride_non_zeros = []
-    for input_spatial_shape, pads_begin, last_stride_start, kernel, stride, dilation\
-            in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], last_stride_starts, kernel_shape, strides, dilations):
-
-        # check if last stride starts in valid position
-        if pads_begin + input_spatial_shape - last_stride_start > 0:
-            non_zeros_values = (pads_begin + input_spatial_shape - last_stride_start) // dilation
-
-            effective_kernel = (kernel - 1) * dilation + 1
-            if non_zeros_values >= effective_kernel:
-                # last stride larger than kernel means there exists dropped stride after
-                # current last stride is full of valid values
-                non_zeros_values = kernel
-
-        else:
-            # sometimes last stride starts from end side padding area when ceil_mode is used
-            # in this case, only zeros are included in padding, so it will be dropped
-            # instead, last stride except end side padding should be calculated
-            non_zeros_values = pads_begin + input_spatial_shape - last_stride_start + stride
-
-        # if last strides start from begin side padding, zeros should be removed
-        if last_stride_start < pads_begin:
-            non_zeros_values -= pads_begin
-
-        last_stride_non_zeros.append(non_zeros_values)
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
@@ -165,6 +164,27 @@ def make_node(
                     f'Wrong auto_pad parameter in AveragePool: {auto_pad}.'
         raise ValueError(error_msg)
 
+    # count nonzero elements in kernel each strides for the case count_include_pad is False
+    non_zero_counts = []
+
+    for input_spatial_shape, output_size, kernel, dilation, stride, pads_begin, pads_end \
+            in zip(input_tensor_shape[1:-1], output_spatial_shape, kernel_shape,
+                   dilations, strides, pads[:len(pads) // 2], pads[len(pads) // 2:]):
+        sample_target = [0 for _ in range(pads_begin)] + \
+                        [1 for _ in range(input_spatial_shape)] + \
+                        [0 for _ in range(pads_end)]
+        sample_kernel = np.zeros((kernel - 1) * dilation + 1)
+        sample_kernel[::dilation] = 1
+
+        counts = []
+        for i in range(output_size):
+            start = i * stride
+            counts.extend(np.convolve(sample_target[start:start+len(sample_kernel)], sample_kernel, mode='valid'))
+
+        non_zero_counts.append(counts)
+
+    need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
+
     # add extra pad layer if needed
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
         warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
@@ -176,20 +196,11 @@ def make_node(
             # switch the order of pads
             tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
 
-        if not count_include_pad:
-            average_multiplier_begin = [
-                k / (k - p) if v + p >= k else k / v
-                for v, p, k
-                in zip(input_tensor_shape[1:-1], tf_pads[:len(tf_pads) // 2], kernel_shape)
-            ]
-
-            average_multiplier_end = [
-                k / n if n > 0 else 1
-                for p, k, n
-                in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_stride_non_zeros)
-            ]
-
-        average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
+        if not count_include_pad and need_multiplier:
+            average_multiplier = []
+            for k, non_zero_count in zip(kernel_shape, non_zero_counts):
+                multiplier = [k / n if n != 0 else 1 for n in non_zero_count]
+                average_multiplier.append(multiplier)
 
         # convert to tensorflow padding format
         tf_pads = [[0, 0]] + \
@@ -205,18 +216,11 @@ def make_node(
     else:
         padded_tensor = input_tensor
 
-        if count_include_pad:
-            average_multiplier_begin = [
-                (k - p) / k if v + p >= k else v / k
-                for v, p, k
-                in zip(input_tensor_shape[1:-1], tf_pads[:len(tf_pads) // 2], kernel_shape)
-            ]
-            average_multiplier_end = [
-                n / k if n > 0 else 1
-                for p, k, n
-                in zip(tf_pads[len(tf_pads) // 2:], kernel_shape, last_stride_non_zeros)
-            ]
-            average_multiplier = [i for tup in zip(average_multiplier_begin, average_multiplier_end) for i in tup]
+        if count_include_pad and need_multiplier:
+            average_multiplier = []
+            for k, non_zero_count in zip(kernel_shape, non_zero_counts):
+                multiplier = [n / k for n in non_zero_count]
+                average_multiplier.append(multiplier)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -261,7 +265,7 @@ def make_node(
 
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124
-    if average_multiplier != [1] * spatial_size * 2:
+    if average_multiplier is not None:
         warning_msg = \
             f'{Color.YELLOW}WARNING:{Color.RESET} ' \
             f'Tensorflow incompatible action detected. ' \
@@ -270,32 +274,18 @@ def make_node(
             f'https://github.com/PINTO0309/onnx2tf/issues/124'
         print(warning_msg)
 
-        # TODO: body may contain zero padded value, average multiplier need to be calculated for every row, column
-        if pooled_tensor.shape[1] >= 2:
-            padded_slice_begin = pooled_tensor[:, 0:1, ...] * average_multiplier[0]
-            padded_slice_body = pooled_tensor[:, 1:-1, ...]
-            padded_slice_end = pooled_tensor[:, -1:, ...] * average_multiplier[1]
-            pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=1)
-        elif pooled_tensor.shape[1] == 1:
-            pooled_tensor = pooled_tensor * average_multiplier[0]
+        average_multiplier = summarize_multiplier(average_multiplier)
 
-        if len(kernel_shape) >= 2:
-            if pooled_tensor.shape[2] >= 2:
-                padded_slice_begin = pooled_tensor[:, :, 0:1, ...] * average_multiplier[2]
-                padded_slice_body = pooled_tensor[:, :, 1:-1, ...]
-                padded_slice_end = pooled_tensor[:, :, -1:, ...] * average_multiplier[3]
-                pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=2)
-            elif pooled_tensor.shape[2] == 1:
-                pooled_tensor = pooled_tensor * average_multiplier[2]
+        for i, multiplier in enumerate(average_multiplier, start=1):
+            slice_list = [slice(None) for _ in range(spatial_size * 2)]
+            multiplied_slices = []
 
-        if len(kernel_shape) >= 3:
-            if pooled_tensor.shape[3] >= 2:
-                padded_slice_begin = pooled_tensor[:, :, :, 0:1, ...] * average_multiplier[4]
-                padded_slice_body = pooled_tensor[:, :, :, 1:-1, ...]
-                padded_slice_end = pooled_tensor[:, :, :, -1:, ...] * average_multiplier[5]
-                pooled_tensor = tf.concat([padded_slice_begin, padded_slice_body, padded_slice_end], axis=3)
-            elif pooled_tensor.shape[3] == 1:
-                pooled_tensor = pooled_tensor * average_multiplier[4]
+            for m in multiplier:
+                start, stop, value = m
+                slice_list[i] = slice(start, stop + 1)
+                multiplied_slices.append(pooled_tensor[slice_list] * value)
+
+            pooled_tensor = tf.concat(multiplied_slices, axis=i)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
 
