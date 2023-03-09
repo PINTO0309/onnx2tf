@@ -221,6 +221,48 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
+Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
+
+```python
+import cv2
+import glob
+import numpy as np
+
+# Not used during data generation ################################
+# You will need to do the calculations yourself using the test data
+MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32) # [1,1,1,3]
+STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32) # [1,1,1,3]
+# Not used during data generation ################################
+
+files = glob.glob("data/*.png")
+img_datas = []
+for idx, file in enumerate(files):
+    bgr_img = cv2.imread(file)
+    rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    resized_img = cv2.resize(rgb_img, dsize=(200,112))
+    extend_batch_size_img = resized_img[np.newaxis, :]
+    normalized_img = extend_batch_size_img / 255.0 # 0.0 - 1.0
+    print(
+        f'{str(idx+1).zfill(2)}. extend_batch_size_img.shape: {extend_batch_size_img.shape}'
+    ) # [1,112,200,3]
+    img_datas.append(extend_batch_size_img)
+calib_datas = np.vstack(img_datas)
+print(f'calib_datas.shape: {calib_datas.shape}') # [10,112,200,3]
+np.save(file='data/calibdata.npy', arr=calib_datas)
+
+loaded_data = np.load('data/calibdata.npy')
+print(f'loaded_data.shape: {loaded_data.shape}') # [10,112,200,3]
+
+"""
+-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD
+int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
+
+e.g.
+-qcind pc_dep 'data/calibdata.npy' [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+-qcind feat 'data/calibdata2.npy' [[[[0.485, ..., 0.406]]]] [[[[0.229, ..., 0.225]]]]
+"""
+```
+
 ## CLI Parameter
 ```
 
