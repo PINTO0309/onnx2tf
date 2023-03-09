@@ -1,4 +1,7 @@
 {
+  "models": "https://github.com/PINTO0309/PINTO_model_zoo/tree/main/358_CGI-Stereo",
+  "cited": "https://github.com/gangweiX/CGI-Stereo",
+  "command": "onnx2tf -i cgi_stereo_kitti_192x320.onnx -prf replace_cgi_stereo.json",
   "format_version": 1,
   "operations": [
     {
