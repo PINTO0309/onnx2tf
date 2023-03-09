@@ -223,6 +223,8 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
 
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
+https://www.tensorflow.org/lite/performance/post_training_quantization
+
 ```python
 import cv2
 import glob
