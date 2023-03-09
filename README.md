@@ -265,6 +265,42 @@ e.g.
 """
 ```
 
+When converting to TensorFlow.js, process as follows.
+
+```bash
+pip install tensorflowjs
+
+onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -osd
+
+tensorflowjs_converter \
+--input_format tf_saved_model \
+--output_format tfjs_graph_model \
+saved_model \
+tfjs_model
+```
+![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
+
+When converting to CoreML, process as follows.
+
+```bash
+pip install coremltools
+
+onnx2tf -i mobilenetv2-12.onnx -k input -ois input:1,3,224,224 -osd
+```
+```python
+import coremltools as ct
+ 
+# Convert saved_model to Core ML
+FOLDER_PATH = 'saved_model'
+ 
+model = ct.convert(
+    model=FOLDER_PATH,
+    source='tensorflow',
+)
+model.save(f'{FOLDER_PATH}/model.mlmodel')
+```
+![image](https://user-images.githubusercontent.com/33194443/224185761-bd0c086c-65e8-4de7-a500-f49b666eea0a.png)
+
 ## CLI Parameter
 ```
 
