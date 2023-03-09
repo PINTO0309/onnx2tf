@@ -259,7 +259,7 @@ int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
 
 e.g.
 -qcind pc_dep 'data/calibdata.npy' [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
--qcind feat 'data/calibdata2.npy' [[[[0.485, ..., 0.406]]]] [[[[0.229, ..., 0.225]]]]
+-qcind feat 'data/calibdata2.npy' [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
 """
 ```
 
