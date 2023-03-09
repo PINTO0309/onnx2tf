@@ -39,7 +39,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   ```
 
 ## Sample Usage
-
+### 1. Install
 - HostPC
   ```
   $ docker run --rm -it \
@@ -97,7 +97,8 @@ or
     && python3.9 -m pip install -U h5py==3.7.0
   ```
 
-Run test.
+### 2. Run test
+Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance.
 ```bash
 # Float32, Float16
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
@@ -127,6 +128,8 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segme
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
 $ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
+
+### 3. Accuracy check
 Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold. Automatically determines before and after which OPs the tool's automatic conversion of the model failed. Know where dimensional compression, dimensional expansion, and dimensional transposition by `Reshape` and `Traspose` are failing. Once you have identified the problem area, you can refer to the tutorial on [Parameter replacement](#parameter-replacement) to modify the tool's behavior.
 
 `-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
@@ -136,6 +139,7 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 
+### 4. Match tflite input/output names and input/output order to ONNX
 If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-coion` / `--copy_onnx_input_output_names_to_tflite` option to output tflite file. See: https://github.com/PINTO0309/onnx2tf/issues/228
 ```python
 import torch
@@ -214,6 +218,7 @@ print("[TFLite] Model Predictions:", tt_lite_output)
 ```
 ![image](https://user-images.githubusercontent.com/33194443/223318437-b89e56c1-4376-4e91-8c0c-08d29a604637.png)
 
+### 5. Embed metadata in tflite
 If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as I do not want to write byte arrays to the tflite file that are not essential to its operation.
 
 - Adding metadata to TensorFlow Lite models
@@ -221,6 +226,7 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
+### 6. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
@@ -265,6 +271,7 @@ e.g.
 """
 ```
 
+### 7. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -280,6 +287,7 @@ tfjs_model
 ```
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
+### 8. Conversion to CoreML
 When converting to CoreML, process as follows.
 
 ```bash
