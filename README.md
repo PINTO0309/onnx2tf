@@ -293,8 +293,7 @@ onnx2tf -i mobilenetv2-12.onnx -k input -ois input:1,3,224,224 -osd
 ```
 ```python
 import coremltools as ct
- 
-# Convert saved_model to Core ML
+
 FOLDER_PATH = 'saved_model'
  
 model = ct.convert(
