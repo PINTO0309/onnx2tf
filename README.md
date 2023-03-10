@@ -1643,6 +1643,7 @@ The above differences often cannot be dealt with by simply converting the model 
 2. https://github.com/opencv/opencv_zoo
 3. https://pytorch.org/vision/stable/models.html
 4. https://tfhub.dev/
+5. https://www.kaggle.com/models
 
 ## Contributors
 <a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
