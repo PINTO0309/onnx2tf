@@ -284,7 +284,7 @@ tfjs_model
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
 ### 8. Conversion to CoreML
-When converting to CoreML, process as follows.
+When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
 pip install coremltools
