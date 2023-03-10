@@ -20,7 +20,6 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnxruntime
 - onnx-simplifier
 - onnx_graphsurgeon
-- polygraphy
 - simple_onnx_processing_tools
 - tensorflow==2.12.0rc1
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
@@ -52,7 +51,6 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ pip install -U onnx \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
-  && pip install -U polygraphy \
   && pip install -U onnxruntime==1.13.1 \
   && pip install -U onnxsim \
   && pip install -U simple_onnx_processing_tools \
@@ -87,8 +85,6 @@ or
   !python3.9 -m pip install tensorflow==2.12.0rc1 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
-    && python3.9 -m pip install -U onnx-graphsurgeon \
-    && python3.9 -m pip install -U polygraphy \
     && python3.9 -m pip install -U onnxruntime==1.13.1 \
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
