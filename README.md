@@ -98,7 +98,7 @@ or
   ```
 
 ### 2. Run test
-Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance.
+Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance. See: [CLI Parameter](#cli-parameter)
 ```bash
 # Float32, Float16
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
