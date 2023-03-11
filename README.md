@@ -85,6 +85,7 @@ or
   !python3.9 -m pip install tensorflow==2.12.0rc1 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
+    && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U onnxruntime==1.13.1 \
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
