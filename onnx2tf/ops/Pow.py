@@ -122,11 +122,13 @@ def make_node(
             )
     to_dtype = NUMPY_DTYPES_TO_TF_DTYPES[output_dtype] \
         if isinstance(output_dtype, np.dtype) else output_dtype
+    if to_dtype is None:
+        to_dtype = input_tensor_1.dtype
     if powed_tensor.dtype != to_dtype:
         powed_tensor = tf.cast(
             powed_tensor,
-            dtype=NUMPY_DTYPES_TO_TF_DTYPES[output_dtype] \
-                if isinstance(output_dtype, np.dtype) else output_dtype
+            dtype=NUMPY_DTYPES_TO_TF_DTYPES[to_dtype] \
+                if isinstance(to_dtype, np.dtype) else to_dtype
         )
     tf_layers_dict[graph_node_output.name]['tf_node'] = powed_tensor
 
