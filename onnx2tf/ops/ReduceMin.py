@@ -56,7 +56,9 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    tensor_rank = len(graph_node_input_1.shape)
+    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    tensor_rank = len(input_tensor.shape)
 
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
@@ -99,8 +101,6 @@ def make_node(
     }
 
     # Generation of TF OP
-    input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
 
     # Param replacement
     axes = replace_parameter(
