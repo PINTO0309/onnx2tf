@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.21
+  ghcr.io/pinto0309/onnx2tf:1.7.22
 
   or
 
@@ -295,7 +295,7 @@ onnx2tf -i mobilenetv2-12.onnx -k input -ois input:1,3,224,224 -osd
 import coremltools as ct
 
 FOLDER_PATH = 'saved_model'
- 
+
 model = ct.convert(
     model=FOLDER_PATH,
     source='tensorflow',
@@ -1391,6 +1391,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |RNN|**Help wanted**|
   |RoiAlign|:heavy_check_mark:|
   |Round|:heavy_check_mark:|
+  |ScaleAndTranslate|:heavy_check_mark:|
   |Scatter|:heavy_check_mark:|
   |ScatterElements|:heavy_check_mark:|
   |ScatterND|:heavy_check_mark:|
