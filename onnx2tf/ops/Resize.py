@@ -170,6 +170,17 @@ def make_node(
     coordinate_transformation_mode = graph_node.attrs.get('coordinate_transformation_mode', 'half_pixel')
     extrapolation_value = graph_node.attrs.get('extrapolation_value', 0.0)
     mode = graph_node.attrs.get('mode', 'nearest')
+    antialias = bool(graph_node.attrs.get('antialias', 0))
+    keep_aspect_ratio_policy = graph_node.attrs.get('keep_aspect_ratio_policy', 'stretch')
+    preserve_aspect_ratio = False
+    if keep_aspect_ratio_policy == 'stretch':
+        preserve_aspect_ratio = False
+    elif keep_aspect_ratio_policy == 'not_larger':
+        preserve_aspect_ratio = True
+    elif keep_aspect_ratio_policy == 'not_smaller':
+        preserve_aspect_ratio = True
+    else:
+        preserve_aspect_ratio = False
 
     replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
         kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
@@ -386,7 +397,7 @@ def make_node(
                     )
                 ]
 
-    elif coordinate_transformation_mode == "align_corners":
+    elif coordinate_transformation_mode == "align_corners" and opset <= 17:
         align_corners = True
         half_pixel_centers = False
         ### Overall model
@@ -417,7 +428,7 @@ def make_node(
                     )
                 ]
 
-    elif coordinate_transformation_mode == "asymmetric":
+    elif coordinate_transformation_mode == "asymmetric" and opset <= 17:
         align_corners = False
         half_pixel_centers = False
         ### Overall model
@@ -448,7 +459,7 @@ def make_node(
                     )
                 ]
 
-    elif coordinate_transformation_mode == "half_pixel":
+    elif coordinate_transformation_mode == "half_pixel" and opset <= 17:
         align_corners = False
         half_pixel_centers = True
         ### Overall model
@@ -485,6 +496,8 @@ def make_node(
             images=input_tensor,
             size=new_size,
             method=mode,
+            preserve_aspect_ratio=preserve_aspect_ratio,
+            antialias=antialias,
             name=graph_node.name,
         )
         tf_op_type = tf.image.resize
@@ -497,6 +510,8 @@ def make_node(
                             if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
                         size=new_size,
                         method=mode,
+                        preserve_aspect_ratio=preserve_aspect_ratio,
+                        antialias=antialias,
                     )
                 ]
 
