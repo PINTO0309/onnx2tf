@@ -82,73 +82,96 @@ def make_node(
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
 
+    # Param replacement - OP replacement
+    op_rep_params = kwargs.get('op_rep_params', [])
+    output_shape_ = None
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == 'op':
+            output_shape_ = op_rep_param.get('output_shape', None)
+            strides_ = op_rep_param.get('strides', None)
+            padding_ = op_rep_param.get('padding', 'SAME')
+            dilations_ = op_rep_param.get('dilations', None)
+
+            if output_shape_ is None or strides_ is None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'When replacing ConvTranspose OP, "filters", "output_shape" and "strides" must be specified in replace.json. ' +
+                    f'Check the specification of tf.nn.convXd_transpose in TensorFlow and specify the appropriate parameters. ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv1d_transpose or ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose or ' +
+                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv3d_transpose'
+                )
+                sys.exit(1)
+
     # get ONNX convolution output shape
     graph_node_output_shape = graph_node.attrs.get('output_shape', graph_node_output.shape)
     output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
-    if graph_node_output_shape is None:
+    if graph_node_output_shape is None and output_shape_ is None:
         graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
             [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
                 1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
 
     # convert ONNX convolution output shape to TF convolution output shape
     converted_axis = []
-    for idx in range(input_tensor_rank):
-        converted_axis.append(
-            convert_reverse_axis(
-                axis=idx,
-                tensor_rank=input_tensor_rank,
-                before_op_output_shape_trans=True,
-            )
-        )
     conv_output_shape = []
-    for idx in range(input_tensor_rank):
-        conv_output_shape.append(graph_node_output_shape[converted_axis[idx]])
+    if output_shape_ is None:
+        for idx in range(input_tensor_rank):
+            converted_axis.append(
+                convert_reverse_axis(
+                    axis=idx,
+                    tensor_rank=input_tensor_rank,
+                    before_op_output_shape_trans=True,
+                )
+            )
+        for idx in range(input_tensor_rank):
+            conv_output_shape.append(graph_node_output_shape[converted_axis[idx]])
 
     # Generation of TF OP
     # select TF padding mode
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     pad_mode = 'VALID'
 
-    # need to calculate output shape for valid mode
-    disable_calc_output_shape_conv_transpose = len([
-        dim for dim in graph_node_input_shape[2:] \
-            if isinstance(dim, str) or dim is None
-    ]) > 0
-    # If the spartial shape is an undefined dimension, skip the process.
-    # Instead, run inference with dummy input tensors in onnxruntime to try to estimate the output shape.
     tf_output_shape = None
-    if not disable_calc_output_shape_conv_transpose:
-        # The TensorFlow API is used to estimate the output shape.
-        tf_output_shape = calc_output_shape_conv_transpose(
-            input_shape=graph_node_input_shape[2:],
-            kernel=kernel_shape,
-            pad_mode='valid',
-            output_padding=output_padding,
-            stride=strides,
-            dilation=dilations,
-        )
-        tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
-    else:
-        # Perform inference using a dummy input tensor to attempt to estimate the output shape.
-        try:
-            import onnxruntime as ort
-        except Exception as ex:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
-                f'The information needed to estimate the output shape of the ConvTranspose ' +\
-                f'was missing and must be estimated using onnxruntime. ' +\
-                f'Install onnxruntime. pip install onnxruntime'
+    if output_shape_ is None:
+        # need to calculate output shape for valid mode
+        disable_calc_output_shape_conv_transpose = len([
+            dim for dim in graph_node_input_shape[2:] \
+                if isinstance(dim, str) or dim is None
+        ]) > 0
+        # If the spartial shape is an undefined dimension, skip the process.
+        # Instead, run inference with dummy input tensors in onnxruntime to try to estimate the output shape.
+        if not disable_calc_output_shape_conv_transpose:
+            # The TensorFlow API is used to estimate the output shape.
+            tf_output_shape = calc_output_shape_conv_transpose(
+                input_shape=graph_node_input_shape[2:],
+                kernel=kernel_shape,
+                pad_mode='valid',
+                output_padding=output_padding,
+                stride=strides,
+                dilation=dilations,
             )
-            sys.exit(1)
-        onnx_graph = kwargs['onnx_graph']
-        convtranspose_output = dummy_onnx_inference(
-            onnx_graph=onnx_graph,
-            output_names=[graph_node_output.name],
-        )[0]
-        onnx_output_shape = list(convtranspose_output.shape)
-        tf_output_shape = []
-        for idx in range(input_tensor_rank):
-            tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
+            tf_output_shape = [graph_node_output_shape[0], *tf_output_shape, graph_node_output_shape[1]]
+        else:
+            # Perform inference using a dummy input tensor to attempt to estimate the output shape.
+            try:
+                import onnxruntime as ort
+            except Exception as ex:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +\
+                    f'The information needed to estimate the output shape of the ConvTranspose ' +\
+                    f'was missing and must be estimated using onnxruntime. ' +\
+                    f'Install onnxruntime. pip install onnxruntime'
+                )
+                sys.exit(1)
+            onnx_graph = kwargs['onnx_graph']
+            convtranspose_output = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=[graph_node_output.name],
+            )[0]
+            onnx_output_shape = list(convtranspose_output.shape)
+            tf_output_shape = []
+            for idx in range(input_tensor_rank):
+                tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
@@ -200,32 +223,11 @@ def make_node(
         if input_bias is not None:
             bias_splits = tf.split(input_bias, num_or_size_splits=group, axis=-1)
 
-    # Param replacement - OP replacement
-    op_rep_params = kwargs.get('op_rep_params', [])
-    output_shape_ = None
-    for op_rep_param in op_rep_params:
-        if op_rep_param['param_target'] == 'op':
-            output_shape_ = op_rep_param.get('output_shape', None)
-            strides_ = op_rep_param.get('strides', None)
-            padding_ = op_rep_param.get('padding', 'SAME')
-            dilations_ = op_rep_param.get('dilations', None)
-
-            if output_shape_ is None or strides_ is None:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
-                    f'When replacing ConvTranspose OP, "filters", "output_shape" and "strides" must be specified in replace.json. ' +
-                    f'Check the specification of tf.nn.convXd_transpose in TensorFlow and specify the appropriate parameters. ' +
-                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv1d_transpose or ' +
-                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose or ' +
-                    f'https://www.tensorflow.org/api_docs/python/tf/nn/conv3d_transpose'
-                )
-                sys.exit(1)
-
     conv_rs = None
     convolved = []
     for i, (input_tensor_split, weight_split) in enumerate(zip(input_tensor_splits, weight_splits)):
-        split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
         if output_shape_ is None:
+            split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
             # Normal ConvTranspose
             try:
                 conv_rs = conv_func(
@@ -276,10 +278,10 @@ def make_node(
         else:
             # OP replacement
             conv_rs = conv_func(
-                input=input_tensor_splits,
-                filters=weight_splits \
-                    if not isinstance(weight_splits, np.ndarray) \
-                        else tf.convert_to_tensor(weight_splits),
+                input=input_tensor_split,
+                filters=weight_split \
+                    if not isinstance(weight_split, np.ndarray) \
+                        else tf.convert_to_tensor(weight_split),
                 output_shape=output_shape_,
                 strides=strides_,
                 padding=padding_,
@@ -300,8 +302,7 @@ def make_node(
         if input_bias is not None and spatial_size == 3:
             conv_rs = tf.add(conv_rs, input_bias)
 
-    if pad_mode == "VALID":
-        # TODO: this part may not work properly when OP replacement is used, need to check
+    if pad_mode == "VALID" and output_shape_ is None:
         # remove pads
         begin = [0] + pads[:spatial_size] + [0]
 
@@ -325,7 +326,8 @@ def make_node(
                 'tf_inputs': {
                     'input': input_tensor,
                     'filters': input_weights,
-                    'output_shape': conv_output_shape,
+                    'output_shape': output_shape_ \
+                        if output_shape_ is not None else conv_output_shape,
                     'strides': strides,
                     'dilations': dilations,
                     'padding': pad_mode,
