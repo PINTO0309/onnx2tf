@@ -107,13 +107,14 @@ def make_node(
     # the forced transposition process is skipped because it may destroy the structure of the model.
     onnx_input_shape = [
         dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
-    ]
+    ] if graph_node.inputs[0].shape is not None else None
     tf_input_shape = [
         dim if isinstance(dim, int) else None for dim in input_tensor_shape
     ]
     tf_transposed_perm = None
     test_data_transposed_perm = None
-    if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
 
         shape_for_judging_skip = [
@@ -145,12 +146,13 @@ def make_node(
                 )
                 tf_transposed_perm = [0,2,3,4,1]
     else:
-        if len(onnx_input_shape) == 3:
-            test_data_transposed_perm = [0,2,1]
-        elif len(onnx_input_shape) == 4:
-            test_data_transposed_perm = [0,2,3,1]
-        elif len(onnx_input_shape) == 5:
-            test_data_transposed_perm = [0,2,3,4,1]
+        if onnx_input_shape is not None:
+            if len(onnx_input_shape) == 3:
+                test_data_transposed_perm = [0,2,1]
+            elif len(onnx_input_shape) == 4:
+                test_data_transposed_perm = [0,2,3,1]
+            elif len(onnx_input_shape) == 5:
+                test_data_transposed_perm = [0,2,3,4,1]
 
     """
     Conv1D
@@ -167,6 +169,7 @@ def make_node(
     padded = False
     if auto_pad == 'NOTSET':
         if input_tensor_rank >=2 \
+            and graph_node.inputs[0].shape is not None \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:

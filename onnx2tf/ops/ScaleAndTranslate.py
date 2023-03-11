@@ -79,11 +79,12 @@ def make_node(
     # the forced transposition process is skipped because it may destroy the structure of the model.
     onnx_input_shape = [
         dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
-    ]
+    ] if graph_node.inputs[0].shape is not None else None
     tf_input_shape = [
         dim if isinstance(dim, int) else None for dim in input_tensor_shape
     ]
-    if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
 
         shape_for_judging_skip = [
@@ -155,6 +156,8 @@ def make_node(
 
     antialias = bool(graph_node.attrs.get('antialias', 1))
     kernel_type = graph_node.attrs.get('kernel_type', 'lanczos3')
+    if kernel_type == 'triangle':
+        kernel_type = 'bilinear'
 
     replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
         kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
@@ -190,7 +193,7 @@ def make_node(
             sizes = sizes.set_shape(input_tensor_shape.shape)
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
-            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
+            new_size = tf.cast(sizes, tf.int32)
         elif tf.keras.backend.is_keras_tensor(sizes):
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
     elif scales is not None:

@@ -88,11 +88,12 @@ def make_node(
     # the forced transposition process is skipped because it may destroy the structure of the model.
     onnx_input_shape = [
         dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
-    ]
+    ] if graph_node.inputs[0].shape is not None else None
     tf_input_shape = [
         dim if isinstance(dim, int) else None for dim in input_tensor_shape
     ]
-    if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
 
         shape_for_judging_skip = [
