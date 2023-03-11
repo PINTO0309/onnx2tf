@@ -75,6 +75,34 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
+    # Param replacement
+    input_tensor_1 = replace_parameter(
+        value_before_replacement=input_tensor_1,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    input_tensor_2 = replace_parameter(
+        value_before_replacement=input_tensor_2,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
+    # Pre-process transpose
+    input_tensor_1 = pre_process_transpose(
+        value_before_transpose=input_tensor_1,
+        param_target='inputs',
+        param_name=graph_node.inputs[0].name,
+        **kwargs,
+    )
+    input_tensor_2 = pre_process_transpose(
+        value_before_transpose=input_tensor_2,
+        param_target='inputs',
+        param_name=graph_node.inputs[1].name,
+        **kwargs,
+    )
+
     # Acquisition of test data for validation
     if kwargs['acc_check']:
         if not isinstance(graph_node_input_1, np.ndarray) \
@@ -130,34 +158,6 @@ def make_node(
         input_tensor_1=input_tensor_1,
         input_tensor_2=input_tensor_2,
         tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
-
-    # Param replacement
-    input_tensor_1 = replace_parameter(
-        value_before_replacement=input_tensor_1,
-        param_target='inputs',
-        param_name=graph_node.inputs[0].name,
-        **kwargs,
-    )
-    input_tensor_2 = replace_parameter(
-        value_before_replacement=input_tensor_2,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
-        **kwargs,
-    )
-
-    # Pre-process transpose
-    input_tensor_1 = pre_process_transpose(
-        value_before_transpose=input_tensor_1,
-        param_target='inputs',
-        param_name=graph_node.inputs[0].name,
-        **kwargs,
-    )
-    input_tensor_2 = pre_process_transpose(
-        value_before_transpose=input_tensor_2,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
         **kwargs,
     )
 
