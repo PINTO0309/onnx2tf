@@ -304,11 +304,32 @@ def make_node(
 
     if pad_mode == "VALID" and output_shape_ is None:
         # remove pads
-        begin = [0] + pads[:spatial_size] + [0]
-
-        # add slice if needed
-        if max(begin) > 0:
-            conv_rs = tf.slice(conv_rs, begin=begin, size=conv_output_shape)
+        # Add slice if needed
+        # pads = [1,2,3,4,5,6] -> [begin0,begin1,begin2,end0,end1,end2]
+        if max(pads) > 0 and None not in conv_rs.shape[1:input_tensor_rank-1]:
+            # Cut padding sections from the front and back of each sparsal dimension
+            begin_ = \
+                [0] \
+                + [
+                    pads[idx] for idx in range(spatial_size)
+                ] \
+                + [0]
+            end_ = \
+                [0] \
+                + [
+                    conv_rs.shape[conv_idx+1] - pads[pad_idx] \
+                        for conv_idx, pad_idx in enumerate(range(spatial_size, spatial_size*2))
+                ] \
+                + [0]
+            begin_mask_ = 2**0 + 2**(input_tensor_rank-1)
+            end_mask_ = begin_mask_
+            conv_rs = tf.strided_slice(
+                input_=conv_rs,
+                begin=begin_,
+                end=end_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+            )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
