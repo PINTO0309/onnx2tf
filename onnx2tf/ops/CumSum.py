@@ -53,6 +53,7 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_tensor_dtype = input_tensor.dtype
     axis = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
@@ -79,6 +80,11 @@ def make_node(
         **kwargs,
     )
 
+    # TensorFlow's cumsum does not support boolean,
+    # so temporarily cast to INT32 for calculation.
+    if input_tensor_dtype == tf.bool:
+        input_tensor = tf.cast(input_tensor, dtype=tf.int32)
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.cumsum(
@@ -88,6 +94,12 @@ def make_node(
             reverse=reverse,
             name=graph_node.name,
         )
+
+    # TensorFlow's cumsum does not support boolean,
+    # so INT32 is converted back to boolean.
+    if input_tensor_dtype == tf.bool:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.cast(tf_layers_dict[graph_node_output.name]['tf_node'], dtype=tf.bool)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
