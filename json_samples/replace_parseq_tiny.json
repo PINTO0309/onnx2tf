@@ -58,7 +58,26 @@
       "values": [1,2,0]
     },
     {
+      "op_name": "/decoder/layers.0/self_attn_5/Transpose_4",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,2,0]
+    },
+
+    {
+      "op_name": "/decoder/layers.0/self_attn_4/Transpose_3",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,2]
+    },
+    {
       "op_name": "/decoder/layers.0/self_attn_6/Transpose_3",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [1,0,2]
+    },
+    {
+      "op_name": "/decoder/layers.0/self_attn_5/Transpose_3",
       "param_target": "attributes",
       "param_name": "perm",
       "values": [1,0,2]
