@@ -269,7 +269,76 @@ e.g.
 """
 ```
 
-### 7. Conversion to TensorFlow.js
+### 7. INT8 quantization of models with multiple inputs requiring non-image data
+If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest. See: https://github.com/PINTO0309/onnx2tf/issues/248
+
+The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. 
+
+```
+wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_248/bertsquad-12.onnx
+
+onnx2tf -i bertsquad-12.onnx -b 1 -osd
+```
+
+Use the `saved_model_cli` command to check the `saved_model` signature. INT8 quantization calibration using signatures allows correct control of the input order of data for calibration. Therefore, calibration with signatures is recommended for INT8 quantization of models with multiple inputs.
+
+```bash
+saved_model_cli show --dir saved_model/ --all
+
+The given SavedModel SignatureDef contains the following input(s):
+  inputs['input_ids_0'] tensor_info:
+      dtype: DT_INT64
+      shape: (1, 256)
+      name: serving_default_input_ids_0:0
+  inputs['input_mask_0'] tensor_info:
+      dtype: DT_INT64
+      shape: (1, 256)
+      name: serving_default_input_mask_0:0
+  inputs['segment_ids_0'] tensor_info:
+      dtype: DT_INT64
+      shape: (1, 256)
+      name: serving_default_segment_ids_0:0
+  inputs['unique_ids_raw_output___9_0'] tensor_info:
+      dtype: DT_INT64
+      shape: (1)
+      name: serving_default_unique_ids_raw_output___9_0:0
+```
+
+Calibrate by specifying the input OP name displayed in `inputs`. The `np.ones([xxx], dtype=np.int64)` part must be replaced with the correct calibration test data. In practice, several pieces of data used for training are extracted and used.
+
+```python
+import tensorflow as tf
+import numpy as np
+
+def representative_dataset():
+    unique_ids = np.ones([10, 256], dtype=np.int64)
+    segment_ids = np.ones([10, 256], dtype=np.int64)
+    input_masks = np.ones([10, 256], dtype=np.int64)
+    input_ids = np.ones([10], dtype=np.int64)
+
+    for unique_id, segment_id, input_mask, input_id \
+        in zip(unique_ids, segment_ids, input_masks, input_ids):
+
+        yield {
+            "unique_ids_raw_output___9_0": unique_id,
+            "segment_ids_0": segment_id,
+            "input_mask_0": input_mask,
+            "input_ids_0": input_id,
+        }
+
+converter = tf.lite.TFLiteConverter.from_saved_model('saved_model')
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+converter.representative_dataset = representative_dataset
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.int8  # or tf.uint8
+converter.inference_output_type = tf.int8  # or tf.uint8
+tflite_quant_model = converter.convert()
+
+with open('saved_model/int8_model.tflite', 'wb') as w:
+    w.write(tflite_quant_model)
+```
+
+### 8. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -285,7 +354,7 @@ tfjs_model
 ```
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 8. Conversion to CoreML
+### 9. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
