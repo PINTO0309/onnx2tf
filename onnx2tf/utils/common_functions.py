@@ -3439,10 +3439,11 @@ def calc_extra_padding_with_ceil(
         print(error_msg)
         raise ValueError(error_msg)
 
-    warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-                  f'Current pooling with ceil_mode = 1 follows pytorch implementation ' \
-                  f'since current onnx implementation generates nan values. ' \
-                  f'Please refer to https://github.com/PINTO0309/onnx2tf/issues/207.'
+    warning_msg = \
+        f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+        f'Current pooling with ceil_mode = 1 follows pytorch implementation ' \
+        f'since current onnx implementation generates nan values. ' \
+        f'Please refer to https://github.com/PINTO0309/onnx2tf/issues/207.'
     print(warning_msg)
 
     pads_begin = pads[:len(pads) // 2]
@@ -4441,3 +4442,99 @@ def merge_two_consecutive_identical_ops_into_one(
                 tf_type = tf.math.add
 
     return tf_layers_dict[graph_node_output.name]['tf_node'], tf_type
+
+
+def deterring_shape_corruption_due_to_broadcast(
+    graph_node_output_shape: List,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+):
+    """Deterring shape corruption due to broadcast.
+    Transformer conversion stability improvement. (3D and below only)
+
+    Parameters
+    ----------
+    graph_node_output_shape: List
+        Output shape of ONNX OP
+
+    input_tensor_1: Any
+        Input Node X of TensorFlow
+
+    input_tensor_2: Any
+        Input Node Y of TensorFlow
+
+    Returns
+    -------
+    input_tensor_1: Any
+        Input Node X of TensorFlow
+
+    input_tensor_2: Any
+        Input Node Y of TensorFlow
+    """
+    # If the shape contains a string or None, skip all processing
+    if graph_node_output_shape is None \
+        or None in graph_node_output_shape \
+        or sum([1 for dim in graph_node_output_shape if isinstance(dim, str)]) > 0:
+        return input_tensor_1, input_tensor_2
+    input_tensor_1_shape = input_tensor_1.shape
+    if input_tensor_1_shape is None \
+        or None in input_tensor_1_shape \
+        or sum([1 for dim in input_tensor_1_shape if isinstance(dim, str)]) > 0:
+        return input_tensor_1, input_tensor_2
+    input_tensor_2_shape = input_tensor_2.shape
+    if input_tensor_2_shape is None \
+        or None in input_tensor_2_shape \
+        or sum([1 for dim in input_tensor_2_shape if isinstance(dim, str)]) > 0:
+        return input_tensor_1, input_tensor_2
+    if len(input_tensor_1_shape) > 3 or len(input_tensor_2_shape) > 3:
+        return input_tensor_1, input_tensor_2
+
+    # Calculate the total number of elements in the onnx tensor
+    onnx_output_elements = np.prod(graph_node_output_shape)
+
+    # Perform dummy calculations to find out
+    # the total number of tf tensor elements after the calculation
+    dummy_tensor = input_tensor_1 * input_tensor_2
+    dummy_tensor_elements = np.prod(dummy_tensor.shape)
+
+    # If the total number of output elements in ONNX matches the total number of
+    # output elements in TensorFlow, the process is terminated
+    if onnx_output_elements == dummy_tensor_elements:
+        return input_tensor_1, input_tensor_2
+
+    # If the total number of output elements in ONNX does not match the total number of
+    # output elements in TensorFlow, search for an arrangement with matching geometry
+    input_tensor_1_shape_perms = list(itertools.permutations(range(len(input_tensor_1_shape))))
+    input_tensor_2_shape_perms = list(itertools.permutations(range(len(input_tensor_2_shape))))
+    input_tensor_1_final_perm = None
+    input_tensor_2_final_perm = None
+    for input_tensor_1_shape_perm in input_tensor_1_shape_perms:
+        for input_tensor_2_shape_perm in input_tensor_2_shape_perms:
+            try:
+                dummy_tensor = \
+                    tf.transpose(a=input_tensor_1, perm=input_tensor_1_shape_perm) \
+                        * tf.transpose(a=input_tensor_2, perm=input_tensor_2_shape_perm)
+                dummy_tensor_elements = np.prod(dummy_tensor.shape)
+                if onnx_output_elements == dummy_tensor_elements \
+                    and graph_node_output_shape == list(dummy_tensor.shape):
+                    input_tensor_1_final_perm = input_tensor_1_shape_perm
+                    input_tensor_2_final_perm = input_tensor_2_shape_perm
+                    break
+            except Exception as ex:
+                pass
+        else:
+            continue
+        break
+    # Transposition to error-free geometry
+    if input_tensor_1_final_perm is not None \
+        and input_tensor_2_final_perm is not None:
+        input_tensor_1 = tf.transpose(
+            a=input_tensor_1,
+            perm=input_tensor_1_final_perm,
+        )
+        input_tensor_2 = tf.transpose(
+            a=input_tensor_2,
+            perm=input_tensor_2_final_perm,
+        )
+
+    return input_tensor_1, input_tensor_2
