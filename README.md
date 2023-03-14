@@ -270,7 +270,7 @@ e.g.
 ```
 
 ### 7. INT8 quantization of models with multiple inputs requiring non-image data
-If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest. See: https://github.com/PINTO0309/onnx2tf/issues/248
+If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest.
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. 
 
@@ -337,6 +337,8 @@ tflite_quant_model = converter.convert()
 with open('saved_model/int8_model.tflite', 'wb') as w:
     w.write(tflite_quant_model)
 ```
+
+See: https://github.com/PINTO0309/onnx2tf/issues/248
 
 ### 8. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
