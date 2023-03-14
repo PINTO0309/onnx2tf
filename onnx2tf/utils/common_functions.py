@@ -4472,15 +4472,18 @@ def deterring_shape_corruption_due_to_broadcast(
         Input Node Y of TensorFlow
     """
     # If the shape contains a string or None, skip all processing
-    if None in graph_node_output_shape \
+    if graph_node_output_shape is None \
+        or None in graph_node_output_shape \
         or sum([1 for dim in graph_node_output_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     input_tensor_1_shape = input_tensor_1.shape
-    if None in input_tensor_1_shape \
+    if input_tensor_1_shape is None \
+        or None in input_tensor_1_shape \
         or sum([1 for dim in input_tensor_1_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     input_tensor_2_shape = input_tensor_2.shape
-    if None in input_tensor_2_shape \
+    if input_tensor_2_shape is None \
+        or None in input_tensor_2_shape \
         or sum([1 for dim in input_tensor_2_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     if len(input_tensor_1_shape) > 3 or len(input_tensor_2_shape) > 3:
