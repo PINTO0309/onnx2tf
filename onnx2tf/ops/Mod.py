@@ -19,6 +19,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     make_tf_partial_model_inputs,
     dummy_tf_inference,
+    deterring_shape_corruption_due_to_broadcast,
 )
 from typing import Any, Dict, List
 
@@ -59,13 +60,13 @@ def make_node(
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    graph_node_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': graph_node_output_shape,
         'dtype': dtype,
     }
 
@@ -160,6 +161,14 @@ def make_node(
         tf_layers_dict=tf_layers_dict,
         **kwargs,
     )
+
+    # Deterring shape corruption due to broadcast
+    input_tensor_1, input_tensor_2 = \
+        deterring_shape_corruption_due_to_broadcast(
+            graph_node_output_shape=graph_node_output_shape,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+        )
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
