@@ -274,7 +274,7 @@ If you do not need to perform INT8 quantization with this tool alone, the follow
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. 
 
-```
+```bash
 # Ref: https://github.com/onnx/models/tree/main/text/machine_comprehension/bert-squad
 wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_248/bertsquad-12.onnx
 
