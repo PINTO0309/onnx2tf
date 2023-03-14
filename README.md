@@ -339,6 +339,8 @@ with open('saved_model/int8_model.tflite', 'wb') as w:
     w.write(tflite_quant_model)
 ```
 
+https://www.tensorflow.org/lite/performance/post_training_quantization
+
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
 ### 8. Conversion to TensorFlow.js
