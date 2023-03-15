@@ -341,6 +341,8 @@ with open('saved_model/int8_model.tflite', 'wb') as w:
     w.write(tflite_quant_model)
 ```
 
+![image](https://user-images.githubusercontent.com/33194443/225174599-e62173f3-1dd2-48f4-a762-f15ef78cd01e.png)
+
 https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
