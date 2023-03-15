@@ -819,7 +819,7 @@ def convert(
             # concrete_func
             if not non_verbose:
                 print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
-            if not output_signaturedefs:
+            if not output_signaturedefs and not output_integer_quantized_tflite:
                 tf.saved_model.save(concrete_func, output_folder_path)
             else:
                 tf.saved_model.save(model, output_folder_path)
@@ -936,6 +936,28 @@ def convert(
         MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
         STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
+            # Get signatures/input keys
+            if not non_verbose:
+                SIGNATURE_KEY = 'serving_default'
+                loaded_saved_model = tf.saved_model.load(
+                    output_folder_path
+                ).signatures[SIGNATURE_KEY]
+                input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
+                input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
+                input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
+                print(f'{Color.BLUE}Input signature information for quantization{Color.RESET}')
+                print(f'{Color.BLUE}signature_name{Color.RESET}: {SIGNATURE_KEY}')
+                for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
+                    print(
+                        f'{Color.BLUE}input_name.{idx}{Color.RESET}: {input_key} '+
+                        f'{Color.BLUE}shape{Color.RESET}: {input_shape} '+
+                        f'{Color.BLUE}dtype{Color.RESET}: {input_dtype}'
+                    )
+
+            # INT8 Converter
+            converter = tf.lite.TFLiteConverter.from_saved_model(
+                output_folder_path,
+            )
             # Dynamic Range Quantization
             try:
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -1029,12 +1051,12 @@ def convert(
             # representative_dataset_gen
             def representative_dataset_gen():
                 for idx in range(data_count):
-                    calib_data_list = []
+                    yield_data_dict = {}
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
                         normalized_calib_data = (calib_data[idx] - mean) / std
-                        calib_data_list.append(normalized_calib_data)
-                    yield calib_data_list
+                        yield_data_dict[model_input_name] = normalized_calib_data
+                    yield yield_data_dict
 
             # INT8 Quantization
             try:
