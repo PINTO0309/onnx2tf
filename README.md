@@ -280,8 +280,10 @@ The `-osd` option will output a `saved_model.pb` in the `saved_model` folder wit
 # Ref: https://github.com/onnx/models/tree/main/text/machine_comprehension/bert-squad
 wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_248/bertsquad-12.onnx
 
-onnx2tf -i bertsquad-12.onnx -b 1 -osd
+onnx2tf -i bertsquad-12.onnx -b 1 -osd -cotof
 ```
+
+![image](https://user-images.githubusercontent.com/33194443/225175510-95200964-06ff-474a-8cd4-f640bec6c397.png)
 
 Use the `saved_model_cli` command to check the `saved_model` signature. INT8 quantization calibration using signatures allows correct control of the input order of data for calibration. Therefore, calibration with signatures is recommended for INT8 quantization of models with multiple inputs.
 
