@@ -508,7 +508,7 @@ def convert(
                 replacement_parameters = json.load(f)['operations']
                 for operations in replacement_parameters:
                     operations['op_name'] = operations['op_name'].replace(':','_')
-                    if output_signaturedefs:
+                    if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
         except json.decoder.JSONDecodeError as ex:
             print(
@@ -737,7 +737,7 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_input.name = graph_input.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 graph_input.name = re.sub('^/', 'wa/', graph_input.name)
             op.make_node(
                 graph_input=graph_input,
@@ -763,7 +763,7 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_node.name = graph_node.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 graph_node.name = re.sub('^/', 'wa/', graph_node.name)
             op.make_node(
                 graph_node=graph_node,
@@ -783,7 +783,7 @@ def convert(
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
             output.node.layer._name = name.replace(':','_')
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
