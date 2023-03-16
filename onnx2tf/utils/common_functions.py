@@ -2216,9 +2216,9 @@ def shape_unmatched_special_avoidance_workaround(
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
     nhwc_flag_1 = False
     same_input_shape_as_onnx_1 = False
-    if isinstance(input_tensor_1, gs.Variable):
-        nhwc_flag_1 = tf_layers_dict[input_tensor_1.name]['nhwc'] \
-            if 'nhwc' in tf_layers_dict[input_tensor_1.name].keys() else False
+    if isinstance(graph_node_input_1, gs.Variable):
+        nhwc_flag_1 = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+            if 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
         if graph_node_input_1.shape is not None:
             graph_node_input_1_shape = [
                 dim if not isinstance(dim, str) else None for dim in graph_node_input_1.shape
@@ -2226,7 +2226,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_1_shape = []
         same_input_shape_as_onnx_1 = True if len(graph_node_input_1_shape) > 0 \
-            and graph_node_input_1_shape == tf_layers_dict[input_tensor_1.name]['tf_node'].shape else False
+            and graph_node_input_1_shape == input_tensor_1.shape else False
     else:
         nhwc_flag_1 = False
         if graph_node_input_1.shape is not None:
@@ -2239,9 +2239,9 @@ def shape_unmatched_special_avoidance_workaround(
             and graph_node_input_1_shape == input_tensor_1.shape else False
     nhwc_flag_2 = False
     same_input_shape_as_onnx_2 = False
-    if isinstance(input_tensor_2, gs.Variable):
-        nhwc_flag_2 = tf_layers_dict[input_tensor_2.name]['nhwc'] \
-            if 'nhwc' in tf_layers_dict[input_tensor_2.name].keys() else False
+    if isinstance(graph_node_input_2, gs.Variable):
+        nhwc_flag_2 = tf_layers_dict[graph_node_input_2.name]['nhwc'] \
+            if 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
         if graph_node_input_2.shape is not None:
             graph_node_input_2_shape = [
                 dim if not isinstance(dim, str) else None for dim in graph_node_input_2.shape
@@ -2249,7 +2249,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_2_shape = []
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
-            and graph_node_input_2_shape == tf_layers_dict[input_tensor_2.name]['tf_node'].shape else False
+            and graph_node_input_2_shape == input_tensor_2.shape else False
     else:
         nhwc_flag_2 = False
         if graph_node_input_2.shape is not None:
