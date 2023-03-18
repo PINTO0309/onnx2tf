@@ -231,7 +231,14 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
-### 6. Calibration data creation for INT8 quantization
+### 6. INT8 quantization bug in `tf.lite.TFLiteConverter`
+Currently, there appears to be a bug in the `tf.lite.TFLiteConverter`. The Float32 TFLite model works fine, but using `tf.lite.TFLiteConverter` to perform INT8 quantization significantly breaks the model. For more information, please see this issue. Please note that `tf.lite.TFLiteConverter` is currently unable to quantize even `MobileNetV2` models. See: https://github.com/PINTO0309/onnx2tf/issues/244, https://github.com/tensorflow/tensorflow/issues/52357
+
+If you want to quantize, distill, or prune TFLite, this tool may be beneficial.
+
+https://github.com/alibaba/TinyNeuralNetwork
+
+### 7. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
@@ -276,7 +283,7 @@ e.g.
 """
 ```
 
-### 7. INT8 quantization of models with multiple inputs requiring non-image data
+### 8. INT8 quantization of models with multiple inputs requiring non-image data
 If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest.
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. The `-b` option is used to convert the batch size by rewriting it as a static integer.
@@ -356,7 +363,7 @@ https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
-### 8. Conversion to TensorFlow.js
+### 9. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -372,7 +379,7 @@ tfjs_model
 ```
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 9. Conversion to CoreML
+### 10. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
