@@ -232,7 +232,7 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
 ### 6. INT8 quantization bug in `tf.lite.TFLiteConverter`
-Currently, there appears to be a bug in the `tf.lite.TFLiteConverter`. The Float32 TFLite model works fine, but using `tf.lite.TFLiteConverter` to perform INT8 quantization significantly breaks the model. For more information, please see this issue. Please note that `tf.lite.TFLiteConverter` is currently unable to quantize even `MobileNetV2` models. See: https://github.com/PINTO0309/onnx2tf/issues/244, https://github.com/tensorflow/tensorflow/issues/52357
+Currently, there appears to be a bug in the `tf.lite.TFLiteConverter`. The Float32/Float16 TFLite model works fine, but using `tf.lite.TFLiteConverter` to perform INT8 quantization significantly breaks the model. For more information, please see this issue. Please note that `tf.lite.TFLiteConverter` is currently unable to quantize even `MobileNetV2` models. See: https://github.com/PINTO0309/onnx2tf/issues/244, https://github.com/tensorflow/tensorflow/issues/52357
 
 If you want to quantize, distill, or prune TFLite, this tool may be beneficial.
 
