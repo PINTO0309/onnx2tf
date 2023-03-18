@@ -75,6 +75,7 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_tensor_shape = input_tensor.shape
 
     split = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
@@ -127,8 +128,8 @@ def make_node(
                 or \
             (isinstance(split, np.ndarray) and len(list(split)) == 1 and split[0] == 1)
         ) \
-        and isinstance(input_tensor.shape[axis], int) \
-        and input_tensor.shape[axis] == 1:
+        and isinstance(input_tensor_shape[axis], int) \
+        and input_tensor_shape[axis] == 1:
         # Disable unnecessary splits
         splited_tensors = \
             [
@@ -140,8 +141,8 @@ def make_node(
     elif isinstance(split, np.ndarray) \
         and len(list(split)) > 1 \
         and np.prod(split) == 1 \
-        and isinstance(input_tensor.shape[axis], int) \
-        and input_tensor.shape[axis] == len(list(split)):
+        and isinstance(input_tensor_shape[axis], int) \
+        and input_tensor_shape[axis] == len(list(split)):
         # strided_slice - Slice everything in size 1
         # Suppression of FlexSplitV generation
         splited_tensors = []
@@ -153,10 +154,10 @@ def make_node(
             for idx in range(input_tensor_rank):
                 if idx == axis:
                     end_.append(split_idx + 1)
-                elif input_tensor.shape[idx] is None:
+                elif input_tensor_shape[idx] is None:
                     end_.append(-1)
                 else:
-                    end_.append(input_tensor.shape[idx])
+                    end_.append(input_tensor_shape[idx])
 
             splited_tensors.append(
                 tf.strided_slice(
@@ -164,6 +165,21 @@ def make_node(
                     begin=begin_,
                     end=end_,
                 )
+            )
+    elif isinstance(split, np.ndarray) \
+        and len(list(split)) > 1 \
+        and np.prod(split) != 1 \
+        and isinstance(input_tensor_shape[axis], int) \
+        and len(split) == sum([1 for dim in split if isinstance(dim, np.int64) or isinstance(dim, int)]) \
+        and len(split) == sum([1 for dim in split if split[0] == dim]):
+        # Suppression of FlexSplitV generation
+        splited_tensors = \
+            tf.split(
+                value=input_tensor,
+                num_or_size_splits=len(split),
+                axis=axis,
+                num=None,
+                name=graph_node.name,
             )
     else:
         splited_tensors = \
