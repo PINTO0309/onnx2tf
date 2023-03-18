@@ -40,6 +40,8 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape
@@ -49,7 +51,11 @@ def make_node(
     rhigh = graph_node.attrs.get('high', 1.0)
     rlow = graph_node.attrs.get('low', 0.0)
     rseed = graph_node.attrs.get('seed', 0)
-    rshape = graph_node_input.shape
+    rshape = graph_node_input.shape \
+        if input_tensor is None else input_tensor.shape
+    rshape = [
+        s if not isinstance(s, str) else None for s in rshape
+    ]
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -59,13 +65,13 @@ def make_node(
     }
 
     # Generation of TF OP
+    generator = tf.random.Generator.from_seed(rseed)
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.random.uniform(
+        generator.uniform(
             shape=rshape,
             minval=rlow,
             maxval=rhigh,
             dtype=ONNX_DTYPES_TO_TF_DTYPES[rdtype],
-            seed=rseed,
             name=graph_node.name,
         )
 
