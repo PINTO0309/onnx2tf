@@ -302,7 +302,7 @@ onnx2tf -i bertsquad-12.onnx -b 1 -osd -cotof
 Use the `saved_model_cli` command to check the `saved_model` signature. INT8 quantization calibration using signatures allows correct control of the input order of data for calibration. Therefore, calibration with signatures is recommended for INT8 quantization of models with multiple inputs.
 
 ```bash
-saved_model_cli show --dir saved_model/ --all
+saved_model_cli show --dir saved_model/ --tag_set serve --signature_def serving_default
 
 The given SavedModel SignatureDef contains the following input(s):
   inputs['input_ids_0'] tensor_info:
