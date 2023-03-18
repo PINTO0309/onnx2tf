@@ -110,6 +110,10 @@ $ onnx2tf -i resnet18-v1-7.onnx -osd
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
 
+# Keras keras_v3 format
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx -okv3
+
 # INT8 Quantization, Full INT8 Quantization
 # INT8 Quantization with INT16 activation, Full INT8 Quantization with INT16 activation
 # Dynamic Range Quantization
