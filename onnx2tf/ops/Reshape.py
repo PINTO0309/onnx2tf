@@ -227,7 +227,7 @@ def make_node(
         or unsqueeze_count == consumer_count \
         or squeeze_count == consumer_count:
         # Replace
-        final_shape = consumer_node.outputs[0].shape
+        final_shape = consumer_nodes[0].outputs[0].shape
         tf_layers_dict[graph_node_output.name]['unnecessary_reshape'] = True
     else:
         # No-replace
