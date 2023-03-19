@@ -239,6 +239,7 @@ It is a matter of model structure. The activation function, kernel size and stri
     |Before|After|
     |:-:|:-:|
     |![image](https://user-images.githubusercontent.com/33194443/226184543-408e0814-3c75-42f6-a640-377004982ba3.png)|![image](https://user-images.githubusercontent.com/33194443/226184570-af4df0aa-e0d2-4fd7-afca-50dc6622977d.png)|
+    |![image](https://user-images.githubusercontent.com/33194443/226185407-ebf3f26d-a483-4fdd-8b27-266e4ba149ab.png)|![image](https://user-images.githubusercontent.com/33194443/226185388-2d2afa7e-6fd6-44a7-b0bc-705a5b22f036.png)|
     |![image](https://user-images.githubusercontent.com/33194443/226184640-8f942741-1109-4a95-b8da-ca49885879cd.png)|![image](https://user-images.githubusercontent.com/33194443/226184604-2c289b9d-7c15-4f84-b4ce-2838ecf4e6d0.png)|
 
     ```
