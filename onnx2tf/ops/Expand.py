@@ -91,17 +91,24 @@ def make_node(
         **kwargs,
     )
 
-    # tf.math.multiply does not support bool therefore use int8
-    expanded_tensor = None
-    if input_tensor.dtype is tf.bool:
-        ones = tf.ones(input_tensor_shape, dtype=tf.int8)
-        r = tf.cast(input_tensor, tf.int8) * ones
-        expanded_tensor = tf.cast(r, tf.bool)
+    tf_type = None
+    if 'unnecessary_reshape' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['unnecessary_reshape'] == True:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_type = tf.identity
     else:
-        ones = tf.ones(input_tensor_shape, dtype=input_tensor.dtype)
-        expanded_tensor = input_tensor * ones
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = expanded_tensor
+        # tf.math.multiply does not support bool therefore use int8
+        expanded_tensor = None
+        if input_tensor.dtype is tf.bool:
+            ones = tf.ones(input_tensor_shape, dtype=tf.int8)
+            r = tf.cast(input_tensor, tf.int8) * ones
+            expanded_tensor = tf.cast(r, tf.bool)
+        else:
+            ones = tf.ones(input_tensor_shape, dtype=input_tensor.dtype)
+            expanded_tensor = input_tensor * ones
+        tf_layers_dict[graph_node_output.name]['tf_node'] = expanded_tensor
+        tf_type = 'Expand'
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -115,7 +122,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': 'Expand',
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'input_tensor': input_tensor,
                     'input_tensor_shape': input_tensor_shape,

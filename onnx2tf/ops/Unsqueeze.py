@@ -183,6 +183,21 @@ def make_node(
                         input=tf_partial_model_inputs[0],
                     )
                 ]
+    elif 'unnecessary_reshape' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['unnecessary_reshape'] == True:
+        # Remove useless reshape/unsqueeze combinations
+        ### Overall model
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_type = tf.identity
+        ### Partial model
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
+            tf_partial_model_outputs = \
+                [
+                    tf.identity(
+                        input=tf_partial_model_inputs[0],
+                    )
+                ]
     elif len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
