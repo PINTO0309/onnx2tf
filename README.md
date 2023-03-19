@@ -234,6 +234,37 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
 ### 6. If the accuracy of the INT8 quantized model degrades significantly
 It is a matter of model structure. The activation function, kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445
 
+- e.g. YOLOv8 https://docs.openvino.ai/latest/notebooks/230-yolov8-optimization-with-output.html
+- e.g. YOLOX-Nano https://github.com/TexasInstruments/edgeai-yolox
+    |Before|After|
+    |:-:|:-:|
+    |![image](https://user-images.githubusercontent.com/33194443/226184543-408e0814-3c75-42f6-a640-377004982ba3.png)|![image](https://user-images.githubusercontent.com/33194443/226184570-af4df0aa-e0d2-4fd7-afca-50dc6622977d.png)|
+    |![image](https://user-images.githubusercontent.com/33194443/226184640-8f942741-1109-4a95-b8da-ca49885879cd.png)|![image](https://user-images.githubusercontent.com/33194443/226184604-2c289b9d-7c15-4f84-b4ce-2838ecf4e6d0.png)|
+
+    ```
+    ### Float32 - YOLOX-Nano
+    (1, 52, 52, 85)
+    array([[[
+        [ 0.971787,  0.811184,  0.550566, ..., -5.962632, -7.403673, -6.735206],
+        [ 0.858804,  1.351296,  1.231673, ..., -6.479690, -8.277064, -7.664936],
+        [ 0.214827,  1.035119,  1.458006, ..., -6.291425, -8.229385, -7.761562],
+            ...,
+        [ 0.450116,  1.391900,  1.533354, ..., -5.672194, -7.121591, -6.880231],
+        [ 0.593133,  2.112723,  0.968755, ..., -6.150078, -7.370633, -6.874294],
+        [ 0.088263,  1.985220,  0.619998, ..., -5.507928, -6.914980, -6.234259]]]]),
+
+    ### INT8 - YOLOX-Nano
+    (1, 52, 52, 85)
+    array([[[
+        [ 0.941908,  0.770652,  0.513768, ..., -5.993958, -7.449634, -6.850238],
+        [ 0.856280,  1.284420,  1.198792, ..., -6.507727, -8.391542, -7.792146],
+        [ 0.256884,  0.941908,  1.455676, ..., -6.336471, -8.305914, -7.877774],
+            ...,
+        [ 0.342512,  1.370048,  1.541304, ..., -5.737075, -7.192750, -7.107122],
+        [ 0.513768,  2.226327,  1.027536, ..., -6.165215, -7.449634, -7.021494],
+        [ 0.085628,  2.055072,  0.685024, ..., -5.480191, -7.021494, -6.422099]]]]),
+    ```
+
 ### 7. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
