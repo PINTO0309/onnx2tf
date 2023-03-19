@@ -190,6 +190,49 @@ def make_node(
     final_shape = final_shape \
         if not isinstance(final_shape, np.ndarray) \
             else tf.convert_to_tensor(final_shape)
+
+
+    # Elimination of unnecessary OP sequential processing
+    # [1,81,52,52] -> Reshape [81,52,52] -> Expand [1,81,52,52]
+    # [1,81,52,52] -> Reshape [81,52,52] -> Unsqueeze [1,81,52,52]
+    # [81,52,52] -> Reshape [1,81,52,52] -> Squeeze [81,52,52]
+    consumer_count = 0
+    consumer_nodes: List[gs.Node] = []
+    while True:
+        try:
+            consumer_node =  graph_node.o(consumer_count, 0)
+            consumer_nodes.append(consumer_node)
+            consumer_count += 1
+        except:
+            break
+    expand_count = 0
+    unsqueeze_count = 0
+    squeeze_count = 0
+    for consumer_node in consumer_nodes:
+        if consumer_node.op == 'Expand' \
+            and consumer_node.outputs[0].shape is not None \
+            and consumer_node.outputs[0].shape == transposed_tensor.shape:
+            expand_count += 1
+
+        elif consumer_node.op == 'Unsqueeze' \
+            and consumer_node.outputs[0].shape is not None \
+            and consumer_node.outputs[0].shape == transposed_tensor.shape:
+            unsqueeze_count += 1
+
+        elif consumer_node.op == 'Squeeze' \
+            and consumer_node.outputs[0].shape is not None \
+            and consumer_node.outputs[0].shape == transposed_tensor.shape:
+            squeeze_count += 1
+    if (expand_count > 0 and expand_count == consumer_count) \
+        or (unsqueeze_count > 0 and unsqueeze_count == consumer_count) \
+        or (squeeze_count > 0 and squeeze_count == consumer_count):
+        # Replace
+        final_shape = consumer_nodes[0].outputs[0].shape
+        tf_layers_dict[graph_node_output.name]['unnecessary_reshape'] = True
+    else:
+        # No-replace
+        pass
+
     ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(

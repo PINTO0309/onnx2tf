@@ -149,8 +149,17 @@ def make_node(
     test pattern.9 : axes=[3,-1], [2,3,4,1,5,6,1,7]
     """
     tf_type = None
-    if 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_1.name] \
-        and tf_layers_dict[graph_node_input_1.name]['unnecessary_squeeze'] == True:
+    if \
+        (
+            isinstance(graph_node_input_1, gs.Variable) \
+            and 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_1.name] \
+            and tf_layers_dict[graph_node_input_1.name]['unnecessary_squeeze'] == True
+        ) or \
+        (
+            isinstance(graph_node_input_2, gs.Variable) \
+            and 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_2.name] \
+            and tf_layers_dict[graph_node_input_2.name]['unnecessary_squeeze'] == True
+        ):
         # Remove useless squeeze/unsqueeze combinations
         #   Only when squeeze and unsqueeze are consecutive
         #   and each is performing a useless process of
@@ -168,9 +177,42 @@ def make_node(
                         input=tf_partial_model_inputs[0],
                     )
                 ]
-    elif 'unnecessary_gather' in tf_layers_dict[graph_node_input_1.name] \
-        and tf_layers_dict[graph_node_input_1.name]['unnecessary_gather'] == True:
+    elif \
+        (
+            isinstance(graph_node_input_1, gs.Variable) \
+            and 'unnecessary_gather' in tf_layers_dict[graph_node_input_1.name] \
+            and tf_layers_dict[graph_node_input_1.name]['unnecessary_gather'] == True
+        ) or \
+        (
+            isinstance(graph_node_input_2, gs.Variable) \
+            and 'unnecessary_gather' in tf_layers_dict[graph_node_input_2.name] \
+            and tf_layers_dict[graph_node_input_2.name]['unnecessary_gather'] == True
+        ):
         # Remove useless gather/unsqueeze combinations
+        ### Overall model
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_type = tf.identity
+        ### Partial model
+        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
+            tf_partial_model_outputs = \
+                [
+                    tf.identity(
+                        input=tf_partial_model_inputs[0],
+                    )
+                ]
+    elif \
+        (
+            isinstance(graph_node_input_1, gs.Variable) \
+            and 'unnecessary_reshape' in tf_layers_dict[graph_node_input_1.name] \
+            and tf_layers_dict[graph_node_input_1.name]['unnecessary_reshape'] == True
+        ) or \
+        (
+            isinstance(graph_node_input_2, gs.Variable) \
+            and 'unnecessary_reshape' in tf_layers_dict[graph_node_input_2.name] \
+            and tf_layers_dict[graph_node_input_2.name]['unnecessary_reshape'] == True
+        ):
+        # Remove useless reshape/unsqueeze combinations
         ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)

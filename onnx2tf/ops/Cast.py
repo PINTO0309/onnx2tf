@@ -79,6 +79,7 @@ def make_node(
         param_name='to',
         **kwargs,
     )
+    to = ONNX_DTYPES_TO_TF_DTYPES[to]
 
     # Pre-process transpose
     before_trans_shape = input_tensor.shape
@@ -94,11 +95,17 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
+    # Suppression of FlexCast generation
+    # Float32 -> Float64
+    if input_tensor.dtype == tf.float32 \
+        and to == tf.float64:
+        to = tf.float32
+
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.cast(
             x=input_tensor,
-            dtype=ONNX_DTYPES_TO_TF_DTYPES[to],
+            dtype=to,
             name=graph_node.name,
         )
 
@@ -123,7 +130,7 @@ def make_node(
                 'tf_op_type': tf.cast,
                 'tf_inputs': {
                     'x': input_tensor,
-                    'dtype': ONNX_DTYPES_TO_TF_DTYPES[to],
+                    'dtype': to,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
