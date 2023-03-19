@@ -223,9 +223,9 @@ def make_node(
             and consumer_node.outputs[0].shape is not None \
             and consumer_node.outputs[0].shape == transposed_tensor.shape:
             squeeze_count += 1
-    if expand_count == consumer_count \
-        or unsqueeze_count == consumer_count \
-        or squeeze_count == consumer_count:
+    if (expand_count > 0 and expand_count == consumer_count) \
+        or (unsqueeze_count > 0 and unsqueeze_count == consumer_count) \
+        or (squeeze_count > 0 and squeeze_count == consumer_count):
         # Replace
         final_shape = consumer_nodes[0].outputs[0].shape
         tf_layers_dict[graph_node_output.name]['unnecessary_reshape'] = True
