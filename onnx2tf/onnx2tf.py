@@ -530,7 +530,7 @@ def convert(
             for _ in range(3):
                 append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
                     if overwrite_input_shape is not None else []
-                append_param = append_param + ['--no-large-tensor'] \
+                append_param = append_param + ['--no-large-tensor', '10MB'] \
                     if no_large_tensor else append_param
                 result = subprocess.check_output(
                     [
