@@ -92,8 +92,17 @@ def make_node(
     )
 
     tf_type = None
-    if 'unnecessary_reshape' in tf_layers_dict[graph_node_input_1.name] \
-        and tf_layers_dict[graph_node_input_1.name]['unnecessary_reshape'] == True:
+    if \
+        (
+            isinstance(graph_node_input_1, gs.Variable) \
+            and 'unnecessary_reshape' in tf_layers_dict[graph_node_input_1.name] \
+            and tf_layers_dict[graph_node_input_1.name]['unnecessary_reshape'] == True
+        ) or \
+        (
+            isinstance(graph_node_input_2, gs.Variable) \
+            and 'unnecessary_reshape' in tf_layers_dict[graph_node_input_2.name] \
+            and tf_layers_dict[graph_node_input_2.name]['unnecessary_reshape'] == True
+        ):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
         tf_type = tf.identity
