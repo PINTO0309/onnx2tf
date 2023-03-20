@@ -1774,6 +1774,7 @@ The above differences often cannot be dealt with by simply converting the model 
 3. https://pytorch.org/vision/stable/models.html
 4. https://tfhub.dev/
 5. https://www.kaggle.com/models
+6. https://github.com/TexasInstruments/edgeai-modelzoo
 
 ## Contributors
 <a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
