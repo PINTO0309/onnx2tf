@@ -127,6 +127,10 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 # Specify the output name of the OP
 $ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
 
+# Suppress generation of Flex OP (Gelu/Erf)
+wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
+$ onnx2tf -i gelu_11.onnx -rtpo Erf
+
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
