@@ -123,6 +123,10 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 # INT8 Quantization (per-tensor)
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
+# Split the model at the middle position for debugging
+# Specify the output name of the OP
+$ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
+
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
