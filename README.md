@@ -270,6 +270,13 @@ It is a matter of model structure. The activation function, kernel size and stri
         [ 0.085628,  2.055072,  0.685024, ..., -5.480191, -7.021494, -6.422099]]]]),
     ```
 
+- Other recommended replacement OP
+
+    |Before|After|
+    |:-:|:-:|
+    |`HardSwish`<br>![image](https://user-images.githubusercontent.com/33194443/226223099-c7344bcf-d24d-4b35-a1d6-2a03dbfce8c7.png)|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
+
+
 ### 7. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
