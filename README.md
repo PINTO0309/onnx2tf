@@ -243,6 +243,14 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
 ### 6. If the accuracy of the INT8 quantized model degrades significantly
 It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445
 
+If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
+
+Gist: [Quantization error simulation of SiLU (Swish) activation](https://gist.github.com/motokimura/1a90c0b8c5628914b99a81cd91369636)
+
+The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error.
+
+![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
+
 - e.g. YOLOv8 https://docs.openvino.ai/latest/notebooks/230-yolov8-optimization-with-output.html
 - e.g. YOLOX-Nano https://github.com/TexasInstruments/edgeai-yolox
     |Before|After|
