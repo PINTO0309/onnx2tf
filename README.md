@@ -674,7 +674,7 @@ optional arguments:
     Disable GroupConvolution and replace it with SeparableConvolution for
     output to saved_model format.
 
-  -ebu, --enaable_batchmatmul_unfold
+  -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
   -dsft, --disable_suppression_flextranspose
@@ -880,7 +880,7 @@ convert(
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
-  enaable_batchmatmul_unfold: Optional[bool] = False,
+  enable_batchmatmul_unfold: Optional[bool] = False,
   disable_suppression_flextranspose: Optional[bool] = False,
   number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
   optimization_for_gpu_delegate: Optional[bool] = False,
@@ -1080,7 +1080,7 @@ convert(
       Disable GroupConvolution and replace it with SeparableConvolution for
       output to saved_model format.
 
-    enaable_batchmatmul_unfold: Optional[bool]
+    enable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
     disable_suppression_flextranspose: Optional[bool]
