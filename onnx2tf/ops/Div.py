@@ -281,7 +281,7 @@ def make_node(
         del test_data2
 
     # Post-process transpose
-    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+    divided_tensor = post_process_transpose(
         value_before_transpose=divided_tensor,
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
