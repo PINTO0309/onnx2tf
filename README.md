@@ -429,6 +429,9 @@ tensorflowjs_converter \
 saved_model \
 tfjs_model
 ```
+
+See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
+
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
 ### 10. Conversion to CoreML
@@ -450,6 +453,9 @@ model = ct.convert(
 )
 model.save(f'{FOLDER_PATH}/model.mlmodel')
 ```
+
+See: https://github.com/apple/coremltools
+
 ![image](https://user-images.githubusercontent.com/33194443/224185761-bd0c086c-65e8-4de7-a500-f49b666eea0a.png)
 
 ## CLI Parameter
