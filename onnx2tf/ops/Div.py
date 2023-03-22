@@ -202,33 +202,40 @@ def make_node(
 
     # Generation of TF OP
     ### Overall model
-    # Merge two consecutive identical OPs into one
-    # https://github.com/PINTO0309/onnx2tf/issues/230
-    #   A constant is calculated in advance only
-    #   when one of the operations of the current OP
-    #   is a constant and one of the operations of
-    #   the next OP is also a constant.
-    # By merging two OPs into one, an accuracy error always occurs
-    # in the merged OP during the accuracy check.
-    # 1. `Mul` -> `Mul` to `Single-Mul` : `10 * 5 * 8 -> 10 * 40`
-    # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
-    # 3. `Div` -> `Mul` to `Single-Mul` : `10 / 5 * 8 -> 10 * 1.6`
-    # 4. `Div` -> `Div` to `Single-Mul` : `10 / 5 / 8 -> 10 * 0.025`
-    # 5. `Sub` -> `Sub` to `Single-Sub` : `10 - 5 - 8 -> 10 - 13`
-    # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
-    # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
-    # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
-    divided_tensor, tf_type = merge_two_consecutive_identical_ops_into_one(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        graph_node_output=graph_node_output,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        graph_node=graph_node,
-        tf_layers_dict=tf_layers_dict,
-        tf_func='Div'
+    # TODO: Temporarily Revert due to missing decision conditions
+    # # Merge two consecutive identical OPs into one
+    # # https://github.com/PINTO0309/onnx2tf/issues/230
+    # #   A constant is calculated in advance only
+    # #   when one of the operations of the current OP
+    # #   is a constant and one of the operations of
+    # #   the next OP is also a constant.
+    # # By merging two OPs into one, an accuracy error always occurs
+    # # in the merged OP during the accuracy check.
+    # # 1. `Mul` -> `Mul` to `Single-Mul` : `10 * 5 * 8 -> 10 * 40`
+    # # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
+    # # 3. `Div` -> `Mul` to `Single-Mul` : `10 / 5 * 8 -> 10 * 1.6`
+    # # 4. `Div` -> `Div` to `Single-Mul` : `10 / 5 / 8 -> 10 * 0.025`
+    # # 5. `Sub` -> `Sub` to `Single-Sub` : `10 - 5 - 8 -> 10 - 13`
+    # # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
+    # # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
+    # # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
+    # divided_tensor, tf_type = merge_two_consecutive_identical_ops_into_one(
+    #     graph_node_input_1=graph_node_input_1,
+    #     graph_node_input_2=graph_node_input_2,
+    #     graph_node_output=graph_node_output,
+    #     before_op_output_shape_trans=before_op_output_shape_trans,
+    #     input_tensor_1=input_tensor_1,
+    #     input_tensor_2=input_tensor_2,
+    #     graph_node=graph_node,
+    #     tf_layers_dict=tf_layers_dict,
+    #     tf_func='Div'
+    # )
+    divided_tensor = tf.math.divide(
+        x=input_tensor_1,
+        y=input_tensor_2,
+        name=graph_node.name,
     )
+    tf_type = tf.math.divide
 
     ### Partial model
     if kwargs['acc_check'] and tf_partial_model_inputs is not None:
@@ -274,7 +281,7 @@ def make_node(
         del test_data2
 
     # Post-process transpose
-    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
+    divided_tensor = post_process_transpose(
         value_before_transpose=divided_tensor,
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
