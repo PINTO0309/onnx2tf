@@ -181,6 +181,43 @@ def make_node(
                 num=None,
                 name=graph_node.name,
             )
+    elif isinstance(split, np.ndarray) \
+        and len(list(split)) > 1 \
+        and np.prod(split) != 1 \
+        and isinstance(input_tensor_shape[axis], int) \
+        and len(split) == sum([1 for dim in split if isinstance(dim, np.int64) or isinstance(dim, int)]) \
+        and len(split) != sum([1 for dim in split if split[0] == dim]) \
+        and np.sum(split) == input_tensor_shape[axis]:
+        # Suppression of FlexSplitV generation
+        # SplitV -> Strided_Slice
+        splited_tensors = []
+        for split_idx, split_dim in enumerate(split):
+            begin_ = []
+            end_ = []
+            begin_mask_ = 0
+            end_mask_ = 0
+            for idx in range(input_tensor_rank):
+                if idx == axis:
+                    if split_idx == 0:
+                        begin_.append(0)
+                    else:
+                        begin_.append(begin_[split_idx-1] + split[split_idx-1])
+                    end_.append(begin_[-1] + split_dim)
+                else:
+                    begin_.append(0)
+                    end_.append(0)
+                    begin_mask_ = begin_mask_ + 2**idx
+                    end_mask_ = end_mask_ + 2**idx
+
+            splited_tensors.append(
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                )
+            )
     else:
         splited_tensors = \
             tf.split(
