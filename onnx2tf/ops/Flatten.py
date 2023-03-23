@@ -57,7 +57,8 @@ def make_node(
     dtype = graph_node_output.dtype
 
     axis = graph_node.attrs.get("axis", 0)
-    if graph_node_input.shape is not None:
+    if graph_node_input.shape is not None \
+        and axis < input_tensor_rank:
         axis = convert_axis(
             axis=axis,
             tensor_rank=len(graph_node_input.shape),
@@ -83,6 +84,8 @@ def make_node(
     cal_shape = None
     if axis == 0:
         cal_shape = (1, -1)
+    elif axis >= input_tensor_rank:
+        cal_shape = (-1, 1)
     elif graph_node_output.shape is not None and len(graph_node_output.shape) == 2 and axis == input_tensor_rank - 1:
         cal_shape = (1, -1)
     elif input_tensor_rank >= 2 \
