@@ -1,4 +1,4 @@
-import copy
+import numbers
 import random
 random.seed(0)
 import numpy as np
@@ -17,7 +17,10 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
+from onnx2tf.utils.enums import (
+    NUMPY_DTYPES_TO_TF_DTYPES,
+    TF_DTYPES_TO_NUMPY_DTYPES,
+)
 
 
 @print_node_info
@@ -63,12 +66,18 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     before_cast_indices = None
-    if isinstance(indices, np.ndarray) and indices.ndim == 1 and indices[0] is not None:
+    if isinstance(indices, np.ndarray) and indices.ndim == 1 and len(indices) == 1 and indices[0] is not None:
         if indices[0] >= 0:
             before_cast_indices = indices[0]
     elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
         if indices >= 0:
             before_cast_indices = int(indices)
+
+    simple_indices = None
+    if isinstance(indices, np.ndarray) and indices.ndim == 1 and None not in indices:
+        simple_indices = indices.copy()
+    elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
+        simple_indices = int(indices)
 
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -178,6 +187,29 @@ def make_node(
             and consumer_node.attrs['axes'][0] == axis:
             unsqueeze_count += 1
 
+    # Complex Gather -> Simple Gather
+    # https://github.com/PINTO0309/onnx2tf/issues/261
+    simple_gather = False
+    if isinstance(simple_indices, np.ndarray) \
+        or isinstance(simple_indices, int):
+
+        if isinstance(simple_indices, int):
+            simple_gather = True
+        elif isinstance(simple_indices, np.ndarray) \
+            and simple_indices.ndim == 1:
+            int_check_sum = sum(
+                [
+                    1 for dim in simple_indices \
+                        if (isinstance(dim, int) or isinstance(dim, np.int32) or isinstance(dim, np.int64)) and dim >= 0
+                ]
+            )
+            if len(simple_indices) == int_check_sum:
+                simple_gather = True
+            else:
+                simple_gather = False
+        else:
+            simple_gather = False
+
     # Generation of TF OP
     if unsqueeze_count == consumer_count \
         and before_cast_indices is not None:
@@ -209,6 +241,26 @@ def make_node(
                 end_mask=end_mask_,
             )
         tf_layers_dict[graph_node_output.name]['unnecessary_gather'] = True
+    elif \
+        (
+            isinstance(simple_indices, np.ndarray) \
+                or isinstance(simple_indices, int)
+        ) and simple_gather:
+        # Complex Gather -> Simple Gather
+        # https://github.com/PINTO0309/onnx2tf/issues/261
+        # No-replace
+        indices_values = indices._inferred_value \
+            if hasattr(indices, "_inferred_value") \
+                and indices._inferred_value is not None else simple_indices
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.gather(
+                params=input_tensor,
+                indices=indices_values \
+                    if not isinstance(indices_values, np.ndarray) \
+                        else tf.convert_to_tensor(indices_values),
+                axis=axis,
+                name=graph_node.name,
+            )
     else:
         # No-replace
         indices_values = indices._inferred_value \
