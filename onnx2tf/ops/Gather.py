@@ -1,4 +1,3 @@
-import numbers
 import random
 random.seed(0)
 import numpy as np
