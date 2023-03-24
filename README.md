@@ -165,6 +165,10 @@ The `-cotof` option only compares the original ONNX and converted TensorFlow (Ke
 
 ```
 $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
+
+or
+
+$ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
