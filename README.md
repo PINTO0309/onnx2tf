@@ -143,7 +143,7 @@ $ onnx2tf -i gelu_11.onnx -rtpo Erf
 # to the specified number of dimensions.
 # In TensorFlow v2.12.0 and later, up to 6 dimensions are converted to normal Transpose;
 # in v2.11.0 and earlier, up to 5 dimensions are converted to normal Transpose.
-# Note that specifying `2` for the nodafc option causes all Transpose OPs to disappear
+# Note that specifying `2` for the `-nodafc` option causes all Transpose OPs to disappear
 # from the model structure.
 # Below is an example of decomposing a Transpose of 5 or more dimensions into a Transpose
 # of 4 dimensions.
