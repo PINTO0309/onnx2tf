@@ -269,7 +269,7 @@ If you want to see the difference in quantization error between `SiLU` and `ReLU
 
 Gist: [Quantization error simulation of SiLU (Swish) activation](https://gist.github.com/motokimura/1a90c0b8c5628914b99a81cd91369636)
 
-The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error.
+The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error. The vertical axis is the number of samples.
 
 ![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
 
