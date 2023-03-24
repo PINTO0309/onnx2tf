@@ -137,6 +137,18 @@ $ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stag
 $ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
 $ onnx2tf -i gelu_11.onnx -rtpo Erf
 
+# High-dimensional Transpose decomposition
+# If you do not like FlexTranspose being generated, try `-nodafc`.
+# Suppresses the generation of FlexTranspose by decomposing Transpose
+# to the specified number of dimensions.
+# In TensorFlow v2.12.0 and later, up to 6 dimensions are converted to normal Transpose;
+# in v2.11.0 and earlier, up to 5 dimensions are converted to normal Transpose.
+# Note that specifying `2` for the nodafc option causes all Transpose OPs to disappear
+# from the model structure.
+# Below is an example of decomposing a Transpose of 5 or more dimensions into a Transpose
+# of 4 dimensions.
+$ onnx2tf -i xxxx.onnx -nodafc 4
+
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
