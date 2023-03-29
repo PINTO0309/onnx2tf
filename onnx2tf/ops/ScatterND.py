@@ -174,9 +174,15 @@ def make_node(
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.tensor_scatter_nd_update(
-            tensor=input_tensor,
-            indices=indices_tensor,
-            updates=updates_tensor,
+            tensor=input_tensor \
+                if not isinstance(input_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(input_tensor),
+            indices=indices_tensor \
+                if not isinstance(indices_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(indices_tensor),
+            updates=updates_tensor \
+                if not isinstance(updates_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(updates_tensor),
             name=graph_node.name,
         )
 
