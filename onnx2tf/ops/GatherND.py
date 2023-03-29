@@ -134,8 +134,12 @@ def make_node(
     if not replace_gathernd_to_pseudo_gathernd:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather_nd(
-                params=input_tensor,
-                indices=indices_tensor,
+                params=input_tensor \
+                    if not isinstance(input_tensor, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor),
+                indices=indices_tensor \
+                    if not isinstance(indices_tensor, np.ndarray) \
+                        else tf.convert_to_tensor(indices_tensor),
                 batch_dims=batch_dims,
                 name=graph_node.name,
             )
