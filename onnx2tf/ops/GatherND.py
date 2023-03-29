@@ -103,11 +103,33 @@ def make_node(
     indices_tensor = indices_tensor \
         if not isinstance(indices_tensor, np.ndarray) \
             else tf.convert_to_tensor(indices_tensor)
-    indices_tensor = process_neg_idx(
-        data=input_tensor,
-        indices=indices_tensor,
-        batch_dims=batch_dims,
-    )
+
+    # Complex GatherND -> Simple GatherND
+    simple_gathernd = False
+    # Verify if negative numbers need to be converted to positive numbers
+    if isinstance(indices_tensor, np.ndarray) and None not in indices_tensor:
+        flatten_indices_tensor = indices_tensor.flatten()
+        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+            simple_gathernd = False
+        else:
+            simple_gathernd = True
+    elif hasattr(indices_tensor, 'numpy') and None not in indices_tensor.numpy():
+        flatten_indices_tensor = indices_tensor.numpy().flatten()
+        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+            simple_gathernd = False
+        else:
+            simple_gathernd = True
+    elif isinstance(indices_tensor, int) and indices_tensor >= 0:
+        simple_gathernd = True
+    else:
+        simple_gathernd = False
+
+    if not simple_gathernd:
+        indices_tensor = process_neg_idx(
+            data=input_tensor,
+            indices=indices_tensor,
+            batch_dims=batch_dims,
+        )
 
     if not replace_gathernd_to_pseudo_gathernd:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
