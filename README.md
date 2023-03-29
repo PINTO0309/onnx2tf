@@ -1694,7 +1694,7 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |37|htnet_1x17x2_without_norm.onnx|:heavy_check_mark:|
 |38|iat_llie_180x320.onnx|:heavy_check_mark:|
 |39|if_p1_11.onnx|:heavy_check_mark:|
-|40if_p2_11.onnx|:heavy_check_mark:|
+|40|if_p2_11.onnx|:heavy_check_mark:|
 |41|if_p3_11.onnx|:heavy_check_mark:|
 |42|imageclassifier.onnx|:heavy_check_mark:|
 |43|inception-v2-9.onnx|:heavy_check_mark:|
