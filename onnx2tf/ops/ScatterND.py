@@ -96,11 +96,26 @@ def make_node(
         **kwargs,
     )
 
+    # Complex ScatterND -> Simple ScatterND
+    simple_scatternd = False
+    # Verify if negative numbers need to be converted to positive numbers
+    if isinstance(indices_tensor, np.ndarray) and None not in indices_tensor:
+        flatten_indices_tensor = indices_tensor.flatten()
+        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+            simple_scatternd = False
+        else:
+            simple_scatternd = True
+    elif isinstance(indices_tensor, int) and indices_tensor >= 0:
+        simple_scatternd = True
+    else:
+        simple_scatternd = False
+
     # Generation of TF OP
-    indices_tensor = process_neg_idx(
-        data=input_tensor,
-        indices=indices_tensor,
-    )
+    if not simple_scatternd:
+        indices_tensor = process_neg_idx(
+            data=input_tensor,
+            indices=indices_tensor,
+        )
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.tensor_scatter_nd_update(
