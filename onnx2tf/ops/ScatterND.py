@@ -105,7 +105,7 @@ def make_node(
             simple_scatternd = False
         else:
             simple_scatternd = True
-    elif isinstance(indices_tensor, int):
+    elif isinstance(indices_tensor, int) and indices_tensor >= 0:
         simple_scatternd = True
     else:
         simple_scatternd = False
