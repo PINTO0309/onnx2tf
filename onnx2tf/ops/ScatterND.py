@@ -69,6 +69,55 @@ def make_node(
     updates_tensor = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
+    # Inverted workaround to avoid shape errors as much as possible
+    if not before_op_output_shape_trans \
+        and list(graph_node.inputs[0].shape) != list(input_tensor.shape) \
+        and list(graph_node.inputs[1].shape) == list(indices_tensor.shape) \
+        and list(graph_node.inputs[2].shape) == list(updates_tensor.shape):
+
+        input_tensor_shape = input_tensor.shape
+        input_tensor_rank = len(input_tensor_shape)
+        indices_tensor_shape = indices_tensor.shape
+        updates_tensor_shape = updates_tensor.shape
+        updates_tensor_rank = len(updates_tensor_shape)
+        # Obtaining the number of ranks to be operated
+        number_of_ranks_operate = indices_tensor_shape[-1]
+        # 1. The number of ranks to be operated must be numeric
+        # 2. The number of ranks to be operated on must match the number of ranks in the input tensor
+        # 3. The number of ranks to be operated on must match the number of ranks in the tensor for updating
+        # 4. Forced NHWC conversion if all the above conditions are met
+        if isinstance(number_of_ranks_operate, int) \
+            and input_tensor_rank == number_of_ranks_operate \
+            and updates_tensor_rank == number_of_ranks_operate:
+
+            indices_convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1, input_tensor_rank]
+            indices_gather_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
+            updates_convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
+            # Corrects tensor shape discrepancies
+            if isinstance(indices_tensor, np.ndarray):
+                indices_tensor = indices_tensor.transpose(indices_convertion_table)
+            elif tf.keras.backend.is_keras_tensor(indices_tensor):
+                indices_tensor = tf.transpose(
+                    a=indices_tensor,
+                    perm=indices_convertion_table,
+                )
+            if isinstance(updates_tensor, np.ndarray):
+                updates_tensor = updates_tensor.transpose(updates_convertion_table)
+            elif tf.keras.backend.is_keras_tensor(updates_tensor):
+                updates_tensor = tf.transpose(
+                    a=updates_tensor,
+                    perm=updates_convertion_table,
+                )
+            # Transposition of indices
+            if isinstance(indices_tensor, np.ndarray):
+                indices_tensor = indices_tensor[..., indices_gather_table]
+            elif tf.keras.backend.is_keras_tensor(indices_tensor):
+                indices_tensor = tf.gather(
+                    params=indices_tensor,
+                    indices=indices_gather_table,
+                    axis=-1,
+                )
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -101,6 +150,12 @@ def make_node(
     # Verify if negative numbers need to be converted to positive numbers
     if isinstance(indices_tensor, np.ndarray) and None not in indices_tensor:
         flatten_indices_tensor = indices_tensor.flatten()
+        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+            simple_scatternd = False
+        else:
+            simple_scatternd = True
+    elif hasattr(indices_tensor, 'numpy') and None not in indices_tensor.numpy():
+        flatten_indices_tensor = indices_tensor.numpy().flatten()
         if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
             simple_scatternd = False
         else:
