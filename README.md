@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.4
+  ghcr.io/pinto0309/onnx2tf:1.8.5
 
   or
 
@@ -495,6 +495,7 @@ usage: onnx2tf
 [-osd]
 [-oh5]
 [-okv3]
+[-otfv1pb]
 [-ow]
 [-coion]
 [-oiqt]
@@ -551,6 +552,9 @@ optional arguments:
 
   -okv3, --output_keras_v3
     Output model in Keras (keras_v3) format.
+
+  -otfv1pb, --output_tfv1_pb
+    Output model in TF v1 (.pb) format.
 
   -ow, --output_weights
     Output weights in hdf5 format.
@@ -894,6 +898,7 @@ convert(
   output_signaturedefs: Optional[bool] = False,
   output_h5: Optional[bool] = False,
   output_keras_v3: Optional[bool] = False,
+  output_tfv1_pb: Optional[bool] = False,
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
@@ -959,6 +964,9 @@ convert(
 
     output_keras_v3: Optional[bool]
       Output model in Keras (keras_v3) format.
+
+    output_tfv1_pb: Optional[bool]
+      Output model in TF v1 (.pb) format.
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.

@@ -30,6 +30,8 @@ tf.config.experimental.enable_op_determinism()
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
 tf.get_logger().setLevel(logging.FATAL)
+from absl import logging as absl_logging
+absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
 import onnx_graphsurgeon as gs
@@ -58,6 +60,7 @@ def convert(
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
     output_keras_v3: Optional[bool] = False,
+    output_tfv1_pb: Optional[bool] = False,
     output_weights: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
@@ -122,6 +125,9 @@ def convert(
 
     output_keras_v3: Optional[bool]
         Output model in Keras (keras_v3) format.
+
+    output_tfv1_pb: Optional[bool]
+        Output model in TF v1 (.pb) format.
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
@@ -580,6 +586,11 @@ def convert(
     disable_per_channel = False \
         if quant_type is not None and quant_type == 'per-channel' else True
 
+    # Output model in TF v1 (.pb) format
+    # Output signatures to saved_model
+    if output_tfv1_pb:
+        output_signaturedefs = True
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -816,6 +827,8 @@ def convert(
             *[tf.TensorSpec(tensor.shape, tensor.dtype) for tensor in model.inputs]
         )
 
+        SIGNATURE_KEY = 'serving_default'
+
         # saved_model
         try:
             # concrete_func
@@ -851,6 +864,27 @@ def convert(
             print(f'{Color.RED}ERROR:{Color.RESET}', e)
             import traceback
             traceback.print_exc()
+
+        # TFv1 .pb
+        if output_tfv1_pb:
+            try:
+                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+                imported = tf.saved_model.load(output_folder_path)
+                f = imported.signatures[SIGNATURE_KEY]
+                frozen_func = convert_variables_to_constants_v2(f)
+                frozen_func.graph.as_graph_def()
+                tf.io.write_graph(
+                    graph_or_graph_def=frozen_func.graph,
+                    logdir=output_folder_path,
+                    name=f'{output_file_name}_float32.pb',
+                    as_text=False,
+                )
+                if not non_verbose:
+                    print(f'{Color.GREEN}TFv1 .pb output complete!{Color.RESET}')
+            except Exception as e:
+                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                import traceback
+                traceback.print_exc()
 
         # TFLite
         """
@@ -940,7 +974,6 @@ def convert(
         if output_integer_quantized_tflite:
             # Get signatures/input keys
             if not non_verbose:
-                SIGNATURE_KEY = 'serving_default'
                 loaded_saved_model = tf.saved_model.load(
                     output_folder_path
                 ).signatures[SIGNATURE_KEY]
@@ -1432,6 +1465,13 @@ def main():
             'Output model in Keras (keras_v3) format.'
     )
     parser.add_argument(
+        '-otfv1pb',
+        '--output_tfv1_pb',
+        action='store_true',
+        help=\
+            'Output model in TF v1 (.pb) format.'
+    )
+    parser.add_argument(
         '-ow',
         '--output_weights',
         action='store_true',
@@ -1894,6 +1934,7 @@ def main():
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
         output_keras_v3=args.output_keras_v3,
+        output_tfv1_pb=args.output_tfv1_pb,
         output_weights=args.output_weights,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
