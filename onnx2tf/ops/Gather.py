@@ -248,6 +248,19 @@ def make_node(
         indices_values = indices._inferred_value \
             if hasattr(indices, "_inferred_value") \
                 and indices._inferred_value is not None else simple_indices
+
+        # Disable negative indexes
+        if isinstance(indices_values, np.ndarray) and input_tensor.shape[axis] is not None:
+            maximum_number_of_elements = input_tensor.shape[axis]
+            indices_values = np.where(
+                condition=indices_values < 0,
+                x=indices_values+maximum_number_of_elements,
+                y=indices_values
+            )
+        elif isinstance(indices_values, int) and input_tensor.shape[axis] is not None:
+            maximum_number_of_elements = input_tensor.shape[axis]
+            indices_values = indices_values + maximum_number_of_elements
+
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather(
                 params=input_tensor,
@@ -262,6 +275,19 @@ def make_node(
         indices_values = indices._inferred_value \
             if hasattr(indices, "_inferred_value") \
                 and indices._inferred_value is not None else indices
+
+        # Disable negative indexes
+        if isinstance(indices_values, np.ndarray) and input_tensor.shape[axis] is not None:
+            maximum_number_of_elements = input_tensor.shape[axis]
+            indices_values = np.where(
+                condition=indices_values < 0,
+                x=indices_values+maximum_number_of_elements,
+                y=indices_values
+            )
+        elif isinstance(indices_values, int) and input_tensor.shape[axis] is not None:
+            maximum_number_of_elements = input_tensor.shape[axis]
+            indices_values = indices_values + maximum_number_of_elements
+
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather(
                 params=input_tensor,
