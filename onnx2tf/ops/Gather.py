@@ -257,7 +257,7 @@ def make_node(
                 x=indices_values+maximum_number_of_elements,
                 y=indices_values
             )
-        elif isinstance(indices_values, int) and input_tensor.shape[axis] is not None:
+        elif isinstance(indices_values, int) and indices_values < 0 and input_tensor.shape[axis] is not None:
             maximum_number_of_elements = input_tensor.shape[axis]
             indices_values = indices_values + maximum_number_of_elements
 
@@ -284,7 +284,7 @@ def make_node(
                 x=indices_values+maximum_number_of_elements,
                 y=indices_values
             )
-        elif isinstance(indices_values, int) and input_tensor.shape[axis] is not None:
+        elif isinstance(indices_values, int) and indices_values < 0 and input_tensor.shape[axis] is not None:
             maximum_number_of_elements = input_tensor.shape[axis]
             indices_values = indices_values + maximum_number_of_elements
 
