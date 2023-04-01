@@ -62,6 +62,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
 
     image = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
@@ -432,6 +433,7 @@ def make_node(
         grid.shape[2],
     ]
     final_reshape = tf.reshape(add63, shape=output_shape)
+    # NCHW -> NHWC
     output = tf.transpose(final_reshape, perm=[0,2,3,1])
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = output
