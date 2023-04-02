@@ -1,5 +1,5 @@
 import sys
-from typing import List, Dict, Any
+from typing import List, Dict
 import random
 random.seed(0)
 import numpy as np
@@ -45,7 +45,7 @@ class ScaledTanh(tf.keras.layers.Layer):
 
 
 # {'activateion_name': [tf_activation, default_alpha, default_beta]}
-ONNX_ACTIVATION_MAPPING: Dict[str, List[Any, float, float]] = {
+ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
     "Elu": [tf.nn.elu, 1.0, None],
     "HardSigmoid": [tf.keras.backend.hard_sigmoid, 0.2, 0.5],
     "LeakyRelu": [tf.nn.leaky_relu, 0.01, 0.0],
@@ -71,6 +71,9 @@ def make_node(
     **kwargs: dict,
 ):
     """[WIP][TODO] LSTM
+    Need to implement CustomLSTMCell and CustomLSTM to handle activation functions for f, g, and h
+    https://zenn.dev/pinto0309/scraps/430cea62b1eb9d
+
     https://github.com/PINTO0309/onnx2tf/issues/198
     test onnx file: https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/text_recognition_CRNN_EN_2021sep.onnx
     onnx2tf -i text_recognition_CRNN_EN_2021sep.onnx
@@ -204,6 +207,16 @@ def make_node(
     # num_directions: bidirectional=2, forward or reverse=1
     B = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
+
+    if isinstance(B, np.ndarray) and np.sum(B) > 0.0:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'The process for the case where Bias is set to a value greater than zero has not yet been implemented. ' +
+            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
+            f'B.shape: {B.shape}'
+        )
+        sys.exit(1)
+
     # sequence_lens [batch_size]
     sequence_lens = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) and graph_node_input_5.name != '' else graph_node_input_5
@@ -220,17 +233,54 @@ def make_node(
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != '' else graph_node_input_8
 
+    if isinstance(P, np.ndarray) and np.sum(P) > 0.0:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'The process for the case where Peepholes is set to a value greater than zero has not yet been implemented. ' +
+            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
+            f'P.shape: {P.shape}'
+        )
+        sys.exit(1)
+
     # Different value ranges for each activation function
     activation_alpha: List[float] = graph_node.attrs.get('activation_alpha', [0.01])
     # Different value ranges for each activation function
     activation_beta: List[float] = graph_node.attrs.get('activation_beta', [])
     # Always three or more present if specified
     activations: List[str] =  graph_node.attrs.get('activations', [])
+
+    if len(activations) > 0:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'The activation functions for f, g, and h are currently not implemented. ' +
+            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
+            f'https://github.com/microsoft/onnxruntime/blob/c57cf374b67f72575546d7b4c69a1af4972e2b54/onnxruntime/core/providers/cpu/rnn/uni_directional_lstm.cc#L45-L84 ' +
+            f'activations: {activations}'
+        )
+        sys.exit(1)
+
     clip: float =  graph_node.attrs.get('clip', None)
+
+    if clip is not None:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'clip is currently not implemented. ' +
+            f'clip: {clip}'
+        )
+        sys.exit(1)
+
     direction: str =  graph_node.attrs.get('direction', 'forward')
-    # TODO: check default value
     hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
     input_forget: bool = bool(graph_node.attrs.get('input_forget', 0))
+
+    if input_forget:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'input_forget = 1 is currently not implemented. ' +
+            f'input_forget: {input_forget}'
+        )
+        sys.exit(1)
+
     layout: int = graph_node.attrs.get('layout', 0)
 
     # Need transpose for batchwise, X
@@ -462,9 +512,9 @@ def make_node(
         forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
 
         forward_lstm = create_lstm_layer(
-            weight=W,
-            recurrence_weight=R,
-            bias=B,
+            weight=forward_kernel,
+            recurrence_weight=forward_recurrent_kernel,
+            bias=forward_bias,
             hidden_size=hidden_size,
             go_backwards=False,
         )
