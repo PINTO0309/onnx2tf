@@ -49,6 +49,7 @@ def make_node(
 ):
     """[WIP][TODO] LSTM
     test onnx file: https://github.com/opencv/opencv_zoo/raw/master/models/text_recognition_crnn/text_recognition_CRNN_EN_2021sep.onnx
+    onnx2tf -i text_recognition_CRNN_EN_2021sep.onnx
 
     Parameters
     ----------
@@ -432,28 +433,27 @@ def make_node(
         cell_state = tf.expand_dims(cell_state, axis=0)
 
     elif direction == 'bidirectional':
-        # forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
-        # forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        # forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
-        forward_weight = W[0].T # TensorShape([512,1024])
-        forward_weight = tf.reshape(forward_weight, shape=[4, input_size, hidden_size]) # TensorShape([4,512,256])
-
+        forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
         forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
         forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        # forward_weight = W[0].T # TensorShape([512,1024])
+        # forward_weight = tf.reshape(forward_weight, shape=[4, input_size, hidden_size]) # TensorShape([4,512,256])
+        # forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        # forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
 
-        # fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
-        # fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
-        # fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
-        fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 512, 256)
+        fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
+        # fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 512, 256)
+        # fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
+        # fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
 
-        # forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
-        # forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
-        # forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
-        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=2).reshape(input_size, -1) # (512, 1024)
-        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=2).reshape(hidden_size, -1) # (256, 1024)
+        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
+        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
         forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
+        # forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=2).reshape(input_size, -1) # (512, 1024)
+        # forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=2).reshape(hidden_size, -1) # (256, 1024)
+        # forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
 
 
 
@@ -496,10 +496,10 @@ def make_node(
             hidden_size=hidden_size,
             go_backwards=True,
         )
-        # forward_output, forward_h, forward_c = forward_lstm(X, initial_state=forward_initial_state) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
-        # reverse_output, reverse_h, reverse_c = reverse_lstm(X, initial_state=backward_initial_state) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
-        forward_output, forward_h, forward_c = forward_lstm(X) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
-        reverse_output, reverse_h, reverse_c = reverse_lstm(X) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
+        forward_output, forward_h, forward_c = forward_lstm(X, initial_state=forward_initial_state) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
+        reverse_output, reverse_h, reverse_c = reverse_lstm(X, initial_state=backward_initial_state) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
+        # forward_output, forward_h, forward_c = forward_lstm(X) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
+        # reverse_output, reverse_h, reverse_c = reverse_lstm(X) # TensorShape([24, 1, 512]), [TensorShape([1, 256]), TensorShape([1, 256])]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
