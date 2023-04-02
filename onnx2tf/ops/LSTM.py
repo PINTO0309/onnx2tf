@@ -252,7 +252,7 @@ def make_node(
     # num_directions: bidirectional=2, forward or reverse=1
     initial_c = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
         if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
-    # P [num_directions, 3*hidde_size]
+    # P [num_directions, 3*hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
