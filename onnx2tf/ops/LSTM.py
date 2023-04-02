@@ -48,6 +48,7 @@ def make_node(
     **kwargs: dict,
 ):
     """[WIP][TODO] LSTM
+    https://github.com/PINTO0309/onnx2tf/issues/198
     test onnx file: https://github.com/opencv/opencv_zoo/raw/master/models/text_recognition_crnn/text_recognition_CRNN_EN_2021sep.onnx
     onnx2tf -i text_recognition_CRNN_EN_2021sep.onnx
 
