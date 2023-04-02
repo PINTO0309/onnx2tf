@@ -49,8 +49,11 @@ def make_node(
 ):
     """[WIP][TODO] LSTM
     https://github.com/PINTO0309/onnx2tf/issues/198
-    test onnx file: https://github.com/opencv/opencv_zoo/raw/master/models/text_recognition_crnn/text_recognition_CRNN_EN_2021sep.onnx
+    test onnx file: https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/text_recognition_CRNN_EN_2021sep.onnx
     onnx2tf -i text_recognition_CRNN_EN_2021sep.onnx
+
+    test onnx file: https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/LSTM.tanh.bidirectional.onnx
+    onnx2tf -i LSTM.tanh.bidirectional.onnx
 
     Parameters
     ----------
@@ -192,7 +195,7 @@ def make_node(
     # P [num_directions, 3*hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
-        if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
+        if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != '' else graph_node_input_8
 
     # Different value ranges for each activation function
     activation_alpha: List[float] = graph_node.attrs.get('activation_alpha', [0.01])
@@ -353,20 +356,37 @@ def make_node(
         hidden_size,
         go_backwards,
     ):
-        lstm_layer = tf.keras.layers.LSTM(
-            units=hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(weight),
-            recurrent_initializer=tf.keras.initializers.constant(recurrence_weight),
-            bias_initializer=tf.keras.initializers.constant(bias),
-            return_sequences=True,
-            return_state=True,
-            go_backwards=go_backwards,
-            dropout=0,
-            recurrent_dropout=0,
-            stateful=False,
-            implementation=2,
-            use_bias=True if bias is not None else False,
-        )
+        need_bias = True
+        if isinstance(bias, np.ndarray) and np.sum(bias) == 0:
+            need_bias = False
+
+        if need_bias:
+            lstm_layer = tf.keras.layers.LSTM(
+                units=hidden_size,
+                kernel_initializer=tf.keras.initializers.constant(weight),
+                recurrent_initializer=tf.keras.initializers.constant(recurrence_weight),
+                bias_initializer=tf.keras.initializers.constant(bias),
+                return_sequences=True,
+                return_state=True,
+                go_backwards=go_backwards,
+                dropout=0,
+                recurrent_dropout=0,
+                stateful=False,
+                implementation=2,
+            )
+        else:
+            lstm_layer = tf.keras.layers.LSTM(
+                units=hidden_size,
+                kernel_initializer=tf.keras.initializers.constant(weight),
+                recurrent_initializer=tf.keras.initializers.constant(recurrence_weight),
+                return_sequences=True,
+                return_state=True,
+                go_backwards=go_backwards,
+                dropout=0,
+                recurrent_dropout=0,
+                stateful=False,
+                implementation=2,
+            )
         return lstm_layer
 
     forward_lstm = None
@@ -408,6 +428,16 @@ def make_node(
             backward_initial_state = backward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[1]))]
 
     if direction == 'forward':
+        forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
+        forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
+        fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
+        fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
+        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
+        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
+        forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
+
         forward_lstm = create_lstm_layer(
             weight=W,
             recurrence_weight=R,
@@ -421,10 +451,20 @@ def make_node(
         cell_state = tf.expand_dims(cell_state, axis=0)
 
     elif direction == 'reverse':
+        backward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
+        backward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        backward_bias = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        bW_i, bW_o, bW_f, bW_c = np.split(backward_weight, 4, axis=0) # (1, 256, 512)
+        bR_i, bR_o, bR_f, bR_c = np.split(backward_recurrence_weight, 4, axis=0) # (1, 256, 256)
+        bB_i, bB_o, bB_f, bB_c = np.split(backward_bias, 4, axis=0) # (1, 256)
+        backward_kernel = np.concatenate([bW_i, bW_f, bW_c, bW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
+        backward_recurrent_kernel = np.concatenate([bR_i, bR_f, bR_c, bR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
+        backward_bias = np.concatenate([bB_i, bB_f, bB_c, bB_o], axis=1) # (1, 1024)
+
         reverse_lstm = create_lstm_layer(
-            weight=W,
-            recurrence_weight=R,
-            bias=B,
+            weight=backward_kernel,
+            recurrence_weight=backward_recurrent_kernel,
+            bias=backward_bias,
             hidden_size=hidden_size,
             go_backwards=True,
         )
