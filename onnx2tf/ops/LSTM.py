@@ -1,5 +1,5 @@
 import sys
-from typing import List
+from typing import List, Dict, Any
 import random
 random.seed(0)
 import numpy as np
@@ -15,25 +15,48 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
 
 from tensorflow.python.framework import ops
-from tensorflow.python.ops import gen_image_ops
 from tensorflow.python.util import dispatch
 
+class Affine(tf.keras.layers.Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Affine, self).__init__()
+        self.alpha = tf.convert_to_tensor(alpha)
+        self.beta = tf.convert_to_tensor(beta)
 
-ONNX_ACTIVATION_MAPPING = {
-    "Elu": tf.nn.elu,
-    "HardSigmoid": tf.keras.backend.hard_sigmoid,
-    "LeakyRelu": tf.nn.leaky_relu,
-    "Relu": tf.nn.relu,
-    "Sigmoid": tf.sigmoid,
-    "Softsign": tf.nn.softsign,
-    "Softplus": tf.nn.softplus,
-    "Tanh": tf.tanh,
-    "ThresholdedRelu": tf.keras.layers.ThresholdedReLU,
+    def call(self, x):
+        # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#lstm-14
+        # alpha*x + beta
+        return self.alpha * x + self.beta
+
+class ScaledTanh(tf.keras.layers.Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(ScaledTanh, self).__init__()
+        self.alpha = tf.convert_to_tensor(alpha)
+        self.beta = tf.convert_to_tensor(beta)
+
+    def call(self, x):
+        # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#lstm-7
+        # alpha*Tanh(beta*x)
+        return self.alpha * tf.nn.tanh(self.beta*x)
+
+
+# {'activateion_name': [tf_activation, default_alpha, default_beta]}
+ONNX_ACTIVATION_MAPPING: Dict[str, List[Any, float, float]] = {
+    "Elu": [tf.nn.elu, 1.0, None],
+    "HardSigmoid": [tf.keras.backend.hard_sigmoid, 0.2, 0.5],
+    "LeakyRelu": [tf.nn.leaky_relu, 0.01, 0.0],
+    "Relu": [tf.nn.relu, None, None],
+    "Sigmoid": [tf.sigmoid, None, None],
+    "Softsign": [tf.nn.softsign, None, None],
+    "Softplus": [tf.nn.softplus, None, None],
+    "Tanh": [tf.tanh, None, None],
+    "ThresholdedRelu": [tf.keras.layers.ThresholdedReLU, 1.0, None],
+    "Affine": [Affine, 1.0, 0.0],
+    "ScaledTanh": [ScaledTanh, 1.0, 1.0]
 }
 
 
