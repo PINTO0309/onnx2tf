@@ -53,7 +53,7 @@ def make_node(
     onnx2tf -i text_recognition_CRNN_EN_2021sep.onnx
 
     test onnx file: https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/LSTM.tanh.bidirectional.onnx
-    onnx2tf -i LSTM.tanh.bidirectional.onnx
+    onnx2tf -i LSTM.tanh.bidirectional.onnx -kat Input3
 
     Parameters
     ----------
