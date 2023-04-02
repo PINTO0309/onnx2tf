@@ -208,7 +208,7 @@ def make_node(
     B = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
 
-    if isinstance(B, np.ndarray) and np.sum(B) > 0.0:
+    if isinstance(B, np.ndarray) and np.sum(B) != 0.0:
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
             f'The process for the case where Bias is set to a value greater than zero has not yet been implemented. ' +
@@ -233,7 +233,7 @@ def make_node(
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != '' else graph_node_input_8
 
-    if isinstance(P, np.ndarray) and np.sum(P) > 0.0:
+    if isinstance(P, np.ndarray) and np.sum(P) != 0.0:
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
             f'The process for the case where Peepholes is set to a value greater than zero has not yet been implemented. ' +
