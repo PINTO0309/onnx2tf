@@ -24,72 +24,6 @@ from tensorflow.python.ops import gen_image_ops
 from tensorflow.python.util import dispatch
 
 
-class NMSLayer(tf.keras.layers.Layer):
-    def __init__(self):
-        super(NMSLayer, self).__init__()
-
-    @dispatch.add_dispatch_support
-    def non_max_suppression(
-        self,
-        boxes,
-        scores,
-        max_output_size,
-        iou_threshold=0.5,
-        score_threshold=float('-inf'),
-        pad_to_max_output_size=False,
-        name=None,
-    ):
-        with ops.name_scope(name, 'non_max_suppression'):
-            selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
-                boxes=boxes,
-                scores=scores,
-                max_output_size=max_output_size \
-                    if not isinstance(max_output_size, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=max_output_size,
-                            name='max_output_size'
-                        ),
-                iou_threshold=iou_threshold \
-                    if not isinstance(iou_threshold, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=iou_threshold,
-                            name='iou_threshold',
-                        ),
-                score_threshold=score_threshold \
-                    if not isinstance(score_threshold, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=score_threshold,
-                            name='score_threshold',
-                        ),
-                pad_to_max_output_size=pad_to_max_output_size,
-            )
-            if pad_to_max_output_size:
-                return selected_indices
-
-            else:
-                return selected_indices[:num_valid]
-
-    def call(
-        self,
-        boxes,
-        scores,
-        max_output_size,
-        iou_threshold=0.5,
-        score_threshold=float('-inf'),
-        pad_to_max_output_size=False,
-        name=None,
-    ):
-        return self.non_max_suppression(
-            boxes,
-            scores,
-            max_output_size,
-            iou_threshold,
-            score_threshold,
-            pad_to_max_output_size,
-            name,
-        )
-
-
 ONNX_ACTIVATION_MAPPING = {
     "Elu": tf.nn.elu,
     "HardSigmoid": tf.keras.backend.hard_sigmoid,
@@ -114,6 +48,7 @@ def make_node(
     **kwargs: dict,
 ):
     """[WIP][TODO] LSTM
+    test onnx file: https://github.com/opencv/opencv_zoo/raw/master/models/text_recognition_crnn/text_recognition_CRNN_EN_2021sep.onnx
 
     Parameters
     ----------
