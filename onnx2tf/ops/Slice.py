@@ -383,6 +383,16 @@ def make_node(
             )
         # FlexStridedSlice generation suppression process
         COMPRESSION_DEFAULT_VALUE = 5
+        onnx_slice_dims_count = 0
+        if isinstance(starts, np.ndarray):
+            onnx_slice_dims_count = len(starts)
+        elif hasattr(starts, 'numpy'):
+            onnx_slice_dims_count = len(starts.numpy())
+        elif isinstance(starts, int):
+            onnx_slice_dims_count = 1
+        else:
+            onnx_slice_dims_count = len(starts)
+
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             stridedslice_with_flexing_deterrence(
                 input_tensor=input_tensor,
@@ -393,6 +403,7 @@ def make_node(
                 end_mask=end_mask_,
                 ignore_axes=axes,
                 compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                onnx_slice_dims_count=onnx_slice_dims_count,
                 output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
                 name=graph_node.name,
                 **kwargs,
