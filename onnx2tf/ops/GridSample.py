@@ -120,8 +120,7 @@ def make_node(
 
     if align_corners:
         add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
-        div1 = tf.math.divide(add1, tf.convert_to_tensor(2.0)) # Div_output_0
-        mul1 = tf.math.multiply(div1, tf.convert_to_tensor(image.shape[2]-1, dtype=tf.float32)) # Mul_output_0
+        mul1 = tf.math.multiply(add1, tf.convert_to_tensor((image.shape[2]-1)*0.5, dtype=tf.float32)) # Mul_output_0
     else:
         add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
         mul00 = tf.math.multiply(add1, tf.convert_to_tensor(image.shape[2], dtype=tf.float32)) # Mul_output_0
@@ -131,8 +130,7 @@ def make_node(
 
     if align_corners:
         add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_1_output_0
-        div2 = tf.math.divide(add2, tf.convert_to_tensor(2.0)) # Div_1_output_0
-        mul2 = tf.math.multiply(div2, tf.convert_to_tensor(image.shape[1]-1, dtype=tf.float32)) # Mul_1_output_0
+        mul2 = tf.math.multiply(add2, tf.convert_to_tensor((image.shape[1]-1)*0.5, dtype=tf.float32)) # Mul_1_output_0
     else:
         add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_output_0
         mul01 = tf.math.multiply(add2, tf.convert_to_tensor(image.shape[1], dtype=tf.float32)) # Mul_output_0
