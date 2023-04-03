@@ -2952,19 +2952,22 @@ def stridedslice_with_flexing_deterrence(
                 stridedslice_no_one_data = \
                     tf.strided_slice(
                         input_=squeezed_original_x,
-                        begin=begin_,
-                        end=end_,
-                        strides=strides_,
-                        begin_mask=begin_mask_,
-                        end_mask=end_mask_,
+                        begin=tf.convert_to_tensor(begin_),
+                        end=tf.convert_to_tensor(end_),
+                        strides=tf.convert_to_tensor(strides_),
+                        begin_mask=tf.convert_to_tensor(begin_mask_),
+                        end_mask=tf.convert_to_tensor(end_mask_),
                         name=name,
                     )
                 tensor_after_stridedslice = \
                     tf.reshape(
                         tensor=stridedslice_no_one_data,
-                        shape=[
-                            dim if not isinstance(dim, str) and dim is not None else -1 for dim in output_shape
-                        ],
+                        shape=\
+                            tf.convert_to_tensor(
+                                [
+                                    dim if not isinstance(dim, str) and dim is not None else -1 for dim in output_shape
+                                ]
+                            ),
                     )
             else:
                 # Normal StridedSlice
