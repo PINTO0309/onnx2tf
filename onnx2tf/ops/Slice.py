@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    stridedslice_with_flexing_deterrence,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.colors import Color
@@ -379,6 +380,22 @@ def make_node(
                 begin_mask=begin_mask_,
                 end_mask=end_mask_,
                 name=graph_node.name,
+            )
+        # FlexStridedSlice generation suppression process
+        COMPRESSION_DEFAULT_VALUE = 5
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            stridedslice_with_flexing_deterrence(
+                input_tensor=input_tensor,
+                begin=begin_,
+                end=end_,
+                strides=strides_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+                ignore_axes=axes,
+                compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
+                name=graph_node.name,
+                **kwargs,
             )
     else:
         # OP replacement

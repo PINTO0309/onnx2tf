@@ -2808,6 +2808,456 @@ def transpose_with_flexing_deterrence(
     return tensor_after_transposition
 
 
+# TODO: StridedSlice
+def stridedslice_with_flexing_deterrence(
+    *,
+    input_tensor: Any,
+    begin: List[int],
+    end: List[int],
+    strides: List[int],
+    begin_mask: List[int],
+    end_mask: List[int],
+    ignore_axes: List[int],
+    compression_defult_value: int,
+    output_shape: List[int] = None,
+    name: str = None,
+    **kwargs: dict,
+) -> Any:
+    """StridedSlice tensors of 6 or more dimensions while suppressing the transformation to FlexTranspose.
+    Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
+
+    Parameters
+    ----------
+    input_tensor: Any
+        Tensor to be Slice
+
+    begin: List[int]
+        begin
+
+    end: List[int]
+        end
+
+    strides: List[int]
+        strides
+
+    begin_mask: List[int]
+        begin_mask
+
+    end_mask: List[int]
+        end_mask
+
+    ignore_axes: List[int]
+        List of dimensions to slice
+
+    compression_defult_value: int
+        Default minimum number of dimensions to enable or disable dimensional compression processing.
+
+    output_shape: List[int]
+        Shape of tensor after transposition.
+        The shape of the tensor in TensorFlow format after transposition must be specified.
+        This value may produce the most optimized StridedSlice with Special StridedSlice.1 applied.
+        If this value is not specified, the redundant Special StridedSlice.2 is applied.
+
+    name: str
+        graph_node.name
+
+    Returns
+    ----------
+    tensor_after_stridedslice: Any
+        Tensor after stridedslice
+    """
+    disable_suppression_flexstridedslice: bool = \
+        kwargs['disable_suppression_flexstridedslice']
+    number_of_dimensions_after_flexstridedslice_compression: int = \
+        kwargs['number_of_dimensions_after_flexstridedslice_compression']
+
+    tensor_after_stridedslice = input_tensor
+
+    if disable_suppression_flexstridedslice:
+        # Normal StridedSlice
+        tensor_after_stridedslice = tf.strided_slice(
+            input_=input_tensor,
+            begin=begin,
+            end=end,
+            strides=strides,
+            begin_mask=begin_mask,
+            end_mask=end_mask,
+            name=name,
+        )
+    else:
+        # Special StridedSlice
+        # Get dimension with 1 element
+        input_tensor_shape: List[int] = input_tensor.shape
+        input_tensor_rank = len(input_tensor_shape)
+        # Only dimensions for which both begin_mask and end_mask are
+        # ignored (==0) are selected for compression
+        remove_one_taget_axes = [
+            axis for axis in range(input_tensor_rank) \
+                if axis not in ignore_axes
+        ]
+        # Extract dimensions of size 1
+        x_shape_one_dims = [
+            idx for idx in (remove_one_taget_axes) \
+                if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx]==1
+        ]
+        # Get the number of undefined dimensions
+        x_shape_none_dims_count = len(
+            [dim for dim in input_tensor_shape if not isinstance(dim, int) or dim < 1]
+        )
+        # Delete dimension with 1 element
+        squeezed_original_x = tf.squeeze(input_tensor, x_shape_one_dims)
+
+        # Obtain a shape with the dimension with 1 element removed
+        squeezed_original_shapes = squeezed_original_x.shape
+
+        if input_tensor_rank >= (compression_defult_value + 1) \
+            and len(squeezed_original_shapes) <= compression_defult_value \
+            and x_shape_none_dims_count == 0 \
+            and output_shape is not None:
+            # Special StridedSlice.1
+            #   Suppresses as much as possible the conversion of StridedSlice
+            #   of 6 or more dimensions into FlexStridedSlice.
+            #   Compresses dimensions with a numerical value of 1
+            #   to suppress the generation of redundant StridedSlice.
+
+            # Adjust begin, end, strides, begin_mask, end_mask
+            begin_ = []
+            end_ = []
+            strides_ = []
+            begin_mask_ = 0
+            end_mask_ = 0
+            for axis in range(input_tensor_rank):
+                if axis not in x_shape_one_dims:
+                    begin_.append(int(begin[axis]))
+            for axis in range(input_tensor_rank):
+                if axis not in x_shape_one_dims:
+                    end_.append(int(end[axis]))
+            for axis in range(input_tensor_rank):
+                if axis not in x_shape_one_dims:
+                    strides_.append(int(strides[axis]))
+            begin_mask_bit = list(reversed([int(i) for i in list(bin(begin_mask)[2:])]))
+            idx = 0
+            for axis in range(input_tensor_rank):
+                if axis not in x_shape_one_dims:
+                    begin_mask_ += 2**idx*begin_mask_bit[axis]
+                    idx +=1
+            end_mask_bit = list(reversed([int(i) for i in list(bin(end_mask)[2:])]))
+            idx = 0
+            for axis in range(input_tensor_rank):
+                if axis not in x_shape_one_dims:
+                    end_mask_ += 2**idx*end_mask_bit[axis]
+                    idx +=1
+            if len(begin_) > 0:
+                # Special StridedSlice
+                stridedslice_no_one_data = \
+                    tf.strided_slice(
+                        input_=squeezed_original_x,
+                        begin=begin_,
+                        end=end_,
+                        strides=strides_,
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
+                        name=name,
+                    )
+                tensor_after_stridedslice = \
+                    tf.reshape(
+                        tensor=stridedslice_no_one_data,
+                        shape=[
+                            dim if not isinstance(dim, str) and dim is not None else -1 for dim in output_shape
+                        ],
+                    )
+            else:
+                # Normal StridedSlice
+                tensor_after_stridedslice = tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin,
+                    end=end,
+                    strides=strides,
+                    begin_mask=begin_mask,
+                    end_mask=end_mask,
+                    name=name,
+                )
+
+        # TODO: WIP
+        # elif input_tensor_rank >= (compression_defult_value + 1) and x_shape_none_dims_count == 0 \
+        #     or number_of_dimensions_after_flextranspose_compression < compression_defult_value \
+        #         and number_of_dimensions_after_flextranspose_compression >= 2 \
+        #         and x_shape_none_dims_count == 0:
+        #     # Special Transpose.2
+        #     #   Suppresses as much as possible the conversion of transposes
+        #     #   of 6 or more dimensions into FlexTransposes.
+        #     #   Decompose and transpose the tensor to be less than 5 dimensions.
+        #     #   Compress in order from the dimension with the smallest value.
+        #     #   https://github.com/PINTO0309/onnx2tf/issues/93
+
+        #     # Overall process flow
+        #     #   1. Extract the dimension with the smallest number needed to be less than 5 dimensions
+        #     #   2. Split the tensor in the extracted dimension
+        #     #   3. Transpose a divided tensor
+        #     #   4. Concat the transposed tensor
+
+        #     """
+        #     e.g.
+        #         data:
+        #             shape = [2,8,8,3,4,5,4,5]
+        #             x = torch.arange(1, np.prod(shape)+1)
+        #             x = x.reshape(shape)
+        #             target_transpose_perm = [6,0,1,4,7,2,5,3]
+
+        #         result:
+        #             shape = [4,2,8,4,5,8,5,3]
+        #     """
+        #     # 1. Extract the dimension with the smallest number needed to be less than 5 dimensions
+        #     np_input_tensor_shape = np.asarray(input_tensor_shape)
+        #     num_of_dim_requiring_compression = \
+        #         input_tensor_rank - number_of_dimensions_after_flextranspose_compression
+        #     """
+        #     np_input_tensor_shape:
+        #         Shape of input data before transposition
+        #         [2, 8, 8, 3, 4, 5, 4, 5]
+
+        #     sorted_minimum_idxs:
+        #         List of extracted dimension numbers with small numbers
+        #         [0, 3, 4]
+
+        #     removed_split_perm:
+
+        #         [6, 1, 7, 2, 5]
+
+        #     target_transpose_perm:
+        #         perm after transposition
+        #         [6, 0, 1, 4, 7, 2, 5, 3]
+
+        #     target_sorted_minimum_idxs:
+        #         Dimension to be restored at the end of processing
+        #         [1, 7, 3]
+
+        #     target_minimum_dims:
+        #         Number of dimensions to be finally re-expanded
+        #         [2, 3, 4]
+
+        #     target_transpose_shape:
+        #         [4, 2, 8, 4, 5, 8, 5, 3]
+        #     """
+        #     sorted_minimum_idxs = np.argsort(np_input_tensor_shape)[:num_of_dim_requiring_compression].tolist()
+        #     target_minimum_dims = [
+        #         np_input_tensor_shape[sorted_idx] for sorted_idx in sorted_minimum_idxs
+        #     ]
+        #     removed_split_perm = [
+        #         dim for dim in perm if dim not in sorted_minimum_idxs
+        #     ]
+        #     sorted_removed_split_perm = sorted(removed_split_perm)
+        #     removed_splited_transpose_perm = [
+        #         sorted_removed_split_perm.index(idx) \
+        #             for idx in removed_split_perm
+        #     ]
+        #     target_transpose_perm = perm
+        #     target_sorted_minimum_idxs = [
+        #         target_transpose_perm.index(idx) for idx in sorted_minimum_idxs
+        #     ]
+
+        #     # 2. Split the tensor in the extracted dimension
+        #     def split_squeeze_tensor(
+        #         *,
+        #         input_tensors: List[Any],
+        #         axis: int,
+        #     ):
+        #         result_tensor_list = []
+        #         for input_tensor in input_tensors:
+        #             splited_tensors = tf.split(
+        #                 value=input_tensor,
+        #                 num_or_size_splits=input_tensor.shape[axis],
+        #                 axis=axis,
+        #             )
+        #             splited_squeezed_tensors = []
+        #             for splited_tensor in splited_tensors:
+        #                 splited_squeezed_tensors.append(
+        #                     tf.squeeze(
+        #                         input=splited_tensor,
+        #                         axis=axis,
+        #                     )
+        #                 )
+        #             result_tensor_list = result_tensor_list + splited_squeezed_tensors
+        #         return result_tensor_list
+
+        #     splited_squeezed_tensors = [input_tensor]
+        #     axeses = copy.deepcopy(sorted_minimum_idxs)
+        #     axeses_idx = 0
+        #     while True:
+        #         axis = axeses[axeses_idx]
+        #         splited_squeezed_tensors = split_squeeze_tensor(
+        #             input_tensors=splited_squeezed_tensors,
+        #             axis=axis,
+        #         )
+        #         axeses_idx += 1
+        #         if axeses_idx > len(axeses)-1:
+        #             break
+        #         new_axeses = []
+        #         for axes in axeses:
+        #             if axes <= axis:
+        #                 new_axeses.append(axes)
+        #             else:
+        #                 new_axeses.append(axes-1)
+        #         axeses = new_axeses
+
+        #     # 3. Transpose a divided tensor (splited_squeezed_tensors)
+        #     """
+        #     splited_squeezed_tensors:
+        #         [
+        #             [8, 8, 5, 4, 5],
+        #             [8, 8, 5, 4, 5],
+        #             [8, 8, 5, 4, 5],
+        #                     :
+        #         ]
+
+        #     shrink_transposed_tensors:
+        #         [
+        #             [4, 8, 5, 8, 5],
+        #             [4, 8, 5, 8, 5],
+        #             [4, 8, 5, 8, 5],
+        #                     :
+        #         ]
+        #     """
+        #     shrink_transposed_tensors = []
+        #     for splited_squeezed_tensor in splited_squeezed_tensors:
+        #         shrink_transposed_tensors.append(
+        #             tf.transpose(
+        #                 a=splited_squeezed_tensor,
+        #                 perm=removed_splited_transpose_perm,
+        #             )
+        #         )
+
+        #     # 4. Concat the transposed tensor
+        #     """
+        #     target_sorted_minimum_idxs:
+        #         [1, 7, 3]
+
+        #     asc_target_idxs_for_expand:
+        #         [1, 3, 7]
+
+        #     target_minimum_dims:
+        #         [2, 3, 4]
+
+        #     len(shrink_transposed_tensors):
+        #         24
+
+        #     ##########################################
+        #     shrink_transposed_tensors:
+        #         [
+        #             [4, 8, 5, 8, 5],
+        #             [4, 8, 5, 8, 5],
+        #             [4, 8, 5, 8, 5],
+        #                     :
+        #         ]
+
+        #     ########################################## step.1 - expand
+        #     [1, 7, 3] -> [1, 3, 7]
+        #     shrink_transposed_tensors:
+        #         [
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #                     :
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #         ]
+
+        #     ########################################## step.2 - grouping
+        #     target_concat_axes: [1, 7, 3] -> [3, 7, 1]
+        #     gorouping_dims: [2, 3, 4] -> [4, 3, 2]
+        #     grouped_total_tensors:
+        #     [
+        #         [
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #         ],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #         ],
+        #                         :
+        #         [
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #             [4, 1, 8, 1, 5, 8, 5, 1],
+        #         ],
+        #     ]
+
+        #     ########################################## step.3 - concat
+        #     concated_part_tensors:
+        #     [
+        #         [4, 1, 8, 4, 5, 8, 5, 1],
+        #         [4, 1, 8, 4, 5, 8, 5, 1],
+        #                     :
+        #         [4, 1, 8, 4, 5, 8, 5, 1],
+        #         [4, 1, 8, 4, 5, 8, 5, 1],
+        #     ]
+
+        #     ########################################## step.final
+        #     final_transposed_tensors:
+        #         [4, 2, 8, 4, 5, 8, 5, 3]
+        #     """
+
+        #     ########################################## step.1 - expand
+        #     asc_target_idxs_for_expand = sorted(target_sorted_minimum_idxs)
+        #     for target_sorted_minimum_idx in asc_target_idxs_for_expand:
+        #         transposed_expanded_tensors = []
+        #         for shrink_transposed_tensor in shrink_transposed_tensors:
+        #             transposed_expanded_tensors.append(
+        #                 tf.expand_dims(
+        #                     input=shrink_transposed_tensor,
+        #                     axis=target_sorted_minimum_idx,
+        #                 )
+        #             )
+        #         shrink_transposed_tensors = transposed_expanded_tensors
+
+        #     ########################################## step.2 - grouping
+        #     target_concat_axes = reversed(target_sorted_minimum_idxs)
+        #     gorouping_dims = reversed(target_minimum_dims)
+        #     for concat_axis, target_concat_dim in zip(target_concat_axes, gorouping_dims):
+        #         grouped_part_tensors = []
+        #         grouped_total_tensors = []
+        #         for idx, shrink_transposed_tensor in enumerate(shrink_transposed_tensors):
+        #             if idx > 0 and (idx % target_concat_dim) == 0:
+        #                 grouped_total_tensors.append(grouped_part_tensors)
+        #                 grouped_part_tensors = []
+        #             grouped_part_tensors.append(shrink_transposed_tensor)
+        #         grouped_total_tensors.append(grouped_part_tensors)
+
+        #         ########################################## step.3 - concat
+        #         concated_part_tensors = []
+        #         for tensors in grouped_total_tensors:
+        #             concated_part_tensors.append(
+        #                 tf.concat(
+        #                     values=tensors,
+        #                     axis=concat_axis,
+        #                 )
+        #             )
+        #         shrink_transposed_tensors = concated_part_tensors
+
+        #     ########################################## step.final
+        #     tensor_after_stridedslice = shrink_transposed_tensors[0]
+
+        else:
+            # Normal StridedSlice
+            tensor_after_stridedslice = tf.strided_slice(
+                input_=input_tensor,
+                begin=begin,
+                end=end,
+                strides=strides,
+                begin_mask=begin_mask,
+                end_mask=end_mask,
+                name=name,
+            )
+
+    return tensor_after_stridedslice
+
+
 def dummy_onnx_inference(
     *,
     onnx_graph: onnx.ModelProto,

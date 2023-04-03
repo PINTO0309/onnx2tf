@@ -81,6 +81,8 @@ def convert(
     enable_batchmatmul_unfold: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
     number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
+    disable_suppression_flexstridedslice: Optional[bool] = False,
+    number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
     optimization_for_gpu_delegate: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
@@ -292,6 +294,13 @@ def convert(
         Also suppress the creation of the Transpose itself by specifying 2.\n
         Default: 6
 
+    disable_suppression_flexstridedslice: Optional[bool]
+        Disables FlexStridedSlice generation suppression.
+
+    number_of_dimensions_after_flexstridedslice_compression: Optional[int]
+        Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.\n
+        Default: 5
+
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those\n
         that do as much as possible.
@@ -500,6 +509,16 @@ def convert(
         )
         sys.exit(1)
 
+    # number_of_dimensions_after_flexstridedslice_compression
+    if number_of_dimensions_after_flexstridedslice_compression < 1:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'number_of_dimensions_after_flexstridedslice_compression must be at least 1. '+
+            f'number_of_dimensions_after_flexstridedslice_compression: ' +
+            f'{number_of_dimensions_after_flexstridedslice_compression}'
+        )
+        sys.exit(1)
+
     replacement_parameters = None
     if param_replacement_file:
         if not os.path.isfile(param_replacement_file):
@@ -688,6 +707,8 @@ def convert(
         'disable_group_convolution': disable_group_convolution,
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
         'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
+        'disable_suppression_flexstridedslice': disable_suppression_flexstridedslice,
+        'number_of_dimensions_after_flexstridedslice_compression': number_of_dimensions_after_flexstridedslice_compression,
         'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
         'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
@@ -1710,7 +1731,7 @@ def main():
             'Disables FlexTranspose generation suppression.'
     )
     parser.add_argument(
-        '-nodafc',
+        '-nodaftc',
         '--number_of_dimensions_after_flextranspose_compression',
         type=int,
         default=6,
@@ -1718,6 +1739,22 @@ def main():
             'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
             'Also suppress the creation of the Transpose itself by specifying 2. \n' +
             'Default: 6'
+    )
+    parser.add_argument(
+        '-dsfs',
+        '--disable_suppression_flexstridedslice',
+        action='store_true',
+        help=\
+            'Disables FlexStridedSlice generation suppression.'
+    )
+    parser.add_argument(
+        '-nodafsc',
+        '--number_of_dimensions_after_flexstridedslice_compression',
+        type=int,
+        default=5,
+        help=\
+            'Number of StricedSlice OP dimensions generated after avoiding FlexStridedSlice generation. \n' +
+            'Default: 5'
     )
     parser.add_argument(
         '-ofgd',
@@ -1955,6 +1992,8 @@ def main():
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
         number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
+        disable_suppression_flexstridedslice=args.disable_suppression_flexstridedslice,
+        number_of_dimensions_after_flexstridedslice_compression=args.number_of_dimensions_after_flexstridedslice_compression,
         optimization_for_gpu_delegate=args.optimization_for_gpu_delegate,
         replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
         replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
