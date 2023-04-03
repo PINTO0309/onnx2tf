@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.9
+  ghcr.io/pinto0309/onnx2tf:1.8.10
 
   or
 
@@ -719,10 +719,17 @@ optional arguments:
   -dsft, --disable_suppression_flextranspose
     Disables FlexTranspose generation suppression.
 
-  -nodafc, --number_of_dimensions_after_flextranspose_compression
+  -nodaftc, --number_of_dimensions_after_flextranspose_compression
     Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
     Also suppress the creation of the Transpose itself by specifying 2.
     Default: 6
+
+  -dsfs, --disable_suppression_flexstridedslice
+    Disables FlexStridedSlice generation suppression.
+
+  -nodafsc, --number_of_dimensions_after_flexstridedslice_compression
+    Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
+    Default: 5
 
   -ofgd, --optimization_for_gpu_delegate
     Replace operations that do not support gpu delegate with those
@@ -922,7 +929,9 @@ convert(
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
   disable_suppression_flextranspose: Optional[bool] = False,
-  number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
+  number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
+  disable_suppression_flexstridedslice: Optional[bool] = False,
+  number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
   optimization_for_gpu_delegate: Optional[bool] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
   replace_argmax_to_reducemax_and_indicies_is_float32: Union[bool, NoneType] = False,
@@ -1133,6 +1142,13 @@ convert(
       Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
       Also suppress the creation of the Transpose itself by specifying 2.
       Default: 6
+
+    disable_suppression_flexstridedslice: Optional[bool]
+        Disables FlexStridedSlice generation suppression.
+
+    number_of_dimensions_after_flexstridedslice_compression: Optional[int]
+        Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
+        Default: 5
 
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those
