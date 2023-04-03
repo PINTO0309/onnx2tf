@@ -2446,7 +2446,7 @@ def transpose_with_flexing_deterrence(
     name: str = None,
     **kwargs: dict,
 ) -> Any:
-    """Transpose tensors of 6 or more dimensions while suppressing the transformation to FlexTranspose.
+    """Transpose tensors of 7 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
 
     Parameters
@@ -2510,7 +2510,7 @@ def transpose_with_flexing_deterrence(
             and output_shape is not None:
             # Special Transpose.1
             #   Suppresses as much as possible the conversion of transposes
-            #   of 6 or more dimensions into FlexTransposes.
+            #   of 7 or more dimensions into FlexTransposes.
             #   Compresses dimensions with a numerical value of 1
             #   to suppress the generation of redundant Transpose.
             remove_one_target_perm = [
@@ -2539,8 +2539,8 @@ def transpose_with_flexing_deterrence(
                 and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
-            #   of 6 or more dimensions into FlexTransposes.
-            #   Decompose and transpose the tensor to be less than 5 dimensions.
+            #   of 7 or more dimensions into FlexTransposes.
+            #   Decompose and transpose the tensor to be less than 6 dimensions.
             #   Compress in order from the dimension with the smallest value.
             #   https://github.com/PINTO0309/onnx2tf/issues/93
 
@@ -2890,7 +2890,7 @@ def stridedslice_with_flexing_deterrence(
         input_tensor_shape: List[int] = input_tensor.shape
         input_tensor_rank = len(input_tensor_shape)
         # Only dimensions for which both begin_mask and end_mask are
-        # ignored (==0) are selected for compression
+        # ignored (==1) are selected for compression
         remove_one_taget_axes = [
             axis for axis in range(input_tensor_rank) \
                 if axis not in ignore_axes
