@@ -275,7 +275,13 @@ def make_node(
     layout: int = graph_node.attrs.get('layout', 0)
 
     # Need transpose for batchwise, X
-    if layout == 1:
+    # layout==0
+    #   onnx: [seq_length, batch_size, input_size]
+    #   tf  : [batch_size, seq_length(timesteps), input_size]
+    # layout==1
+    #   onnx: [batch_size, seq_length, input_size]
+    #   tf  : [batch_size, seq_length(timesteps), input_size]
+    if layout == 0:
         X = tf.transpose(X, perm=[1, 0, 2])
 
     graph_node_output1: gs.Variable = graph_node.outputs[0]
@@ -461,6 +467,12 @@ def make_node(
     input_size = X.shape[-1]
 
     # Need transpose for batchwise, initial_h/initial_c
+    # layout==0
+    #   onnx: [num_directions, batch_size, hidden_size]
+    #   tf  : [num_directions, batch_size, hidden_size]
+    # layout==1
+    #   onnx: [batch_size, num_directions, hidden_size]
+    #   tf  : [num_directions, batch_size, hidden_size]
     if layout == 1:
         initial_h = tf.transpose(initial_h, perm=[1, 0, 2]) if initial_h is not None else None
         initial_c = tf.transpose(initial_c, perm=[1, 0, 2]) if initial_c is not None else None
@@ -493,15 +505,6 @@ def make_node(
             backward_initial_state = backward_initial_state + [tf.convert_to_tensor(initial_c[1])]
         elif initial_h is not None and initial_c is None:
             backward_initial_state = backward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[1]))]
-
-    # forward
-    if forward_initial_state is not None:
-        forward_initial_state[0] = forward_initial_state[0] * tf.ones([hidden_size, hidden_size], dtype=forward_initial_state[0].dtype)
-        forward_initial_state[1] = forward_initial_state[1] * tf.ones([hidden_size, hidden_size], dtype=forward_initial_state[1].dtype)
-    # backward
-    if backward_initial_state is not None:
-        backward_initial_state[0] = backward_initial_state[0] * tf.ones([hidden_size, hidden_size], dtype=backward_initial_state[0].dtype)
-        backward_initial_state[1] = backward_initial_state[1] * tf.ones([hidden_size, hidden_size], dtype=backward_initial_state[1].dtype)
 
     if direction == 'forward':
         forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
@@ -596,12 +599,10 @@ def make_node(
             go_backwards=True,
             unit_forget_bias=reverse_unit_forget_bias,
         )
-        # forward_output, forward_h, forward_c = \
-        #     forward_lstm(X, initial_state=forward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
-        # reverse_output, reverse_h, reverse_c = \
-        #     reverse_lstm(X, initial_state=backward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
-        forward_output, forward_h, forward_c = forward_lstm(X) # [24, 1, 512], [256, 256], [256, 256]
-        reverse_output, reverse_h, reverse_c = reverse_lstm(X) # [24, 1, 512], [256, 256], [256, 256]
+        forward_output, forward_h, forward_c = \
+            forward_lstm(X, initial_state=forward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
+        reverse_output, reverse_h, reverse_c = \
+            reverse_lstm(X, initial_state=backward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
