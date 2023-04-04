@@ -47,7 +47,7 @@ class ScaledTanh(tf.keras.layers.Layer):
 
 # {'activateion_name': [tf_activation, default_alpha, default_beta]}
 ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
-    "Elu": [tf.nn.elu, 1.0, None],
+    "Elu": [tf.nn.elu, 1.0, 0.0],
     "HardSigmoid": [tf.keras.backend.hard_sigmoid, 0.2, 0.5],
     "LeakyRelu": [tf.nn.leaky_relu, 0.01, 0.0],
     "Relu": [tf.nn.relu, 1.0, 0.0],
