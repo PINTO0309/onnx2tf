@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    explicit_broadcast,
 )
 from onnx2tf.utils.colors import Color
 
@@ -207,16 +208,6 @@ def make_node(
     # num_directions: bidirectional=2, forward or reverse=1
     B = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
-
-    if isinstance(B, np.ndarray) and np.sum(B) != 0.0:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'The process for the case where Bias is set to a value greater than zero has not yet been implemented. ' +
-            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
-            f'B.shape: {B.shape}'
-        )
-        sys.exit(1)
-
     # sequence_lens [batch_size]
     sequence_lens = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) and graph_node_input_5.name != '' else graph_node_input_5
@@ -428,6 +419,7 @@ def make_node(
         bias=None,
         hidden_size,
         go_backwards,
+        unit_forget_bias,
     ):
         need_bias = True
         if isinstance(bias, np.ndarray) and np.sum(bias) == 0:
@@ -446,6 +438,7 @@ def make_node(
                 recurrent_dropout=0,
                 stateful=False,
                 implementation=2,
+                unit_forget_bias=unit_forget_bias,
             )
         else:
             lstm_layer = tf.keras.layers.LSTM(
@@ -459,6 +452,7 @@ def make_node(
                 recurrent_dropout=0,
                 stateful=False,
                 implementation=2,
+                unit_forget_bias=unit_forget_bias,
             )
         return lstm_layer
 
@@ -499,6 +493,15 @@ def make_node(
             backward_initial_state = backward_initial_state + [tf.convert_to_tensor(initial_c[1])]
         elif initial_h is not None and initial_c is None:
             backward_initial_state = backward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[1]))]
+
+    # forward
+    if forward_initial_state is not None:
+        forward_initial_state[0] = forward_initial_state[0] * tf.ones([hidden_size, hidden_size], dtype=forward_initial_state[0].dtype)
+        forward_initial_state[1] = forward_initial_state[1] * tf.ones([hidden_size, hidden_size], dtype=forward_initial_state[1].dtype)
+    # backward
+    if backward_initial_state is not None:
+        backward_initial_state[0] = backward_initial_state[0] * tf.ones([hidden_size, hidden_size], dtype=backward_initial_state[0].dtype)
+        backward_initial_state[1] = backward_initial_state[1] * tf.ones([hidden_size, hidden_size], dtype=backward_initial_state[1].dtype)
 
     if direction == 'forward':
         forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
@@ -557,6 +560,9 @@ def make_node(
         forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
         forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
         forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
+        forward_unit_forget_bias = True
+        if forward_bias.shape[-1] != hidden_size:
+            forward_unit_forget_bias = False
 
         reverse_weight = tf.reshape(W[1], shape=[4, hidden_size, input_size])
         reverse_recurrence_weight = tf.reshape(R[1], shape=[4, hidden_size, hidden_size])
@@ -568,6 +574,9 @@ def make_node(
         reverse_kernel = np.concatenate([rW_i, rW_f, rW_c, rW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1)
         reverse_recurrent_kernel = np.concatenate([rR_i, rR_f, rR_c, rR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1)
         reverse_bias = np.concatenate([rB_i, rB_f, rB_c, rB_o], axis=1) # (1, 1024)
+        reverse_unit_forget_bias = True
+        if reverse_bias.shape[-1] != hidden_size:
+            reverse_unit_forget_bias = False
 
         # forward
         forward_lstm = create_lstm_layer(
@@ -576,6 +585,7 @@ def make_node(
             bias=forward_bias, # (1, 1024)
             hidden_size=hidden_size, # 256
             go_backwards=False,
+            unit_forget_bias=forward_unit_forget_bias,
         )
         # backward
         reverse_lstm = create_lstm_layer(
@@ -584,11 +594,14 @@ def make_node(
             bias=reverse_bias, # (1, 1024)
             hidden_size=hidden_size, # 256
             go_backwards=True,
+            unit_forget_bias=reverse_unit_forget_bias,
         )
-        forward_output, forward_h, forward_c = \
-            forward_lstm(X, initial_state=forward_initial_state) # [24, 1, 512], [1, 256], [1, 256]
-        reverse_output, reverse_h, reverse_c = \
-            reverse_lstm(X, initial_state=backward_initial_state) # [24, 1, 512], [1, 256], [1, 256]
+        # forward_output, forward_h, forward_c = \
+        #     forward_lstm(X, initial_state=forward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
+        # reverse_output, reverse_h, reverse_c = \
+        #     reverse_lstm(X, initial_state=backward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
+        forward_output, forward_h, forward_c = forward_lstm(X) # [24, 1, 512], [256, 256], [256, 256]
+        reverse_output, reverse_h, reverse_c = reverse_lstm(X) # [24, 1, 512], [256, 256], [256, 256]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
