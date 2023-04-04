@@ -50,12 +50,12 @@ ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
     "Elu": [tf.nn.elu, 1.0, None],
     "HardSigmoid": [tf.keras.backend.hard_sigmoid, 0.2, 0.5],
     "LeakyRelu": [tf.nn.leaky_relu, 0.01, 0.0],
-    "Relu": [tf.nn.relu, None, None],
-    "Sigmoid": [tf.sigmoid, None, None],
-    "Softsign": [tf.nn.softsign, None, None],
-    "Softplus": [tf.nn.softplus, None, None],
-    "Tanh": [tf.tanh, None, None],
-    "ThresholdedRelu": [tf.keras.layers.ThresholdedReLU, 1.0, None],
+    "Relu": [tf.nn.relu, 1.0, 0.0],
+    "Sigmoid": [tf.sigmoid, 1.0, 0.0],
+    "Softsign": [tf.nn.softsign, 1.0, 0.0],
+    "Softplus": [tf.nn.softplus, 1.0, 0.0],
+    "Tanh": [tf.tanh, 1.0, 0.0],
+    "ThresholdedRelu": [tf.keras.layers.ThresholdedReLU, 1.0, 0.0],
     "Affine": [Affine, 1.0, 0.0],
     "ScaledTanh": [ScaledTanh, 1.0, 1.0]
 }
