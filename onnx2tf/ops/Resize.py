@@ -100,7 +100,23 @@ def make_node(
             dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
         ]
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
-            if len(onnx_input_shape) == 4:
+            if len(onnx_input_shape) == 3:
+                # 1D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+                before_op_output_shape_trans = True
+                # 1D - Partial model
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
+                    tf_partial_model_tensors = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=tf_partial_model_inputs[0],
+                            perm=[0,2,1],
+                            **kwargs,
+                        )
+            elif len(onnx_input_shape) == 4:
                 # 2D - Overall model
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
@@ -197,6 +213,30 @@ def make_node(
         'dtype': dtype,
         'nhwc': True,
     }
+
+    # 1D Resize workaround
+    # https://github.com/PINTO0309/onnx2tf/issues/283
+    resize_one_d = False
+    if input_tensor_rank == 3:
+        # Reshape 4D N,W,C -> N,H,W,C
+        # H scale is fixed at 1x.
+        input_tensor = tf.expand_dims(input=input_tensor, axis=1)
+        input_tensor_rank = 4
+        resize_one_d = True
+
+        if isinstance(sizes, np.ndarray):
+            sizes = np.insert(arr=sizes, obj=1, values=1)
+        elif sizes is not None and sizes.shape is not None and hasattr(sizes, 'numpy'):
+            sizes = np.insert(arr=sizes.numpy(), obj=1, values=1)
+        elif sizes is not None and sizes.shape is not None and tf.keras.backend.is_keras_tensor(sizes):
+            sizes = tf.concat([sizes[:1], [1], sizes[1:]], axis=0)
+
+        if isinstance(scales, np.ndarray):
+            scales = np.insert(arr=scales, obj=1, values=1)
+        elif scales is not None and scales.shape is not None and hasattr(scales, 'numpy'):
+            scales = np.insert(arr=scales.numpy(), obj=1, values=1)
+        elif scales is not None and scales.shape is not None and tf.keras.backend.is_keras_tensor(scales):
+            scales = tf.concat([scales[:1], [1], scales[1:]], axis=0)
 
     # Generation of TF OP
     if mode.lower() == "linear":
@@ -551,6 +591,12 @@ def make_node(
         del tf_partial_model_inputs
         del tf_partial_model_outputs
         del test_data
+
+    # 1D Resize workaround
+    # https://github.com/PINTO0309/onnx2tf/issues/283
+    # Reshape N,H,W,C -> N,W,C
+    if resize_one_d:
+        resized_tensor = tf.gather(params=resized_tensor, indices=0, axis=1)
 
     # TensorFlow's Resize operation casts to Float32 on its own,
     # so we have to change it back to the original type.
