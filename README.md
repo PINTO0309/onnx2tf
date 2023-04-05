@@ -1452,7 +1452,7 @@ Do not submit an issue that only contains an amount of information that cannot b
 
 ## Supported layers
 - https://github.com/onnx/onnx/blob/main/docs/Operators.md
-- :heavy_check_mark:: Supported　**Help wanted**: Pull Request are welcome
+- :heavy_check_mark:: Supported　:white_check_mark:: Partial support　**Help wanted**: Pull Request are welcome
 
   <details><summary>See the list of supported layers</summary><div>
 
@@ -1541,7 +1541,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |Loop|**Help wanted**|
   |LpNormalization|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
-  |LSTM|**Help wanted**|
+  |LSTM|:white_check_mark: forward/reverse|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
