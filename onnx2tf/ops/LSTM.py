@@ -680,6 +680,7 @@ def make_node(
             go_backwards=True,
         )
         output, hidden_state, cell_state = reverse_lstm(X, initial_state=backward_initial_state)
+        output = tf.reverse(output, axis=[1])
         output = tf.expand_dims(output, axis=1)
         hidden_state = tf.expand_dims(hidden_state, axis=0)
         cell_state = tf.expand_dims(cell_state, axis=0)
@@ -739,7 +740,7 @@ def make_node(
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
-                tf.expand_dims(reverse_output, axis=1),
+                tf.expand_dims(tf.reverse(reverse_output, axis=[1]), axis=1),
             ],
             axis=1,
         )
