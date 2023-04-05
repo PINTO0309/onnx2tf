@@ -723,9 +723,9 @@ def make_node(
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
 
-        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
-        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
-        forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
+        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 256*4) -> (1, 1024)
         forward_unit_forget_bias = True
         if forward_bias.shape[-1] != hidden_size:
             forward_unit_forget_bias = False
