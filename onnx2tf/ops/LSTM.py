@@ -19,8 +19,8 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.colors import Color
 
-from tensorflow.python.framework import ops
-from tensorflow.python.util import dispatch
+from tensorflow.python.keras.layers import Layer
+
 
 class Affine(tf.keras.layers.Layer):
     def __init__(self, alpha: float, beta: float):
@@ -60,6 +60,83 @@ ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
     "ScaledTanh": [ScaledTanh, 1.0, 1.0]
 }
 
+
+class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
+    def __init__(
+        self,
+        hidden_size,
+        activation_alphas,
+        activation_betas,
+        activations,
+        **kwargs
+    ):
+        super(CustomLSTMCell, self).__init__(**kwargs)
+        self.hidden_size = hidden_size
+        self.activation_alphas = activation_alphas
+        self.activation_betas = activation_betas
+        self.activations = activations
+
+        self.dense_i = tf.keras.layers.Dense(4 * hidden_size, use_bias=False)
+        self.dense_h = tf.keras.layers.Dense(4 * hidden_size)
+
+    @property
+    def state_size(self):
+        return [self.hidden_size, self.hidden_size]
+
+    def call(self, inputs, states):
+        # Custom activation functions
+        """
+        Default activations: f=Sigmoid, g=Tanh, h=Tanh
+        ONNX:
+            it = f( Xt*(Wi^T) + Ht-1*(Ri^T) + Pi (.) Ct-1 + Wbi + Rbi )
+            ft = f( Xt*(Wf^T) + Ht-1*(Rf^T) + Pf (.) Ct-1 + Wbf + Rbf )
+            ct = g( Xt*(Wc^T) + Ht-1*(Rc^T) + Wbc + Rbc )
+            Ct = ft (.) Ct-1 + it (.) ct
+            ot = f( Xt*(Wo^T) + Ht-1*(Ro^T) + Po (.) Ct + Wbo + Rbo )
+            Ht = ot (.) h( Ct )
+        """
+
+        # TODO:
+        # 1. Biasが考慮されていない
+        # 2. Pが考慮されていない
+        h_prev, c_prev = states
+        gates = self.dense_i(inputs) + self.dense_h(h_prev)
+        i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
+
+        i = self.activations[0](i * self.activation_alphas[0] + self.activation_betas[0])
+        f = self.activations[0](f * self.activation_alphas[0] + self.activation_betas[0])
+        c_candidate = self.activations[1](c_candidate * self.activation_alphas[1] + self.activation_betas[1])
+        o = self.activations[0](o * self.activation_alphas[0] + self.activation_betas[0])
+
+        c = f * c_prev + i * c_candidate
+        h = o * self.activations[2](c * self.activation_alphas[2] + self.activation_betas[2])
+
+        return h, [h, c]
+
+
+class CustomLSTM(Layer):
+    def __init__(
+        self,
+        hidden_size,
+        activation_alphas,
+        activation_betas,
+        activations,
+        return_sequences=True,
+        **kwargs
+    ):
+        super(CustomLSTM, self).__init__(**kwargs)
+        self.hidden_size = hidden_size
+        self.activation_alphas = activation_alphas
+        self.activation_betas = activation_betas
+        self.activations = activations
+        self.return_sequences = return_sequences
+
+        self.cell = CustomLSTMCell(hidden_size, activation_alphas, activation_betas, activations)
+        self.rnn = tf.keras.layers.RNN(self.cell, return_sequences=return_sequences, return_state=True)
+
+    def call(self, inputs, initial_state=None):
+        outputs, h, c = self.rnn(inputs, initial_state=initial_state)
+        return outputs, h, c
 
 
 @print_node_info
@@ -233,25 +310,64 @@ def make_node(
         )
         sys.exit(1)
 
+    # Always three or more present if specified
+    #   forward, reverse: 3 items
+    #   bidirectional: 6 items
+    activations: List[str] =  graph_node.attrs.get('activations', [])
     # Different value ranges for each activation function
+    #   forward, reverse: 3 items
+    #   bidirectional: 6 items
     activation_alpha: List[float] = graph_node.attrs.get('activation_alpha', [0.01])
     # Different value ranges for each activation function
+    #   forward, reverse: 3 items
+    #   bidirectional: 6 items
     activation_beta: List[float] = graph_node.attrs.get('activation_beta', [])
-    # Always three or more present if specified
-    activations: List[str] =  graph_node.attrs.get('activations', [])
 
-    if len(activations) > 0:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'The activation functions for f, g, and h are currently not implemented. ' +
-            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
-            f'https://github.com/microsoft/onnxruntime/blob/c57cf374b67f72575546d7b4c69a1af4972e2b54/onnxruntime/core/providers/cpu/rnn/uni_directional_lstm.cc#L45-L84 ' +
-            f'activations: {activations}'
-        )
-        sys.exit(1)
+    # Default activation function setting
+    tf_activations: List = None
+    tf_activation_alpha: List = None
+    tf_activation_beta: List = None
+    if len(activations) == 0:
+        # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LSTM-14
+        # Equations (Default: f=Sigmoid, g=Tanh, h=Tanh)
+        default_activations = [
+            'Sigmoid', # f (Oblivion Gate)
+            'Tanh',    # g (Input Gate)
+            'Tanh',    # h (Output Gate)
+        ]
+        tf_activations = [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][0], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
+        ]
+        tf_activation_alpha = [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
+        ]
+        tf_activation_beta = [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
+        ]
+    else:
+        tf_activations = [
+            ONNX_ACTIVATION_MAPPING[activations[0]][0], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[1]][0], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[2]][0], # h (Output Gate)
+        ]
+        tf_activation_alpha = [
+            ONNX_ACTIVATION_MAPPING[activations[0]][1], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[1]][1], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[2]][1], # h (Output Gate)
+        ]
+        tf_activation_beta = [
+            ONNX_ACTIVATION_MAPPING[activations[0]][2], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[1]][2], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[2]][2], # h (Output Gate)
+        ]
 
     clip: float =  graph_node.attrs.get('clip', None)
-
     if clip is not None:
         print(
             f'{Color.RED}ERROR:{Color.RESET} ' +
@@ -506,6 +622,7 @@ def make_node(
         elif initial_h is not None and initial_c is None:
             backward_initial_state = backward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[1]))]
 
+    # LSTM layer
     if direction == 'forward':
         forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
         forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
@@ -672,9 +789,9 @@ def make_node(
                     'initial_h': initial_h,
                     'initial_c': initial_c,
                     'P': P,
-                    'activation_alpha': activation_alpha,
-                    'activation_beta': activation_beta,
-                    'activations': activations,
+                    'activations': tf_activations,
+                    'activation_alpha': tf_activation_alpha,
+                    'activation_beta': tf_activation_beta,
                     'clip': clip,
                     'hidden_size': hidden_size,
                     'input_forget': input_forget,
