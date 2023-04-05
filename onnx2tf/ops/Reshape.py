@@ -99,13 +99,25 @@ def make_node(
     ]
 
     # NHWC -> HCHW
-    transposed_tensor = transpose_with_flexing_deterrence(
-            input_tensor=input_tensor,
-            perm=list(perm) if perm is not None else None,
-            output_shape=output_shape,
-            name=graph_node.name,
-            **kwargs,
-        )
+    try:
+        if graph_node.i().op != 'LSTM':
+            transposed_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=list(perm) if perm is not None else None,
+                    output_shape=output_shape,
+                    name=graph_node.name,
+                    **kwargs,
+                )
+        else:
+            transposed_tensor = input_tensor
+    except:
+        transposed_tensor = transpose_with_flexing_deterrence(
+                input_tensor=input_tensor,
+                perm=list(perm) if perm is not None else None,
+                output_shape=output_shape,
+                name=graph_node.name,
+                **kwargs,
+            )
     test_data = None
     if not isinstance(input_tensor, np.ndarray):
         if not isinstance(graph_node_input_1, np.ndarray) \
