@@ -390,6 +390,8 @@ def make_node(
             onnx_slice_dims_count = len(starts.numpy())
         elif isinstance(starts, int):
             onnx_slice_dims_count = 1
+        elif tf.keras.backend.is_keras_tensor(starts):
+            onnx_slice_dims_count = len(starts.shape)
         else:
             onnx_slice_dims_count = len(starts)
 
