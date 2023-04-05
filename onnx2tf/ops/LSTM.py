@@ -734,9 +734,9 @@ def make_node(
             go_backwards=True,
         )
         forward_output, forward_h, forward_c = \
-            forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
+            forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]
         reverse_output, reverse_h, reverse_c = \
-            reverse_lstm(X, initial_state=backward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
+            reverse_lstm(X, initial_state=backward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
