@@ -65,6 +65,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
     def __init__(
         self,
         hidden_size,
+        kernel,
+        recurrent_kernel,
         activation_alphas,
         activation_betas,
         activations,
@@ -76,6 +78,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
     ):
         super(CustomLSTMCell, self).__init__(**kwargs)
         self.hidden_size = hidden_size
+        self.kernel = kernel
+        self.recurrent_kernel = recurrent_kernel
         self.activation_alphas = activation_alphas
         self.activation_betas = activation_betas
         self.activations = activations
@@ -84,11 +88,13 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.bc = bias_c
         self.bo = bias_o
         self.dense_i = tf.keras.layers.Dense(
-            units=4 * hidden_size,
+            units=4 * self.hidden_size,
+            kernel_initializer=tf.keras.initializers.constant(self.kernel),
             use_bias=False,
         )
         self.dense_h = tf.keras.layers.Dense(
-            units=4 * hidden_size,
+            units=4 * self.hidden_size,
+            kernel_initializer=tf.keras.initializers.constant(self.recurrent_kernel),
             use_bias=False,
         )
 
@@ -111,9 +117,7 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         """
 
         # TODO:
-        # 1. Wi, Wf, Wc, Wo, Ri, Rf, Rc, Roが考慮されていない（たぶん各kernelの値）
-        # 2. Biasが考慮されていない
-        # 3. Pが考慮されていない
+        # 1. Pが考慮されていない
         h_prev, c_prev = states
         gates = self.dense_i(inputs) + self.dense_h(h_prev)
         i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
@@ -143,7 +147,6 @@ class CustomLSTM(Layer):
         bias_c,
         bias_o,
         go_backwards,
-        unit_forget_bias,
         return_sequences=True,
         **kwargs
     ):
@@ -156,7 +159,6 @@ class CustomLSTM(Layer):
         self.activations = activations
         self.return_sequences = return_sequences
         self.go_backwards = go_backwards
-        self.unit_forget_bias = unit_forget_bias
         self.bias_i = bias_i
         self.bias_f = bias_f
         self.bias_c = bias_c
@@ -164,6 +166,8 @@ class CustomLSTM(Layer):
 
         self.cell = CustomLSTMCell(
             self.hidden_size,
+            self.kernel,
+            self.recurrent_kernel,
             self.activation_alphas,
             self.activation_betas,
             self.activations,
@@ -176,7 +180,6 @@ class CustomLSTM(Layer):
             self.cell,
             return_sequences=self.return_sequences,
             go_backwards=self.go_backwards,
-            # unit_forget_bias=self.unit_forget_bias,
             return_state=True,
         )
 
@@ -580,50 +583,6 @@ def make_node(
     )
 
     # Generation of TF OP
-    def create_lstm_layer(
-        *,
-        weight,
-        recurrence_weight,
-        bias=None,
-        hidden_size,
-        go_backwards,
-        unit_forget_bias,
-    ):
-        need_bias = True
-        if isinstance(bias, np.ndarray) and np.sum(bias) == 0:
-            need_bias = False
-
-        if need_bias:
-            lstm_layer = tf.keras.layers.LSTM(
-                units=hidden_size,
-                kernel_initializer=tf.keras.initializers.constant(weight),
-                recurrent_initializer=tf.keras.initializers.constant(recurrence_weight),
-                bias_initializer=tf.keras.initializers.constant(bias),
-                return_sequences=True,
-                return_state=True,
-                go_backwards=go_backwards,
-                dropout=0,
-                recurrent_dropout=0,
-                stateful=False,
-                implementation=2,
-                unit_forget_bias=unit_forget_bias,
-            )
-        else:
-            lstm_layer = tf.keras.layers.LSTM(
-                units=hidden_size,
-                kernel_initializer=tf.keras.initializers.constant(weight),
-                recurrent_initializer=tf.keras.initializers.constant(recurrence_weight),
-                return_sequences=True,
-                return_state=True,
-                go_backwards=go_backwards,
-                dropout=0,
-                recurrent_dropout=0,
-                stateful=False,
-                implementation=2,
-                unit_forget_bias=unit_forget_bias,
-            )
-        return lstm_layer
-
     forward_lstm = None
     reverse_lstm = None
     input_size = X.shape[-1]
@@ -676,15 +635,20 @@ def make_node(
         fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
-        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
-        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
-        forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 1024)
-
-        forward_lstm = create_lstm_layer(
-            weight=forward_kernel,
-            recurrence_weight=forward_recurrent_kernel,
-            bias=forward_bias,
-            hidden_size=hidden_size,
+        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        # forward
+        forward_lstm = CustomLSTM(
+            hidden_size=hidden_size, # 256
+            kernel=forward_kernel, # (512, 1024)
+            recurrent_kernel=forward_recurrent_kernel, # (256, 1024)
+            activation_alphas=tf_activation_alphas, # [1.0, 1.0, 1.0]
+            activation_betas=tf_activation_betas, # [0.0, 0.0, 0.0]
+            activations=tf_activations, # [tf.sigmoid, tf.tanh, tf.tanh]
+            bias_i=fB_i, # (1, 256)
+            bias_f=fB_f, # (1, 256)
+            bias_c=fB_c, # (1, 256)
+            bias_o=fB_o, # (1, 256)
             go_backwards=False,
         )
         output, hidden_state, cell_state = forward_lstm(X, initial_state=forward_initial_state)
@@ -693,21 +657,26 @@ def make_node(
         cell_state = tf.expand_dims(cell_state, axis=0)
 
     elif direction == 'reverse':
-        backward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
-        backward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        backward_bias = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
-        bW_i, bW_o, bW_f, bW_c = np.split(backward_weight, 4, axis=0) # (1, 256, 512)
-        bR_i, bR_o, bR_f, bR_c = np.split(backward_recurrence_weight, 4, axis=0) # (1, 256, 256)
-        bB_i, bB_o, bB_f, bB_c = np.split(backward_bias, 4, axis=0) # (1, 256)
-        backward_kernel = np.concatenate([bW_i, bW_f, bW_c, bW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (512, 1024)
-        backward_recurrent_kernel = np.concatenate([bR_i, bR_f, bR_c, bR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (256, 1024)
-        backward_bias = np.concatenate([bB_i, bB_f, bB_c, bB_o], axis=1) # (1, 1024)
-
-        reverse_lstm = create_lstm_layer(
-            weight=backward_kernel,
-            recurrence_weight=backward_recurrent_kernel,
-            bias=backward_bias,
-            hidden_size=hidden_size,
+        reverse_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
+        reverse_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        reverse_bias = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
+        rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
+        rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
+        reverse_kernel = np.concatenate([rW_i, rW_f, rW_c, rW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        reverse_recurrent_kernel = np.concatenate([rR_i, rR_f, rR_c, rR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        # backward
+        reverse_lstm = CustomLSTM(
+            hidden_size=hidden_size, # 256
+            kernel=reverse_kernel, # (512, 1024)
+            recurrent_kernel=reverse_recurrent_kernel, # (256, 1024)
+            activation_alphas=tf_activation_alphas, # [1.0, 1.0, 1.0]
+            activation_betas=tf_activation_betas, # [0.0, 0.0, 0.0]
+            activations=tf_activations, # [tf.sigmoid, tf.tanh, tf.tanh]
+            bias_i=rB_i, # (1, 256)
+            bias_f=rB_f, # (1, 256)
+            bias_c=rB_c, # (1, 256)
+            bias_o=rB_o, # (1, 256)
             go_backwards=True,
         )
         output, hidden_state, cell_state = reverse_lstm(X, initial_state=backward_initial_state)
@@ -722,13 +691,8 @@ def make_node(
         fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
-
         forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
         forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
-        forward_bias = np.concatenate([fB_i, fB_f, fB_c, fB_o], axis=1) # (1, 256*4) -> (1, 1024)
-        forward_unit_forget_bias = True
-        if forward_bias.shape[-1] != hidden_size:
-            forward_unit_forget_bias = False
 
         reverse_weight = tf.reshape(W[1], shape=[4, hidden_size, input_size])
         reverse_recurrence_weight = tf.reshape(R[1], shape=[4, hidden_size, hidden_size])
@@ -736,65 +700,42 @@ def make_node(
         rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
         rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
         rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
-
         reverse_kernel = np.concatenate([rW_i, rW_f, rW_c, rW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1)
         reverse_recurrent_kernel = np.concatenate([rR_i, rR_f, rR_c, rR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1)
-        reverse_bias = np.concatenate([rB_i, rB_f, rB_c, rB_o], axis=1) # (1, 1024)
-        reverse_unit_forget_bias = True
-        if reverse_bias.shape[-1] != hidden_size:
-            reverse_unit_forget_bias = False
 
         # forward
-        # forward_lstm = create_lstm_layer(
-        #     weight=forward_kernel, # (512, 1024)
-        #     recurrence_weight=forward_recurrent_kernel, # (256, 1024)
-        #     bias=forward_bias, # (1, 1024)
-        #     hidden_size=hidden_size, # 256
-        #     go_backwards=False,
-        #     unit_forget_bias=forward_unit_forget_bias,
-        # )
         forward_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
-            kernel=forward_kernel,
-            recurrent_kernel=forward_recurrent_kernel,
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
-            activations=tf_activations,
-            bias_i=fB_i,
-            bias_f=fB_f,
-            bias_c=fB_c,
-            bias_o=fB_o,
+            kernel=forward_kernel, # (512, 1024)
+            recurrent_kernel=forward_recurrent_kernel, # (256, 1024)
+            activation_alphas=tf_activation_alphas, # [1.0, 1.0, 1.0]
+            activation_betas=tf_activation_betas, # [0.0, 0.0, 0.0]
+            activations=tf_activations, # [tf.sigmoid, tf.tanh, tf.tanh]
+            bias_i=fB_i, # (1, 256)
+            bias_f=fB_f, # (1, 256)
+            bias_c=fB_c, # (1, 256)
+            bias_o=fB_o, # (1, 256)
             go_backwards=False,
-            unit_forget_bias=forward_unit_forget_bias,
         )
 
         # backward
-        # reverse_lstm = create_lstm_layer(
-        #     weight=reverse_kernel, # (512, 1024)
-        #     recurrence_weight=reverse_recurrent_kernel, # (256, 1024)
-        #     bias=reverse_bias, # (1, 1024)
-        #     hidden_size=hidden_size, # 256
-        #     go_backwards=True,
-        #     unit_forget_bias=reverse_unit_forget_bias,
-        # )
-        forward_lstm = CustomLSTM(
+        reverse_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
-            kernel=reverse_kernel,
-            recurrent_kernel=reverse_recurrent_kernel,
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
-            activations=tf_activations,
-            bias_i=rB_i,
-            bias_f=rB_f,
-            bias_c=rB_c,
-            bias_o=rB_o,
+            kernel=reverse_kernel, # (512, 1024)
+            recurrent_kernel=reverse_recurrent_kernel, # (256, 1024)
+            activation_alphas=tf_activation_alphas, # [1.0, 1.0, 1.0]
+            activation_betas=tf_activation_betas, # [0.0, 0.0, 0.0]
+            activations=tf_activations, # [tf.sigmoid, tf.tanh, tf.tanh]
+            bias_i=rB_i, # (1, 256)
+            bias_f=rB_f, # (1, 256)
+            bias_c=rB_c, # (1, 256)
+            bias_o=rB_o, # (1, 256)
             go_backwards=True,
-            unit_forget_bias=reverse_unit_forget_bias,
         )
         forward_output, forward_h, forward_c = \
-            forward_lstm(X, initial_state=forward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
+            forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
         reverse_output, reverse_h, reverse_c = \
-            reverse_lstm(X, initial_state=backward_initial_state) # [24, 1, 512], [256, 256], [256, 256]
+            reverse_lstm(X, initial_state=backward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
