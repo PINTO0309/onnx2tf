@@ -797,6 +797,7 @@ def make_node(
             node_info={
                 'tf_op_type': tf.keras.layers.LSTM,
                 'tf_inputs': {
+                    'direction': direction,
                     'X': X,
                     'W': W,
                     'R': R,
