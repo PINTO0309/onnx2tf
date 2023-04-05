@@ -15,10 +15,8 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    explicit_broadcast,
 )
 from onnx2tf.utils.colors import Color
-
 from tensorflow.python.keras.layers import Layer
 
 
@@ -74,6 +72,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         bias_f,
         bias_c,
         bias_o,
+        is_bidirectional,
+        go_backwards,
         **kwargs
     ):
         super(CustomLSTMCell, self).__init__(**kwargs)
@@ -87,6 +87,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.bf = bias_f
         self.bc = bias_c
         self.bo = bias_o
+        self.is_bidirectional = is_bidirectional
+        self.go_backwards = go_backwards
         self.dense_i = tf.keras.layers.Dense(
             units=4 * self.hidden_size,
             kernel_initializer=tf.keras.initializers.constant(self.kernel),
@@ -122,13 +124,15 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         gates = self.dense_i(inputs) + self.dense_h(h_prev)
         i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
 
-        i = self.activations[0](i * self.activation_alphas[0] + self.activation_betas[0] + self.bi)
-        f = self.activations[0](f * self.activation_alphas[0] + self.activation_betas[0] + self.bf)
-        c_candidate = self.activations[1](c_candidate * self.activation_alphas[1] + self.activation_betas[1] + self.bc)
-        o = self.activations[0](o * self.activation_alphas[0] + self.activation_betas[0] + self.bo)
+        offsetidx = 3 if self.is_bidirectional and self.go_backwards else 0
+
+        i = self.activations[0 + offsetidx](i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi)
+        f = self.activations[0 + offsetidx](f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf)
+        c_candidate = self.activations[1 + offsetidx](c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc)
+        o = self.activations[0 + offsetidx](o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo)
 
         c = f * c_prev + i * c_candidate
-        h = o * self.activations[2](c * self.activation_alphas[2] + self.activation_betas[2])
+        h = o * self.activations[2 + offsetidx](c * self.activation_alphas[2 + offsetidx] + self.activation_betas[2 + offsetidx])
 
         return h, [h, c]
 
@@ -146,6 +150,7 @@ class CustomLSTM(Layer):
         bias_f,
         bias_c,
         bias_o,
+        is_bidirectional,
         go_backwards,
         return_sequences=True,
         **kwargs
@@ -158,6 +163,7 @@ class CustomLSTM(Layer):
         self.activation_betas = activation_betas
         self.activations = activations
         self.return_sequences = return_sequences
+        self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
         self.bias_i = bias_i
         self.bias_f = bias_f
@@ -175,6 +181,8 @@ class CustomLSTM(Layer):
             self.bias_f,
             self.bias_c,
             self.bias_o,
+            self.is_bidirectional,
+            self.go_backwards,
         )
         self.rnn = tf.keras.layers.RNN(
             self.cell,
@@ -376,6 +384,17 @@ def make_node(
     tf_activations: List = None
     tf_activation_alphas: List = None
     tf_activation_betas: List = None
+
+    clip: float =  graph_node.attrs.get('clip', None)
+    if clip is not None:
+        print(
+            f'{Color.RED}ERROR:{Color.RESET} ' +
+            f'clip is currently not implemented. ' +
+            f'clip: {clip}'
+        )
+        sys.exit(1)
+
+    direction: str =  graph_node.attrs.get('direction', 'forward')
     if len(activations) == 0:
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LSTM-14
         # Equations (Default: f=Sigmoid, g=Tanh, h=Tanh)
@@ -389,43 +408,63 @@ def make_node(
             ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
         ]
+        tf_activations = tf_activations + [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][0], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activations
         tf_activation_alphas = [
             ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
         ]
+        tf_activation_alphas = tf_activation_alphas + [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activation_alphas
         tf_activation_betas = [
             ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
         ]
+        tf_activation_betas = tf_activation_betas + [
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activation_betas
     else:
         tf_activations = [
             ONNX_ACTIVATION_MAPPING[activations[0]][0], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[activations[1]][0], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][0], # h (Output Gate)
         ]
+        tf_activations = tf_activations + [
+            ONNX_ACTIVATION_MAPPING[activations[3]][0], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[4]][0], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[5]][0], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activations
         tf_activation_alphas = [
             ONNX_ACTIVATION_MAPPING[activations[0]][1], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[activations[1]][1], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][1], # h (Output Gate)
         ]
+        tf_activation_alphas = tf_activation_alphas + [
+            ONNX_ACTIVATION_MAPPING[activations[3]][1], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[4]][1], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[5]][1], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activation_alphas
         tf_activation_betas = [
             ONNX_ACTIVATION_MAPPING[activations[0]][2], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[activations[1]][2], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][2], # h (Output Gate)
         ]
+        tf_activation_betas = tf_activation_betas + [
+            ONNX_ACTIVATION_MAPPING[activations[3]][2], # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[4]][2], # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[5]][2], # h (Output Gate)
+        ] if direction == 'bidirectional' else tf_activation_betas
 
-    clip: float =  graph_node.attrs.get('clip', None)
-    if clip is not None:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'clip is currently not implemented. ' +
-            f'clip: {clip}'
-        )
-        sys.exit(1)
-
-    direction: str =  graph_node.attrs.get('direction', 'forward')
     hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
     input_forget: bool = bool(graph_node.attrs.get('input_forget', 0))
 
@@ -649,6 +688,7 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            is_bidirectional=False,
             go_backwards=False,
         )
         output, hidden_state, cell_state = forward_lstm(X, initial_state=forward_initial_state)
@@ -677,6 +717,7 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            is_bidirectional=False,
             go_backwards=True,
         )
         output, hidden_state, cell_state = reverse_lstm(X, initial_state=backward_initial_state)
@@ -716,6 +757,7 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            is_bidirectional=True,
             go_backwards=False,
         )
 
@@ -731,12 +773,13 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            is_bidirectional=True,
             go_backwards=True,
         )
         forward_output, forward_h, forward_c = \
-            forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
+            forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]
         reverse_output, reverse_h, reverse_c = \
-            reverse_lstm(X, initial_state=backward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]]
+            reverse_lstm(X, initial_state=backward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
