@@ -68,6 +68,10 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         activation_alphas,
         activation_betas,
         activations,
+        bias_i,
+        bias_f,
+        bias_c,
+        bias_o,
         **kwargs
     ):
         super(CustomLSTMCell, self).__init__(**kwargs)
@@ -75,9 +79,18 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.activation_alphas = activation_alphas
         self.activation_betas = activation_betas
         self.activations = activations
-
-        self.dense_i = tf.keras.layers.Dense(4 * hidden_size, use_bias=False)
-        self.dense_h = tf.keras.layers.Dense(4 * hidden_size)
+        self.bi = bias_i
+        self.bf = bias_f
+        self.bc = bias_c
+        self.bo = bias_o
+        self.dense_i = tf.keras.layers.Dense(
+            units=4 * hidden_size,
+            use_bias=False,
+        )
+        self.dense_h = tf.keras.layers.Dense(
+            units=4 * hidden_size,
+            use_bias=False,
+        )
 
     @property
     def state_size(self):
@@ -91,22 +104,24 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
             it = f( Xt*(Wi^T) + Ht-1*(Ri^T) + Pi (.) Ct-1 + Wbi + Rbi )
             ft = f( Xt*(Wf^T) + Ht-1*(Rf^T) + Pf (.) Ct-1 + Wbf + Rbf )
             ct = g( Xt*(Wc^T) + Ht-1*(Rc^T) + Wbc + Rbc )
-            Ct = ft (.) Ct-1 + it (.) ct
             ot = f( Xt*(Wo^T) + Ht-1*(Ro^T) + Po (.) Ct + Wbo + Rbo )
+
+            Ct = ft (.) Ct-1 + it (.) ct
             Ht = ot (.) h( Ct )
         """
 
         # TODO:
-        # 1. Biasが考慮されていない
-        # 2. Pが考慮されていない
+        # 1. Wi, Wf, Wc, Wo, Ri, Rf, Rc, Roが考慮されていない（たぶん各kernelの値）
+        # 2. Biasが考慮されていない
+        # 3. Pが考慮されていない
         h_prev, c_prev = states
         gates = self.dense_i(inputs) + self.dense_h(h_prev)
         i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
 
-        i = self.activations[0](i * self.activation_alphas[0] + self.activation_betas[0])
-        f = self.activations[0](f * self.activation_alphas[0] + self.activation_betas[0])
-        c_candidate = self.activations[1](c_candidate * self.activation_alphas[1] + self.activation_betas[1])
-        o = self.activations[0](o * self.activation_alphas[0] + self.activation_betas[0])
+        i = self.activations[0](i * self.activation_alphas[0] + self.activation_betas[0] + self.bi)
+        f = self.activations[0](f * self.activation_alphas[0] + self.activation_betas[0] + self.bf)
+        c_candidate = self.activations[1](c_candidate * self.activation_alphas[1] + self.activation_betas[1] + self.bc)
+        o = self.activations[0](o * self.activation_alphas[0] + self.activation_betas[0] + self.bo)
 
         c = f * c_prev + i * c_candidate
         h = o * self.activations[2](c * self.activation_alphas[2] + self.activation_betas[2])
@@ -118,21 +133,52 @@ class CustomLSTM(Layer):
     def __init__(
         self,
         hidden_size,
+        kernel,
+        recurrent_kernel,
         activation_alphas,
         activation_betas,
         activations,
+        bias_i,
+        bias_f,
+        bias_c,
+        bias_o,
+        go_backwards,
+        unit_forget_bias,
         return_sequences=True,
         **kwargs
     ):
         super(CustomLSTM, self).__init__(**kwargs)
         self.hidden_size = hidden_size
+        self.kernel = kernel
+        self.recurrent_kernel = recurrent_kernel
         self.activation_alphas = activation_alphas
         self.activation_betas = activation_betas
         self.activations = activations
         self.return_sequences = return_sequences
+        self.go_backwards = go_backwards
+        self.unit_forget_bias = unit_forget_bias
+        self.bias_i = bias_i
+        self.bias_f = bias_f
+        self.bias_c = bias_c
+        self.bias_o = bias_o
 
-        self.cell = CustomLSTMCell(hidden_size, activation_alphas, activation_betas, activations)
-        self.rnn = tf.keras.layers.RNN(self.cell, return_sequences=return_sequences, return_state=True)
+        self.cell = CustomLSTMCell(
+            self.hidden_size,
+            self.activation_alphas,
+            self.activation_betas,
+            self.activations,
+            self.bias_i,
+            self.bias_f,
+            self.bias_c,
+            self.bias_o,
+        )
+        self.rnn = tf.keras.layers.RNN(
+            self.cell,
+            return_sequences=self.return_sequences,
+            go_backwards=self.go_backwards,
+            # unit_forget_bias=self.unit_forget_bias,
+            return_state=True,
+        )
 
     def call(self, inputs, initial_state=None):
         outputs, h, c = self.rnn(inputs, initial_state=initial_state)
@@ -325,8 +371,8 @@ def make_node(
 
     # Default activation function setting
     tf_activations: List = None
-    tf_activation_alpha: List = None
-    tf_activation_beta: List = None
+    tf_activation_alphas: List = None
+    tf_activation_betas: List = None
     if len(activations) == 0:
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LSTM-14
         # Equations (Default: f=Sigmoid, g=Tanh, h=Tanh)
@@ -340,12 +386,12 @@ def make_node(
             ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
         ]
-        tf_activation_alpha = [
+        tf_activation_alphas = [
             ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
         ]
-        tf_activation_beta = [
+        tf_activation_betas = [
             ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
@@ -356,12 +402,12 @@ def make_node(
             ONNX_ACTIVATION_MAPPING[activations[1]][0], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][0], # h (Output Gate)
         ]
-        tf_activation_alpha = [
+        tf_activation_alphas = [
             ONNX_ACTIVATION_MAPPING[activations[0]][1], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[activations[1]][1], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][1], # h (Output Gate)
         ]
-        tf_activation_beta = [
+        tf_activation_betas = [
             ONNX_ACTIVATION_MAPPING[activations[0]][2], # f (Oblivion Gate)
             ONNX_ACTIVATION_MAPPING[activations[1]][2], # g (Input Gate)
             ONNX_ACTIVATION_MAPPING[activations[2]][2], # h (Output Gate)
@@ -699,20 +745,49 @@ def make_node(
             reverse_unit_forget_bias = False
 
         # forward
-        forward_lstm = create_lstm_layer(
-            weight=forward_kernel, # (512, 1024)
-            recurrence_weight=forward_recurrent_kernel, # (256, 1024)
-            bias=forward_bias, # (1, 1024)
+        # forward_lstm = create_lstm_layer(
+        #     weight=forward_kernel, # (512, 1024)
+        #     recurrence_weight=forward_recurrent_kernel, # (256, 1024)
+        #     bias=forward_bias, # (1, 1024)
+        #     hidden_size=hidden_size, # 256
+        #     go_backwards=False,
+        #     unit_forget_bias=forward_unit_forget_bias,
+        # )
+        forward_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
+            kernel=forward_kernel,
+            recurrent_kernel=forward_recurrent_kernel,
+            activation_alphas=tf_activation_alphas,
+            activation_betas=tf_activation_betas,
+            activations=tf_activations,
+            bias_i=fB_i,
+            bias_f=fB_f,
+            bias_c=fB_c,
+            bias_o=fB_o,
             go_backwards=False,
             unit_forget_bias=forward_unit_forget_bias,
         )
+
         # backward
-        reverse_lstm = create_lstm_layer(
-            weight=reverse_kernel, # (512, 1024)
-            recurrence_weight=reverse_recurrent_kernel, # (256, 1024)
-            bias=reverse_bias, # (1, 1024)
+        # reverse_lstm = create_lstm_layer(
+        #     weight=reverse_kernel, # (512, 1024)
+        #     recurrence_weight=reverse_recurrent_kernel, # (256, 1024)
+        #     bias=reverse_bias, # (1, 1024)
+        #     hidden_size=hidden_size, # 256
+        #     go_backwards=True,
+        #     unit_forget_bias=reverse_unit_forget_bias,
+        # )
+        forward_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
+            kernel=reverse_kernel,
+            recurrent_kernel=reverse_recurrent_kernel,
+            activation_alphas=tf_activation_alphas,
+            activation_betas=tf_activation_betas,
+            activations=tf_activations,
+            bias_i=rB_i,
+            bias_f=rB_f,
+            bias_c=rB_c,
+            bias_o=rB_o,
             go_backwards=True,
             unit_forget_bias=reverse_unit_forget_bias,
         )
@@ -790,8 +865,8 @@ def make_node(
                     'initial_c': initial_c,
                     'P': P,
                     'activations': tf_activations,
-                    'activation_alpha': tf_activation_alpha,
-                    'activation_beta': tf_activation_beta,
+                    'activation_alpha': tf_activation_alphas,
+                    'activation_beta': tf_activation_betas,
                     'clip': clip,
                     'hidden_size': hidden_size,
                     'input_forget': input_forget,
