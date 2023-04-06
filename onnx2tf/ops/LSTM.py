@@ -670,7 +670,9 @@ def make_node(
     if direction == 'forward':
         forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
         forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias = forward_bias_W + forward_bias_R
         fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
@@ -699,7 +701,9 @@ def make_node(
     elif direction == 'reverse':
         reverse_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
         reverse_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        reverse_bias = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias = reverse_bias_W + reverse_bias_R
         rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
         rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
         rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
@@ -729,7 +733,9 @@ def make_node(
     elif direction == 'bidirectional':
         forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
         forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        forward_bias = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias = forward_bias_W + forward_bias_R
         fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
@@ -738,7 +744,9 @@ def make_node(
 
         reverse_weight = tf.reshape(W[1], shape=[4, hidden_size, input_size])
         reverse_recurrence_weight = tf.reshape(R[1], shape=[4, hidden_size, hidden_size])
-        reverse_bias = tf.reshape(B[1][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size])
+        reverse_bias_W = tf.reshape(B[1][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias_R = tf.reshape(B[1][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias = reverse_bias_W + reverse_bias_R
         rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
         rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
         rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
