@@ -673,11 +673,11 @@ def make_node(
         forward_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias = forward_bias_W + forward_bias_R
-        fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
-        fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
-        fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
-        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
-        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        fW_i, fW_o, fW_f, fW_c = tf.split(value=forward_weight, num_or_size_splits=4, axis=0) # (1, 256, 512)
+        fR_i, fR_o, fR_f, fR_c = tf.split(value=forward_recurrence_weight, num_or_size_splits=4, axis=0) # (1, 256, 256)
+        fB_i, fB_o, fB_f, fB_c = tf.split(value=forward_bias, num_or_size_splits=4, axis=0) # (1, 256)
+        forward_kernel = tf.reshape(tf.transpose(tf.concat([fW_i, fW_f, fW_c, fW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        forward_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([fR_i, fR_f, fR_c, fR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
         # forward
         forward_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
@@ -699,16 +699,16 @@ def make_node(
         cell_state = tf.expand_dims(cell_state, axis=0)
 
     elif direction == 'reverse':
-        reverse_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
-        reverse_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        reverse_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
-        reverse_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
+        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[0][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias = reverse_bias_W + reverse_bias_R
-        rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
-        rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
-        rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
-        reverse_kernel = np.concatenate([rW_i, rW_f, rW_c, rW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
-        reverse_recurrent_kernel = np.concatenate([rR_i, rR_f, rR_c, rR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        rW_i, rW_o, rW_f, rW_c = tf.split(value=reverse_weight, num_or_size_splits=4, axis=0)
+        rR_i, rR_o, rR_f, rR_c = tf.split(value=reverse_recurrence_weight, num_or_size_splits=4, axis=0)
+        rB_i, rB_o, rB_f, rB_c = tf.split(value=reverse_bias, num_or_size_splits=4, axis=0)
+        reverse_kernel = tf.reshape(tf.transpose(tf.concat([rW_i, rW_f, rW_c, rW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        reverse_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([rR_i, rR_f, rR_c, rR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
         # backward
         reverse_lstm = CustomLSTM(
             hidden_size=hidden_size, # 256
@@ -731,27 +731,27 @@ def make_node(
         cell_state = tf.expand_dims(cell_state, axis=0)
 
     elif direction == 'bidirectional':
-        forward_weight = tf.reshape(W[0], shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
-        forward_recurrence_weight = tf.reshape(R[0], shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
-        forward_bias_W = tf.reshape(B[0][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
-        forward_bias_R = tf.reshape(B[0][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[4, hidden_size, input_size]) # TensorShape([4, 256, 512])
+        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[4, hidden_size, hidden_size]) # TensorShape([4, 256, 256])
+        forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
+        forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias = forward_bias_W + forward_bias_R
-        fW_i, fW_o, fW_f, fW_c = np.split(forward_weight, 4, axis=0) # (1, 256, 512)
-        fR_i, fR_o, fR_f, fR_c = np.split(forward_recurrence_weight, 4, axis=0) # (1, 256, 256)
-        fB_i, fB_o, fB_f, fB_c = np.split(forward_bias, 4, axis=0) # (1, 256)
-        forward_kernel = np.concatenate([fW_i, fW_f, fW_c, fW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
-        forward_recurrent_kernel = np.concatenate([fR_i, fR_f, fR_c, fR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
+        fW_i, fW_o, fW_f, fW_c = tf.split(value=forward_weight, num_or_size_splits=4, axis=0) # (1, 256, 512)
+        fR_i, fR_o, fR_f, fR_c = tf.split(value=forward_recurrence_weight, num_or_size_splits=4, axis=0) # (1, 256, 256)
+        fB_i, fB_o, fB_f, fB_c = tf.split(value=forward_bias, num_or_size_splits=4, axis=0) # (1, 256)
+        forward_kernel = tf.reshape(tf.transpose(tf.concat([fW_i, fW_f, fW_c, fW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        forward_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([fR_i, fR_f, fR_c, fR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
 
-        reverse_weight = tf.reshape(W[1], shape=[4, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(R[1], shape=[4, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(B[1][:4*hidden_size], shape=[4, hidden_size]) # TensorShape([4, 256])
-        reverse_bias_R = tf.reshape(B[1][4*hidden_size:4*hidden_size*2], shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_weight = tf.reshape(tf.convert_to_tensor(W[1]), shape=[4, hidden_size, input_size])
+        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[1]), shape=[4, hidden_size, hidden_size])
+        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[1][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
+        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[1][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias = reverse_bias_W + reverse_bias_R
-        rW_i, rW_o, rW_f, rW_c = np.split(reverse_weight, 4, axis=0)
-        rR_i, rR_o, rR_f, rR_c = np.split(reverse_recurrence_weight, 4, axis=0)
-        rB_i, rB_o, rB_f, rB_c = np.split(reverse_bias, 4, axis=0)
-        reverse_kernel = np.concatenate([rW_i, rW_f, rW_c, rW_o], axis=1).transpose(2, 0, 1).reshape(input_size, -1)
-        reverse_recurrent_kernel = np.concatenate([rR_i, rR_f, rR_c, rR_o], axis=1).transpose(2, 0, 1).reshape(hidden_size, -1)
+        rW_i, rW_o, rW_f, rW_c = tf.split(value=reverse_weight, num_or_size_splits=4, axis=0)
+        rR_i, rR_o, rR_f, rR_c = tf.split(value=reverse_recurrence_weight, num_or_size_splits=4, axis=0)
+        rB_i, rB_o, rB_f, rB_c = tf.split(value=reverse_bias, num_or_size_splits=4, axis=0)
+        reverse_kernel = tf.reshape(tf.transpose(tf.concat([rW_i, rW_f, rW_c, rW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
+        reverse_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([rR_i, rR_f, rR_c, rR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
 
         # forward
         forward_lstm = CustomLSTM(
