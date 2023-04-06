@@ -1541,7 +1541,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |Loop|**Help wanted**|
   |LpNormalization|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
-  |LSTM|:white_check_mark: Unimplemented `input_forget` and `P`.|
+  |LSTM|:white_check_mark: Unimplemented `P`.|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
