@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.18
+  ghcr.io/pinto0309/onnx2tf:1.8.19
 
   or
 
@@ -518,6 +518,7 @@ usage: onnx2tf
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-dgc]
 [-ebu]
+[-eru]
 [-dsft]
 [-nodaftc]
 [-dsfs]
@@ -717,6 +718,12 @@ optional arguments:
 
   -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
+
+  -eru, --enable_rnn_unroll
+    Instead of increasing inference speed by expanding all symbolic loops of
+    the RNN (LSTM, GRU, RNN), RAM consumption will increase because all tensors
+    are expanded and embedded in the model.
+    https://keras.io/api/layers/recurrent_layers/
 
   -dsft, --disable_suppression_flextranspose
     Disables FlexTranspose generation suppression.
@@ -930,6 +937,7 @@ convert(
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
+  enable_rnn_unroll: Optional[bool] = False,
   disable_suppression_flextranspose: Optional[bool] = False,
   number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
   disable_suppression_flexstridedslice: Optional[bool] = False,
@@ -1136,6 +1144,12 @@ convert(
 
     enable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
+
+    enable_rnn_unroll: Optional[bool]
+      Instead of increasing inference speed by expanding all symbolic loops of
+      the RNN (LSTM, GRU, RNN), RAM consumption will increase because all tensors
+      are expanded and embedded in the model.
+      https://keras.io/api/layers/recurrent_layers/
 
     disable_suppression_flextranspose: Optional[bool]
       Disables FlexTranspose generation suppression.
@@ -1541,7 +1555,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |Loop|**Help wanted**|
   |LpNormalization|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
-  |LSTM|:white_check_mark: Unimplemented `input_forget` and `P`.|
+  |LSTM|:white_check_mark: Unimplemented `P`.|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|

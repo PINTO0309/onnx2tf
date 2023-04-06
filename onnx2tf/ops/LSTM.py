@@ -72,6 +72,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         bias_f,
         bias_c,
         bias_o,
+        clip,
+        input_forget,
         is_bidirectional,
         go_backwards,
         **kwargs
@@ -87,6 +89,8 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.bf = bias_f
         self.bc = bias_c
         self.bo = bias_o
+        self.clip = clip
+        self.input_forget = input_forget
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
         self.dense_i = tf.keras.layers.Dense(
@@ -126,10 +130,54 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
 
         offsetidx = 3 if self.is_bidirectional and self.go_backwards else 0
 
-        i = self.activations[0 + offsetidx](i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi)
-        f = self.activations[0 + offsetidx](f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf)
-        c_candidate = self.activations[1 + offsetidx](c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc)
-        o = self.activations[0 + offsetidx](o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo)
+        if not self.clip:
+            i = self.activations[0 + offsetidx](
+                i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi
+            )
+            if not self.input_forget:
+                f = self.activations[0 + offsetidx](
+                    f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf
+                )
+            else:
+                f = 1.0 - i
+            c_candidate = self.activations[1 + offsetidx](
+                c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc
+            )
+            o = self.activations[0 + offsetidx](
+                o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo
+            )
+        else:
+            i = self.activations[0 + offsetidx](
+                tf.clip_by_value(
+                    i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi,
+                    clip_value_min=-self.clip,
+                    clip_value_max=self.clip,
+                )
+            )
+            if not self.input_forget:
+                f = self.activations[0 + offsetidx](
+                    tf.clip_by_value(
+                        f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf,
+                        clip_value_min=-self.clip,
+                        clip_value_max=self.clip,
+                    )
+                )
+            else:
+                f = 1.0 - i
+            c_candidate = self.activations[1 + offsetidx](
+                tf.clip_by_value(
+                    c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc,
+                    clip_value_min=-self.clip,
+                    clip_value_max=self.clip,
+                )
+            )
+            o = self.activations[0 + offsetidx](
+                tf.clip_by_value(
+                    o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo,
+                    clip_value_min=-self.clip,
+                    clip_value_max=self.clip,
+                )
+            )
 
         c = f * c_prev + i * c_candidate
         h = o * self.activations[2 + offsetidx](c * self.activation_alphas[2 + offsetidx] + self.activation_betas[2 + offsetidx])
@@ -150,8 +198,11 @@ class CustomLSTM(Layer):
         bias_f,
         bias_c,
         bias_o,
+        clip,
+        input_forget,
         is_bidirectional,
         go_backwards,
+        enable_rnn_unroll,
         return_sequences=True,
         **kwargs
     ):
@@ -165,10 +216,13 @@ class CustomLSTM(Layer):
         self.return_sequences = return_sequences
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
+        self.enable_rnn_unroll = enable_rnn_unroll
         self.bias_i = bias_i
         self.bias_f = bias_f
         self.bias_c = bias_c
         self.bias_o = bias_o
+        self.clip = clip
+        self.input_forget = input_forget
 
         self.cell = CustomLSTMCell(
             self.hidden_size,
@@ -181,6 +235,8 @@ class CustomLSTM(Layer):
             self.bias_f,
             self.bias_c,
             self.bias_o,
+            self.clip,
+            self.input_forget,
             self.is_bidirectional,
             self.go_backwards,
         )
@@ -189,6 +245,7 @@ class CustomLSTM(Layer):
             return_sequences=self.return_sequences,
             go_backwards=self.go_backwards,
             return_state=True,
+            unroll=self.enable_rnn_unroll,
         )
 
     def call(self, inputs, initial_state=None):
@@ -386,14 +443,6 @@ def make_node(
     tf_activation_betas: List = None
 
     clip: float =  graph_node.attrs.get('clip', None)
-    if clip is not None:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'clip is currently not implemented. ' +
-            f'clip: {clip}'
-        )
-        sys.exit(1)
-
     direction: str =  graph_node.attrs.get('direction', 'forward')
     if len(activations) == 0:
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LSTM-14
@@ -467,15 +516,6 @@ def make_node(
 
     hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
     input_forget: bool = bool(graph_node.attrs.get('input_forget', 0))
-
-    if input_forget:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'input_forget = 1 is currently not implemented. ' +
-            f'input_forget: {input_forget}'
-        )
-        sys.exit(1)
-
     layout: int = graph_node.attrs.get('layout', 0)
 
     # Need transpose for batchwise, X
@@ -502,6 +542,7 @@ def make_node(
         shape3 = graph_node_output3.shape
         dtype3 = graph_node_output3.dtype
 
+    enable_rnn_unroll: bool = kwargs['enable_rnn_unroll']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output1.name] = {
@@ -690,8 +731,11 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            clip=clip,
+            input_forget=input_forget,
             is_bidirectional=False,
             go_backwards=False,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         output, hidden_state, cell_state = forward_lstm(X, initial_state=forward_initial_state)
         output = tf.expand_dims(output, axis=1)
@@ -721,8 +765,11 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            clip=clip,
+            input_forget=input_forget,
             is_bidirectional=False,
             go_backwards=True,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         output, hidden_state, cell_state = reverse_lstm(X, initial_state=backward_initial_state)
         output = tf.reverse(output, axis=[1])
@@ -765,8 +812,11 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            clip=clip,
+            input_forget=input_forget,
             is_bidirectional=True,
             go_backwards=False,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
 
         # backward
@@ -781,8 +831,11 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            clip=clip,
+            input_forget=input_forget,
             is_bidirectional=True,
             go_backwards=True,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         forward_output, forward_h, forward_c = \
             forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]
