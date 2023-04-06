@@ -6,6 +6,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    replace_parameter,
     get_constant_or_variable,
     convert_axis,
     print_node_info,
@@ -89,6 +90,14 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
+
+    # Param replacement
+    axes = replace_parameter(
+        value_before_replacement=axes,
+        param_target='attributes',
+        param_name='axes',
+        **kwargs,
+    )
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(

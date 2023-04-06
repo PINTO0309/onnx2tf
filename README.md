@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.16
+  ghcr.io/pinto0309/onnx2tf:1.8.17
 
   or
 
@@ -1541,7 +1541,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |Loop|**Help wanted**|
   |LpNormalization|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
-  |LSTM|:white_check_mark: forward/reverse|
+  |LSTM|:white_check_mark: Unimplemented `input_forget` and `P`.|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
@@ -1754,23 +1754,24 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |67|squeezenet1.0-12.onnx|:heavy_check_mark:|
 |68|super-resolution-10.onnx|:heavy_check_mark:|
 |69|swinir-m_64x64_12.onnx|:heavy_check_mark:|
-|70|tinyyolov2-8.onnx|:heavy_check_mark:|
-|71|version-RFB-640.onnx|:heavy_check_mark:|
-|72|vit-b-32_textual.onnx|:heavy_check_mark:|
-|73|vit-b-32_visual.onnx|:heavy_check_mark:|
-|74|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|75|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|76|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|77|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|78|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|79|yolov8n.onnx|:heavy_check_mark:|
-|80|yolov8n-seg.onnx|:heavy_check_mark:|
-|81|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|82|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|83|yolox_s.onnx|:heavy_check_mark:|
-|84|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|85|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|86|zfnet512-12.onnx|:heavy_check_mark:|
+|70|text_recognition_CRNN_EN_2021sep.onnx|:heavy_check_mark:|
+|71|tinyyolov2-8.onnx|:heavy_check_mark:|
+|72|version-RFB-640.onnx|:heavy_check_mark:|
+|73|vit-b-32_textual.onnx|:heavy_check_mark:|
+|74|vit-b-32_visual.onnx|:heavy_check_mark:|
+|75|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|76|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|77|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|78|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|79|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|80|yolov8n.onnx|:heavy_check_mark:|
+|81|yolov8n-seg.onnx|:heavy_check_mark:|
+|82|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|83|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|84|yolox_s.onnx|:heavy_check_mark:|
+|85|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|86|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|87|zfnet512-12.onnx|:heavy_check_mark:|
 
 </div></details>
 
