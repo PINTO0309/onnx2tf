@@ -100,7 +100,7 @@ def make_node(
 
     # NHWC -> HCHW
     try:
-        if graph_node.i().op != 'LSTM':
+        if graph_node.i().op not in ['LSTM', 'RNN', 'GRU']:
             transposed_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=list(perm) if perm is not None else None,
