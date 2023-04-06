@@ -152,6 +152,7 @@ class CustomLSTM(Layer):
         bias_o,
         is_bidirectional,
         go_backwards,
+        enable_rnn_unroll,
         return_sequences=True,
         **kwargs
     ):
@@ -165,6 +166,7 @@ class CustomLSTM(Layer):
         self.return_sequences = return_sequences
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
+        self.enable_rnn_unroll = enable_rnn_unroll
         self.bias_i = bias_i
         self.bias_f = bias_f
         self.bias_c = bias_c
@@ -189,6 +191,7 @@ class CustomLSTM(Layer):
             return_sequences=self.return_sequences,
             go_backwards=self.go_backwards,
             return_state=True,
+            unroll=self.enable_rnn_unroll,
         )
 
     def call(self, inputs, initial_state=None):
@@ -502,6 +505,7 @@ def make_node(
         shape3 = graph_node_output3.shape
         dtype3 = graph_node_output3.dtype
 
+    enable_rnn_unroll: bool = kwargs['enable_rnn_unroll']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output1.name] = {
@@ -692,6 +696,7 @@ def make_node(
             bias_o=fB_o, # (1, 256)
             is_bidirectional=False,
             go_backwards=False,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         output, hidden_state, cell_state = forward_lstm(X, initial_state=forward_initial_state)
         output = tf.expand_dims(output, axis=1)
@@ -723,6 +728,7 @@ def make_node(
             bias_o=rB_o, # (1, 256)
             is_bidirectional=False,
             go_backwards=True,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         output, hidden_state, cell_state = reverse_lstm(X, initial_state=backward_initial_state)
         output = tf.reverse(output, axis=[1])
@@ -767,6 +773,7 @@ def make_node(
             bias_o=fB_o, # (1, 256)
             is_bidirectional=True,
             go_backwards=False,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
 
         # backward
@@ -783,6 +790,7 @@ def make_node(
             bias_o=rB_o, # (1, 256)
             is_bidirectional=True,
             go_backwards=True,
+            enable_rnn_unroll=enable_rnn_unroll,
         )
         forward_output, forward_h, forward_c = \
             forward_lstm(X, initial_state=forward_initial_state) # [1, 24, 512], [[1, 256], [1, 256]] -> [1, 24, 256], [1, 256], [1, 256]

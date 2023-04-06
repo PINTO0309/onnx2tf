@@ -79,6 +79,7 @@ def convert(
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     disable_group_convolution: Optional[bool] = False,
     enable_batchmatmul_unfold: Optional[bool] = False,
+    enable_rnn_unroll: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
     number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
     disable_suppression_flexstridedslice: Optional[bool] = False,
@@ -285,6 +286,11 @@ def convert(
 
     enable_batchmatmul_unfold: Optional[bool]
         BatchMatMul is separated batch by batch to generate a primitive MatMul.
+
+    enable_rnn_unroll: Optional[bool]
+        Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN),\n
+        RAM consumption will increase because all tensors are expanded and embedded in the model.\n
+        https://keras.io/api/layers/recurrent_layers/
 
     disable_suppression_flextranspose: Optional[bool]
         Disables FlexTranspose generation suppression.
@@ -705,6 +711,7 @@ def convert(
         'batch_size': batch_size,
         'non_verbose': non_verbose,
         'disable_group_convolution': disable_group_convolution,
+        'enable_rnn_unroll': enable_rnn_unroll,
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
         'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
         'disable_suppression_flexstridedslice': disable_suppression_flexstridedslice,
@@ -1724,6 +1731,15 @@ def main():
             'BatchMatMul is separated batch by batch to generate a primitive MatMul.'
     )
     parser.add_argument(
+        '-eru',
+        '--enable_rnn_unroll',
+        action='store_true',
+        help=\
+            'Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN), \n' +
+            'RAM consumption will increase because all tensors are expanded and embedded in the model. \n' +
+            'https://keras.io/api/layers/recurrent_layers/'
+    )
+    parser.add_argument(
         '-dsft',
         '--disable_suppression_flextranspose',
         action='store_true',
@@ -1990,6 +2006,7 @@ def main():
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         disable_group_convolution=args.disable_group_convolution,
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
+        enable_rnn_unroll=args.enable_rnn_unroll,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
         number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
         disable_suppression_flexstridedslice=args.disable_suppression_flexstridedslice,
