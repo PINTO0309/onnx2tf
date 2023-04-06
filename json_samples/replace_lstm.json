@@ -1,0 +1,20 @@
+{
+  "model": "https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/torch_lstm.onnx",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/198",
+  "command": "onnx2tf -i torch_lstm.onnx -prf replace_lstm.json",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/Squeeze",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [1]
+    },
+    {
+      "op_name": "/Transpose_1",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2]
+    }
+  ]
+}
