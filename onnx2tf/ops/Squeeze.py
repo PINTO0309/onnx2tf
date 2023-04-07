@@ -98,6 +98,13 @@ def make_node(
         param_name='axes',
         **kwargs,
     )
+    if len(graph_node.inputs) >= 2:
+        axes = replace_parameter(
+            value_before_replacement=axes,
+            param_target='inputs',
+            param_name=graph_node.inputs[1].name,
+            **kwargs,
+        )
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
