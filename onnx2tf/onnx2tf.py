@@ -48,10 +48,11 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     get_tf_model_outputs,
     rewrite_tflite_inout_opname,
+    check_custom_input
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
-
+import pickle
 
 def convert(
     input_onnx_file_path: Optional[str] = '',
@@ -100,6 +101,8 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
+    
+    custom_input_data: Optional[str] = None #new parameter
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
 
@@ -423,7 +426,12 @@ def convert(
     model: tf.keras.Model
         Model
     """
-
+    # load custom input
+    if custom_input_data:
+        check_custom_input(custom_input_data)
+        with open(custom_input_data, 'rb') as f:
+            custom_input_data = pickle.load(f)       
+    
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
         print(
@@ -670,6 +678,7 @@ def convert(
             onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
                 onnx_graph=onnx_graph,
                 output_names=full_ops_output_names,
+                custom_input_data=custom_input_data
             )
             """
             onnx_tensor_infos_for_validation:
@@ -737,7 +746,8 @@ def convert(
         print('')
         print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
 
-    with graph.node_ids():
+    with graph.node_ids():     
+        
         onnx_graph_input_names: List[str] = [
             inputop.name for inputop in graph.inputs
         ]
@@ -1363,6 +1373,7 @@ def convert(
                     onnx_graph=onnx_graph,
                     output_names=ops_output_names,
                     test_data_nhwc=test_data_nhwc,
+                    custom_input_data=custom_input_data
                 )
             except Exception as ex:
                 print(
@@ -1377,6 +1388,7 @@ def convert(
                     model=model,
                     inputs=inputs,
                     test_data_nhwc=test_data_nhwc,
+                    custom_input_data=custom_input_data,
                 )
                 # Validation
                 onnx_tensor_infos = {
@@ -1914,6 +1926,14 @@ def main():
             'there are operations.'
     )
     parser.add_argument(
+        '-cid',
+        '--custom_input_data',
+        type=str,
+        default=None,
+        help=\
+            'Use custom onnx input data instead of dummy inputs.'
+    )    
+    parser.add_argument(
         '-coton',
         '--check_onnx_tf_outputs_sample_data_normalization',
         type=str,
@@ -2027,6 +2047,8 @@ def main():
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
+        
+        custom_input_data=args.custom_input_data # new parameter
     )
 
 
