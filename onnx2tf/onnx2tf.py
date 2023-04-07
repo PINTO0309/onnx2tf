@@ -47,8 +47,7 @@ from onnx2tf.utils.common_functions import (
     download_test_image_data,
     get_tf_model_inputs,
     get_tf_model_outputs,
-    rewrite_tflite_inout_opname,
-    check_custom_input
+    rewrite_tflite_inout_opname
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
