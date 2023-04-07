@@ -3376,7 +3376,7 @@ def dummy_onnx_inference(
     onnx_graph: onnx.ModelProto,
     output_names: List[str],
     test_data_nhwc: Optional[np.ndarray] = None,
-    custom_input_data: Optional[str] = None,
+    custom_input_op_name_np_data_path: Optional[str] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3477,9 +3477,15 @@ def dummy_onnx_inference(
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
     input_datas = {}
     
-    if custom_input_data:
-        for idx, data in enumerate(custom_input_data):
-            input_datas[input_names[idx]] = data
+    # -cid
+    if custom_input_op_name_np_data_path:
+        for param in custom_input_op_name_np_data_path:
+            input_op_name = str(param[0])
+            numpy_file_path = str(param[1])
+            custom_input_data = np.load(numpy_file_path)
+
+            input_datas[input_op_name] = custom_input_data
+        
     else:
         for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
             if test_data_nhwc is None:
@@ -3506,7 +3512,7 @@ def dummy_tf_inference(
     inputs: List[tf.keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
     verification_datas: Optional[List[np.ndarray]] = None,
-    custom_input_data: Optional[str] = None,
+    custom_input_op_name_np_data_path: Optional[str] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -3547,9 +3553,24 @@ def dummy_tf_inference(
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
     
-    if custom_input_data:
-        for idx, data in enumerate(custom_input_data):
-            input_datas[input_names[idx]] = data    
+    
+    # -cid
+    if custom_input_op_name_np_data_path:
+        for idx, param in enumerate(custom_input_op_name_np_data_path):
+            numpy_file_path = str(param[1])
+            custom_input_data = np.load(numpy_file_path)
+            input_size = input_sizes[idx]
+            
+            if list(custom_input_data.shape) != input_size:
+                error_msg = f'' + \
+                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f"The format of custom input data is different from Tensorflow's format. " + \
+                    f"Therefore, you cannot use custom input. "
+                
+                raise ValueError(error_msg)
+
+            input_datas[input_names[idx]] = custom_input_data    
+             
     else:
         if verification_datas is None:
             for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):            
@@ -5121,27 +5142,3 @@ def deterring_shape_corruption_due_to_broadcast(
         )
 
     return input_tensor_1, input_tensor_2
-
-def check_custom_input(custom_onnx_input_data):
-
-    try:
-        import pickle
-        
-        with open(custom_onnx_input_data, 'rb') as f:
-            ipt = pickle.load(f)         
-    except OSError: 
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'Not exist Directory.'
-        )
-        sys.exit(1)
-    except Exception as err:
-        print(err)
-        print(
-            f"{Color.RED}ERROR:{Color.RESET} " + \
-            "Do not use .cuda() or .to('cuda') when saving the input tensor to the pickle file. " + \
-            "Instead, use '.cpu().detach().numpy()' "
-        )
-        sys.exit(1)
-        
-    # print('good')

@@ -52,7 +52,6 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
-import pickle
 
 def convert(
     input_onnx_file_path: Optional[str] = '',
@@ -66,7 +65,7 @@ def convert(
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
-    quant_calib_input_op_name_np_data_path: Optional[List] = None,
+    custom_input_op_name_np_data_path: Optional[List] = None, # edit parameter
     input_output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
@@ -101,8 +100,6 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
     non_verbose: Optional[bool] = False,
-    
-    custom_input_data: Optional[str] = None #new parameter
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
 
@@ -156,7 +153,7 @@ def convert(
         Selects whether "per-channel" or "per-tensor" quantization is used.\n
         Default: "per-channel"
 
-    quant_calib_input_op_name_np_data_path: Optional[List]
+    custom_input_op_name_np_data_path: Optional[List]
         INPUT Name of OP and path of calibration data file (Numpy) for quantization\n
         and mean and std.\n
         The specification can be omitted only when the input OP is a single 4D tensor image data.\n
@@ -425,13 +422,7 @@ def convert(
     ----------
     model: tf.keras.Model
         Model
-    """
-    # load custom input
-    if custom_input_data:
-        check_custom_input(custom_input_data)
-        with open(custom_input_data, 'rb') as f:
-            custom_input_data = pickle.load(f)       
-    
+    """   
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
         print(
@@ -678,7 +669,7 @@ def convert(
             onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
                 onnx_graph=onnx_graph,
                 output_names=full_ops_output_names,
-                custom_input_data=custom_input_data
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path
             )
             """
             onnx_tensor_infos_for_validation:
@@ -772,12 +763,12 @@ def convert(
             """
             # AUTO calib 4D check
             if output_integer_quantized_tflite \
-                and quant_calib_input_op_name_np_data_path is None \
+                and custom_input_op_name_np_data_path is None \
                 and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
                 print(
                     f'{Color.RED}ERROR:{Color.RESET} ' +
                     f'For INT8 quantization, the input data type must be Float32. ' +
-                    f'Also, if --quant_calib_input_op_name_np_data_path is not specified, ' +
+                    f'Also, if --custom_input_op_name_np_data_path is not specified, ' +
                     f'all input OPs must assume 4D tensor image data. ' +
                     f'INPUT Name: {graph_input.name} INPUT Shape: {graph_input.shape} INPUT dtype: {graph_input.dtype}'
                 )
@@ -1076,7 +1067,7 @@ def convert(
                 model_input.name for model_input in model.inputs
             ]
             data_count = 0
-            if quant_calib_input_op_name_np_data_path is None \
+            if custom_input_op_name_np_data_path is None \
                 and model.inputs[0].dtype == tf.float32 \
                 and len(model.inputs[0].shape) == 4:
 
@@ -1105,21 +1096,22 @@ def convert(
                             MEAN,
                             STD,
                         ]
-            elif quant_calib_input_op_name_np_data_path is not None:
-                for param in quant_calib_input_op_name_np_data_path:
-                    input_op_name = str(param[0])
-                    numpy_file_path = str(param[1])
-                    calib_data = np.load(numpy_file_path)
-                    if data_count == 0:
-                        data_count = calib_data.shape[0]
-                    mean = param[2]
-                    std = param[3]
-                    calib_data_dict[input_op_name] = \
-                        [
-                            calib_data.copy(),
-                            mean,
-                            std,
-                        ]
+            elif custom_input_op_name_np_data_path is not None:
+                for param in custom_input_op_name_np_data_path:
+                    if len(param) == 4:
+                        input_op_name = str(param[0])
+                        numpy_file_path = str(param[1])
+                        calib_data = np.load(numpy_file_path)
+                        if data_count == 0:
+                            data_count = calib_data.shape[0]
+                        mean = param[2]
+                        std = param[3]
+                        calib_data_dict[input_op_name] = \
+                            [
+                                calib_data.copy(),
+                                mean,
+                                std,
+                            ]
 
             # representative_dataset_gen
             def representative_dataset_gen():
@@ -1373,7 +1365,7 @@ def convert(
                     onnx_graph=onnx_graph,
                     output_names=ops_output_names,
                     test_data_nhwc=test_data_nhwc,
-                    custom_input_data=custom_input_data
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path
                 )
             except Exception as ex:
                 print(
@@ -1388,7 +1380,7 @@ def convert(
                     model=model,
                     inputs=inputs,
                     test_data_nhwc=test_data_nhwc,
-                    custom_input_data=custom_input_data,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                 )
                 # Validation
                 onnx_tensor_infos = {
@@ -1551,11 +1543,11 @@ def main():
             'Default: "per-channel"'
     )
     parser.add_argument(
-        '-qcind',
-        '--quant_calib_input_op_name_np_data_path',
+        '-cind',
+        '--custom_input_op_name_np_data_path',
         type=str,
         action='append',
-        nargs=4,
+        nargs='+',
         help=\
             'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
             'and mean and std. \n' +
@@ -1924,15 +1916,7 @@ def main():
             'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
             'there are operations.'
-    )
-    parser.add_argument(
-        '-cid',
-        '--custom_input_data',
-        type=str,
-        default=None,
-        help=\
-            'Use custom onnx input data instead of dummy inputs.'
-    )    
+    )  
     parser.add_argument(
         '-coton',
         '--check_onnx_tf_outputs_sample_data_normalization',
@@ -1983,18 +1967,30 @@ def main():
     #   [{input_op_name} {numpy_file_path} {mean} {std}],
     #   [{input_op_name} {numpy_file_path} {mean} {std}],
     # ]
-    calib_params = []
-    if args.quant_calib_input_op_name_np_data_path is not None:
-        for param in args.quant_calib_input_op_name_np_data_path:
-            input_op_name = str(param[0])
-            numpy_file_path = str(param[1])
-            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
-            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
-            calib_params.append(
-                [input_op_name, numpy_file_path, mean, std]
-            )
-    if len(calib_params) == 0:
-        calib_params = None
+    custom_params = []
+    if args.custom_input_op_name_np_data_path is not None:
+        for param in args.custom_input_op_name_np_data_path:
+            tmp = []
+            if len(param) == 2:
+                tmp.append(str(param[0])) # input_op_name
+                tmp.append(str(param[1])) # numpy_file_path
+                
+                if len(param) == 4:
+                    tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
+                    tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
+                    
+                custom_params.append(
+                    tmp
+                )
+            else:
+                error_msg = f'' + \
+                            f'{Color.RED}ERROR:{Color.RESET} ' + \
+                            f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
+                print(error_msg)
+                raise ValueError(error_msg)
+            
+    if len(custom_params) == 0:
+        custom_params = None
 
     args.replace_to_pseudo_operators = [
         name.lower() for name in args.replace_to_pseudo_operators
@@ -2012,7 +2008,7 @@ def main():
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
-        quant_calib_input_op_name_np_data_path=calib_params,
+        custom_input_op_name_np_data_path=custom_params, # edit parameter
         input_output_quant_dtype=args.input_output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
@@ -2047,10 +2043,9 @@ def main():
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
         non_verbose=args.non_verbose,
-        
-        custom_input_data=args.custom_input_data # new parameter
     )
 
 
 if __name__ == '__main__':
     main()
+
