@@ -20,42 +20,128 @@ from onnx2tf.utils.colors import Color
 from tensorflow.python.keras.layers import Layer
 
 
-class Affine(tf.keras.layers.Layer):
+class Elu(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Elu, self).__init__()
+
+    def call(self, x):
+        return tf.nn.elu(x)
+
+class HardSigmoid(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(HardSigmoid, self).__init__()
+        self.alpha = 0.2
+        self.beta = 0.5
+        self.alpha = tf.convert_to_tensor(alpha) \
+            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.beta = tf.convert_to_tensor(beta) \
+            if self.beta != beta else tf.convert_to_tensor(self.beta)
+
+    def call(self, x):
+        # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#hardsigmoid-6
+        # max(0, min(1, alpha * x + beta))
+        return tf.maximum(0.0, tf.minimum(1.0, self.alpha * x + self.beta))
+
+class LeakyReLU(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(LeakyReLU, self).__init__()
+        self.alpha = 0.01
+        self.alpha = tf.convert_to_tensor(alpha) \
+            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+
+    def call(self, x):
+        # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#leakyrelu-16
+        return tf.nn.leaky_relu(x, alpha=self.alpha)
+
+class ReLU(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(ReLU, self).__init__()
+
+    def call(self, x):
+        return tf.nn.relu(x)
+
+class Sigmoid(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Sigmoid, self).__init__()
+
+    def call(self, x):
+        return tf.sigmoid(x)
+
+class Softsign(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Softsign, self).__init__()
+
+    def call(self, x):
+        return tf.nn.softsign(x)
+
+class Softplus(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Softplus, self).__init__()
+
+    def call(self, x):
+        return tf.nn.softplus(x)
+
+class Tanh(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(Tanh, self).__init__()
+
+    def call(self, x):
+        return tf.tanh(x)
+
+class ThresholdedReLU(Layer):
+    def __init__(self, alpha: float, beta: float):
+        super(ThresholdedReLU, self).__init__()
+        self.alpha = 1.0
+        self.alpha = tf.convert_to_tensor(alpha) \
+            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+
+    def call(self, x):
+        return tf.keras.layers.ThresholdedReLU(theta=self.alpha)(x)
+
+class Affine(Layer):
     def __init__(self, alpha: float, beta: float):
         super(Affine, self).__init__()
-        self.alpha = tf.convert_to_tensor(alpha)
-        self.beta = tf.convert_to_tensor(beta)
+        self.alpha = 1.0
+        self.beta = 0.0
+        self.alpha = tf.convert_to_tensor(alpha) \
+            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.beta = tf.convert_to_tensor(beta) \
+            if self.beta != beta else tf.convert_to_tensor(self.beta)
 
     def call(self, x):
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#lstm-14
         # alpha*x + beta
         return self.alpha * x + self.beta
 
-class ScaledTanh(tf.keras.layers.Layer):
+class ScaledTanh(Layer):
     def __init__(self, alpha: float, beta: float):
         super(ScaledTanh, self).__init__()
-        self.alpha = tf.convert_to_tensor(alpha)
-        self.beta = tf.convert_to_tensor(beta)
+        self.alpha = 1.0
+        self.beta = 1.0
+        self.alpha = tf.convert_to_tensor(alpha) \
+            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.beta = tf.convert_to_tensor(beta) \
+            if self.beta != beta else tf.convert_to_tensor(self.beta)
 
     def call(self, x):
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#lstm-7
         # alpha*Tanh(beta*x)
-        return self.alpha * tf.nn.tanh(self.beta*x)
+        return self.alpha * tf.nn.tanh(self.beta * x)
 
 
 # {'activateion_name': [tf_activation, default_alpha, default_beta]}
 ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
-    "Elu": [tf.nn.elu, 1.0, 0.0],
-    "HardSigmoid": [tf.keras.backend.hard_sigmoid, 0.2, 0.5],
-    "LeakyRelu": [tf.nn.leaky_relu, 0.01, 0.0],
-    "Relu": [tf.nn.relu, 1.0, 0.0],
-    "Sigmoid": [tf.sigmoid, 1.0, 0.0],
-    "Softsign": [tf.nn.softsign, 1.0, 0.0],
-    "Softplus": [tf.nn.softplus, 1.0, 0.0],
-    "Tanh": [tf.tanh, 1.0, 0.0],
-    "ThresholdedRelu": [tf.keras.layers.ThresholdedReLU, 1.0, 0.0],
+    "Elu": [Elu, 1.0, 0.0],
+    "HardSigmoid": [HardSigmoid, 0.2, 0.5],
+    "LeakyRelu": [LeakyReLU, 0.01, 0.0],
+    "Relu": [ReLU, 1.0, 0.0],
+    "Sigmoid": [Sigmoid, 1.0, 0.0],
+    "Softsign": [Softsign, 1.0, 0.0],
+    "Softplus": [Softplus, 1.0, 0.0],
+    "Tanh": [Tanh, 1.0, 0.0],
+    "ThresholdedRelu": [ThresholdedReLU, 1.0, 0.0],
     "Affine": [Affine, 1.0, 0.0],
-    "ScaledTanh": [ScaledTanh, 1.0, 1.0]
+    "ScaledTanh": [ScaledTanh, 1.0, 1.0],
 }
 
 
@@ -131,25 +217,17 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         offsetidx = 3 if self.is_bidirectional and self.go_backwards else 0
 
         if not self.clip:
-            i = self.activations[0 + offsetidx](
-                i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi
-            )
+            i = self.activations[0 + offsetidx](i + self.bi)
             if not self.input_forget:
-                f = self.activations[0 + offsetidx](
-                    f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf
-                )
+                f = self.activations[0 + offsetidx](f + self.bf)
             else:
                 f = 1.0 - i
-            c_candidate = self.activations[1 + offsetidx](
-                c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc
-            )
-            o = self.activations[0 + offsetidx](
-                o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo
-            )
+            c_candidate = self.activations[1 + offsetidx](c_candidate + self.bc)
+            o = self.activations[0 + offsetidx](o + self.bo)
         else:
             i = self.activations[0 + offsetidx](
                 tf.clip_by_value(
-                    i * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bi,
+                    i + self.bi,
                     clip_value_min=-self.clip,
                     clip_value_max=self.clip,
                 )
@@ -157,7 +235,7 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
             if not self.input_forget:
                 f = self.activations[0 + offsetidx](
                     tf.clip_by_value(
-                        f * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bf,
+                        f + self.bf,
                         clip_value_min=-self.clip,
                         clip_value_max=self.clip,
                     )
@@ -166,21 +244,21 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
                 f = 1.0 - i
             c_candidate = self.activations[1 + offsetidx](
                 tf.clip_by_value(
-                    c_candidate * self.activation_alphas[1 + offsetidx] + self.activation_betas[1 + offsetidx] + self.bc,
+                    c_candidate + self.bc,
                     clip_value_min=-self.clip,
                     clip_value_max=self.clip,
                 )
             )
             o = self.activations[0 + offsetidx](
                 tf.clip_by_value(
-                    o * self.activation_alphas[0 + offsetidx] + self.activation_betas[0 + offsetidx] + self.bo,
+                    o + self.bo,
                     clip_value_min=-self.clip,
                     clip_value_max=self.clip,
                 )
             )
 
         c = f * c_prev + i * c_candidate
-        h = o * self.activations[2 + offsetidx](c * self.activation_alphas[2 + offsetidx] + self.activation_betas[2 + offsetidx])
+        h = o * self.activations[2 + offsetidx](c)
 
         return h, [h, c]
 
@@ -451,66 +529,63 @@ def make_node(
             'Tanh',    # h (Output Gate)
         ]
         tf_activations = [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][0], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
+            # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[0]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[0]][2]
+            ),
+            # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[1]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[1]][2]
+            ),
+            # h (Output Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[2]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[2]][2]
+            ),
         ]
         tf_activations = tf_activations + [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][0], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][0], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][0], # h (Output Gate)
+            # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[0]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[0]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[0]][2]
+            ),
+            # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[1]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[1]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[1]][2]
+            ),
+            # h (Output Gate)
+            ONNX_ACTIVATION_MAPPING[default_activations[2]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[default_activations[2]][1], beta=ONNX_ACTIVATION_MAPPING[default_activations[2]][2]
+            ),
         ] if direction == 'bidirectional' else tf_activations
-        tf_activation_alphas = [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
-        ]
-        tf_activation_alphas = tf_activation_alphas + [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][1], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][1], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][1], # h (Output Gate)
-        ] if direction == 'bidirectional' else tf_activation_alphas
-        tf_activation_betas = [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
-        ]
-        tf_activation_betas = tf_activation_betas + [
-            ONNX_ACTIVATION_MAPPING[default_activations[0]][2], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[1]][2], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[default_activations[2]][2], # h (Output Gate)
-        ] if direction == 'bidirectional' else tf_activation_betas
+
     else:
         tf_activations = [
-            ONNX_ACTIVATION_MAPPING[activations[0]][0], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[1]][0], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[2]][0], # h (Output Gate)
+            # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[0]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[0]][1], beta=ONNX_ACTIVATION_MAPPING[activations[0]][2]
+            ),
+            # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[1]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[1]][1], beta=ONNX_ACTIVATION_MAPPING[activations[1]][2]
+            ),
+            # h (Output Gate)
+            ONNX_ACTIVATION_MAPPING[activations[2]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[2]][1], beta=ONNX_ACTIVATION_MAPPING[activations[2]][2]
+            ),
         ]
         tf_activations = tf_activations + [
-            ONNX_ACTIVATION_MAPPING[activations[3]][0], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[4]][0], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[5]][0], # h (Output Gate)
+            # f (Oblivion Gate)
+            ONNX_ACTIVATION_MAPPING[activations[3]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[3]][1], beta=ONNX_ACTIVATION_MAPPING[activations[3]][2]
+            ),
+            # g (Input Gate)
+            ONNX_ACTIVATION_MAPPING[activations[4]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[4]][1], beta=ONNX_ACTIVATION_MAPPING[activations[4]][2]
+            ),
+            # h (Output Gate)
+            ONNX_ACTIVATION_MAPPING[activations[5]][0](
+                alpha=ONNX_ACTIVATION_MAPPING[activations[5]][1], beta=ONNX_ACTIVATION_MAPPING[activations[5]][2]
+            ),
         ] if direction == 'bidirectional' else tf_activations
-        tf_activation_alphas = [
-            ONNX_ACTIVATION_MAPPING[activations[0]][1], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[1]][1], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[2]][1], # h (Output Gate)
-        ]
-        tf_activation_alphas = tf_activation_alphas + [
-            ONNX_ACTIVATION_MAPPING[activations[3]][1], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[4]][1], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[5]][1], # h (Output Gate)
-        ] if direction == 'bidirectional' else tf_activation_alphas
-        tf_activation_betas = [
-            ONNX_ACTIVATION_MAPPING[activations[0]][2], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[1]][2], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[2]][2], # h (Output Gate)
-        ]
-        tf_activation_betas = tf_activation_betas + [
-            ONNX_ACTIVATION_MAPPING[activations[3]][2], # f (Oblivion Gate)
-            ONNX_ACTIVATION_MAPPING[activations[4]][2], # g (Input Gate)
-            ONNX_ACTIVATION_MAPPING[activations[5]][2], # h (Output Gate)
-        ] if direction == 'bidirectional' else tf_activation_betas
 
     hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
     input_forget: bool = bool(graph_node.attrs.get('input_forget', 0))
