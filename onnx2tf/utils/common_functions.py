@@ -3553,7 +3553,6 @@ def dummy_tf_inference(
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
     
-    
     # -cid
     if custom_input_op_name_np_data_path:
         for idx, param in enumerate(custom_input_op_name_np_data_path):

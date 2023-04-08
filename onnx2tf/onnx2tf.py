@@ -47,7 +47,7 @@ from onnx2tf.utils.common_functions import (
     download_test_image_data,
     get_tf_model_inputs,
     get_tf_model_outputs,
-    rewrite_tflite_inout_opname
+    rewrite_tflite_inout_opname,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -64,7 +64,7 @@ def convert(
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
-    custom_input_op_name_np_data_path: Optional[List] = None, # edit parameter
+    custom_input_op_name_np_data_path: Optional[List] = None,
     input_output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
@@ -421,7 +421,17 @@ def convert(
     ----------
     model: tf.keras.Model
         Model
-    """   
+    """
+    # determination of errors in custom input
+    if custom_input_op_name_np_data_path is not None:
+        for param in custom_input_op_name_np_data_path:
+            if len(param) not in [2, 4]:
+                error_msg = f'' + \
+                            f'{Color.RED}ERROR:{Color.RESET} ' + \
+                            f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
+                print(error_msg)
+                raise ValueError(error_msg)
+    
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
         print(
@@ -1915,7 +1925,7 @@ def main():
             'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
             'there are operations.'
-    )  
+    )
     parser.add_argument(
         '-coton',
         '--check_onnx_tf_outputs_sample_data_normalization',
@@ -1981,13 +1991,7 @@ def main():
                 custom_params.append(
                     tmp
                 )
-            else:
-                error_msg = f'' + \
-                            f'{Color.RED}ERROR:{Color.RESET} ' + \
-                            f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
-                print(error_msg)
-                raise ValueError(error_msg)
-            
+
     if len(custom_params) == 0:
         custom_params = None
 
@@ -2007,7 +2011,7 @@ def main():
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
-        custom_input_op_name_np_data_path=custom_params, # edit parameter
+        custom_input_op_name_np_data_path=custom_params,
         input_output_quant_dtype=args.input_output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,

@@ -3,7 +3,7 @@ import numpy as np
 from os import path
 from torch import nn
 
-save_dir = '/data/ojw/onnx2tf/test_cind/'
+save_dir = 'test_cind/'
 
 # model
 class Model(nn.Module):
@@ -33,4 +33,3 @@ torch.onnx.export(
     verbose=True,
     opset_version=16
 )
-
