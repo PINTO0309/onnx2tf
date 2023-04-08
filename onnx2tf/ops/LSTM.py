@@ -179,16 +179,6 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.input_forget = input_forget
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
-        self.dense_i = tf.keras.layers.Dense(
-            units=4 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(self.kernel),
-            use_bias=False,
-        )
-        self.dense_h = tf.keras.layers.Dense(
-            units=4 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(self.recurrent_kernel),
-            use_bias=False,
-        )
 
     @property
     def state_size(self):
@@ -211,7 +201,7 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         # TODO:
         # 1. Pが考慮されていない
         h_prev, c_prev = states
-        gates = self.dense_i(inputs) + self.dense_h(h_prev)
+        gates = tf.matmul(inputs, self.kernel) + tf.matmul(h_prev, self.recurrent_kernel)
         i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
 
         offsetidx = 3 if self.is_bidirectional and self.go_backwards else 0

@@ -1,0 +1,26 @@
+{
+  "model": "https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_302/lstm_undefined_dim.onnx",
+  "cited": "https://github.com/musharaf-hossain-cs/ml-project-handwritten-text-recognition/tree/main/Saved%20Models",
+  "command": "onnx2tf -i lstm_undefined_dim.onnx -prf replace_lstm_undefined_dim.json",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "LSTM__185",
+      "param_target": "outputs",
+      "param_name": "LSTM__185:0",
+      "post_process_transpose_perm": [2,1,0,3]
+    },
+    {
+      "op_name": "LSTM__159",
+      "param_target": "outputs",
+      "param_name": "LSTM__159:0",
+      "post_process_transpose_perm": [2,1,0,3]
+    },
+    {
+      "op_name": "model/output/Tensordot",
+      "param_target": "outputs",
+      "param_name": "model/output/Tensordot:0",
+      "post_process_transpose_perm": [0,2,1]
+    }
+  ]
+}

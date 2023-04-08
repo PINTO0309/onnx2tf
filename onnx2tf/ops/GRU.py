@@ -205,46 +205,6 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
 
-        # z = self.f(np.dot(row, np.transpose(w_z)) + np.dot(self.H_0, np.transpose(r_z)) + w_bz + r_bz)
-        # r = self.f(np.dot(row, np.transpose(w_r)) + np.dot(self.H_0, np.transpose(r_r)) + w_br + r_br)
-        # h_default = self.g(np.dot(row, np.transpose(w_h)) + np.dot(r * self.H_0, np.transpose(r_h)) + w_bh + r_bh)
-        # h_linear = self.g(np.dot(row, np.transpose(w_h)) + r * (np.dot(self.H_0, np.transpose(r_h)) + r_bh) + w_bh)
-
-        self.dense_z1 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.w_z)),
-            use_bias=False,
-        )
-        self.dense_z2 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.r_z)),
-            use_bias=False,
-        )
-
-        self.dense_r1 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.w_r)),
-            use_bias=False,
-        )
-
-        self.dense_r2 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.r_r)),
-            use_bias=False,
-        )
-
-        self.dense_h1 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.w_h)),
-            use_bias=False,
-        )
-        self.dense_h2 = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(tf.transpose(self.r_h)),
-            use_bias=False,
-        )
-
-
     @property
     def state_size(self):
         return [self.hidden_size]
@@ -265,15 +225,16 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
 
         # z = self.f(np.dot(row, np.transpose(w_z)) + np.dot(h_prev, np.transpose(r_z)) + w_bz + r_bz)
         # r = self.f(np.dot(row, np.transpose(w_r)) + np.dot(h_prev, np.transpose(r_r)) + w_br + r_br)
-        z = self.dense_z1(inputs) + self.dense_z2(h_prev) + self.w_bz + self.r_bz
-        r = self.dense_r1(inputs) + self.dense_r2(h_prev) + self.w_br + self.r_br
+        z = tf.matmul(inputs, tf.transpose(self.w_z)) + tf.matmul(h_prev, tf.transpose(self.r_z)) + self.w_bz + self.r_bz
+        r = tf.matmul(inputs, tf.transpose(self.w_r)) + tf.matmul(h_prev, tf.transpose(self.r_r)) + self.w_br + self.r_br
+
 
         # h_default = self.g(np.dot(row, np.transpose(w_h)) + np.dot(r * h_prev, np.transpose(r_h)) + w_bh + r_bh)
         # h_linear = self.g(np.dot(row, np.transpose(w_h)) + r * (np.dot(h_prev, np.transpose(r_h)) + r_bh) + w_bh)
         if not self.linear_before_reset:
-            h = self.dense_h1(inputs) + self.dense_h2(r * h_prev) + self.w_bh + self.r_bh
+            h = tf.matmul(inputs, tf.transpose(self.w_h)) + tf.matmul(r * h_prev, tf.transpose(self.r_h)) + self.w_bh + self.r_bh
         else:
-            h = self.dense_h1(inputs) + r * (self.dense_h2(h_prev) + self.r_bh) + self.w_bh
+            h = tf.matmul(inputs, tf.transpose(self.w_h)) + r * (tf.matmul(h_prev, tf.transpose(self.r_h)) + self.r_bh) + self.w_bh
 
         offsetidx = 2 if self.is_bidirectional and self.go_backwards else 0
 
