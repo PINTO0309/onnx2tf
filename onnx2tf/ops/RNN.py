@@ -170,16 +170,6 @@ class CustomRNNCell(tf.keras.layers.AbstractRNNCell):
         self.clip = clip
         self.is_bidirectional = is_bidirectional
         self.go_backwards = go_backwards
-        self.dense_i = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(self.kernel),
-            use_bias=False,
-        )
-        self.dense_h = tf.keras.layers.Dense(
-            units=1 * self.hidden_size,
-            kernel_initializer=tf.keras.initializers.constant(self.recurrent_kernel),
-            use_bias=False,
-        )
 
     @property
     def state_size(self):
@@ -193,7 +183,7 @@ class CustomRNNCell(tf.keras.layers.AbstractRNNCell):
             Ht = f( Xt*(Wi^T) + Ht-1*(Ri^T) + Wbi + Rbi )
         """
         h_prev = states[0]
-        gates = self.dense_i(inputs) + self.dense_h(h_prev)
+        gates = tf.matmul(inputs, self.kernel) + tf.matmul(h_prev, self.recurrent_kernel)
         i = gates
         offsetidx = 1 if self.is_bidirectional and self.go_backwards else 0
 
