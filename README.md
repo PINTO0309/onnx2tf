@@ -10,6 +10,203 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 ## Model Conversion Status
 https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
+## Supported layers
+- https://github.com/onnx/onnx/blob/main/docs/Operators.md
+- :heavy_check_mark:: Supported　:white_check_mark:: Partial support　**Help wanted**: Pull Request are welcome
+
+  <details><summary>See the list of supported layers</summary><div>
+
+  |OP|Status|
+  |:-|:-:|
+  |Abs|:heavy_check_mark:|
+  |Acosh|:heavy_check_mark:|
+  |Acos|:heavy_check_mark:|
+  |Add|:heavy_check_mark:|
+  |And|:heavy_check_mark:|
+  |ArgMax|:heavy_check_mark:|
+  |ArgMin|:heavy_check_mark:|
+  |Asinh|:heavy_check_mark:|
+  |Asin|:heavy_check_mark:|
+  |Atanh|:heavy_check_mark:|
+  |Atan|:heavy_check_mark:|
+  |AveragePool|:heavy_check_mark:|
+  |BatchNormalization|:heavy_check_mark:|
+  |Bernoulli|:heavy_check_mark:|
+  |BitShift|:heavy_check_mark:|
+  |BitwiseAnd|**Help wanted**|
+  |BitwiseNot|**Help wanted**|
+  |BitwiseOr|**Help wanted**|
+  |BitwiseXor|**Help wanted**|
+  |Cast|:heavy_check_mark:|
+  |Ceil|:heavy_check_mark:|
+  |Celu|:heavy_check_mark:|
+  |CenterCropPad|**Help wanted**|
+  |Clip|:heavy_check_mark:|
+  |Col2Im|**Help wanted**|
+  |Compress|:heavy_check_mark:|
+  |ConcatFromSequence|:heavy_check_mark:|
+  |Concat|:heavy_check_mark:|
+  |ConstantOfShape|:heavy_check_mark:|
+  |Constant|:heavy_check_mark:|
+  |Conv|:heavy_check_mark:|
+  |ConvTranspose|:heavy_check_mark:|
+  |Cosh|:heavy_check_mark:|
+  |Cos|:heavy_check_mark:|
+  |CumSum|:heavy_check_mark:|
+  |DepthToSpace|:heavy_check_mark:|
+  |Det|:heavy_check_mark:|
+  |DequantizeLinear|:heavy_check_mark:|
+  |DFT|**Help wanted**|
+  |Div|:heavy_check_mark:|
+  |Dropout|:heavy_check_mark:|
+  |DynamicQuantizeLinear|:heavy_check_mark:|
+  |Einsum|:heavy_check_mark:|
+  |Elu|:heavy_check_mark:|
+  |Equal|:heavy_check_mark:|
+  |Erf|:heavy_check_mark:|
+  |Expand|:heavy_check_mark:|
+  |Exp|:heavy_check_mark:|
+  |EyeLike|:heavy_check_mark:|
+  |Flatten|:heavy_check_mark:|
+  |Floor|:heavy_check_mark:|
+  |FusedConv|:heavy_check_mark:|
+  |GatherElements|:heavy_check_mark:|
+  |GatherND|:heavy_check_mark:|
+  |Gather|:heavy_check_mark:|
+  |Gemm|:heavy_check_mark:|
+  |GlobalAveragePool|:heavy_check_mark:|
+  |GlobalLpPool|:heavy_check_mark:|
+  |GlobalMaxPool|:heavy_check_mark:|
+  |GreaterOrEqual|:heavy_check_mark:|
+  |Greater|:heavy_check_mark:|
+  |GridSample|:heavy_check_mark:|
+  |GroupNormalization|**Help wanted**|
+  |GRU|**Help wanted**|
+  |Hardmax|:heavy_check_mark:|
+  |HardSigmoid|:heavy_check_mark:|
+  |HardSwish|:heavy_check_mark:|
+  |Identity|:heavy_check_mark:|
+  |If|:heavy_check_mark:|
+  |Input|:heavy_check_mark:|
+  |InstanceNormalization|:heavy_check_mark:|
+  |Inverse|:heavy_check_mark:|
+  |IsInf|:heavy_check_mark:|
+  |IsNaN|:heavy_check_mark:|
+  |LayerNormalization|:heavy_check_mark:|
+  |LeakyRelu|:heavy_check_mark:|
+  |LessOrEqual|:heavy_check_mark:|
+  |Less|:heavy_check_mark:|
+  |Log|:heavy_check_mark:|
+  |LogSoftmax|:heavy_check_mark:|
+  |Loop|**Help wanted**|
+  |LpNormalization|:heavy_check_mark:|
+  |LRN|:heavy_check_mark:|
+  |LSTM|:heavy_check_mark:|
+  |MatMul|:heavy_check_mark:|
+  |MatMulInteger|:heavy_check_mark:|
+  |MaxPool|:heavy_check_mark:|
+  |Max|:heavy_check_mark:|
+  |MaxRoiPool|**Help wanted**|
+  |MaxUnpool|:heavy_check_mark:|
+  |Mean|:heavy_check_mark:|
+  |MeanVarianceNormalization|:heavy_check_mark:|
+  |MelWeightMatrix|**Help wanted**|
+  |Min|:heavy_check_mark:|
+  |Mish|:heavy_check_mark:|
+  |Mod|:heavy_check_mark:|
+  |Mul|:heavy_check_mark:|
+  |Multinomial|:heavy_check_mark:|
+  |Neg|:heavy_check_mark:|
+  |NonMaxSuppression|:heavy_check_mark:|
+  |NonZero|:heavy_check_mark:|
+  |Optional|**Help wanted**|
+  |OptionalGetElement|**Help wanted**|
+  |OptionalHasElement|**Help wanted**|
+  |Not|:heavy_check_mark:|
+  |OneHot|:heavy_check_mark:|
+  |Or|:heavy_check_mark:|
+  |Pad|:heavy_check_mark:|
+  |Pow|:heavy_check_mark:|
+  |PRelu|:heavy_check_mark:|
+  |QLinearAdd|:heavy_check_mark:|
+  |QLinearConcat|:heavy_check_mark:|
+  |QLinearConv|:heavy_check_mark:|
+  |QLinearLeakyRelu|:heavy_check_mark:|
+  |QLinearMatMul|:heavy_check_mark:|
+  |QLinearMul|:heavy_check_mark:|
+  |QLinearSigmoid|:heavy_check_mark:|
+  |QLinearSoftmax|:heavy_check_mark:|
+  |QuantizeLinear|:heavy_check_mark:|
+  |RandomNormalLike|:heavy_check_mark:|
+  |RandomNormal|:heavy_check_mark:|
+  |RandomUniformLike|:heavy_check_mark:|
+  |RandomUniform|:heavy_check_mark:|
+  |Range|:heavy_check_mark:|
+  |Reciprocal|:heavy_check_mark:|
+  |ReduceL1|:heavy_check_mark:|
+  |ReduceL2|:heavy_check_mark:|
+  |ReduceLogSum|:heavy_check_mark:|
+  |ReduceLogSumExp|:heavy_check_mark:|
+  |ReduceMax|:heavy_check_mark:|
+  |ReduceMean|:heavy_check_mark:|
+  |ReduceMin|:heavy_check_mark:|
+  |ReduceProd|:heavy_check_mark:|
+  |ReduceSum|:heavy_check_mark:|
+  |ReduceSumSquare|:heavy_check_mark:|
+  |Relu|:heavy_check_mark:|
+  |Reshape|:heavy_check_mark:|
+  |Resize|:heavy_check_mark:|
+  |ReverseSequence|:heavy_check_mark:|
+  |RNN|:heavy_check_mark:|
+  |RoiAlign|:heavy_check_mark:|
+  |Round|:heavy_check_mark:|
+  |ScaleAndTranslate|:heavy_check_mark:|
+  |Scatter|:heavy_check_mark:|
+  |ScatterElements|:heavy_check_mark:|
+  |ScatterND|:heavy_check_mark:|
+  |Scan|**Help wanted**|
+  |Selu|:heavy_check_mark:|
+  |SequenceAt|:heavy_check_mark:|
+  |SequenceConstruct|:heavy_check_mark:|
+  |SequenceEmpty|:heavy_check_mark:|
+  |SequenceErase|:heavy_check_mark:|
+  |SequenceInsert|:heavy_check_mark:|
+  |SequenceLength|:heavy_check_mark:|
+  |Shape|:heavy_check_mark:|
+  |Shrink|:heavy_check_mark:|
+  |Sigmoid|:heavy_check_mark:|
+  |Sign|:heavy_check_mark:|
+  |Sinh|:heavy_check_mark:|
+  |Sin|:heavy_check_mark:|
+  |Size|:heavy_check_mark:|
+  |Slice|:heavy_check_mark:|
+  |Softmax|:heavy_check_mark:|
+  |Softplus|:heavy_check_mark:|
+  |Softsign|:heavy_check_mark:|
+  |SpaceToDepth|:heavy_check_mark:|
+  |Split|:heavy_check_mark:|
+  |SplitToSequence|:heavy_check_mark:|
+  |Sqrt|:heavy_check_mark:|
+  |Squeeze|:heavy_check_mark:|
+  |STFT|**Help wanted**|
+  |StringNormalizer|**Help wanted**|
+  |Sub|:heavy_check_mark:|
+  |Sum|:heavy_check_mark:|
+  |Tanh|:heavy_check_mark:|
+  |Tan|:heavy_check_mark:|
+  |TfIdfVectorizer|**Help wanted**|
+  |ThresholdedRelu|:heavy_check_mark:|
+  |Tile|:heavy_check_mark:|
+  |TopK|:heavy_check_mark:|
+  |Transpose|:heavy_check_mark:|
+  |Trilu|:heavy_check_mark:|
+  |Unique|:heavy_check_mark:|
+  |Unsqueeze|:heavy_check_mark:|
+  |Upsample|:heavy_check_mark:|
+  |Where|:heavy_check_mark:|
+  |Xor|:heavy_check_mark:|
+
+  </div></details>
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
@@ -1461,204 +1658,6 @@ Do not submit an issue that only contains an amount of information that cannot b
   |20|Sub|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Sub operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Sub operation with the perm specified as post-processing.|
   |21|Tile|1. "param_target": "inputs"<br>`values`: Value of `input`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Tile operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Tile operation with the perm specified as post-processing.|
   |22|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
-
-  </div></details>
-
-## Supported layers
-- https://github.com/onnx/onnx/blob/main/docs/Operators.md
-- :heavy_check_mark:: Supported　:white_check_mark:: Partial support　**Help wanted**: Pull Request are welcome
-
-  <details><summary>See the list of supported layers</summary><div>
-
-  |OP|Status|
-  |:-|:-:|
-  |Abs|:heavy_check_mark:|
-  |Acosh|:heavy_check_mark:|
-  |Acos|:heavy_check_mark:|
-  |Add|:heavy_check_mark:|
-  |And|:heavy_check_mark:|
-  |ArgMax|:heavy_check_mark:|
-  |ArgMin|:heavy_check_mark:|
-  |Asinh|:heavy_check_mark:|
-  |Asin|:heavy_check_mark:|
-  |Atanh|:heavy_check_mark:|
-  |Atan|:heavy_check_mark:|
-  |AveragePool|:heavy_check_mark:|
-  |BatchNormalization|:heavy_check_mark:|
-  |Bernoulli|:heavy_check_mark:|
-  |BitShift|:heavy_check_mark:|
-  |BitwiseAnd|**Help wanted**|
-  |BitwiseNot|**Help wanted**|
-  |BitwiseOr|**Help wanted**|
-  |BitwiseXor|**Help wanted**|
-  |Cast|:heavy_check_mark:|
-  |Ceil|:heavy_check_mark:|
-  |Celu|:heavy_check_mark:|
-  |CenterCropPad|**Help wanted**|
-  |Clip|:heavy_check_mark:|
-  |Col2Im|**Help wanted**|
-  |Compress|:heavy_check_mark:|
-  |ConcatFromSequence|:heavy_check_mark:|
-  |Concat|:heavy_check_mark:|
-  |ConstantOfShape|:heavy_check_mark:|
-  |Constant|:heavy_check_mark:|
-  |Conv|:heavy_check_mark:|
-  |ConvTranspose|:heavy_check_mark:|
-  |Cosh|:heavy_check_mark:|
-  |Cos|:heavy_check_mark:|
-  |CumSum|:heavy_check_mark:|
-  |DepthToSpace|:heavy_check_mark:|
-  |Det|:heavy_check_mark:|
-  |DequantizeLinear|:heavy_check_mark:|
-  |DFT|**Help wanted**|
-  |Div|:heavy_check_mark:|
-  |Dropout|:heavy_check_mark:|
-  |DynamicQuantizeLinear|:heavy_check_mark:|
-  |Einsum|:heavy_check_mark:|
-  |Elu|:heavy_check_mark:|
-  |Equal|:heavy_check_mark:|
-  |Erf|:heavy_check_mark:|
-  |Expand|:heavy_check_mark:|
-  |Exp|:heavy_check_mark:|
-  |EyeLike|:heavy_check_mark:|
-  |Flatten|:heavy_check_mark:|
-  |Floor|:heavy_check_mark:|
-  |FusedConv|:heavy_check_mark:|
-  |GatherElements|:heavy_check_mark:|
-  |GatherND|:heavy_check_mark:|
-  |Gather|:heavy_check_mark:|
-  |Gemm|:heavy_check_mark:|
-  |GlobalAveragePool|:heavy_check_mark:|
-  |GlobalLpPool|:heavy_check_mark:|
-  |GlobalMaxPool|:heavy_check_mark:|
-  |GreaterOrEqual|:heavy_check_mark:|
-  |Greater|:heavy_check_mark:|
-  |GridSample|:heavy_check_mark:|
-  |GroupNormalization|**Help wanted**|
-  |GRU|**Help wanted**|
-  |Hardmax|:heavy_check_mark:|
-  |HardSigmoid|:heavy_check_mark:|
-  |HardSwish|:heavy_check_mark:|
-  |Identity|:heavy_check_mark:|
-  |If|:heavy_check_mark:|
-  |Input|:heavy_check_mark:|
-  |InstanceNormalization|:heavy_check_mark:|
-  |Inverse|:heavy_check_mark:|
-  |IsInf|:heavy_check_mark:|
-  |IsNaN|:heavy_check_mark:|
-  |LayerNormalization|:heavy_check_mark:|
-  |LeakyRelu|:heavy_check_mark:|
-  |LessOrEqual|:heavy_check_mark:|
-  |Less|:heavy_check_mark:|
-  |Log|:heavy_check_mark:|
-  |LogSoftmax|:heavy_check_mark:|
-  |Loop|**Help wanted**|
-  |LpNormalization|:heavy_check_mark:|
-  |LRN|:heavy_check_mark:|
-  |LSTM|:heavy_check_mark:|
-  |MatMul|:heavy_check_mark:|
-  |MatMulInteger|:heavy_check_mark:|
-  |MaxPool|:heavy_check_mark:|
-  |Max|:heavy_check_mark:|
-  |MaxRoiPool|**Help wanted**|
-  |MaxUnpool|:heavy_check_mark:|
-  |Mean|:heavy_check_mark:|
-  |MeanVarianceNormalization|:heavy_check_mark:|
-  |MelWeightMatrix|**Help wanted**|
-  |Min|:heavy_check_mark:|
-  |Mish|:heavy_check_mark:|
-  |Mod|:heavy_check_mark:|
-  |Mul|:heavy_check_mark:|
-  |Multinomial|:heavy_check_mark:|
-  |Neg|:heavy_check_mark:|
-  |NonMaxSuppression|:heavy_check_mark:|
-  |NonZero|:heavy_check_mark:|
-  |Optional|**Help wanted**|
-  |OptionalGetElement|**Help wanted**|
-  |OptionalHasElement|**Help wanted**|
-  |Not|:heavy_check_mark:|
-  |OneHot|:heavy_check_mark:|
-  |Or|:heavy_check_mark:|
-  |Pad|:heavy_check_mark:|
-  |Pow|:heavy_check_mark:|
-  |PRelu|:heavy_check_mark:|
-  |QLinearAdd|:heavy_check_mark:|
-  |QLinearConcat|:heavy_check_mark:|
-  |QLinearConv|:heavy_check_mark:|
-  |QLinearLeakyRelu|:heavy_check_mark:|
-  |QLinearMatMul|:heavy_check_mark:|
-  |QLinearMul|:heavy_check_mark:|
-  |QLinearSigmoid|:heavy_check_mark:|
-  |QLinearSoftmax|:heavy_check_mark:|
-  |QuantizeLinear|:heavy_check_mark:|
-  |RandomNormalLike|:heavy_check_mark:|
-  |RandomNormal|:heavy_check_mark:|
-  |RandomUniformLike|:heavy_check_mark:|
-  |RandomUniform|:heavy_check_mark:|
-  |Range|:heavy_check_mark:|
-  |Reciprocal|:heavy_check_mark:|
-  |ReduceL1|:heavy_check_mark:|
-  |ReduceL2|:heavy_check_mark:|
-  |ReduceLogSum|:heavy_check_mark:|
-  |ReduceLogSumExp|:heavy_check_mark:|
-  |ReduceMax|:heavy_check_mark:|
-  |ReduceMean|:heavy_check_mark:|
-  |ReduceMin|:heavy_check_mark:|
-  |ReduceProd|:heavy_check_mark:|
-  |ReduceSum|:heavy_check_mark:|
-  |ReduceSumSquare|:heavy_check_mark:|
-  |Relu|:heavy_check_mark:|
-  |Reshape|:heavy_check_mark:|
-  |Resize|:heavy_check_mark:|
-  |ReverseSequence|:heavy_check_mark:|
-  |RNN|:heavy_check_mark:|
-  |RoiAlign|:heavy_check_mark:|
-  |Round|:heavy_check_mark:|
-  |ScaleAndTranslate|:heavy_check_mark:|
-  |Scatter|:heavy_check_mark:|
-  |ScatterElements|:heavy_check_mark:|
-  |ScatterND|:heavy_check_mark:|
-  |Scan|**Help wanted**|
-  |Selu|:heavy_check_mark:|
-  |SequenceAt|:heavy_check_mark:|
-  |SequenceConstruct|:heavy_check_mark:|
-  |SequenceEmpty|:heavy_check_mark:|
-  |SequenceErase|:heavy_check_mark:|
-  |SequenceInsert|:heavy_check_mark:|
-  |SequenceLength|:heavy_check_mark:|
-  |Shape|:heavy_check_mark:|
-  |Shrink|:heavy_check_mark:|
-  |Sigmoid|:heavy_check_mark:|
-  |Sign|:heavy_check_mark:|
-  |Sinh|:heavy_check_mark:|
-  |Sin|:heavy_check_mark:|
-  |Size|:heavy_check_mark:|
-  |Slice|:heavy_check_mark:|
-  |Softmax|:heavy_check_mark:|
-  |Softplus|:heavy_check_mark:|
-  |Softsign|:heavy_check_mark:|
-  |SpaceToDepth|:heavy_check_mark:|
-  |Split|:heavy_check_mark:|
-  |SplitToSequence|:heavy_check_mark:|
-  |Sqrt|:heavy_check_mark:|
-  |Squeeze|:heavy_check_mark:|
-  |STFT|**Help wanted**|
-  |StringNormalizer|**Help wanted**|
-  |Sub|:heavy_check_mark:|
-  |Sum|:heavy_check_mark:|
-  |Tanh|:heavy_check_mark:|
-  |Tan|:heavy_check_mark:|
-  |TfIdfVectorizer|**Help wanted**|
-  |ThresholdedRelu|:heavy_check_mark:|
-  |Tile|:heavy_check_mark:|
-  |TopK|:heavy_check_mark:|
-  |Transpose|:heavy_check_mark:|
-  |Trilu|:heavy_check_mark:|
-  |Unique|:heavy_check_mark:|
-  |Unsqueeze|:heavy_check_mark:|
-  |Upsample|:heavy_check_mark:|
-  |Where|:heavy_check_mark:|
-  |Xor|:heavy_check_mark:|
 
   </div></details>
 
