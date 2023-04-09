@@ -817,6 +817,34 @@ def explicit_broadcast(
     if np.prod(shape_for_judging_skip_processing_1) == 1 or np.prod(shape_for_judging_skip_processing_2) == 1:
         return const_or_var_1, const_or_var_2
 
+    # Dealing with tricky BatchNormalization
+    #   X: [1,1024,1]
+    #   scale: [1024]
+    #   B: [1024]
+    #   mean: [1024]
+    #   var: [1024]
+    #       ↓
+    #   scale: [1,1024,1]
+    #   B: [1,1024,1]
+    #   mean: [1,1024,1]
+    #   var: [1,1024,1]
+    if len(const_or_var_1.shape) > len(const_or_var_2.shape) \
+        and None not in const_or_var_1.shape \
+        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
+        and None not in const_or_var_2.shape \
+        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
+        and np.prod(shape_for_judging_skip_processing_1) == np.prod(shape_for_judging_skip_processing_2):
+
+        var2_rehsape_possible = False
+        try:
+            _ = tf.reshape(const_or_var_2, shape=shape_for_judging_skip_processing_1)
+            var2_rehsape_possible = True
+        except:
+            var2_rehsape_possible = False
+        if var2_rehsape_possible:
+            const_or_var_2 = tf.reshape(const_or_var_2, shape=shape_for_judging_skip_processing_1)
+            return const_or_var_1, const_or_var_2
+
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
     swapped = 0
     if len(const_or_var_1.shape) < len(const_or_var_2.shape):
