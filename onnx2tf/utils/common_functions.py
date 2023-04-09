@@ -30,6 +30,7 @@ from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
 )
 
+
 INF_INDEX_VALUE: int = 4294967296
 ONNX_INF_INDEX_VALUE = sys.maxsize # 9223372036854775807
 
@@ -3404,6 +3405,7 @@ def dummy_onnx_inference(
     onnx_graph: onnx.ModelProto,
     output_names: List[str],
     test_data_nhwc: Optional[np.ndarray] = None,
+    custom_input_op_name_np_data_path: Optional[str] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3502,23 +3504,34 @@ def dummy_onnx_inference(
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
-    dummy_datas = {}
-    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        if test_data_nhwc is None:
-            dummy_datas[input_name] = np.ones(
-                input_size,
-                dtype=input_dtype,
-            )
-        else:
-            dummy_datas[input_name] = \
-                tf.transpose(
-                    a=tf.image.resize(
-                        images=test_data_nhwc,
-                        size=[input_size[2],input_size[3]],
-                    ),
-                    perm=[0,3,1,2],
-                ).numpy().astype(input_dtype)
-    outputs = onnx_session.run(None, dummy_datas)
+    input_datas = {}
+    
+    # -cid
+    if custom_input_op_name_np_data_path:
+        for param in custom_input_op_name_np_data_path:
+            input_op_name = str(param[0])
+            numpy_file_path = str(param[1])
+            custom_input_data = np.load(numpy_file_path)
+
+            input_datas[input_op_name] = custom_input_data
+        
+    else:
+        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            if test_data_nhwc is None:
+                input_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=input_dtype,
+                )
+            else:
+                input_datas[input_name] = \
+                    tf.transpose(
+                        a=tf.image.resize(
+                            images=test_data_nhwc,
+                            size=[input_size[2],input_size[3]],
+                        ),
+                        perm=[0,3,1,2],
+                    ).numpy().astype(input_dtype)
+    outputs = onnx_session.run(None, input_datas)
     return outputs
 
 
@@ -3528,6 +3541,7 @@ def dummy_tf_inference(
     inputs: List[tf.keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
     verification_datas: Optional[List[np.ndarray]] = None,
+    custom_input_op_name_np_data_path: Optional[str] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -3566,42 +3580,61 @@ def dummy_tf_inference(
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
-    dummy_datas = {}
-    if verification_datas is None:
-        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-            if test_data_nhwc is None:
-                dummy_datas[input_name] = np.ones(
-                    input_size,
-                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-                )
-            else:
-                dummy_datas[input_name] = \
-                    tf.image.resize(
-                        images=test_data_nhwc,
-                        size=[input_size[1],input_size[2]],
-                    ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
-    else:
-        for input_name, input_size, input_dtype, verification_data \
-            in zip(input_names, input_sizes, input_dtypes, verification_datas):
+    input_datas = {}
+    
+    # -cid
+    if custom_input_op_name_np_data_path:
+        for idx, param in enumerate(custom_input_op_name_np_data_path):
+            numpy_file_path = str(param[1])
+            custom_input_data = np.load(numpy_file_path)
+            input_size = input_sizes[idx]
+            
+            if list(custom_input_data.shape) != input_size:
+                error_msg = f'' + \
+                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    f"The format of custom input data is different from Tensorflow's format. " + \
+                    f"Therefore, you cannot use custom input. "
+                
+                raise ValueError(error_msg)
 
-            if verification_data is not None:
-                verification_data = verification_data.numpy() \
-                    if hasattr(verification_data, "numpy") else verification_data
-                if len(input_size) != len(verification_data.shape):
-                    if len(verification_data.shape) <= 1:
-                        dummy_datas[input_name] = verification_data
-                    else:
-                        dummy_datas[input_name] = verification_data.reshape(input_size)
+            input_datas[input_names[idx]] = custom_input_data    
+             
+    else:
+        if verification_datas is None:
+            for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):            
+                if test_data_nhwc is None:
+                    input_datas[input_name] = np.ones(
+                        input_size,
+                        dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                    )
                 else:
-                    dummy_datas[input_name] = verification_data
-            else:
-                dummy_datas[input_name] = np.ones(
-                    input_size,
-                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-                )
+                    input_datas[input_name] = \
+                        tf.image.resize(
+                            images=test_data_nhwc,
+                            size=[input_size[1],input_size[2]],
+                        ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+        else:
+            for input_name, input_size, input_dtype, verification_data \
+                in zip(input_names, input_sizes, input_dtypes, verification_datas):
+
+                if verification_data is not None:
+                    verification_data = verification_data.numpy() \
+                        if hasattr(verification_data, "numpy") else verification_data
+                    if len(input_size) != len(verification_data.shape):
+                        if len(verification_data.shape) <= 1:
+                            input_datas[input_name] = verification_data
+                        else:
+                            input_datas[input_name] = verification_data.reshape(input_size)
+                    else:
+                        input_datas[input_name] = verification_data
+                else:
+                    input_datas[input_name] = np.ones(
+                        input_size,
+                        dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                    )
     outputs = model(
         inputs={
-            input.name: dummy_datas[input.name] for input in inputs
+            input.name: input_datas[input.name] for input in inputs
         },
         training=False,
     )
