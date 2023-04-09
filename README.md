@@ -641,7 +641,16 @@ https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
-### 9. Conversion to TensorFlow.js
+### 9. Fixing the output of NonMaxSuppression (NMS)
+PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppression` are not fully compatible. TorchVision's NMS is very inefficient. Therefore, it is inevitable that converting ONNX using NMS in object detection models and other models will be very redundant and will be converted with a structure that is difficult for TensorFlow.js and TFLite models to take advantage of in devices. This is due to the indefinite number of tensors output by the NMS. In this chapter, we share how to easily tune the ONNX generated using TorchVision's redundant NMS to generate an optimized NMS.
+
+1. There are multiple issues with TorchVision's NMS. First, the batch size specification is not supported; second, the `max_output_boxes_per_class` parameter cannot be specified. Please see the NMS sample ONNX part I generated. The `max_output_boxes_per_class` has been changed to `896` instead of `-Infinite`. The biggest problem with TorchVision NMS is that it generates ONNX with `max_output_boxes_per_class` set to `-Infinite`, resulting in a variable number of NMS outputs from zero to infinite. Thus, by rewriting `-Infinite` to a constant value, it is possible to output an NMS that can be effortlessly inferred by TFJS or TFLite.
+![image](https://user-images.githubusercontent.com/33194443/230778827-faab8ffe-d49f-498d-b414-a1a26848a380.png)
+
+    Here you will find committed ONNX components optimized for various devices.
+    https://github.com/PINTO0309/components_of_onnx/tree/main/components_of_onnx/ops
+
+### 10. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -660,7 +669,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 10. Conversion to CoreML
+### 11. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
