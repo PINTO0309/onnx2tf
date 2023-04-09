@@ -1629,7 +1629,7 @@ def main():
             'To use -cotof and -oiqt simultaneously, \n' +
             'you need to enter the Input name of OP, path of data file, mean, and std all together. \n' +
             'And the data file must be in Float32 format, \n' +
-            'and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. \n'
+            'and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. \n' +
             'Otherwise, an error will occur during the -oiqt stage.'
     )
     parser.add_argument(
