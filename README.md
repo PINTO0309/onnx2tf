@@ -241,7 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.25
+  ghcr.io/pinto0309/onnx2tf:1.9.0
 
   or
 
@@ -701,7 +701,7 @@ usage: onnx2tf
 [-coion]
 [-oiqt]
 [-qt {per-channel,per-tensor}]
-[-qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
+[-cind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
 [-ioqd {int8,uint8}]
 [-nuo]
 [-nuonag]
@@ -781,56 +781,74 @@ optional arguments:
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
 
-  -qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
-    --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
-    INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
-    The specification can be omitted only when the input OP is a single 4D tensor image data.
-    If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
-    The type of the input OP must be Float32.
-    Data for calibration must be pre-normalized to a range of 0 to 1.
-    -qcind {input_op_name} {numpy_file_path} {mean} {std}
-    Numpy file paths must be specified the same number of times as the number of input OPs.
-    Normalize the value of the input OP based on the tensor specified in mean and std.
-    (input_value - mean) / std
-    Tensors in Numpy file format must be in dimension order after conversion to TF.
-    Note that this is intended for deployment on low-resource devices,
-    so the batch size is limited to 1 only.
+  -cind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
+    --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+    Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
+    and mean (optional) and std (optional).
 
-    e.g.
-    The example below shows a case where there are three input OPs.
-    Assume input0 is 128x128 RGB image data.
-    In addition, input0 should be a value that has been divided by 255
-    in the preprocessing and normalized to a range between 0 and 1.
-    input1 and input2 assume the input of something that is not an image.
-    Because input1 and input2 assume something that is not an image,
-    the divisor is not 255 when normalizing from 0 to 1.
-    "n" is the number of calibration data.
+    <Usage in -cotof>
+      When using -cotof, custom input defined by the user, instead of dummy data, is used.
+      In this case, mean and std are omitted from the input.
+      -cind {input_op_name} {numpy_file_path}
+      e.g. -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof
+      The input_op_name must be the same as in ONNX,
+      and it may not work if the input format is different between ONNX and TF.
 
-    ONNX INPUT shapes:
-      input0: [n,3,128,128]
-        mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
-        std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
-      input1: [n,64,64]
-        mean: [1,64] -> [[0.1, ..., 0.64]]
-        std : [1,64] -> [[0.05, ..., 0.08]]
-      input2: [n,5]
-        mean: [1] -> [0.3]
-        std : [1] -> [0.07]
+    <Usage in -oiqt>
+      INPUT Name of OP and path of calibration data file (Numpy) for quantization
+      and mean and std.
+      The specification can be omitted only when the input OP is a single 4D tensor image data.
+      If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+      The type of the input OP must be Float32.
+      Data for calibration must be pre-normalized to a range of 0 to 1.
+      -cind {input_op_name} {numpy_file_path} {mean} {std}
+      Numpy file paths must be specified the same number of times as the number of input OPs.
+      Normalize the value of the input OP based on the tensor specified in mean and std.
+      (input_value - mean) / std
+      Tensors in Numpy file format must be in dimension order after conversion to TF.
+      Note that this is intended for deployment on low-resource devices,
+      so the batch size is limited to 1 only.
 
-    TensorFlow INPUT shapes (Numpy file ndarray shapes):
-      input0: [n,128,128,3]
-        mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
-        std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
-      input1: [n,64,64]
-        mean: [1,64] -> [[0.1, ..., 0.64]]
-        std : [1,64] -> [[0.05, ..., 0.08]]
-      input2: [n,5]
-        mean: [1] -> [0.3]
-        std : [1] -> [0.07]
+      e.g.
+      The example below shows a case where there are three input OPs.
+      Assume input0 is 128x128 RGB image data.
+      In addition, input0 should be a value that has been divided by 255
+      in the preprocessing and normalized to a range between 0 and 1.
+      input1 and input2 assume the input of something that is not an image.
+      Because input1 and input2 assume something that is not an image,
+      the divisor is not 255 when normalizing from 0 to 1.
+      "n" is the number of calibration data.
 
-    -qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-    -qcind "input1" "./input1.npy" [[0.1, ..., 0.64]] [[0.05, ..., 0.08]]
-    -qcind "input2" "input2.npy" [0.3] [0.07]
+      ONNX INPUT shapes:
+        input0: [n,3,128,128]
+            mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+            std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+        input1: [n,64,64]
+            mean: [1,64] -> [0.1, ..., 0.64]
+            std:  [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+            mean: [1] -> [0.3]
+            std:  [1] -> [0.07]
+      TensorFlow INPUT shapes (Numpy file ndarray shapes):
+        input0: [n,128,128,3]
+            mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+            std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+        input1: [n,64,64]
+            mean: [1,64] -> [0.1, ..., 0.64]
+            std:  [1,64] -> [0.05, ..., 0.08]
+        input2: [n,5]
+            mean: [1] -> [0.3]
+            std:  [1] -> [0.07]
+      -cind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+      -cind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
+      -cind "input2" "input2.npy" [0.3] [0.07]
+
+    <Using -cotof and -oiqt at the same time>
+      To use -cotof and -oiqt simultaneously,
+      you need to enter the Input name of OP, path of data file, mean, and std all together.
+      And the data file must be in Float32 format,
+      and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered.
+      Otherwise, an error will occur during the -oiqt stage.
 
   -ioqd {int8,uint8}, --input_output_quant_dtype {int8,uint8}
     Input and Output dtypes when doing Full INT8 Quantization.
@@ -1120,7 +1138,7 @@ convert(
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
   quant_type: Optional[str] = 'per-channel',
-  quant_calib_input_op_name_np_data_path: Optional[List] = None,
+  custom_input_op_name_np_data_path: Optional[List] = None,
   input_output_quant_dtype: Optional[str] = 'int8',
   not_use_onnxsim: Optional[bool] = False,
   not_use_opname_auto_generate: Optional[bool] = False,
@@ -1209,58 +1227,77 @@ convert(
       Selects whether "per-channel" or "per-tensor" quantization is used.
       Default: "per-channel"
 
-    quant_calib_input_op_name_np_data_path: Optional[List]
-      --quant_calib_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
-      INPUT Name of OP and path of calibration data file (Numpy) for quantization and mean and std.
-      The specification can be omitted only when the input OP is a single 4D tensor image data.
-      If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
-      The type of the input OP must be Float32.
-      Data for calibration must be pre-normalized to a range of 0 to 1.
-      -qcind {input_op_name} {numpy_file_path} {mean} {std}
-      Numpy file paths must be specified the same number of times as the number of input OPs.
-      Normalize the value of the input OP based on the tensor specified in mean and std.
-      (input_value - mean) / std
-      Tensors in Numpy file format must be in dimension order after conversion to TF.
-      Note that this is intended for deployment on low-resource devices,
-      so the batch size is limited to 1 only.
+    custom_input_op_name_np_data_path: Optional[List]
+      --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
+      Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
+      and mean (optional) and std (optional).
 
-      e.g.
-      The example below shows a case where there are three input OPs.
-      Assume input0 is 128x128 RGB image data.
-      In addition, input0 should be a value that has been divided by 255
-      in the preprocessing and normalized to a range between 0 and 1.
-      input1 and input2 assume the input of something that is not an image.
-      Because input1 and input2 assume something that is not an image,
-      the divisor is not 255 when normalizing from 0 to 1.
-      "n" is the number of calibration data.
+      <Usage in -cotof>
+        When using -cotof, custom input defined by the user, instead of dummy data, is used.
+        In this case, mean and std are omitted from the input.
+        -cind {input_op_name} {numpy_file_path}
+        e.g. -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof
+        The input_op_name must be the same as in ONNX,
+        and it may not work if the input format is different between ONNX and TF.
 
-      ONNX INPUT shapes:
-        input0: [n,3,128,128]
-          mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
-          std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
-        input1: [n,64,64]
-          mean: [1,64] -> [[0.1, ..., 0.64]]
-          std : [1,64] -> [[0.05, ..., 0.08]]
-        input2: [n,5]
-          mean: [1] -> [0.3]
-          std : [1] -> [0.07]
+      <Usage in -oiqt>
+        INPUT Name of OP and path of calibration data file (Numpy) for quantization
+        and mean and std.
+        The specification can be omitted only when the input OP is a single 4D tensor image data.
+        If omitted, it is automatically calibrated using 20 normalized MS-COCO images.
+        The type of the input OP must be Float32.
+        Data for calibration must be pre-normalized to a range of 0 to 1.
+        -cind {input_op_name} {numpy_file_path} {mean} {std}
+        Numpy file paths must be specified the same number of times as the number of input OPs.
+        Normalize the value of the input OP based on the tensor specified in mean and std.
+        (input_value - mean) / std
+        Tensors in Numpy file format must be in dimension order after conversion to TF.
+        Note that this is intended for deployment on low-resource devices,
+        so the batch size is limited to 1 only.
+        e.g.
+        The example below shows a case where there are three input OPs.
+        Assume input0 is 128x128 RGB image data.
+        In addition, input0 should be a value that has been divided by 255
+        in the preprocessing and normalized to a range between 0 and 1.
+        input1 and input2 assume the input of something that is not an image.
+        Because input1 and input2 assume something that is not an image,
+        the divisor is not 255 when normalizing from 0 to 1.
+        "n" is the number of calibration data.
 
-      TensorFlow INPUT shapes (Numpy file ndarray shapes):
-        input0: [n,128,128,3]
-          mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
-          std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
-        input1: [n,64,64]
-          mean: [1,64] -> [[0.1, ..., 0.64]]
-          std : [1,64] -> [[0.05, ..., 0.08]]
-        input2: [n,5]
-          mean: [1] -> [0.3]
-          std : [1] -> [0.07]
+        ONNX INPUT shapes:
+          input0: [n,3,128,128]
+            mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]
+            std : [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]
+          input1: [n,64,64]
+            mean: [1,64] -> [[0.1, ..., 0.64]]
+            std : [1,64] -> [[0.05, ..., 0.08]]
+          input2: [n,5]
+            mean: [1] -> [0.3]
+            std : [1] -> [0.07]
 
-        qcind=[
-            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],
-            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],
-            ["input2","input2.npy",[0.3],[0.07]],
-        ]
+        TensorFlow INPUT shapes (Numpy file ndarray shapes):
+          input0: [n,128,128,3]
+            mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]
+            std : [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]
+          input1: [n,64,64]
+            mean: [1,64] -> [[0.1, ..., 0.64]]
+            std : [1,64] -> [[0.05, ..., 0.08]]
+          input2: [n,5]
+            mean: [1] -> [0.3]
+            std : [1] -> [0.07]
+
+          cind=[
+              ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],
+              ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],
+              ["input2","input2.npy",[0.3],[0.07]],
+          ]
+
+      <Using -cotof and -oiqt at the same time>
+        To use -cotof and -oiqt simultaneously,
+        you need to enter the Input name of OP, path of data file, mean, and std all together.
+        And the data file must be in Float32 format,
+        and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered.
+        Otherwise, an error will occur during the -oiqt stage.
 
     input_output_quant_dtype: Optional[str]
       Input and Output dtypes when doing Full INT8 Quantization.
