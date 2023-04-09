@@ -517,7 +517,7 @@ The accuracy error rates after quantization for different activation functions a
 
 
 ### 7. Calibration data creation for INT8 quantization
-Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
+Calibration data (.npy) for INT8 quantization (`-cind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
 
@@ -552,12 +552,12 @@ loaded_data = np.load('data/calibdata.npy')
 print(f'loaded_data.shape: {loaded_data.shape}') # [10,112,200,3]
 
 """
--qcind INPUT_NAME NUMPY_FILE_PATH MEAN STD
+-cind INPUT_NAME NUMPY_FILE_PATH MEAN STD
 int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
 
 e.g.
--qcind pc_dep 'data/calibdata.npy' [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
--qcind feat 'data/calibdata2.npy' [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
+-cind pc_dep 'data/calibdata.npy' [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+-cind feat 'data/calibdata2.npy' [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
 """
 ```
 
