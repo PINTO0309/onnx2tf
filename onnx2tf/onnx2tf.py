@@ -422,16 +422,6 @@ def convert(
     model: tf.keras.Model
         Model
     """
-    # determination of errors in custom input
-    if custom_input_op_name_np_data_path is not None:
-        for param in custom_input_op_name_np_data_path:
-            if len(param) not in [2, 4]:
-                error_msg = f'' + \
-                            f'{Color.RED}ERROR:{Color.RESET} ' + \
-                            f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
-                print(error_msg)
-                raise ValueError(error_msg)
-    
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
         print(
@@ -482,6 +472,16 @@ def convert(
             f'overwrite_input_shape must be specified by list.'
         )
         sys.exit(1)
+
+    # determination of errors in custom input
+    if custom_input_op_name_np_data_path is not None:
+        for param in custom_input_op_name_np_data_path:
+            if len(param) not in [2, 4]:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
+                )
+                sys.exit(1)
 
     # replace_argmax_to_reducemax_and_indicies_is_int64
     # replace_argmax_to_reducemax_and_indicies_is_float32
@@ -746,8 +746,8 @@ def convert(
         print('')
         print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
 
-    with graph.node_ids():     
-        
+    with graph.node_ids():
+
         onnx_graph_input_names: List[str] = [
             inputop.name for inputop in graph.inputs
         ]
@@ -1114,8 +1114,8 @@ def convert(
                             "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. " +
                             f"However, you have only entered {len(param)} options. "
                         )
-                        sys.exit(1)                    
-                    
+                        sys.exit(1)
+
                     input_op_name = str(param[0])
                     numpy_file_path = str(param[1])
                     calib_data = np.load(numpy_file_path)
@@ -1123,7 +1123,7 @@ def convert(
                         data_count = calib_data.shape[0]
                     mean = param[2]
                     std = param[3]
-                    
+
                     calib_data_dict[input_op_name] = \
                         [
                             calib_data.copy(),
@@ -1567,7 +1567,7 @@ def main():
         action='append',
         nargs='+',
         help=\
-            'Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt, \n' + 
+            'Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt, \n' +
             'and mean (optional) and std (optional). \n' +
 
             '\n<Usage in -cotof> \n' +
@@ -1575,8 +1575,8 @@ def main():
             'In this case, mean and std are omitted from the input. \n' +
             '-cind {input_op_name} {numpy_file_path} \n' +
             'ex) -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof \n' +
-            'The input_op_name must be the same as in ONNX, \n'
-            'and it may not work if the input format is different between ONNX and TF. \n'
+            'The input_op_name must be the same as in ONNX, \n' +
+            'and it may not work if the input format is different between ONNX and TF. \n' +
 
             '\n<Usage in -oiqt> \n' +
             'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
@@ -1623,8 +1623,7 @@ def main():
             '       std:  [1] -> [0.07] \n' +
             '-cind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
             '-cind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
-            '-cind "input2" "input2.npy" [0.3] [0.07]' +
-
+            '-cind "input2" "input2.npy" [0.3] [0.07] \n\n' +
             '\n<Using -cotof and -oiqt at the same time> \n' +
             'To use -cotof and -oiqt simultaneously, \n' +
             'you need to enter the Input name of OP, path of data file, mean, and std all together. \n' +
@@ -2011,11 +2010,11 @@ def main():
             if len(param) == 2:
                 tmp.append(str(param[0])) # input_op_name
                 tmp.append(str(param[1])) # numpy_file_path
-                
+
                 if len(param) == 4:
                     tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
                     tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
-                    
+
                 custom_params.append(
                     tmp
                 )
