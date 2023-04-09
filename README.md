@@ -676,7 +676,7 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
     onnx2tf -i nms_yolov7_update.onnx -osd -cotof
     ```
     I would be happy if this is a reference for Android + Java or TFJS implementations. There are tons more tricky model optimization techniques described in my blog posts, so you'll have to find them yourself. I don't dare to list the URL here because it is annoying to see so many `issues` being posted. And unfortunately, all articles are in Japanese.
-    ![image](https://user-images.githubusercontent.com/33194443/230779947-38a8e3fa-d22b-470a-b581-b0f647514325.png)
+    ![image](https://user-images.githubusercontent.com/33194443/230780749-9967a34b-abf6-47fe-827d-92e0f6bddf46.png)
 
 ### 10. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
