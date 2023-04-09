@@ -434,13 +434,13 @@ print("[TFLite] Model Predictions:", tt_lite_output)
 ```
 [PyTorch] Model Predictions:
   {
-    add': 12,
-    sub': 8
+    'add': 12,
+    'sub': 8
   }
 [ONNX] Model Outputs:
   [
-    add',
-    sub'
+    'add',
+    'sub'
   ]
 [ONNX] Model Predictions:
   [
@@ -449,8 +449,8 @@ print("[TFLite] Model Predictions:", tt_lite_output)
   ]
 [TFLite] Model Predictions:
   {
-    add': array([12]),
-    sub': array([8])
+    'add': array([12]),
+    'sub': array([8])
   }
 ```
 ![image](https://user-images.githubusercontent.com/33194443/223318437-b89e56c1-4376-4e91-8c0c-08d29a604637.png)
