@@ -17,8 +17,8 @@ class Model(nn.Module):
         return x_1+x_2
 
 # input data
-x_1 = torch.tensor([2,3,4,5])
-x_2 = torch.tensor([0,0,0,0])
+x_1 = torch.tensor([2,3,4,5], dtype=torch.float32)
+x_2 = torch.tensor([0,0,0,0], dtype=torch.float32)
 m = Model().eval()
 
 # export input

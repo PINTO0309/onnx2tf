@@ -1107,20 +1107,29 @@ def convert(
                         ]
             elif custom_input_op_name_np_data_path is not None:
                 for param in custom_input_op_name_np_data_path:
-                    if len(param) == 4:
-                        input_op_name = str(param[0])
-                        numpy_file_path = str(param[1])
-                        calib_data = np.load(numpy_file_path)
-                        if data_count == 0:
-                            data_count = calib_data.shape[0]
-                        mean = param[2]
-                        std = param[3]
-                        calib_data_dict[input_op_name] = \
-                            [
-                                calib_data.copy(),
-                                mean,
-                                std,
-                            ]
+                    if len(param) != 4:
+                        print(
+                            f"{Color.RED}ERROR:{Color.RESET} " +
+                            "If you want to use custom input with the '-oiqt' option, " +
+                            "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. " +
+                            f"However, you have only entered {len(param)} options. "
+                        )
+                        sys.exit(1)                    
+                    
+                    input_op_name = str(param[0])
+                    numpy_file_path = str(param[1])
+                    calib_data = np.load(numpy_file_path)
+                    if data_count == 0:
+                        data_count = calib_data.shape[0]
+                    mean = param[2]
+                    std = param[3]
+                    
+                    calib_data_dict[input_op_name] = \
+                        [
+                            calib_data.copy(),
+                            mean,
+                            std,
+                        ]
 
             # representative_dataset_gen
             def representative_dataset_gen():
@@ -1558,13 +1567,25 @@ def main():
         action='append',
         nargs='+',
         help=\
+            'Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt, \n' + 
+            'and mean (optional) and std (optional). \n' +
+
+            '\n<Usage in -cotof> \n' +
+            'When using -cotof, custom input defined by the user, instead of dummy data, is used. \n' +
+            'In this case, mean and std are omitted from the input. \n' +
+            '-cind {input_op_name} {numpy_file_path} \n' +
+            'ex) -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof \n' +
+            'The input_op_name must be the same as in ONNX, \n'
+            'and it may not work if the input format is different between ONNX and TF. \n'
+
+            '\n<Usage in -oiqt> \n' +
             'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
             'and mean and std. \n' +
             'The specification can be omitted only when the input OP is a single 4D tensor image data. \n' +
             'If omitted, it is automatically calibrated using 20 normalized MS-COCO images. \n' +
             'The type of the input OP must be Float32. \n' +
             'Data for calibration must be pre-normalized to a range of 0 to 1. \n' +
-            '-qcind {input_op_name} {numpy_file_path} {mean} {std} \n' +
+            '-cind {input_op_name} {numpy_file_path} {mean} {std} \n' +
             'Numpy file paths must be specified the same number of times as the number of input OPs. \n' +
             'Normalize the value of the input OP based on the tensor specified in mean and std. \n' +
             '(input_value - mean) / std \n' +
@@ -1600,9 +1621,16 @@ def main():
             '   input2: [n,5] \n' +
             '       mean: [1] -> [0.3] \n' +
             '       std:  [1] -> [0.07] \n' +
-            '-qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
-            '-qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
-            '-qcind "input2" "input2.npy" [0.3] [0.07]'
+            '-cind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
+            '-cind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
+            '-cind "input2" "input2.npy" [0.3] [0.07]' +
+
+            '\n<Using -cotof and -oiqt at the same time> \n' +
+            'To use -cotof and -oiqt simultaneously, \n' +
+            'you need to enter the Input name of OP, path of data file, mean, and std all together. \n' +
+            'And the data file must be in Float32 format, \n' +
+            'and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. \n'
+            'Otherwise, an error will occur during the -oiqt stage.'
     )
     parser.add_argument(
         '-ioqd',
