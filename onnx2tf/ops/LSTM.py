@@ -158,6 +158,9 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         bias_f,
         bias_c,
         bias_o,
+        peephole_i,
+        peephole_f,
+        peephole_o,
         clip,
         input_forget,
         is_bidirectional,
@@ -175,6 +178,9 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
         self.bf = bias_f
         self.bc = bias_c
         self.bo = bias_o
+        self.peephole_i = peephole_i
+        self.peephole_f = peephole_f
+        self.peephole_o = peephole_o
         self.clip = clip
         self.input_forget = input_forget
         self.is_bidirectional = is_bidirectional
@@ -192,17 +198,20 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
             it = f( Xt*(Wi^T) + Ht-1*(Ri^T) + Pi (.) Ct-1 + Wbi + Rbi )
             ft = f( Xt*(Wf^T) + Ht-1*(Rf^T) + Pf (.) Ct-1 + Wbf + Rbf )
             ct = g( Xt*(Wc^T) + Ht-1*(Rc^T) + Wbc + Rbc )
-            ot = f( Xt*(Wo^T) + Ht-1*(Ro^T) + Po (.) Ct + Wbo + Rbo )
 
             Ct = ft (.) Ct-1 + it (.) ct
+
+            ot = f( Xt*(Wo^T) + Ht-1*(Ro^T) + Po (.) Ct + Wbo + Rbo )
+
             Ht = ot (.) h( Ct )
         """
-
-        # TODO:
-        # 1. Pが考慮されていない
         h_prev, c_prev = states
         gates = tf.matmul(inputs, self.kernel) + tf.matmul(h_prev, self.recurrent_kernel)
         i, f, c_candidate, o = tf.split(gates, num_or_size_splits=4, axis=-1)
+        if self.peephole_i is not None:
+            i = i + tf.matmul(self.peephole_i, c_prev)
+        if self.peephole_f is not None:
+            f = f + tf.matmul(self.peephole_f, c_prev)
 
         offsetidx = 3 if self.is_bidirectional and self.go_backwards else 0
 
@@ -213,7 +222,6 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
             else:
                 f = 1.0 - i
             c_candidate = self.activations[1 + offsetidx](c_candidate + self.bc)
-            o = self.activations[0 + offsetidx](o + self.bo)
         else:
             i = self.activations[0 + offsetidx](
                 tf.clip_by_value(
@@ -239,15 +247,25 @@ class CustomLSTMCell(tf.keras.layers.AbstractRNNCell):
                     clip_value_max=self.clip,
                 )
             )
+
+        c = f * c_prev + i * c_candidate
+
+        if self.peephole_o is None:
+            o = o + self.bo
+        else:
+            o = o + tf.matmul(self.peephole_o, c) + self.bo
+
+        if not self.clip:
+            o = self.activations[0 + offsetidx](o)
+        else:
             o = self.activations[0 + offsetidx](
                 tf.clip_by_value(
-                    o + self.bo,
+                    o,
                     clip_value_min=-self.clip,
                     clip_value_max=self.clip,
                 )
             )
 
-        c = f * c_prev + i * c_candidate
         h = o * self.activations[2 + offsetidx](c)
 
         return h, [h, c]
@@ -266,6 +284,9 @@ class CustomLSTM(Layer):
         bias_f,
         bias_c,
         bias_o,
+        peephole_i,
+        peephole_f,
+        peephole_o,
         clip,
         input_forget,
         is_bidirectional,
@@ -289,6 +310,9 @@ class CustomLSTM(Layer):
         self.bias_f = bias_f
         self.bias_c = bias_c
         self.bias_o = bias_o
+        self.peephole_i = peephole_i
+        self.peephole_f = peephole_f
+        self.peephole_o = peephole_o
         self.clip = clip
         self.input_forget = input_forget
 
@@ -303,6 +327,9 @@ class CustomLSTM(Layer):
             self.bias_f,
             self.bias_c,
             self.bias_o,
+            self.peephole_i,
+            self.peephole_f,
+            self.peephole_o,
             self.clip,
             self.input_forget,
             self.is_bidirectional,
@@ -480,15 +507,6 @@ def make_node(
     # num_directions: bidirectional=2, forward or reverse=1
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != '' else graph_node_input_8
-
-    if isinstance(P, np.ndarray) and np.sum(P) != 0.0:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'The process for the case where Peepholes is set to a value greater than zero has not yet been implemented. ' +
-            f'https://zenn.dev/pinto0309/scraps/430cea62b1eb9d ' +
-            f'P.shape: {P.shape}'
-        )
-        sys.exit(1)
 
     # Always three or more present if specified
     #   forward, reverse: 3 items
@@ -777,9 +795,17 @@ def make_node(
         forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias = forward_bias_W + forward_bias_R
+        forward_peepholes = None
+        if P is not None:
+            forward_peepholes = tf.reshape(tf.convert_to_tensor(P[0]), shape=[3, hidden_size])
         fW_i, fW_o, fW_f, fW_c = tf.split(value=forward_weight, num_or_size_splits=4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = tf.split(value=forward_recurrence_weight, num_or_size_splits=4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = tf.split(value=forward_bias, num_or_size_splits=4, axis=0) # (1, 256)
+        fP_i = None
+        fP_o = None
+        fP_f = None
+        if forward_peepholes is not None:
+            fP_i, fP_o, fP_f = tf.split(value=forward_peepholes, num_or_size_splits=3, axis=0) # (1, 256)
         forward_kernel = tf.reshape(tf.transpose(tf.concat([fW_i, fW_f, fW_c, fW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
         forward_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([fR_i, fR_f, fR_c, fR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
         # forward
@@ -794,6 +820,9 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            peephole_i=fP_i, # (1, 256)
+            peephole_f=fP_f, # (1, 256)
+            peephole_o=fP_o, # (1, 256)
             clip=clip,
             input_forget=input_forget,
             is_bidirectional=False,
@@ -811,9 +840,17 @@ def make_node(
         reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[0][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias = reverse_bias_W + reverse_bias_R
+        reverse_peepholes = None
+        if P is not None:
+            reverse_peepholes = tf.reshape(tf.convert_to_tensor(P[0]), shape=[3, hidden_size])
         rW_i, rW_o, rW_f, rW_c = tf.split(value=reverse_weight, num_or_size_splits=4, axis=0)
         rR_i, rR_o, rR_f, rR_c = tf.split(value=reverse_recurrence_weight, num_or_size_splits=4, axis=0)
         rB_i, rB_o, rB_f, rB_c = tf.split(value=reverse_bias, num_or_size_splits=4, axis=0)
+        rP_i = None
+        rP_o = None
+        rP_f = None
+        if reverse_peepholes is not None:
+            rP_i, rP_o, rP_f = tf.split(value=reverse_peepholes, num_or_size_splits=3, axis=0) # (1, 256)
         reverse_kernel = tf.reshape(tf.transpose(tf.concat([rW_i, rW_f, rW_c, rW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
         reverse_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([rR_i, rR_f, rR_c, rR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
         # backward
@@ -828,6 +865,9 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            peephole_i=rP_i, # (1, 256)
+            peephole_f=rP_f, # (1, 256)
+            peephole_o=rP_o, # (1, 256)
             clip=clip,
             input_forget=input_forget,
             is_bidirectional=False,
@@ -846,9 +886,17 @@ def make_node(
         forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         forward_bias = forward_bias_W + forward_bias_R
+        forward_peepholes = None
+        if P is not None:
+            forward_peepholes = tf.reshape(tf.convert_to_tensor(P[0]), shape=[3, hidden_size])
         fW_i, fW_o, fW_f, fW_c = tf.split(value=forward_weight, num_or_size_splits=4, axis=0) # (1, 256, 512)
         fR_i, fR_o, fR_f, fR_c = tf.split(value=forward_recurrence_weight, num_or_size_splits=4, axis=0) # (1, 256, 256)
         fB_i, fB_o, fB_f, fB_c = tf.split(value=forward_bias, num_or_size_splits=4, axis=0) # (1, 256)
+        fP_i = None
+        fP_o = None
+        fP_f = None
+        if forward_peepholes is not None:
+            fP_i, fP_o, fP_f = tf.split(value=forward_peepholes, num_or_size_splits=3, axis=0) # (1, 256)
         forward_kernel = tf.reshape(tf.transpose(tf.concat([fW_i, fW_f, fW_c, fW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
         forward_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([fR_i, fR_f, fR_c, fR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
 
@@ -857,9 +905,17 @@ def make_node(
         reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[1][:4*hidden_size]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[1][4*hidden_size:4*hidden_size*2]), shape=[4, hidden_size]) # TensorShape([4, 256])
         reverse_bias = reverse_bias_W + reverse_bias_R
+        reverse_peepholes = None
+        if P is not None:
+            reverse_peepholes = tf.reshape(tf.convert_to_tensor(P[1]), shape=[3, hidden_size])
         rW_i, rW_o, rW_f, rW_c = tf.split(value=reverse_weight, num_or_size_splits=4, axis=0)
         rR_i, rR_o, rR_f, rR_c = tf.split(value=reverse_recurrence_weight, num_or_size_splits=4, axis=0)
         rB_i, rB_o, rB_f, rB_c = tf.split(value=reverse_bias, num_or_size_splits=4, axis=0)
+        rP_i = None
+        rP_o = None
+        rP_f = None
+        if reverse_peepholes is not None:
+            rP_i, rP_o, rP_f = tf.split(value=reverse_peepholes, num_or_size_splits=3, axis=0) # (1, 256)
         reverse_kernel = tf.reshape(tf.transpose(tf.concat([rW_i, rW_f, rW_c, rW_o], axis=1), perm=[2, 0, 1]), shape=[input_size, -1]) # (1, 256*4, 512) -> (1, 1024, 512) -> (512, 1, 1024) -> (512, 1024)
         reverse_recurrent_kernel = tf.reshape(tf.transpose(tf.concat([rR_i, rR_f, rR_c, rR_o], axis=1), perm=[2, 0, 1]), shape=[hidden_size, -1]) # (1, 256*4, 256) -> (256, 1, 1024) -> (256, 1024)
 
@@ -875,6 +931,9 @@ def make_node(
             bias_f=fB_f, # (1, 256)
             bias_c=fB_c, # (1, 256)
             bias_o=fB_o, # (1, 256)
+            peephole_i=fP_i, # (1, 256)
+            peephole_f=fP_f, # (1, 256)
+            peephole_o=fP_o, # (1, 256)
             clip=clip,
             input_forget=input_forget,
             is_bidirectional=True,
@@ -894,6 +953,9 @@ def make_node(
             bias_f=rB_f, # (1, 256)
             bias_c=rB_c, # (1, 256)
             bias_o=rB_o, # (1, 256)
+            peephole_i=rP_i, # (1, 256)
+            peephole_f=rP_f, # (1, 256)
+            peephole_o=rP_o, # (1, 256)
             clip=clip,
             input_forget=input_forget,
             is_bidirectional=True,
