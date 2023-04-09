@@ -833,6 +833,7 @@ def explicit_broadcast(
         and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
         and None not in const_or_var_2.shape \
         and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
+        and len(const_or_var_2.shape) == 1 \
         and np.prod(shape_for_judging_skip_processing_1) == np.prod(shape_for_judging_skip_processing_2):
 
         var2_rehsape_possible = False
