@@ -5,6 +5,7 @@ build/
 dist/
 json_samples/
 make_test_op/
+test_cind/
 tests/
 onnx2tf/
 onnx2tf.egg-info/
