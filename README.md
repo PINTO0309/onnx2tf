@@ -671,7 +671,7 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
 
     https://github.com/PINTO0309/PINTO_model_zoo/tree/main/307_YOLOv7/post_process_gen_tools
 
-3. Finally, simply convert ONNX to TFLite or saved_model or TFJS using onnx2tf.
+3. Finally, simply convert ONNX to TFLite or saved_model or TFJS using onnx2tf. onnx2tf performs an internal operation to automatically optimize the NMS output to a fixed shape if `max_output_boxes_per_class` is set to a value other than `-Infinite`. Specify `--output_nms_with_dynamic_tensor` if you do not want to optimize for a fixed shape.
     ```
     onnx2tf -i nms_yolov7_update.onnx -osd -cotof
     ```
