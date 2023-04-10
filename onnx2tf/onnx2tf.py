@@ -2011,13 +2011,15 @@ def main():
                 tmp.append(str(param[0])) # input_op_name
                 tmp.append(str(param[1])) # numpy_file_path
 
-                if len(param) == 4:
-                    tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
-                    tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
+            if len(param) == 4:
+                tmp.append(str(param[0])) # input_op_name
+                tmp.append(str(param[1])) # numpy_file_path
+                tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
+                tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
 
-                custom_params.append(
-                    tmp
-                )
+            custom_params.append(
+                tmp
+            )
 
     if len(custom_params) == 0:
         custom_params = None
