@@ -232,7 +232,7 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
         # h_default = self.g(np.dot(row, np.transpose(w_h)) + np.dot(r * h_prev, np.transpose(r_h)) + w_bh + r_bh)
         # h_linear = self.g(np.dot(row, np.transpose(w_h)) + r * (np.dot(h_prev, np.transpose(r_h)) + r_bh) + w_bh)
         if not self.linear_before_reset:
-            h = tf.matmul(inputs, tf.transpose(self.w_h)) + tf.matmul(r * h_prev, tf.transpose(self.r_h)) + self.w_bh + self.r_bh
+            h = tf.matmul(inputs, tf.transpose(self.w_h)) + tf.matmul(r * h_prev, tf.transpose(self.r_h)) + self.r_bh + self.w_bh
         else:
             h = tf.matmul(inputs, tf.transpose(self.w_h)) + r * (tf.matmul(h_prev, tf.transpose(self.r_h)) + self.r_bh) + self.w_bh
 
