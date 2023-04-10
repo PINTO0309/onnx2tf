@@ -742,28 +742,20 @@ def make_node(
         forward_lstm = CustomGRU(
             hidden_size=hidden_size,
 
-            # w_z=w_z,
-            # w_r=w_r,
-            w_z=w_r,
-            w_r=w_z,
+            w_z=w_z,
+            w_r=w_r,
             w_h=w_h,
 
-            # r_z=r_z,
-            # r_r=r_r,
-            r_z=r_r,
-            r_r=r_z,
+            r_z=r_z,
+            r_r=r_r,
             r_h=r_h,
 
-            # w_bz=w_bz,
-            # w_br=w_br,
-            w_bz=w_br,
-            w_br=w_bz,
+            w_bz=w_bz,
+            w_br=w_br,
             w_bh=w_bh,
 
-            # r_bz=r_bz,
-            # r_br=r_br,
-            r_bz=r_br,
-            r_br=r_bz,
+            r_bz=r_bz,
+            r_br=r_br,
             r_bh=r_bh,
 
             activation_alphas=tf_activation_alphas,
