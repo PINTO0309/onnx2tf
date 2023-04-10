@@ -200,7 +200,7 @@ def convert(
             input2: [n,5]\n
                 mean: [1] -> [0.3]\n
                 std:  [1] -> [0.07]\n
-        qcind=[
+        cind=[
             ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],\n
             ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
             ["input2","input2.npy",[0.3],[0.07]],\n
@@ -2011,13 +2011,15 @@ def main():
                 tmp.append(str(param[0])) # input_op_name
                 tmp.append(str(param[1])) # numpy_file_path
 
-                if len(param) == 4:
-                    tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
-                    tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
+            if len(param) == 4:
+                tmp.append(str(param[0])) # input_op_name
+                tmp.append(str(param[1])) # numpy_file_path
+                tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
+                tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
 
-                custom_params.append(
-                    tmp
-                )
+            custom_params.append(
+                tmp
+            )
 
     if len(custom_params) == 0:
         custom_params = None
