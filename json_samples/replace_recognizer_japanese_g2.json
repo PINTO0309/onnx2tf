@@ -1,0 +1,13 @@
+{
+  "model": "https://github.com/axinc-ai/ailia-models/tree/master/text_recognition/ndlocr_text_recognition",
+  "command": "onnx2tf -i recognizer_japanese_g2.onnx -prf replace_recognizer_japanese_g2.json",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Transpose_18",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,3,1,2]
+    }
+  ]
+}
