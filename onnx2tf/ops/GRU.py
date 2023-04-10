@@ -167,8 +167,6 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
         r_br,
         r_bh,
 
-        activation_alphas,
-        activation_betas,
         activations,
 
         clip,
@@ -196,8 +194,6 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
         self.r_br=r_br
         self.r_bh=r_bh
 
-        self.activation_alphas = activation_alphas
-        self.activation_betas = activation_betas
         self.activations = activations
 
         self.clip = clip
@@ -291,8 +287,6 @@ class CustomGRU(Layer):
         r_br,
         r_bh,
 
-        activation_alphas,
-        activation_betas,
         activations,
 
         clip,
@@ -322,8 +316,6 @@ class CustomGRU(Layer):
         self.r_br=r_br
         self.r_bh=r_bh
 
-        self.activation_alphas = activation_alphas
-        self.activation_betas = activation_betas
         self.activations = activations
 
         self.return_sequences = return_sequences
@@ -353,8 +345,6 @@ class CustomGRU(Layer):
             self.r_br,
             self.r_bh,
 
-            self.activation_alphas,
-            self.activation_betas,
             self.activations,
 
             self.clip,
@@ -513,8 +503,6 @@ def make_node(
 
     # Default activation function setting
     tf_activations: List = None
-    tf_activation_alphas: List = None
-    tf_activation_betas: List = None
 
     clip: float =  graph_node.attrs.get('clip', None)
     direction: str =  graph_node.attrs.get('direction', 'forward')
@@ -758,8 +746,6 @@ def make_node(
             r_br=r_br,
             r_bh=r_bh,
 
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
             activations=tf_activations,
 
             clip=clip,
@@ -792,8 +778,6 @@ def make_node(
             R_z=rR_z,
             R_r=rR_r,
             R_h=rR_h,
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
             activations=tf_activations,
             bias_z=rB_z,
             bias_r=rB_r,
@@ -840,8 +824,6 @@ def make_node(
             R_z=fR_z,
             R_r=fR_r,
             R_h=fR_h,
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
             activations=tf_activations,
             bias_z=fB_z,
             bias_r=fB_r,
@@ -863,8 +845,6 @@ def make_node(
             R_z=rR_z,
             R_r=rR_r,
             R_h=rR_h,
-            activation_alphas=tf_activation_alphas,
-            activation_betas=tf_activation_betas,
             activations=tf_activations,
             bias_z=rB_z,
             bias_r=rB_r,
@@ -932,8 +912,6 @@ def make_node(
                     'sequence_lens': sequence_lens,
                     'initial_h': initial_h,
                     'activations': tf_activations,
-                    'activation_alpha': tf_activation_alphas,
-                    'activation_beta': tf_activation_betas,
                     'clip': clip,
                     'linear_before_reset': linear_before_reset,
                     'layout': layout,
