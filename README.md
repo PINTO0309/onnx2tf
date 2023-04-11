@@ -363,6 +363,8 @@ Perform error checking of ONNX output and TensorFlow output. Verify that the err
 
 `-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
 
+Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. For more information about the `-cind` option, please refer to [here](#cli-parameter).
+
 The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
 
 ```
@@ -371,6 +373,10 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 or
 
 $ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
+
+or
+
+$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind input /your/path/x.npy
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
@@ -1954,3 +1960,4 @@ The above differences often cannot be dealt with by simply converting the model 
 </a>
 
 Made with [contrib.rocks](https://contrib.rocks).
+
