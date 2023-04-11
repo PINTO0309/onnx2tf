@@ -449,7 +449,7 @@ def make_node(
         make_tf_node_info(
             node_info={
                 'tf_op_type': 'GridSample',
-                'tf_inputs': {                                  
+                'tf_inputs': {
                     'image': image,
                     'grid': grid,
                     'align_corners': align_corners,
