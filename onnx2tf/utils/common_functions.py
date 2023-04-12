@@ -962,7 +962,9 @@ def tf_shape(
         The function will check for fully defined shape and will return numpy array or \n
         if the shape is not fully defined will use tf.shape() to return the shape as a Tensor.
     """
-    if input_tensor.shape.is_fully_defined():
+    if isinstance(input_tensor, np.ndarray):
+        return input_tensor.shape
+    if not isinstance(input_tensor, np.ndarray) and input_tensor.shape.is_fully_defined():
         return np.array(input_tensor.shape.as_list(), dtype=dtype.as_numpy_dtype)
     else:
         return tf.shape(input_tensor, out_type=dtype)
