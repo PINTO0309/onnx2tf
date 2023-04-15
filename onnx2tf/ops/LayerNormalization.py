@@ -132,7 +132,7 @@ def make_node(
     # Generation of TF OP
     reduce_meaned_1 = tf.reduce_mean(
         input_tensor=input_tensor,
-        axis=[i for i in range(1, axis+1)],
+        axis=[axis],
         keepdims=True,
     )
     subed = tf.math.subtract(
@@ -146,7 +146,7 @@ def make_node(
     )
     reduce_meaned_2 = tf.reduce_mean(
         input_tensor=squared,
-        axis=[i for i in range(1, axis+1)],
+        axis=[axis],
         keepdims=True,
     )
     added = tf.math.add(
