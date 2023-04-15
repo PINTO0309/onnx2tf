@@ -215,7 +215,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ## Environment
 - onnx
 - onnxruntime
-- onnx-simplifier
+- onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.12.0
@@ -241,7 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.9.3
+  ghcr.io/pinto0309/onnx2tf:1.9.4
 
   or
 
