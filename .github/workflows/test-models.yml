@@ -30,7 +30,7 @@ jobs:
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
         pip install protobuf==3.20.3
-        pip install onnxsim
+        pip install onnxsim==0.4.17
         pip install sng4onnx
         pip install onnxruntime==1.13.1
         pip install -e .
