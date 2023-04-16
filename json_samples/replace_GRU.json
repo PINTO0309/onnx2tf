@@ -1,0 +1,14 @@
+{
+  "model": "https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_198/torch_lstm.onnx",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/198",
+  "command": "onnx2tf -i torch_lstm.onnx -prf replace_lstm.json -kat input h_in c_in",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Squeeze_3",
+      "param_target": "inputs",
+      "param_name": "69",
+      "values": [1]
+    }
+  ]
+}
