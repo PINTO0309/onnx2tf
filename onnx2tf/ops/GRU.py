@@ -224,20 +224,11 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
         z = tf.matmul(inputs, tf.transpose(self.w_z)) + tf.matmul(h_prev, tf.transpose(self.r_z)) + self.w_bz + self.r_bz
         r = tf.matmul(inputs, tf.transpose(self.w_r)) + tf.matmul(h_prev, tf.transpose(self.r_r)) + self.w_br + self.r_br
 
-
-        # h_default = self.g(np.dot(row, np.transpose(w_h)) + np.dot(r * h_prev, np.transpose(r_h)) + w_bh + r_bh)
-        # h_linear = self.g(np.dot(row, np.transpose(w_h)) + r * (np.dot(h_prev, np.transpose(r_h)) + r_bh) + w_bh)
-        if not self.linear_before_reset:
-            h = tf.matmul(inputs, tf.transpose(self.w_h)) + tf.matmul(r * h_prev, tf.transpose(self.r_h)) + self.r_bh + self.w_bh
-        else:
-            h = tf.matmul(inputs, tf.transpose(self.w_h)) + r * (tf.matmul(h_prev, tf.transpose(self.r_h)) + self.r_bh) + self.w_bh
-
         offsetidx = 2 if self.is_bidirectional and self.go_backwards else 0
 
         if not self.clip:
             z = self.activations[0 + offsetidx](z)
             r = self.activations[0 + offsetidx](r)
-            h = self.activations[1 + offsetidx](h)
         else:
             z = self.activations[0 + offsetidx](
                 tf.clip_by_value(
@@ -253,6 +244,17 @@ class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
                     clip_value_max=self.clip,
                 )
             )
+
+        # h_default = self.g(np.dot(row, np.transpose(w_h)) + np.dot(r * h_prev, np.transpose(r_h)) + w_bh + r_bh)
+        # h_linear = self.g(np.dot(row, np.transpose(w_h)) + r * (np.dot(h_prev, np.transpose(r_h)) + r_bh) + w_bh)
+        if not self.linear_before_reset:
+            h = tf.matmul(inputs, tf.transpose(self.w_h)) + tf.matmul(r * h_prev, tf.transpose(self.r_h)) + self.r_bh + self.w_bh
+        else:
+            h = tf.matmul(inputs, tf.transpose(self.w_h)) + r * (tf.matmul(h_prev, tf.transpose(self.r_h)) + self.r_bh) + self.w_bh
+
+        if not self.clip:
+            h = self.activations[1 + offsetidx](h)
+        else:
             h = self.activations[1 + offsetidx](
                 tf.clip_by_value(
                     h,
@@ -721,7 +723,6 @@ def make_node(
         tW = tf.convert_to_tensor(W[0]) # [12, 3]
         tR = tf.convert_to_tensor(R[0]) # [12, 4]
         tB = tf.convert_to_tensor(B[0]) # [24]
-
         w_z, w_r, w_h = tf.split(tW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
         r_z, r_r, r_h = tf.split(tR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
         w_bz, w_br, w_bh, r_bz, r_br, r_bh = tf.split(tB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
@@ -759,76 +760,83 @@ def make_node(
         hidden_state = tf.expand_dims(hidden_state, axis=0)
 
     elif direction == 'reverse':
-        reverse_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[3, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[3, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:3*hidden_size]), shape=[3, hidden_size])
-        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[0][3*hidden_size:3*hidden_size*2]), shape=[3, hidden_size])
-        reverse_bias = reverse_bias_W + reverse_bias_R
-        rW_z, rW_r, rW_h = tf.split(value=reverse_weight, num_or_size_splits=3, axis=0)
-        rR_z, rR_r, rR_h = tf.split(value=reverse_recurrence_weight, num_or_size_splits=3, axis=0)
-        rB_z, rB_r, _ = tf.split(value=reverse_bias, num_or_size_splits=3, axis=0)
-        _, _, rB_wh = tf.split(value=reverse_bias_W, num_or_size_splits=3, axis=0)
-        _, _, rB_rh = tf.split(value=reverse_bias_R, num_or_size_splits=3, axis=0)
-        # backward
+        tW = tf.convert_to_tensor(W[0]) # [12, 3]
+        tR = tf.convert_to_tensor(R[0]) # [12, 4]
+        tB = tf.convert_to_tensor(B[0]) # [24]
+        w_z, w_r, w_h = tf.split(tW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
+        r_z, r_r, r_h = tf.split(tR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
+        w_bz, w_br, w_bh, r_bz, r_br, r_bh = tf.split(tB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+
+        # reverse
         reverse_lstm = CustomGRU(
             hidden_size=hidden_size,
-            W_z=rW_z,
-            W_r=rW_r,
-            W_h=rW_h,
-            R_z=rR_z,
-            R_r=rR_r,
-            R_h=rR_h,
+
+            w_z=w_z,
+            w_r=w_r,
+            w_h=w_h,
+
+            r_z=r_z,
+            r_r=r_r,
+            r_h=r_h,
+
+            w_bz=w_bz,
+            w_br=w_br,
+            w_bh=w_bh,
+
+            r_bz=r_bz,
+            r_br=r_br,
+            r_bh=r_bh,
+
             activations=tf_activations,
-            bias_z=rB_z,
-            bias_r=rB_r,
-            bias_wh=rB_wh,
-            bias_rh=rB_rh,
+
             clip=clip,
             linear_before_reset=linear_before_reset,
             is_bidirectional=False,
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        output, hidden_state = reverse_lstm(X, initial_state=backward_initial_state)
+        output, hidden_state = reverse_lstm(X, initial_state=backward_initial_state) # [2,5,3], [2, 4]
         output = tf.reverse(output, axis=[1])
         output = tf.expand_dims(output, axis=1)
         hidden_state = tf.expand_dims(hidden_state, axis=0)
 
     elif direction == 'bidirectional':
-        forward_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[3, hidden_size, input_size])
-        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[3, hidden_size, hidden_size])
-        forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:3*hidden_size]), shape=[3, hidden_size])
-        forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][3*hidden_size:3*hidden_size*2]), shape=[3, hidden_size])
-        forward_bias = forward_bias_W + forward_bias_R
-        fW_z, fW_r, fW_h = tf.split(value=forward_weight, num_or_size_splits=3, axis=0)
-        fR_z, fR_r, fR_h = tf.split(value=forward_recurrence_weight, num_or_size_splits=3, axis=0)
-        fB_z, fB_r, _ = tf.split(value=forward_bias, num_or_size_splits=3, axis=0)
-        _, _, fB_wh = tf.split(value=forward_bias_W, num_or_size_splits=3, axis=0)
-        _, _, fB_rh = tf.split(value=forward_bias_R, num_or_size_splits=3, axis=0)
-        reverse_weight = tf.reshape(tf.convert_to_tensor(W[1]), shape=[3, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[1]), shape=[3, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[1][:3*hidden_size]), shape=[3, hidden_size])
-        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[1][3*hidden_size:3*hidden_size*2]), shape=[3, hidden_size])
-        reverse_bias = reverse_bias_W + reverse_bias_R
-        rW_z, rW_r, rW_h = tf.split(value=reverse_weight, num_or_size_splits=3, axis=0)
-        rR_z, rR_r, rR_h = tf.split(value=reverse_recurrence_weight, num_or_size_splits=3, axis=0)
-        rB_z, rB_r, _ = tf.split(value=reverse_bias, num_or_size_splits=3, axis=0)
-        _, _, rB_wh = tf.split(value=reverse_bias_W, num_or_size_splits=3, axis=0)
-        _, _, rB_rh = tf.split(value=reverse_bias_R, num_or_size_splits=3, axis=0)
+        ftW = tf.convert_to_tensor(W[0]) # [12, 3]
+        ftR = tf.convert_to_tensor(R[0]) # [12, 4]
+        ftB = tf.convert_to_tensor(B[0]) # [24]
+        fw_z, fw_r, fw_h = tf.split(ftW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
+        fr_z, fr_r, fr_h = tf.split(ftR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
+        fw_bz, fw_br, fw_bh, fr_bz, fr_br, fr_bh = tf.split(ftB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+
+        rtW = tf.convert_to_tensor(W[1]) # [12, 3]
+        rtR = tf.convert_to_tensor(R[1]) # [12, 4]
+        rtB = tf.convert_to_tensor(B[1]) # [24]
+        rw_z, rw_r, rw_h = tf.split(rtW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
+        rr_z, rr_r, rr_h = tf.split(rtR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
+        rw_bz, rw_br, rw_bh, rr_bz, rr_br, rr_bh = tf.split(rtB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+
         # forward
         forward_lstm = CustomGRU(
             hidden_size=hidden_size,
-            W_z=fW_z,
-            W_r=fW_r,
-            W_h=fW_h,
-            R_z=fR_z,
-            R_r=fR_r,
-            R_h=fR_h,
+
+            w_z=fw_z,
+            w_r=fw_r,
+            w_h=fw_h,
+
+            r_z=fr_z,
+            r_r=fr_r,
+            r_h=fr_h,
+
+            w_bz=fw_bz,
+            w_br=fw_br,
+            w_bh=fw_bh,
+
+            r_bz=fr_bz,
+            r_br=fr_br,
+            r_bh=fr_bh,
+
             activations=tf_activations,
-            bias_z=fB_z,
-            bias_r=fB_r,
-            bias_wh=fB_wh,
-            bias_rh=fB_rh,
+
             clip=clip,
             linear_before_reset=linear_before_reset,
             is_bidirectional=True,
@@ -839,23 +847,32 @@ def make_node(
         # backward
         reverse_lstm = CustomGRU(
             hidden_size=hidden_size,
-            W_z=rW_z,
-            W_r=rW_r,
-            W_h=rW_h,
-            R_z=rR_z,
-            R_r=rR_r,
-            R_h=rR_h,
+
+            w_z=rw_z,
+            w_r=rw_r,
+            w_h=rw_h,
+
+            r_z=rr_z,
+            r_r=rr_r,
+            r_h=rr_h,
+
+            w_bz=rw_bz,
+            w_br=rw_br,
+            w_bh=rw_bh,
+
+            r_bz=rr_bz,
+            r_br=rr_br,
+            r_bh=rr_bh,
+
             activations=tf_activations,
-            bias_z=rB_z,
-            bias_r=rB_r,
-            bias_wh=rB_wh,
-            bias_rh=rB_rh,
+
             clip=clip,
             linear_before_reset=linear_before_reset,
             is_bidirectional=True,
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
+
         forward_output, forward_h = \
             forward_lstm(X, initial_state=forward_initial_state)
         reverse_output, reverse_h = \
