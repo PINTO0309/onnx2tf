@@ -839,7 +839,7 @@ def make_node(
 
             clip=clip,
             linear_before_reset=linear_before_reset,
-            is_bidirectional=False,
+            is_bidirectional=True,
             go_backwards=False,
             enable_rnn_unroll=enable_rnn_unroll,
         )
@@ -868,7 +868,7 @@ def make_node(
 
             clip=clip,
             linear_before_reset=linear_before_reset,
-            is_bidirectional=False,
+            is_bidirectional=True,
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
