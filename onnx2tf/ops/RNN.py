@@ -649,10 +649,10 @@ def make_node(
         forward_kernel = tf.reshape(tf.transpose(fW_i, perm=[2, 0, 1]), shape=[input_size, -1])
         forward_recurrent_kernel = tf.reshape(tf.transpose(fR_i, perm=[2, 0, 1]), shape=[hidden_size, -1])
 
-        reverse_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[1, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[1, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:hidden_size]), shape=[1, hidden_size])
-        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[0][hidden_size:hidden_size*2]), shape=[1, hidden_size])
+        reverse_weight = tf.reshape(tf.convert_to_tensor(W[1]), shape=[1, hidden_size, input_size])
+        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[1]), shape=[1, hidden_size, hidden_size])
+        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[1][:hidden_size]), shape=[1, hidden_size])
+        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[1][hidden_size:hidden_size*2]), shape=[1, hidden_size])
         reverse_bias = reverse_bias_W + reverse_bias_R
         rW_i = reverse_weight
         rR_i = reverse_recurrence_weight
