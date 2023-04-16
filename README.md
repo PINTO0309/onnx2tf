@@ -249,7 +249,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.13.1 \
-  && pip install -U onnxsim \
+  && pip install -U onnxsim==0.4.17 \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
   && pip install -U h5py==3.7.0
@@ -284,7 +284,7 @@ or
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U onnxruntime==1.13.1 \
-    && python3.9 -m pip install -U onnxsim \
+    && python3.9 -m pip install -U onnxsim==0.4.17 \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
     && python3.9 -m pip install -U protobuf==3.20.3 \
