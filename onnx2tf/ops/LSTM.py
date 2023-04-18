@@ -16,7 +16,6 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
 from tensorflow.python.keras.layers import Layer
 
 
