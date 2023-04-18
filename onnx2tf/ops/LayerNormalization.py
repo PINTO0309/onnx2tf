@@ -61,38 +61,50 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
 
-    # layer_norm の scale と bias は少し特殊な転置を施す
-    # [c,w] -> [w,c]
-    # [c,h,w] -> [h,w,c]
-    # [c,d,h,w] -> [d,h,w,c]
-    # [c,d,d,h,w] -> [d,d,h,w,c]
+    # # layer_norm の scale と bias は少し特殊な転置を施す
+    # # [c,w] -> [w,c]
+    # # [c,h,w] -> [h,w,c]
+    # # [c,d,h,w] -> [d,h,w,c]
+    # # [c,d,d,h,w] -> [d,d,h,w,c]
+    # graph_node_input_2 = None
+    # if hasattr(graph_node.inputs[1], 'values'):
+    #     values = graph_node.inputs[1].values
+    #     values_rank = values.ndim
+    #     if values_rank > 1:
+    #         perm = [i for i in range(1, values_rank)] + [0]
+    #         graph_node_input_2 = values.transpose(perm)
+    #     else:
+    #         scale_shape_idx = list(input_tensor_shape).index(values.shape[0])
+    #         scale_shape = [1] * input_tensor_rank
+    #         scale_shape[scale_shape_idx] = values.shape[0]
+    #         graph_node_input_2 = values.reshape(scale_shape)
+    # else:
+    #     graph_node_input_2 = graph_node.inputs[1]
+    # graph_node_input_3 = None
+    # if len(graph_node.inputs) >= 3:
+    #     if hasattr(graph_node.inputs[2], 'values'):
+    #         values = graph_node.inputs[2].values
+    #         values_rank = values.ndim
+    #         if values_rank > 1:
+    #             perm = [i for i in range(1, values_rank)] + [0]
+    #             graph_node_input_3 = values.transpose(perm)
+    #         else:
+    #             bias_shape_idx = list(input_tensor_shape).index(values.shape[0])
+    #             bias_shape = [1] * input_tensor_rank
+    #             bias_shape[bias_shape_idx] = values.shape[0]
+    #             graph_node_input_3 = values.reshape(bias_shape)
+    #     else:
+    #         graph_node_input_3 = graph_node.inputs[2]
+
     graph_node_input_2 = None
     if hasattr(graph_node.inputs[1], 'values'):
-        values = graph_node.inputs[1].values
-        values_rank = values.ndim
-        if values_rank > 1:
-            perm = [i for i in range(1, values_rank)] + [0]
-            graph_node_input_2 = values.transpose(perm)
-        else:
-            scale_shape_idx = list(input_tensor_shape).index(values.shape[0])
-            scale_shape = [1] * input_tensor_rank
-            scale_shape[scale_shape_idx] = values.shape[0]
-            graph_node_input_2 = values.reshape(scale_shape)
+        graph_node_input_2 = graph_node.inputs[1].values
     else:
         graph_node_input_2 = graph_node.inputs[1]
     graph_node_input_3 = None
     if len(graph_node.inputs) >= 3:
         if hasattr(graph_node.inputs[2], 'values'):
-            values = graph_node.inputs[2].values
-            values_rank = values.ndim
-            if values_rank > 1:
-                perm = [i for i in range(1, values_rank)] + [0]
-                graph_node_input_3 = values.transpose(perm)
-            else:
-                bias_shape_idx = list(input_tensor_shape).index(values.shape[0])
-                bias_shape = [1] * input_tensor_rank
-                bias_shape[bias_shape_idx] = values.shape[0]
-                graph_node_input_3 = values.reshape(bias_shape)
+            graph_node_input_3 = graph_node.inputs[2].values
         else:
             graph_node_input_3 = graph_node.inputs[2]
 
@@ -130,49 +142,57 @@ def make_node(
     }
 
     # Generation of TF OP
-    reduce_meaned_1 = tf.reduce_mean(
-        input_tensor=input_tensor,
-        axis=[axis],
-        keepdims=True,
-    )
-    subed = tf.math.subtract(
-        x=input_tensor,
-        y=reduce_meaned_1,
-    )
+    # reduce_meaned_1 = tf.reduce_mean(
+    #     input_tensor=input_tensor,
+    #     axis=[axis],
+    #     keepdims=True,
+    # )
+    # subed = tf.math.subtract(
+    #     x=input_tensor,
+    #     y=reduce_meaned_1,
+    # )
 
-    squared = tf.math.multiply(
-        x=subed,
-        y=subed,
-    )
-    reduce_meaned_2 = tf.reduce_mean(
-        input_tensor=squared,
-        axis=[axis],
-        keepdims=True,
-    )
-    added = tf.math.add(
-        x=reduce_meaned_2,
-        y=epsilon,
-    )
-    sqrted = tf.math.sqrt(x=added)
+    # squared = tf.math.multiply(
+    #     x=subed,
+    #     y=subed,
+    # )
+    # reduce_meaned_2 = tf.reduce_mean(
+    #     input_tensor=squared,
+    #     axis=[axis],
+    #     keepdims=True,
+    # )
+    # added = tf.math.add(
+    #     x=reduce_meaned_2,
+    #     y=epsilon,
+    # )
+    # sqrted = tf.math.sqrt(x=added)
 
-    divided = tf.math.divide(
-        x=subed,
-        y=sqrted,
-    )
-    sacaled = tf.math.multiply(
-        x=divided,
-        y=scale,
-    )
-    bias_added = None
-    if bias is not None:
-        bias_added = tf.math.add(
-            x=sacaled,
-            y=bias,
-        )
-    else:
-        bias_added = sacaled
+    # divided = tf.math.divide(
+    #     x=subed,
+    #     y=sqrted,
+    # )
+    # sacaled = tf.math.multiply(
+    #     x=divided,
+    #     y=scale,
+    # )
+    # bias_added = None
+    # if bias is not None:
+    #     bias_added = tf.math.add(
+    #         x=sacaled,
+    #         y=bias,
+    #     )
+    # else:
+    #     bias_added = sacaled
 
-    tf_layers_dict[graph_node_output_1.name]['tf_node'] = bias_added
+    # tf_layers_dict[graph_node_output_1.name]['tf_node'] = bias_added
+
+    tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
+        tf.keras.layers.LayerNormalization(
+            axis=[axis],
+            epsilon=epsilon,
+            gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
+            beta_initializer=tf.keras.initializers.constant(bias) if bias is not None else 'zeros',
+        )(input_tensor)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = post_process_transpose(
