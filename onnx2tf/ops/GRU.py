@@ -1,4 +1,3 @@
-import sys
 from typing import List, Dict
 import random
 random.seed(0)
