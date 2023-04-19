@@ -1,4 +1,3 @@
-import sys
 from typing import List, Dict
 import random
 random.seed(0)
@@ -16,7 +15,6 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
 from tensorflow.python.keras.layers import Layer
 
 
@@ -509,14 +507,6 @@ def make_node(
     clip: float =  graph_node.attrs.get('clip', None)
     direction: str =  graph_node.attrs.get('direction', 'forward')
 
-    if direction in ['reverse', 'bidirectional']:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
-            f'Currently, direction == "reverse" and direction == bidirectional processing is not yet implemented. ' +
-            f'direction: {direction}'
-        )
-        sys.exit(1)
-
     if len(activations) == 0:
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#gru-14
         # Equations (Default: f=Sigmoid, g=Tanh)
@@ -693,7 +683,6 @@ def make_node(
     # Generation of TF OP
     forward_lstm = None
     reverse_lstm = None
-    input_size = X.shape[-1]
 
     # Need transpose for batchwise, initial_h/initial_c
     # layout==0
