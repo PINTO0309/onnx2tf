@@ -34,6 +34,22 @@ body:
     validations:
       required: true
   - type: input
+    id: onnxruntime-version
+    attributes:
+      label: onnxruntime version number
+      description: Please list the version number of onnx used. `pip show onnxruntime onnxruntime-gpu | grep Version`
+      placeholder: x.x.x
+    validations:
+      required: true
+  - type: input
+    id: onnxsim-onnx-simplifier-version
+    attributes:
+      label: onnxsim (onnx_simplifier) version number
+      description: Please list the version number of onnx used. `pip show onnxsim | grep Version`
+      placeholder: x.x.x
+    validations:
+      required: true
+  - type: input
     id: tensorflow-version
     attributes:
       label: tensorflow version number
