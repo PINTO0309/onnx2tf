@@ -520,6 +520,7 @@ The accuracy error rates after quantization for different activation functions a
     |Before|After|
     |:-:|:-:|
     |`HardSwish`<br>![image](https://user-images.githubusercontent.com/33194443/226223099-c7344bcf-d24d-4b35-a1d6-2a03dbfce8c7.png)|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
+    |`ReLU6`<br>![image](https://user-images.githubusercontent.com/33194443/233639086-721e5e80-08c3-4785-9c1a-002bbfc0fa3d.png)<br>Paper: [A Quantization-Friendly Separable Convolution for MobileNets](https://arxiv.org/pdf/1803.08607.pdf) https://arxiv.org/pdf/1803.08607.pdf|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
 
 
 ### 7. Calibration data creation for INT8 quantization
