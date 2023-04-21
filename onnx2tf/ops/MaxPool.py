@@ -17,8 +17,11 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     calc_tf_pooling_pads,
     calc_extra_padding_with_ceil,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 @print_node_info
@@ -55,6 +58,7 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
+    input_tensor_shape = input_tensor.shape
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -63,6 +67,48 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
+
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ] if graph_node.inputs[0].shape is not None else None
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 4:
+                # 2D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 5:
+                # 3D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,4,1],
+                    **kwargs,
+                )
 
     if len(graph_node.outputs) > 1:
         error_msg = \
@@ -126,11 +172,13 @@ def make_node(
             # this padding is added to end side (right, bottom) only
             if ceil_mode:
                 extra_pads = \
-                    calc_extra_padding_with_ceil(input_shape=input_tensor_shape[1:-1],
-                                                 kernel=kernel_shape,
-                                                 pads=pads,
-                                                 dilations=dilations,
-                                                 strides=strides)
+                    calc_extra_padding_with_ceil(
+                        input_shape=input_tensor_shape[1:-1],
+                        kernel=kernel_shape,
+                        pads=pads,
+                        dilations=dilations,
+                        strides=strides,
+                    )
                 pads = pads[:len(pads) // 2] + [p + e for p, e in zip(pads[len(pads) // 2:], extra_pads)]
 
             tf_pads = pads
@@ -183,6 +231,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
 
     # Generation of TF OP

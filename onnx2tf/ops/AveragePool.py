@@ -20,8 +20,11 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     calc_tf_pooling_pads,
-    calc_extra_padding_with_ceil
+    calc_extra_padding_with_ceil,
+    transpose_with_flexing_deterrence,
 )
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 def summarize_multiplier(arr):
@@ -87,6 +90,7 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
+    input_tensor_shape = input_tensor.shape
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -95,6 +99,48 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
+
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ] if graph_node.inputs[0].shape is not None else None
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 4:
+                # 2D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 5:
+                # 3D - Overall model
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,4,1],
+                    **kwargs,
+                )
 
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     ceil_mode = bool(graph_node.attrs.get('ceil_mode', 0))
@@ -114,15 +160,16 @@ def make_node(
     # explicit pad layer is added for tensorflow incompatible cases
     tf_pad_mode = 'VALID'
     is_explicit_padding = False
-    tf_pads = calc_tf_pooling_pads(input_shape=input_tensor_shape,
-                                   kernel=kernel_shape,
-                                   strides=strides)
+    tf_pads = calc_tf_pooling_pads(
+        input_shape=input_tensor_shape,
+        kernel=kernel_shape,
+        strides=strides
+    )
 
     func = math.ceil if ceil_mode else math.floor
     output_spatial_shape = [
         func((i + pb + pe - d * (k - 1) - 1) / s + 1)
-        for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:],
-                                      kernel_shape, dilations, strides)
+        for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
     ]
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
@@ -142,11 +189,13 @@ def make_node(
             # this extra padding should not be counted as padding when count_include_pad is True
             if ceil_mode:
                 extra_pads = \
-                    calc_extra_padding_with_ceil(input_shape=input_tensor_shape[1:-1],
-                                                 kernel=kernel_shape,
-                                                 pads=pads,
-                                                 dilations=dilations,
-                                                 strides=strides)
+                    calc_extra_padding_with_ceil(
+                        input_shape=input_tensor_shape[1:-1],
+                        kernel=kernel_shape,
+                        pads=pads,
+                        dilations=dilations,
+                        strides=strides,
+                    )
                 pads = pads[:len(pads) // 2] + [p + e for p, e in zip(pads[len(pads) // 2:], extra_pads)]
 
             tf_pads = pads
@@ -197,9 +246,10 @@ def make_node(
     # 2. when extra padding layer is not added and count_include_pad is True
     # 3. when last stride has extra padding due to ceil_mode and count_include_pad is True
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
-        warning_msg = f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-                      f'Tensorflow incompatible padding detected. ' \
-                      f'Extra pad layer is inserted automatically. '
+        warning_msg = \
+            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+            f'Tensorflow incompatible padding detected. ' \
+            f'Extra pad layer is inserted automatically. '
         print(warning_msg)
 
         if auto_pad == 'SAME_LOWER':
@@ -213,9 +263,10 @@ def make_node(
                 average_multiplier.append(multiplier)
 
         # convert to tensorflow padding format
-        tf_pads = [[0, 0]] + \
-                  [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
-                  [[0, 0]]
+        tf_pads = \
+            [[0, 0]] + \
+            [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
+            [[0, 0]]
 
         padded_tensor = tf.pad(
             tensor=input_tensor,
@@ -249,6 +300,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
 
     # Generation of TF OP
