@@ -14,8 +14,11 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     transpose_with_flexing_deterrence,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 @print_node_info
@@ -69,6 +72,7 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     grid = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    input_tensor_shape = image.shape
 
     # Pre-process transpose
     image = pre_process_transpose(
@@ -108,6 +112,47 @@ def make_node(
         )
         sys.exit(1)
 
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ] if graph_node.inputs[0].shape is not None else None
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D - Overall model
+                image = transpose_with_flexing_deterrence(
+                    input_tensor=image,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 4:
+                # 2D - Overall model
+                image = transpose_with_flexing_deterrence(
+                    input_tensor=image,
+                    perm=[0,2,3,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 5:
+                # 3D - Overall model
+                image = transpose_with_flexing_deterrence(
+                    input_tensor=image,
+                    perm=[0,2,3,4,1],
+                    **kwargs,
+                )
 
     # Generation of TF OP
     """
