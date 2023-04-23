@@ -191,6 +191,7 @@ def make_node(
         # Suppression of FlexSplitV generation
         # SplitV -> Strided_Slice
         splited_tensors = []
+        begin_stock = []
         for split_idx, split_dim in enumerate(split):
             begin_ = []
             end_ = []
@@ -201,7 +202,7 @@ def make_node(
                     if split_idx == 0:
                         begin_.append(0)
                     else:
-                        begin_.append(begin_[split_idx-1] + split[split_idx-1])
+                        begin_.append(begin_stock[split_idx-1][axis] + split[split_idx-1])
                     end_.append(begin_[-1] + split_dim)
                 else:
                     begin_.append(0)
@@ -218,6 +219,7 @@ def make_node(
                     end_mask=end_mask_,
                 )
             )
+            begin_stock.append(begin_)
     else:
         splited_tensors = \
             tf.split(
