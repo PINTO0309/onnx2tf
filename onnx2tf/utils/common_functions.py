@@ -1469,7 +1469,7 @@ def alternative_asin(
     x_dtype = input_tensor.dtype
     neg = tf.math.divide(
         tf.math.multiply(
-            tf.minimum(input_tensor, tf.convert_to_tensor(0, dtype=x_dtype)),
+            tf.minimum(input_tensor, tf.convert_to_tensor(0.0, dtype=x_dtype)),
             tf.convert_to_tensor(-1.0, dtype=x_dtype)
         ),
         x_abs
@@ -1521,7 +1521,7 @@ def alternative_acos(
     x_dtype = input_tensor.dtype
     neg = tf.math.divide(
         tf.math.multiply(
-            tf.minimum(input_tensor, tf.convert_to_tensor(0, dtype=x_dtype)),
+            tf.minimum(input_tensor, tf.convert_to_tensor(0.0, dtype=x_dtype)),
             tf.convert_to_tensor(-1.0, dtype=x_dtype)
         ),
         x_abs
