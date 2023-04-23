@@ -1466,10 +1466,11 @@ def alternative_asin(
     """
     x_abs = None
     x_abs = tf.abs(input_tensor)
+    x_dtype = input_tensor.dtype
     neg = tf.math.divide(
         tf.math.multiply(
-            tf.minimum(input_tensor, 0),
-            -1
+            tf.minimum(input_tensor, tf.convert_to_tensor(0, dtype=x_dtype)),
+            tf.convert_to_tensor(-1.0, dtype=x_dtype)
         ),
         x_abs
     )
@@ -1484,14 +1485,14 @@ def alternative_asin(
     y = tf.math.subtract(
         tf.math.multiply(3.14159265358979, 0.5),
         tf.math.multiply(
-            tf.sqrt(tf.math.subtract(1.0, x)),
+            tf.sqrt(tf.math.subtract(tf.convert_to_tensor(1.0, dtype=x.dtype), x)),
             y
         )
     )
     pseudo_asin = tf.math.subtract(
         y,
         tf.math.multiply(
-            tf.math.multiply(2, neg),
+            tf.math.multiply(tf.convert_to_tensor(2.0, dtype=neg.dtype), neg),
             y
         )
     )
@@ -1517,10 +1518,11 @@ def alternative_acos(
     """
     x_abs = None
     x_abs = tf.abs(input_tensor)
+    x_dtype = input_tensor.dtype
     neg = tf.math.divide(
         tf.math.multiply(
-            tf.minimum(input_tensor, 0),
-            -1
+            tf.minimum(input_tensor, tf.convert_to_tensor(0, dtype=x_dtype)),
+            tf.convert_to_tensor(-1.0, dtype=x_dtype)
         ),
         x_abs
     )
@@ -1534,13 +1536,13 @@ def alternative_acos(
     y = tf.math.add(y, 1.5707288)
     y = tf.math.multiply(
         y,
-        tf.sqrt(tf.math.subtract(1.0, x))
+        tf.sqrt(tf.math.subtract(tf.convert_to_tensor(1.0, dtype=x.dtype), x))
     )
     y = tf.math.multiply(
         y,
         tf.math.subtract(
-            1.0,
-            tf.math.multiply(2.0, neg)
+            tf.convert_to_tensor(1.0, dtype=neg.dtype),
+            tf.math.multiply(tf.convert_to_tensor(2.0, dtype=neg.dtype), neg),
         )
     )
     pseudo_acos = tf.math.add(
@@ -1603,7 +1605,10 @@ def alternative_atan(
     """
     return alternative_atan2(
         input_tensor_y=input_tensor,
-        input_tensor_x=tf.broadcast_to(1.0, shape=input_tensor.shape),
+        input_tensor_x=tf.broadcast_to(
+            tf.convert_to_tensor(1.0, dtype=input_tensor.dtype),
+            shape=input_tensor.shape
+        ),
     )
 
 
