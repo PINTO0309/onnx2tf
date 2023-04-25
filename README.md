@@ -305,8 +305,8 @@ $ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#10-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#11-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#11-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#12-conversion-to-coreml
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -687,7 +687,27 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
     I would be happy if this is a reference for Android + Java or TFJS implementations. There are tons more tricky model optimization techniques described in my blog posts, so you'll have to find them yourself. I don't dare to list the URL here because it is annoying to see so many `issues` being posted. And unfortunately, all articles are in Japanese.
     ![image](https://user-images.githubusercontent.com/33194443/230780749-9967a34b-abf6-47fe-827d-92e0f6bddf46.png)
 
-### 10. Conversion to TensorFlow.js
+### 10. RNN (RNN, GRU, LSTM) Inference Acceleration
+TensorFlow's RNN has a speedup option called `unroll`. The network will be unrolled, else a symbolic loop will be used. Unrolling can speed-up a RNN, although it tends to be more memory-intensive. Unrolling is only suitable for short sequences. onnx2tf allows you to deploy RNNs into memory-intensive operations by specifying the `--enable_rnn_unroll` or `-eru` options. The `--enable_rnn_unroll` option is available for `RNN`, `GRU`, and `LSTM`.
+
+- Keras https://keras.io/api/layers/recurrent_layers/lstm/
+- TensorFlow https://www.tensorflow.org/api_docs/python/tf/keras/layers/LSTM
+
+An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` option is shown below. Please ignore that the shapes of the input and output tensors do not match, since the samples are shown by picking up separate models.
+
+- ONNX `LSTM (Bidirectional)`
+
+  ![image](https://user-images.githubusercontent.com/33194443/234157356-7a0790a5-d5e0-4d9b-9800-0750fc944ac6.png)
+
+- `BidirectionalLSTM` with `--enable_rnn_unroll` option unspecified
+
+  ![image](https://user-images.githubusercontent.com/33194443/234149979-4931a8cb-a2da-429a-a811-db46e1ca4c5e.png)
+
+- `BidirectionalLSTM` with `--enable_rnn_unroll` option
+
+  ![image](https://user-images.githubusercontent.com/33194443/234149995-7b68b550-90d9-4070-abd0-158d1e824315.png)
+
+### 11. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -706,7 +726,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 11. Conversion to CoreML
+### 12. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
