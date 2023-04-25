@@ -701,6 +701,8 @@ An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` opti
 
 - `BidirectionalLSTM` with `--enable_rnn_unroll` option unspecified
 
+  Recurrent layer is implemented from scratch.
+
   ![image](https://user-images.githubusercontent.com/33194443/234149979-4931a8cb-a2da-429a-a811-db46e1ca4c5e.png)
 
 - `BidirectionalLSTM` with `--enable_rnn_unroll` option
