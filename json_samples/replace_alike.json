@@ -5,7 +5,6 @@
     {
       "op_name": "/Unsqueeze",
       "param_target": "op",
-      "param_name": "scores_map",
       "new_shape": [1,192,320,1]
     },
     {
