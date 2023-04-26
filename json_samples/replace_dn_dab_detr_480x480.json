@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "operations": [
+
+
+    {
+      "op_name": "/backbone/backbone.1/Unsqueeze",
+      "param_target": "outputs",
+      "param_name": "/backbone/backbone.1/Unsqueeze_output_0",
+      "post_process_transpose_perm": [3,0,1,2]
+    },
+    {
+      "op_name": "/backbone/backbone.1/Unsqueeze_1",
+      "param_target": "outputs",
+      "param_name": "/backbone/backbone.1/Unsqueeze_1_output_0",
+      "post_process_transpose_perm": [3,0,1,2]
+    }
+
+  ]
+}
