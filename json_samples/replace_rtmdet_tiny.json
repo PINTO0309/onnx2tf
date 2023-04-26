@@ -4,7 +4,6 @@
     {
       "op_name": "/Unsqueeze_10",
       "param_target": "op",
-      "param_name": "/Unsqueeze_10_output_0",
       "new_shape": [1,16000,1]
     },
     {
