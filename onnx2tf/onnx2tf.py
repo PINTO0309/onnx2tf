@@ -661,6 +661,22 @@ def convert(
         del graph
         graph = gs.import_onnx(onnx_graph)
 
+    def sanitizing(node):
+        if hasattr(node, 'name'):
+            node.name = node.name.replace(':','_')
+            if output_signaturedefs or output_integer_quantized_tflite:
+                node.name = re.sub('^/', 'wa/', node.name)
+        elif hasattr(node, '_name'):
+            node._name = node._name.replace(':','_')
+            if output_signaturedefs or output_integer_quantized_tflite:
+                node._name = re.sub('^/', 'wa/', node._name)
+
+    # sanitizing ':', '/'
+    _ = [sanitizing(graph_input) for graph_input in graph.inputs]
+    _ = [sanitizing(graph_node) for graph_node in graph.nodes]
+    _ = [sanitizing(graph_output) for graph_output in graph.outputs]
+    onnx_graph = gs.export_onnx(graph)
+
     # ONNX dummy inference
     # Generate output for all OPs.
     # Used to verify the output error of each OP in the TensorFlow model.
@@ -785,11 +801,11 @@ def convert(
 
             # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
+
             # substitution because saved_model does not allow colons
-            graph_input.name = graph_input.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs or output_integer_quantized_tflite:
-                graph_input.name = re.sub('^/', 'wa/', graph_input.name)
+            sanitizing(graph_input)
+
             op.make_node(
                 graph_input=graph_input,
                 tf_layers_dict=tf_layers_dict,
@@ -812,10 +828,9 @@ def convert(
                 sys.exit(1)
 
             # substitution because saved_model does not allow colons
-            graph_node.name = graph_node.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs or output_integer_quantized_tflite:
-                graph_node.name = re.sub('^/', 'wa/', graph_node.name)
+            sanitizing(graph_node)
+
             op.make_node(
                 graph_node=graph_node,
                 tf_layers_dict=tf_layers_dict,
