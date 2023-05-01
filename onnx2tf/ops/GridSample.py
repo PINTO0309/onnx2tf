@@ -133,21 +133,21 @@ def make_node(
         ]
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 3:
-                # 1D - Overall model
+                # 1D
                 image = transpose_with_flexing_deterrence(
                     input_tensor=image,
                     perm=[0,2,1],
                     **kwargs,
                 )
             elif len(onnx_input_shape) == 4:
-                # 2D - Overall model
+                # 2D
                 image = transpose_with_flexing_deterrence(
                     input_tensor=image,
                     perm=[0,2,3,1],
                     **kwargs,
                 )
             elif len(onnx_input_shape) == 5:
-                # 3D - Overall model
+                # 3D
                 image = transpose_with_flexing_deterrence(
                     input_tensor=image,
                     perm=[0,2,3,4,1],

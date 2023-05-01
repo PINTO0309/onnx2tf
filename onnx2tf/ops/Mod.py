@@ -17,11 +17,8 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    make_tf_partial_model_inputs,
-    dummy_tf_inference,
     deterring_shape_corruption_due_to_broadcast,
 )
-from typing import Any, Dict, List
 
 
 @print_node_info
@@ -104,25 +101,6 @@ def make_node(
         **kwargs,
     )
 
-    # Acquisition of test data for validation
-    if kwargs['acc_check']:
-        if not isinstance(graph_node_input_1, np.ndarray) \
-            and graph_node_input_1.name in tf_layers_dict \
-            and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-            test_data1: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
-        elif isinstance(graph_node_input_1, np.ndarray):
-            test_data1: np.ndarray = graph_node_input_1
-        else:
-            test_data1 = None
-        if not isinstance(graph_node_input_2, np.ndarray) \
-            and graph_node_input_2.name in tf_layers_dict \
-            and 'verification_data' in tf_layers_dict[graph_node_input_2.name].keys():
-            test_data2: np.ndarray = tf_layers_dict[graph_node_input_2.name]['verification_data']
-        elif isinstance(graph_node_input_2, np.ndarray):
-            test_data2: np.ndarray = graph_node_input_2
-        else:
-            test_data2 = None
-
     # Disable unnecessary Transpose
     #   1. If both x and y are gs.Variable
     #   2. If only one of the two is the output of Transpose
@@ -170,20 +148,7 @@ def make_node(
             input_tensor_2=input_tensor_2,
         )
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    if kwargs['acc_check']:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[
-                    input_tensor_1,
-                    input_tensor_2,
-                ]
-            )
-        tf_partial_model_outputs = None
-
     # Generation of TF OP
-    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.math.mod(
             x=input_tensor_1 \
@@ -194,44 +159,6 @@ def make_node(
                     else tf.convert_to_tensor(input_tensor_2),
             name=graph_node.name,
         )
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model_outputs = \
-            [
-                tf.math.mod(
-                    x=tf_partial_model_inputs[0] \
-                        if not isinstance(tf_partial_model_inputs[0], np.ndarray) \
-                            else tf.convert_to_tensor(tf_partial_model_inputs[0]),
-                    y=tf_partial_model_inputs[1] \
-                        if not isinstance(tf_partial_model_inputs[1], np.ndarray) \
-                            else tf.convert_to_tensor(tf_partial_model_inputs[1]),
-                )
-            ]
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
-        test_data1 = None
-        if isinstance(input_tensor_1, np.ndarray):
-            test_data1 = input_tensor_1
-        test_data2 = None
-        if isinstance(input_tensor_2, np.ndarray):
-            test_data2 = input_tensor_2
-        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
-            model=tf_partial_model,
-            inputs=tf_partial_model_inputs,
-            verification_datas=[
-                test_data1,
-                test_data2,
-            ]
-        )
-        tf_layers_dict[graph_node_output.name]['verification_data'] = \
-            list(tf_partial_model_result_infos.values())[0]
-        del tf_partial_model
-        del tf_partial_model_inputs
-        del tf_partial_model_outputs
-        del test_data1
-        del test_data2
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
