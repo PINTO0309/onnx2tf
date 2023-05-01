@@ -14,11 +14,9 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
-    make_tf_partial_model_inputs,
-    dummy_tf_inference,
     transpose_with_flexing_deterrence,
 )
-from typing import Any, Dict, List
+from typing import List
 
 
 @print_node_info
@@ -182,15 +180,6 @@ def make_node(
         **kwargs,
     )
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    if kwargs['acc_check']:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[transposed_tensor]
-            )
-        tf_partial_model_outputs = None
-
     # Reshape
     has_undefined_outputshape = output_shape is None
     if not has_undefined_outputshape:
@@ -245,39 +234,12 @@ def make_node(
         # No-replace
         pass
 
-    ### Overall model
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.reshape(
             tensor=transposed_tensor,
             shape=final_shape,
             name=graph_node.name,
         )
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model_outputs = \
-            [
-                tf.reshape(
-                    tensor=tf_partial_model_inputs[0],
-                    shape=final_shape,
-                )
-            ]
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
-        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
-            model=tf_partial_model,
-            inputs=tf_partial_model_inputs,
-            verification_datas=[
-                test_data
-            ]
-        )
-        tf_layers_dict[graph_node_output.name]['verification_data'] = \
-            list(tf_partial_model_result_infos.values())[0]
-        del tf_partial_model
-        del tf_partial_model_inputs
-        del tf_partial_model_outputs
-        del test_data
 
     # Special support for ShuffleNet patterns
     # 5D Reshape -> 5D Transpose -> 4D Reshape
@@ -302,17 +264,12 @@ def make_node(
                 and two_previous_op_output_shape[2] == one_previous_op_output_shape[1] \
                 and current_op_output_shape[1] == (one_previous_op_output_shape[1] * one_previous_op_output_shape[2]):
                 # ShuffleNet patterns - 4D only
-                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     transpose_with_flexing_deterrence(
                         input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
                         perm=[0,2,3,1],
                         **kwargs,
                     )
-                ### Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_layers_dict[graph_node_output.name]['verification_data'] = \
-                        tf_layers_dict[graph_node_output.name]['verification_data'].transpose([0,2,3,1])
             else:
                 pass
     except:

@@ -14,10 +14,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
-    make_tf_partial_model_inputs,
-    dummy_tf_inference,
 )
-from typing import Any, Dict, List
 
 
 @print_node_info
@@ -125,15 +122,6 @@ def make_node(
         **kwargs,
     )
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    if kwargs['acc_check']:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[input_tensor]
-            )
-        tf_partial_model_outputs = None
-
     # Generation of TF OP
     # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#unsqueeze-13
     """
@@ -165,18 +153,10 @@ def make_node(
         #   and each is performing a useless process of
         #   compressing and decompressing the same axis,
         #   the two operations are disabled at the same time.
-        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
         tf_type = tf.identity
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.identity(
-                        input=tf_partial_model_inputs[0],
-                    )
-                ]
+
     elif \
         (
             isinstance(graph_node_input_1, gs.Variable) \
@@ -189,18 +169,10 @@ def make_node(
             and tf_layers_dict[graph_node_input_2.name]['unnecessary_gather'] == True
         ):
         # Remove useless gather/unsqueeze combinations
-        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
         tf_type = tf.identity
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.identity(
-                        input=tf_partial_model_inputs[0],
-                    )
-                ]
+
     elif \
         (
             isinstance(graph_node_input_1, gs.Variable) \
@@ -213,23 +185,14 @@ def make_node(
             and tf_layers_dict[graph_node_input_2.name]['unnecessary_reshape'] == True
         ):
         # Remove useless reshape/unsqueeze combinations
-        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
         tf_type = tf.identity
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.identity(
-                        input=tf_partial_model_inputs[0],
-                    )
-                ]
+
     elif len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
         and len(axes) == 1:
-        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.expand_dims(
                 input=input_tensor,
@@ -237,17 +200,8 @@ def make_node(
                 name=graph_node.name,
             )
         tf_type = tf.expand_dims
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.expand_dims(
-                        input=tf_partial_model_inputs[0],
-                        axis=axes[0],
-                    )
-                ]
+
     else:
-        ### Overall model
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.reshape(
                 tensor=input_tensor,
@@ -255,48 +209,6 @@ def make_node(
                 name=graph_node.name,
             )
         tf_type = tf.reshape
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.reshape(
-                        tensor=tf_partial_model_inputs[0],
-                        shape=new_shape,
-                    )
-                ]
-
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
-        test_data = None
-        if not isinstance(input_tensor, np.ndarray):
-            if not isinstance(graph_node_input_1, np.ndarray) \
-                and graph_node_input_1.name in tf_layers_dict \
-                and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-                test_data: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
-            elif isinstance(graph_node_input_1, np.ndarray):
-                test_data: np.ndarray = graph_node_input_1
-            else:
-                test_data = None
-        else:
-            test_data = input_tensor
-        tf_partial_model_result_infos: Dict[Any] = dummy_tf_inference(
-            model=tf_partial_model,
-            inputs=tf_partial_model_inputs,
-            verification_datas=[
-                test_data
-            ]
-        )
-        tf_layers_dict[graph_node_output.name]['verification_data'] = \
-            list(tf_partial_model_result_infos.values())[0]
-        del tf_partial_model
-        del tf_partial_model_inputs
-        del tf_partial_model_outputs
-        del test_data
-
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

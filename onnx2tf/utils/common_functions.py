@@ -4549,7 +4549,6 @@ def merge_two_consecutive_identical_ops_into_one(
                     else:
                         tf_type = tf.math.multiply
 
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.multiply(
                             x=input_tensor_1 \
@@ -4562,7 +4561,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
 
                 except Exception as ex:
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.multiply(
                             x=input_tensor_1 \
@@ -4575,7 +4573,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
                     tf_type = tf.math.multiply
             else:
-                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.math.multiply(
                         x=input_tensor_1 \
@@ -4653,7 +4650,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     input_tensor_2 = \
                                         np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 / next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
@@ -4673,7 +4669,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     input_tensor_2 = \
                                         np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 / next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
@@ -4686,7 +4681,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     )
                                 tf_type = tf.identity
                             else:
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
@@ -4709,7 +4703,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     input_tensor_2 = \
                                         np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 * next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
@@ -4729,7 +4722,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     input_tensor_2 = \
                                         np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 * next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
@@ -4742,7 +4734,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     )
                                 tf_type = tf.identity
                             else:
-                                ### Overall model
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.divide(
                                         x=input_tensor_1 \
@@ -4755,7 +4746,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                     )
                                 tf_type = tf.math.divide
                         else:
-                            ### Overall model
                             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                 tf.math.divide(
                                     x=input_tensor_1 \
@@ -4768,7 +4758,6 @@ def merge_two_consecutive_identical_ops_into_one(
                                 )
                             tf_type = tf.math.divide
                     else:
-                        ### Overall model
                         tf_layers_dict[graph_node_output.name]['tf_node'] = \
                             tf.math.divide(
                                 x=input_tensor_1 \
@@ -4782,7 +4771,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf_type = tf.math.divide
 
                 except Exception as ex:
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.divide(
                             x=input_tensor_1 \
@@ -4795,7 +4783,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
                     tf_type = tf.math.divide
             else:
-                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.math.divide(
                         x=input_tensor_1 \
@@ -4905,7 +4892,6 @@ def merge_two_consecutive_identical_ops_into_one(
                     else:
                         tf_type = tf.math.subtract
 
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.subtract(
                             x=input_tensor_1 \
@@ -4918,7 +4904,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
 
                 except Exception as ex:
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.subtract(
                             x=input_tensor_1 \
@@ -4931,7 +4916,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
                     tf_type = tf.math.subtract
             else:
-                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.math.subtract(
                         x=input_tensor_1 \
@@ -5041,7 +5025,6 @@ def merge_two_consecutive_identical_ops_into_one(
                     else:
                         tf_type = tf.math.add
 
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.add(
                             x=input_tensor_1 \
@@ -5054,7 +5037,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
 
                 except Exception as ex:
-                    ### Overall model
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.add(
                             x=input_tensor_1 \
@@ -5067,7 +5049,6 @@ def merge_two_consecutive_identical_ops_into_one(
                         )
                     tf_type = tf.math.add
             else:
-                ### Overall model
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.math.add(
                         x=input_tensor_1 \

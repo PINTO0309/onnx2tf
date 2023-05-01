@@ -21,15 +21,11 @@ from onnx2tf.utils.common_functions import (
     upsampling3d_nearest,
     pre_process_transpose,
     post_process_transpose,
-    make_tf_partial_model_inputs,
-    dummy_tf_inference,
     transpose_with_flexing_deterrence,
 )
-from typing import Any, Dict, List
 from onnx2tf.utils.colors import Color
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
-    TF_DTYPES_TO_NUMPY_DTYPES,
 )
 
 INF_INDEX_VALUE: int = 4294967296
@@ -70,16 +66,6 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    if kwargs['acc_check']:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[input_tensor]
-            )
-        tf_partial_model_tensors = None
-        tf_partial_model_outputs = None
-
     # Workaround to avoid as many Resize failures as possible
     # for models with useless Transpose immediately before them.
     # If the input geometry of the ONNX and the input geometry of the TF model match,
@@ -101,53 +87,31 @@ def make_node(
         ]
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 3:
-                # 1D - Overall model
+                # 1D
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,1],
                     **kwargs,
                 )
                 before_op_output_shape_trans = True
-                # 1D - Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_partial_model_tensors = \
-                        transpose_with_flexing_deterrence(
-                            input_tensor=tf_partial_model_inputs[0],
-                            perm=[0,2,1],
-                            **kwargs,
-                        )
+
             elif len(onnx_input_shape) == 4:
-                # 2D - Overall model
+                # 2D
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,1],
                     **kwargs,
                 )
                 before_op_output_shape_trans = True
-                # 2D - Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_partial_model_tensors = \
-                        transpose_with_flexing_deterrence(
-                            input_tensor=tf_partial_model_inputs[0],
-                            perm=[0,2,3,1],
-                            **kwargs,
-                        )
+
             elif len(onnx_input_shape) == 5:
-                # 3D - Overall model
+                # 3D
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
                     **kwargs,
                 )
                 before_op_output_shape_trans = True
-                # 3D - Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_partial_model_tensors = \
-                        transpose_with_flexing_deterrence(
-                            input_tensor=tf_partial_model_inputs[0],
-                            perm=[0,2,3,4,1],
-                            **kwargs,
-                        )
 
     roi = None
     scales = None
@@ -411,7 +375,6 @@ def make_node(
         boxes = tf.expand_dims(tf.gather(roi, indices, axis=0), 0)
         # get box_indices for crop
         box_indices = tf.cast(tf.range(0, input_tensor_shape[0]), dtype=tf.int32)
-        ### Overall model
         # run crop and resize
         resized_tensor = tf.image.crop_and_resize(
             images=input_tensor,
@@ -423,25 +386,10 @@ def make_node(
             name=graph_node.name,
         )
         tf_op_type = tf.image.crop_and_resize
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.image.crop_and_resize(
-                        images=tf_partial_model_tensors \
-                            if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
-                        boxes=boxes,
-                        box_indices=box_indices,
-                        crop_size=new_size,
-                        method=mode,
-                        extrapolation_value=extrapolation_value,
-                    )
-                ]
 
     elif coordinate_transformation_mode == "align_corners" and opset <= 17:
         align_corners = True
         half_pixel_centers = False
-        ### Overall model
         resized_tensor = Lambda(
             tf_resize,
             arguments={
@@ -452,27 +400,10 @@ def make_node(
             }
         )(input_tensor)
         tf_op_type = tf_resize
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    Lambda(
-                        tf_resize,
-                        arguments={
-                            'new_size': new_size,
-                            'align_corners': align_corners,
-                            'half_pixel_centers': half_pixel_centers,
-                            'name': graph_node.name,
-                        }
-                    )(tf_partial_model_tensors \
-                        if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
-                    )
-                ]
 
     elif coordinate_transformation_mode == "asymmetric" and opset <= 17:
         align_corners = False
         half_pixel_centers = False
-        ### Overall model
         resized_tensor = Lambda(
             tf_resize,
             arguments={
@@ -483,27 +414,10 @@ def make_node(
             }
         )(input_tensor)
         tf_op_type = tf_resize
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    Lambda(
-                        tf_resize,
-                        arguments={
-                            'new_size': new_size,
-                            'align_corners': align_corners,
-                            'half_pixel_centers': half_pixel_centers,
-                            'name': graph_node.name,
-                        }
-                    )(tf_partial_model_tensors \
-                        if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
-                    )
-                ]
 
     elif coordinate_transformation_mode == "half_pixel" and opset <= 17:
         align_corners = False
         half_pixel_centers = True
-        ### Overall model
         resized_tensor = Lambda(
             tf_resize,
             arguments={
@@ -514,25 +428,8 @@ def make_node(
             }
         )(input_tensor)
         tf_op_type = tf_resize
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    Lambda(
-                        tf_resize,
-                        arguments={
-                            'new_size': new_size,
-                            'align_corners': align_corners,
-                            'half_pixel_centers': half_pixel_centers,
-                            'name': graph_node.name,
-                        }
-                    )(tf_partial_model_tensors \
-                        if tf_partial_model_tensors is not None else tf_partial_model_inputs[0]
-                    )
-                ]
 
     else:
-        ### Overall model
         resized_tensor = tf.image.resize(
             images=input_tensor,
             size=new_size,
@@ -542,55 +439,6 @@ def make_node(
             name=graph_node.name,
         )
         tf_op_type = tf.image.resize
-        ### Partial model
-        if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-            tf_partial_model_outputs = \
-                [
-                    tf.image.resize(
-                        images=tf_partial_model_tensors \
-                            if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
-                        size=new_size,
-                        method=mode,
-                        preserve_aspect_ratio=preserve_aspect_ratio,
-                        antialias=antialias,
-                    )
-                ]
-
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
-        test_data = None
-        if not isinstance(input_tensor, np.ndarray):
-            if not isinstance(graph_node_input, np.ndarray) \
-                and graph_node_input.name in tf_layers_dict \
-                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-            elif isinstance(graph_node_input, np.ndarray):
-                test_data: np.ndarray = graph_node_input
-            else:
-                test_data = None
-        else:
-            test_data = input_tensor
-        # TF dummy inference
-        tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-            model=tf_partial_model,
-            inputs=tf_partial_model_inputs,
-            verification_datas=[
-                test_data
-            ]
-        )
-        tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-        cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-            if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-        tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-        tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-        del tf_partial_model
-        del tf_partial_model_inputs
-        del tf_partial_model_outputs
-        del test_data
 
     # 1D Resize workaround
     # https://github.com/PINTO0309/onnx2tf/issues/283

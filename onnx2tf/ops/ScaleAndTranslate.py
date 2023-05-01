@@ -61,16 +61,6 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
 
-    # Generate input OPs for TensorFlow subgraphs
-    # For inference testing on OP stand-alone
-    if kwargs['acc_check']:
-        tf_partial_model_inputs: List[tf.keras.Input] = \
-            make_tf_partial_model_inputs(
-                input_tensors=[input_tensor]
-            )
-        tf_partial_model_tensors = None
-        tf_partial_model_outputs = None
-
     # Workaround to avoid as many Resize failures as possible
     # for models with useless Transpose immediately before them.
     # If the input geometry of the ONNX and the input geometry of the TF model match,
@@ -92,37 +82,22 @@ def make_node(
         ]
         if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
             if len(onnx_input_shape) == 4:
-                # 2D - Overall model
+                # 2D
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,1],
                     **kwargs,
                 )
                 before_op_output_shape_trans = True
-                # 2D - Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_partial_model_tensors = \
-                        transpose_with_flexing_deterrence(
-                            input_tensor=tf_partial_model_inputs[0],
-                            perm=[0,2,3,1],
-                            **kwargs,
-                        )
+
             elif len(onnx_input_shape) == 5:
-                # 3D - Overall model
+                # 3D
                 input_tensor = transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=[0,2,3,4,1],
                     **kwargs,
                 )
                 before_op_output_shape_trans = True
-                # 3D - Partial model
-                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-                    tf_partial_model_tensors = \
-                        transpose_with_flexing_deterrence(
-                            input_tensor=tf_partial_model_inputs[0],
-                            perm=[0,2,3,4,1],
-                            **kwargs,
-                        )
 
     sizes = None
     if len(graph_node.inputs) >= 2:
@@ -298,7 +273,6 @@ def make_node(
 
     resized_tensor = None
     org_dtype = input_tensor.dtype
-    ### Overall model
     resized_tensor = tf.image.resize(
         images=input_tensor,
         size=new_size,
@@ -307,55 +281,6 @@ def make_node(
         antialias=antialias,
         name=graph_node.name,
     )
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model_outputs = \
-            [
-                tf.image.resize(
-                    images=tf_partial_model_tensors \
-                        if tf_partial_model_tensors is not None else tf_partial_model_inputs[0],
-                    size=new_size,
-                    method=kernel_type,
-                    preserve_aspect_ratio=False,
-                    antialias=antialias,
-                )
-            ]
-
-    ### Partial model
-    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
-        tf_partial_model = tf.keras.Model(
-            inputs=tf_partial_model_inputs,
-            outputs=tf_partial_model_outputs,
-        )
-        test_data = None
-        if not isinstance(input_tensor, np.ndarray):
-            if not isinstance(graph_node_input, np.ndarray) \
-                and graph_node_input.name in tf_layers_dict \
-                and 'verification_data' in tf_layers_dict[graph_node_input.name].keys():
-                test_data: np.ndarray = tf_layers_dict[graph_node_input.name]['verification_data']
-            elif isinstance(graph_node_input, np.ndarray):
-                test_data: np.ndarray = graph_node_input
-            else:
-                test_data = None
-        else:
-            test_data = input_tensor
-        # TF dummy inference
-        tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-            model=tf_partial_model,
-            inputs=tf_partial_model_inputs,
-            verification_datas=[
-                test_data
-            ]
-        )
-        tf_partial_model_result: np.ndarray = list(tf_tensor_infos.values())[0]
-        cast_dtype = TF_DTYPES_TO_NUMPY_DTYPES[org_dtype] \
-            if isinstance(org_dtype, tf.dtypes.DType) else org_dtype
-        tf_partial_model_result = tf_partial_model_result.astype(cast_dtype)
-        tf_layers_dict[graph_node_output.name]['verification_data'] = tf_partial_model_result
-        del tf_partial_model
-        del tf_partial_model_inputs
-        del tf_partial_model_outputs
-        del test_data
 
     # TensorFlow's Resize operation casts to Float32 on its own,
     # so we have to change it back to the original type.
