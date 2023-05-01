@@ -700,7 +700,9 @@ def pre_explicit_broadcast(
     #   input_tensor_1: [1,2,3,4]
     #   input_tensor_2: [1,1,1,1]
     if input_tensor_1.shape is not None \
+        and input_tensor_1.shape != tf.TensorShape(None) \
         and input_tensor_2.shape is not None \
+        and input_tensor_2.shape != tf.TensorShape(None) \
         and None not in input_tensor_1.shape \
         and None not in input_tensor_2.shape \
         and len(input_tensor_1.shape) == len(input_tensor_2.shape):
@@ -751,7 +753,9 @@ def pre_explicit_broadcast(
                         axis=-1,
                     )
     elif input_tensor_1.shape is not None \
+        and input_tensor_1.shape != tf.TensorShape(None) \
         and input_tensor_2.shape is not None \
+        and input_tensor_2.shape != tf.TensorShape(None) \
         and None not in input_tensor_1.shape \
         and None not in input_tensor_2.shape \
         and len(input_tensor_1.shape) > len(input_tensor_2.shape) \

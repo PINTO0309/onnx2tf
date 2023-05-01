@@ -675,7 +675,11 @@ def convert(
     _ = [sanitizing(graph_input) for graph_input in graph.inputs]
     _ = [sanitizing(graph_node) for graph_node in graph.nodes]
     _ = [sanitizing(graph_output) for graph_output in graph.outputs]
-    onnx_graph = gs.export_onnx(graph)
+    try:
+        onnx_graph = gs.export_onnx(graph)
+    except Exception as ex:
+        # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
+        pass
 
     # ONNX dummy inference
     # Generate output for all OPs.

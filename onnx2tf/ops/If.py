@@ -153,11 +153,15 @@ def make_node(
             'dtype': graph_node_output.dtype,
         }
 
-    if_cond_outputs = [] + switch(
-        condition=input_tensor,
-        then_expression=then_branch_ops,
-        else_expression=else_branch_ops,
-    )
+    if_cond_outputs = []
+    for then_op, else_op in zip(then_branch_ops, else_branch_ops):
+        if_cond_outputs.append(
+            switch(
+                condition=input_tensor,
+                then_expression=then_op,
+                else_expression=else_op,
+            )
+        )
 
     for graph_node_output, if_cond_output in zip(graph_node_outputs, if_cond_outputs):
         tf_layers_dict[graph_node_output.name]['tf_node'] = if_cond_output

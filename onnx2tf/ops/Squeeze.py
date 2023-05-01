@@ -58,7 +58,9 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    tensor_rank = len(input_tensor.shape)
+    input_tensor_shape = input_tensor.shape
+    tensor_rank = len(input_tensor_shape) \
+        if input_tensor_shape != tf.TensorShape(None) else 1
 
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
