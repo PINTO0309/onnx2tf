@@ -3503,7 +3503,8 @@ def dummy_onnx_inference(
         new_input_size = []
         for idx, dim in enumerate(input_size):
             if idx == 0 and input_sizes[0][0] is not None \
-                and not isinstance(input_sizes[0][0], str):
+                and not isinstance(input_sizes[0][0], str) \
+                and len(input_sizes[0]) == len(input_size):
                 # Batch size assignment for input OPs
                 new_input_size.append(input_sizes[0][0])
             elif dim is None or isinstance(dim, str):
@@ -3579,7 +3580,8 @@ def dummy_tf_inference(
     for input_size in input_sizes:
         new_input_size = []
         for idx, dim in enumerate(input_size):
-            if idx == 0 and input_sizes[0][0] is not None:
+            if idx == 0 and input_sizes[0][0] is not None \
+                and len(input_sizes[0]) == len(input_size):
                 # Batch size assignment for input OPs
                 new_input_size.append(input_sizes[0][0])
             elif dim is None:
