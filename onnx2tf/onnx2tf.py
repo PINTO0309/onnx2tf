@@ -1401,7 +1401,8 @@ def convert(
                     onnx_graph=onnx_graph,
                     output_names=ops_output_names,
                     test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    tf_layers_dict=tf_layers_dict,
                 )
             except Exception as ex:
                 print(
