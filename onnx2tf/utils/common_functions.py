@@ -3417,6 +3417,7 @@ def dummy_onnx_inference(
     output_names: List[str],
     test_data_nhwc: Optional[np.ndarray] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
+    tf_layers_dict: Optional[Dict] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3430,6 +3431,14 @@ def dummy_onnx_inference(
 
     test_data_nhwc: Optional[np.ndarray]
         Test Image Data
+
+    custom_input_op_name_np_data_path: Optional[str]
+        Path to Numpy file for custom data used for dummy inference
+
+    tf_layers_dict: Optional[Dict]
+        TensorFlow Model Structure Dictionary.
+        Used to determine if the input OP needs to be transposed
+        from NHWC to NCHW when checking accuracy.
 
     Returns
     ----------
@@ -3524,8 +3533,13 @@ def dummy_onnx_inference(
         for param in custom_input_op_name_np_data_path:
             input_op_name = str(param[0])
             numpy_file_path = str(param[1])
-            custom_input_data = np.load(numpy_file_path)
-
+            custom_input_data: np.ndarray = np.load(numpy_file_path)
+            # NHWC -> NCHW
+            input_op_info: Dict = tf_layers_dict.get(input_op_name, None)
+            if input_op_info is not None:
+                ncw_nchw_ncdhw_perm: List = input_op_info.get('ncw_nchw_ncdhw_perm', None)
+                if ncw_nchw_ncdhw_perm is not None:
+                    custom_input_data = custom_input_data.transpose(ncw_nchw_ncdhw_perm)
             input_datas[input_op_name] = custom_input_data
 
     else:

@@ -681,47 +681,6 @@ def convert(
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
 
-    # ONNX dummy inference
-    # Generate output for all OPs.
-    # Used to verify the output error of each OP in the TensorFlow model.
-    full_ops_output_names = []
-    onnx_tensor_infos_for_validation = None
-    if check_onnx_tf_outputs_elementwise_close \
-        or check_onnx_tf_outputs_elementwise_close_full:
-        for graph_node in graph.nodes:
-            full_ops_output_names_sub = []
-            for graph_node_output in graph_node.outputs:
-                full_ops_output_names_sub.append(graph_node_output.name)
-            full_ops_output_names.extend(full_ops_output_names_sub)
-        # Models with errors during inference in onnxruntime skip dummy inference.
-        try:
-            onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
-                output_names=full_ops_output_names,
-                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path
-            )
-            """
-            onnx_tensor_infos_for_validation:
-                {
-                    onnx_output_name: np.ndarray,
-                    onnx_output_name: np.ndarray,
-                    onnx_output_name: np.ndarray,
-                                :
-                }
-            """
-            onnx_tensor_infos_for_validation = {
-                ops_output_name: onnx_output_for_validation \
-                    for ops_output_name, onnx_output_for_validation \
-                        in zip(full_ops_output_names, onnx_outputs_for_validation)
-            }
-        except Exception as ex:
-            print(
-                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
-                f'The optimization process for shape estimation is skipped ' +
-                f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
-            )
-            print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
-
     if not non_verbose:
         print('')
         print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
@@ -755,7 +714,6 @@ def convert(
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
-        'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
     }
 
@@ -818,6 +776,81 @@ def convert(
                 **additional_parameters,
             )
 
+        # Get Inputs
+        inputs = get_tf_model_inputs(
+            tf_layers_dict=tf_layers_dict,
+        )
+
+        # download test data
+        all_four_dim = sum(
+            [
+                1 for input in inputs \
+                    if len(input.shape) == 4 \
+                        and input.shape[0] is not None \
+                        and input.shape[0] <= 20 \
+                        and input.shape[-1] == 3 \
+                        and input.shape[1] is not None \
+                        and input.shape[2] is not None
+            ]
+        ) == len(inputs)
+        same_batch_dim = False
+        if all_four_dim:
+            batch_size = inputs[0].shape[0]
+            for input in inputs:
+                same_batch_dim = batch_size == input.shape[0]
+        test_data_nhwc = None
+        if all_four_dim and same_batch_dim:
+            test_data: np.ndarray = download_test_image_data()
+            test_data_nhwc = test_data[:inputs[0].shape[0], ...]
+            if check_onnx_tf_outputs_sample_data_normalization == "norm":
+                pass
+            elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
+                test_data_nhwc = test_data_nhwc * 255.0
+
+        # ONNX dummy inference
+        # Generate output for all OPs.
+        # Used to verify the output error of each OP in the TensorFlow model.
+        full_ops_output_names = []
+        onnx_tensor_infos_for_validation = None
+        if check_onnx_tf_outputs_elementwise_close \
+            or check_onnx_tf_outputs_elementwise_close_full:
+            for graph_node in graph.nodes:
+                full_ops_output_names_sub = []
+                for graph_node_output in graph_node.outputs:
+                    full_ops_output_names_sub.append(graph_node_output.name)
+                full_ops_output_names.extend(full_ops_output_names_sub)
+            # Models with errors during inference in onnxruntime skip dummy inference.
+            try:
+                onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=full_ops_output_names,
+                    test_data_nhwc=test_data_nhwc,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    tf_layers_dict=tf_layers_dict,
+                )
+                """
+                onnx_tensor_infos_for_validation:
+                    {
+                        onnx_output_name: np.ndarray,
+                        onnx_output_name: np.ndarray,
+                        onnx_output_name: np.ndarray,
+                                    :
+                    }
+                """
+                onnx_tensor_infos_for_validation = {
+                    ops_output_name: onnx_output_for_validation \
+                        for ops_output_name, onnx_output_for_validation \
+                            in zip(full_ops_output_names, onnx_outputs_for_validation)
+                }
+            except Exception as ex:
+                print(
+                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                    f'The optimization process for shape estimation is skipped ' +
+                    f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
+                )
+                print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
+        additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
+
         # Nodes
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
@@ -840,10 +873,10 @@ def convert(
                 **additional_parameters,
             )
 
-        # List "optype"="Input"
-        inputs = get_tf_model_inputs(
-            tf_layers_dict=tf_layers_dict,
-        )
+        del additional_parameters['onnx_tensor_infos_for_validation']
+        del onnx_tensor_infos_for_validation
+
+        # Get Outputs
         outputs = get_tf_model_outputs(
             tf_layers_dict=tf_layers_dict,
             output_names=output_names,
@@ -1368,32 +1401,6 @@ def convert(
                     if ops_output_name not in exclude_output_names
             ]
 
-            # download test data
-            all_four_dim = sum(
-                [
-                    1 for input in inputs \
-                        if len(input.shape) == 4 \
-                            and input.shape[0] is not None \
-                            and input.shape[0] <= 20 \
-                            and input.shape[-1] == 3 \
-                            and input.shape[1] is not None \
-                            and input.shape[2] is not None
-                ]
-            ) == len(inputs)
-            same_batch_dim = False
-            if all_four_dim:
-                batch_size = inputs[0].shape[0]
-                for input in inputs:
-                    same_batch_dim = batch_size == input.shape[0]
-            test_data_nhwc = None
-            if all_four_dim and same_batch_dim:
-                test_data: np.ndarray = download_test_image_data()
-                test_data_nhwc = test_data[:inputs[0].shape[0], ...]
-                if check_onnx_tf_outputs_sample_data_normalization == "norm":
-                    pass
-                elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
-                    test_data_nhwc = test_data_nhwc * 255.0
-
             dummy_onnx_outputs = None
             try:
                 # ONNX dummy inference
@@ -1401,7 +1408,8 @@ def convert(
                     onnx_graph=onnx_graph,
                     output_names=ops_output_names,
                     test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    tf_layers_dict=tf_layers_dict,
                 )
             except Exception as ex:
                 print(
