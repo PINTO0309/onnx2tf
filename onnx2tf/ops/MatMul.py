@@ -56,13 +56,13 @@ def make_node(
         before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    onnx_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': onnx_output_shape,
         'dtype': dtype,
     }
 
@@ -89,54 +89,48 @@ def make_node(
     output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
         if isinstance(dtype, np.dtype) else dtype
 
-    try:
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.matmul(
-                a=input_tensor_1 \
-                    if not isinstance(input_tensor_1, np.ndarray) \
-                        else tf.convert_to_tensor(input_tensor_1),
-                b=input_tensor_2 \
-                    if not isinstance(input_tensor_2, np.ndarray) \
-                        else tf.convert_to_tensor(input_tensor_2),
-                output_type=output_dtype,
-                name=graph_node.name,
-            )
-
-    except Exception as ex1:
-        # Shape Unmatch Error Mitigation Measures
-        # Search for and transpose shapes that do not cause shape unmatch errors
-        tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
-        tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
-        for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
-            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
-                try:
-                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.matmul(
-                            a=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_1 \
-                                    if not isinstance(input_tensor_1, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_1),
-                                perm=list(tensor_1_candidate_for_transposition),
-                                **kwargs,
-                            ),
-                            b=transpose_with_flexing_deterrence(
-                                input_tensor=input_tensor_2 \
-                                    if not isinstance(input_tensor_2, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_2),
-                                perm=list(tensor_2_candidate_for_transposition),
-                                **kwargs,
-                            ),
-                            output_type=output_dtype,
-                            name=graph_node.name,
-                        )
-                    break
-                except Exception as ex2:
-                    pass
-            else:
-                continue
-            break
-        if 'tf_node' not in tf_layers_dict[graph_node_output.name]:
-            raise ex1
+    # Shape Unmatch Error Mitigation Measures
+    # Search for and transpose shapes that do not cause shape unmatch errors
+    tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+    tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+    for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+        for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+            try:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.matmul(
+                        a=transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor_1 \
+                                if not isinstance(input_tensor_1, np.ndarray) \
+                                    else tf.convert_to_tensor(input_tensor_1),
+                            perm=list(tensor_1_candidate_for_transposition),
+                            **kwargs,
+                        ),
+                        b=transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor_2 \
+                                if not isinstance(input_tensor_2, np.ndarray) \
+                                    else tf.convert_to_tensor(input_tensor_2),
+                            perm=list(tensor_2_candidate_for_transposition),
+                            **kwargs,
+                        ),
+                        output_type=output_dtype,
+                        name=graph_node.name,
+                    )
+                # Verify that the output shape matches that of ONNX
+                # If the combination of each value of a dimension is not correct,
+                # invalidate the normal processing judgment.
+                onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                matmul_output_shapes = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
+                matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
+                if onnx_output_shape_prod != matmul_output_shape_prod:
+                    continue
+                break
+            except Exception as ex1:
+                pass
+        else:
+            continue
+        break
+    if 'tf_node' not in tf_layers_dict[graph_node_output.name]:
+        raise ex1
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
