@@ -3583,6 +3583,12 @@ def dummy_tf_inference(
     test_data_nhwc: Optional[np.ndarray]
         Test Image Data
 
+    verification_datas: Optional[List[np.ndarray]]
+        Test Data
+
+    custom_input_op_name_np_data_path
+        Path to Numpy file for custom data used for dummy inference
+
     Returns
     ----------
     outputs: Dict[np.ndarray]
