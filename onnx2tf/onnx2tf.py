@@ -850,6 +850,8 @@ def convert(
                 )
                 print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
         additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
+        additional_parameters['test_data_nhwc'] = test_data_nhwc
+        additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
 
         # Nodes
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
