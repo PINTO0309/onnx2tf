@@ -331,6 +331,9 @@ def make_node(
     if sum([1 if dim is None else 0 for dim in post_matmul_shape]) <= 1 \
         and post_matmul_shape != list(onnx_output_shape):
 
+        onnx_output_shape = [
+            dim if not isinstance(dim, str) else None for dim in onnx_output_shape
+        ]
         post_transpose_perm = []
         for dim in onnx_output_shape:
             idx = post_matmul_shape.index(dim)
