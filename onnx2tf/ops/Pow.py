@@ -97,12 +97,36 @@ def make_node(
                                     or "pow" in kwargs['replace_to_pseudo_operators']
 
     if not replace_power_to_pseudo_power:
-        powed_tensor = \
-            tf.math.pow(
-                x=input_tensor_1,
-                y=input_tensor_2,
-                name=graph_node.name,
-            )
+        if isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 0 and input_tensor_2 == 2 \
+            or isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 1 and np.squeeze(input_tensor_2) == 2 \
+            or isinstance(input_tensor_2, float) and input_tensor_2 == 2 \
+            or isinstance(input_tensor_2, int) and input_tensor_2 == 2:
+            powed_tensor = \
+                tf.math.multiply(
+                    x=input_tensor_1,
+                    y=input_tensor_1,
+                    name=graph_node.name,
+                )
+        elif isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 0 and input_tensor_2 == 3 \
+            or isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 1 and np.squeeze(input_tensor_2) == 3 \
+            or isinstance(input_tensor_2, float) and input_tensor_2 == 3 \
+            or isinstance(input_tensor_2, int) and input_tensor_2 == 3:
+            powed_tensor = \
+                tf.math.multiply(
+                    x=tf.math.multiply(
+                        x=input_tensor_1,
+                        y=input_tensor_1,
+                    ),
+                    y=input_tensor_1,
+                    name=graph_node.name,
+                )
+        else:
+            powed_tensor = \
+                tf.math.pow(
+                    x=input_tensor_1,
+                    y=input_tensor_2,
+                    name=graph_node.name,
+                )
     else:
         if is_integer_num(x=input_tensor_2):
             if isinstance(input_tensor_2, np.ndarray):

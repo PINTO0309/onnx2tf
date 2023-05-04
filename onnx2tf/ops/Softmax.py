@@ -1,4 +1,5 @@
 import sys
+import copy
 import random
 random.seed(0)
 import numpy as np
@@ -89,6 +90,60 @@ def make_node(
                 and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name].keys() else False,
     }
 
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+        kwargs['onnx_tensor_infos_for_validation']
+    test_data_nhwc: np.ndarray = \
+        kwargs['test_data_nhwc']
+    custom_input_op_name_np_data_path: str = \
+        kwargs['custom_input_op_name_np_data_path']
+
+    # Get the output tensor of one previous OP of TensorFlow only once
+    tf_model_inputs = get_tf_model_inputs(
+        tf_layers_dict=tf_layers_dict,
+    )
+    val_model = None
+    if not isinstance(input_tensor, np.ndarray):
+        val_model = tf.keras.Model(
+            inputs=tf_model_inputs,
+            outputs=[
+                input_tensor,
+            ],
+        )
+    else:
+        pass
+
+    # TF dummy inference
+    #   Get the output tensor of the previous layer of MatMul
+    #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
+    #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
+    tf_pre_tensor_infos = {}
+    try:
+        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+            model=val_model,
+            inputs=tf_model_inputs,
+            test_data_nhwc=test_data_nhwc,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        )
+    except Exception as ex:
+        pass
+    del val_model
+
+    # Get np.ndarray for validation
+    validation_data = None
+    if len(tf_pre_tensor_infos) == 1:
+        if not isinstance(input_tensor, np.ndarray):
+            validation_data = list(tf_pre_tensor_infos.values())[0]
+        else:
+            validation_data = copy.deepcopy(input_tensor)
+
+    # Get ONNX inference results
+    onnx_tensor_infos = None
+    if onnx_tensor_infos_for_validation is not None:
+        onnx_tensor_infos = {
+            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+        }
+        del onnx_tensor_infos_for_validation
+
     # Param replacement
     input_tensor = replace_parameter(
         value_before_replacement=input_tensor,
@@ -141,30 +196,32 @@ def make_node(
     # with the smallest possible error and replace it.
     min_abs_err = sys.maxsize
     min_abs_err_axis: int = axis
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
-        kwargs['onnx_tensor_infos_for_validation']
-    if onnx_tensor_infos_for_validation is not None:
-        onnx_tensor_infos = {
-            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
-        }
-        del onnx_tensor_infos_for_validation
+
+    if onnx_tensor_infos is not None:
         check_axes = None
         if not error_check_unnecessary_flag:
             check_axes = reversed([idx for idx in range(tensor_rank)])
         else:
             check_axes = [axis]
-        tf_model_inputs = get_tf_model_inputs(
-            tf_layers_dict=tf_layers_dict,
-        )
+
         # Search for the axis with the smallest error
         for check_axis in check_axes:
             try:
-                ### model check
+                # Build TF dummy model
+                input = tf.keras.Input(
+                    shape=validation_data.shape[1:],
+                    batch_size=validation_data.shape[0] \
+                        if isinstance(validation_data.shape[0], int) else None,
+                    name='dummy_input',
+                    dtype=validation_data.dtype,
+                )
                 val_model = tf.keras.Model(
-                    inputs=tf_model_inputs,
+                    inputs=[
+                        input,
+                    ],
                     outputs=[
                         tf.nn.softmax(
-                            logits=input_tensor,
+                            logits=input,
                             axis=check_axis,
                             name=graph_node.name,
                         )
@@ -173,8 +230,14 @@ def make_node(
                 # TF dummy inference
                 tf_tensor_infos: Dict[Any] = dummy_tf_inference(
                     model=val_model,
-                    inputs=tf_model_inputs,
+                    inputs=[
+                        input,
+                    ],
+                    verification_datas=[
+                        validation_data,
+                    ],
                 )
+                del input
                 del val_model
 
                 # Validation
@@ -203,7 +266,7 @@ def make_node(
                     min_abs_err_axis = check_axis
                     if min_abs_err < 1e-3:
                         break
-            except tf.errors.InvalidArgumentError as ex:
+            except Exception as ex:
                 pass
 
     # Suppress automatic Traspose extrapolation behavior by Softmax in TensorFlow
