@@ -212,7 +212,12 @@ def make_node(
             )
 
     tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+    if len(input_tensor_1.shape) == 3:
+        tensor_1_candidate_for_transpositions = tensor_1_candidate_for_transpositions[:2]
     tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+    if len(input_tensor_2.shape) == 3:
+        tensor_2_candidate_for_transpositions = tensor_2_candidate_for_transpositions[:2]
+
     for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
         for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
             try:
