@@ -116,12 +116,16 @@ def make_node(
     #   Get the output tensor of the previous layer of MatMul
     #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
     #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
-    tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
-        model=val_model,
-        inputs=tf_model_inputs,
-        test_data_nhwc=test_data_nhwc,
-        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-    )
+    tf_pre_tensor_infos = {}
+    try:
+        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+            model=val_model,
+            inputs=tf_model_inputs,
+            test_data_nhwc=test_data_nhwc,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        )
+    except Exception as ex:
+        pass
     del val_model
 
     # Get np.ndarray for validation
@@ -262,7 +266,7 @@ def make_node(
                     min_abs_err_axis = check_axis
                     if min_abs_err < 1e-3:
                         break
-            except tf.errors.InvalidArgumentError as ex:
+            except Exception as ex:
                 pass
 
     # Suppress automatic Traspose extrapolation behavior by Softmax in TensorFlow
