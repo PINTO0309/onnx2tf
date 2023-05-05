@@ -567,8 +567,8 @@ int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
 
 e.g. How to specify calibration data in CLI or Script respectively.
 1. CLI
-  -cind "pc_dep" "data/calibdata.npy" "[[[[0.485, 0.456, 0.406]]]]" "[[[[0.229, 0.224, 0.225]]]]"
-  -cind "feat" "data/calibdata2.npy" "[[[[0.123, ..., 0.321]]]]" "[[[[0.112, ..., 0.451]]]]"
+  -cind "pc_dep" "data/calibdata.npy" "[[[[0.485,0.456,0.406]]]]" "[[[[0.229,0.224,0.225]]]]"
+  -cind "feat" "data/calibdata2.npy" "[[[[0.123,...,0.321]]]]" "[[[[0.112,...,0.451]]]]"
 
 2. Script
   custom_input_op_name_np_data_path=[
