@@ -433,10 +433,11 @@ onnx2tf.convert(
 # Now, test the newer TFLite model
 interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
 tf_lite_model = interpreter.get_signature_runner()
-tt_lite_output = tf_lite_model(
-    x=tf.constant((10,), dtype=tf.int64),
-    y=tf.constant((2,), dtype=tf.int64),
-)
+inputs = {
+  'x': np.asarray([10], dtype=np.int64),
+  'y': np.asarray([2], dtype=np.int64),
+}
+tt_lite_output = tf_lite_model(**inputs)
 print("[TFLite] Model Predictions:", tt_lite_output)
 ```
 ```
