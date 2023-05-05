@@ -241,7 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.10.2
+  ghcr.io/pinto0309/onnx2tf:1.10.3
 
   or
 
@@ -915,8 +915,8 @@ optional arguments:
         input2: [n,5]
             mean: [1] -> [0.3]
             std:  [1] -> [0.07]
-      -cind "input0" "../input0.npy" "[[[[0.485, 0.456, 0.406]]]]" "[[[[0.229, 0.224, 0.225]]]]"
-      -cind "input1" "./input1.npy" "[0.1, ..., 0.64]" "[0.05, ..., 0.08]"
+      -cind "input0" "../input0.npy" "[[[[0.485,0.456,0.406]]]]" "[[[[0.229,0.224,0.225]]]]"
+      -cind "input1" "./input1.npy" "[0.1,...,0.64]" "[0.05,...,0.08]"
       -cind "input2" "input2.npy" "[0.3]" "[0.07]"
 
     <Using -cotof and -oiqt at the same time>
