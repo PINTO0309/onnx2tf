@@ -1646,9 +1646,9 @@ def main():
             '   input2: [n,5] \n' +
             '       mean: [1] -> [0.3] \n' +
             '       std:  [1] -> [0.07] \n' +
-            '-cind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
-            '-cind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
-            '-cind "input2" "input2.npy" [0.3] [0.07] \n\n' +
+            '-cind "input0" "../input0.npy" "[[[[0.485,0.456,0.406]]]]" "[[[[0.229,0.224,0.225]]]]" \n' +
+            '-cind "input1" "./input1.npy" "[0.1,...,0.64]" "[0.05,...,0.08]" \n' +
+            '-cind "input2" "input2.npy" "[0.3]" "[0.07]" \n\n' +
             '\n<Using -cotof and -oiqt at the same time> \n' +
             'To use -cotof and -oiqt simultaneously, \n' +
             'you need to enter the Input name of OP, path of data file, mean, and std all together. \n' +
