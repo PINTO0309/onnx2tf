@@ -241,7 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.10.1
+  ghcr.io/pinto0309/onnx2tf:1.10.2
 
   or
 
@@ -565,9 +565,16 @@ print(f'loaded_data.shape: {loaded_data.shape}') # [10,112,200,3]
 -cind INPUT_NAME NUMPY_FILE_PATH MEAN STD
 int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
 
-e.g.
--cind pc_dep 'data/calibdata.npy' [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
--cind feat 'data/calibdata2.npy' [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
+e.g. How to specify calibration data in CLI or Script respectively.
+1. CLI
+  -cind "pc_dep" "data/calibdata.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
+  -cind "feat" "data/calibdata2.npy" [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
+
+2. Script
+  custom_input_op_name_np_data_path=[
+      ["pc_dep", "data/calibdata.npy", [[[[0.485, 0.456, 0.406]]]], [[[[0.229, 0.224, 0.225]]]]],
+      ["feat", "data/calibdata2.npy", [[[[0.123, ..., 0.321]]]], [[[[0.112, ..., 0.451]]]],
+  ]
 """
 ```
 

@@ -92,6 +92,8 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
 
+    non_verbose = bool(kwargs['non_verbose'])
+
     # Pre-process transpose
     input_tensor = pre_process_transpose(
         value_before_transpose=input_tensor,
@@ -246,11 +248,12 @@ def make_node(
     # 2. when extra padding layer is not added and count_include_pad is True
     # 3. when last stride has extra padding due to ceil_mode and count_include_pad is True
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
-        warning_msg = \
-            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-            f'Tensorflow incompatible padding detected. ' \
-            f'Extra pad layer is inserted automatically. '
-        print(warning_msg)
+        if not non_verbose:
+            warning_msg = \
+                f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                f'Tensorflow incompatible padding detected. ' \
+                f'Extra pad layer is inserted automatically. '
+            print(warning_msg)
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
@@ -340,13 +343,14 @@ def make_node(
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124
     if average_multiplier is not None:
-        warning_msg = \
-            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-            f'Tensorflow incompatible action detected. ' \
-            f'Some additional layers are inserted to reproduce same output. ' \
-            f'Please refer to the following link for more information: ' \
-            f'https://github.com/PINTO0309/onnx2tf/issues/124'
-        print(warning_msg)
+        if not non_verbose:
+            warning_msg = \
+                f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                f'Tensorflow incompatible action detected. ' \
+                f'Some additional layers are inserted to reproduce same output. ' \
+                f'Please refer to the following link for more information: ' \
+                f'https://github.com/PINTO0309/onnx2tf/issues/124'
+            print(warning_msg)
 
         average_multiplier = summarize_multiplier(average_multiplier)
 

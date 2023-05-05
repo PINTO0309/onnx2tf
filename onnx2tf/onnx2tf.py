@@ -160,9 +160,9 @@ def convert(
         The type of the input OP must be Float32.\n
         Data for calibration must be pre-normalized to a range of 0 to 1.\n
         [\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
+            [{input_op_name: str}, {numpy_file_path: str}, {mean: np.ndarray}, {std: np.ndarray}],\n
+            [{input_op_name: str}, {numpy_file_path: str}, {mean: np.ndarray}, {std: np.ndarray}],\n
+            [{input_op_name: str}, {numpy_file_path: str}, {mean: np.ndarray}, {std: np.ndarray}],\n
             :\n
         ]\n
         Numpy file paths must be specified the same number of times as the number of input OPs.\n
@@ -200,7 +200,7 @@ def convert(
             input2: [n,5]\n
                 mean: [1] -> [0.3]\n
                 std:  [1] -> [0.07]\n
-        cind=[
+        custom_input_op_name_np_data_path=[
             ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],\n
             ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
             ["input2","input2.npy",[0.3],[0.07]],\n
@@ -1062,13 +1062,13 @@ def convert(
         STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
             # Get signatures/input keys
+            loaded_saved_model = tf.saved_model.load(
+                output_folder_path
+            ).signatures[SIGNATURE_KEY]
+            input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
+            input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
+            input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
             if not non_verbose:
-                loaded_saved_model = tf.saved_model.load(
-                    output_folder_path
-                ).signatures[SIGNATURE_KEY]
-                input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
-                input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
-                input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
                 print(f'{Color.BLUE}Input signature information for quantization{Color.RESET}')
                 print(f'{Color.BLUE}signature_name{Color.RESET}: {SIGNATURE_KEY}')
                 for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
@@ -1170,8 +1170,7 @@ def convert(
                     input_op_name = str(param[0])
                     numpy_file_path = str(param[1])
                     calib_data = np.load(numpy_file_path)
-                    if data_count == 0:
-                        data_count = calib_data.shape[0]
+                    data_count = calib_data.shape[0]
                     mean = param[2]
                     std = param[3]
 
