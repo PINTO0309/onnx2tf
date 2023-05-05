@@ -378,7 +378,7 @@ $ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 
 or
 
-$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind input /your/path/x.npy
+$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.npy"
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
@@ -567,13 +567,13 @@ int8_calib_datas = (loaded_data - MEAN) / STD # -1.0 - 1.0
 
 e.g. How to specify calibration data in CLI or Script respectively.
 1. CLI
-  -cind "pc_dep" "data/calibdata.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-  -cind "feat" "data/calibdata2.npy" [[[[0.123, ..., 0.321]]]] [[[[0.112, ..., 0.451]]]]
+  -cind "pc_dep" "data/calibdata.npy" "[[[[0.485, 0.456, 0.406]]]]" "[[[[0.229, 0.224, 0.225]]]]"
+  -cind "feat" "data/calibdata2.npy" "[[[[0.123, ..., 0.321]]]]" "[[[[0.112, ..., 0.451]]]]"
 
 2. Script
   custom_input_op_name_np_data_path=[
-      ["pc_dep", "data/calibdata.npy", [[[[0.485, 0.456, 0.406]]]], [[[[0.229, 0.224, 0.225]]]]],
-      ["feat", "data/calibdata2.npy", [[[[0.123, ..., 0.321]]]], [[[[0.112, ..., 0.451]]]],
+      ["pc_dep", "data/calibdata.npy", "[[[[0.485, 0.456, 0.406]]]]", "[[[[0.229, 0.224, 0.225]]]]]",
+      ["feat", "data/calibdata2.npy", "[[[[0.123, ..., 0.321]]]]", "[[[[0.112, ..., 0.451]]]]",
   ]
 """
 ```
@@ -915,9 +915,9 @@ optional arguments:
         input2: [n,5]
             mean: [1] -> [0.3]
             std:  [1] -> [0.07]
-      -cind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]]
-      -cind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08]
-      -cind "input2" "input2.npy" [0.3] [0.07]
+      -cind "input0" "../input0.npy" "[[[[0.485, 0.456, 0.406]]]]" "[[[[0.229, 0.224, 0.225]]]]"
+      -cind "input1" "./input1.npy" "[0.1, ..., 0.64]" "[0.05, ..., 0.08]"
+      -cind "input2" "input2.npy" "[0.3]" "[0.07]"
 
     <Using -cotof and -oiqt at the same time>
       To use -cotof and -oiqt simultaneously,
