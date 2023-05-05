@@ -437,8 +437,8 @@ inputs = {
   'x': np.asarray([10], dtype=np.int64),
   'y': np.asarray([2], dtype=np.int64),
 }
-tt_lite_output = tf_lite_model(**inputs)
-print("[TFLite] Model Predictions:", tt_lite_output)
+tf_lite_output = tf_lite_model(**inputs)
+print("[TFLite] Model Predictions:", tf_lite_output)
 ```
 ```
 [PyTorch] Model Predictions:
