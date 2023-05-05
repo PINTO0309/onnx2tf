@@ -3540,6 +3540,13 @@ def dummy_onnx_inference(
                 ncw_nchw_ncdhw_perm: List = input_op_info.get('ncw_nchw_ncdhw_perm', None)
                 if ncw_nchw_ncdhw_perm is not None:
                     custom_input_data = custom_input_data.transpose(ncw_nchw_ncdhw_perm)
+                onnx_batch_size = input_op_info['shape'][0]
+                cdata_batch_size = custom_input_data.shape[0]
+                if isinstance(onnx_batch_size, int) and onnx_batch_size != cdata_batch_size and cdata_batch_size > 1:
+                    custom_input_data = custom_input_data[0:onnx_batch_size, ...]
+                elif isinstance(onnx_batch_size, str) and cdata_batch_size > 1:
+                    custom_input_data = custom_input_data[0:1, ...]
+
             input_datas[input_op_name] = custom_input_data
 
     else:
@@ -3623,6 +3630,13 @@ def dummy_tf_inference(
             numpy_file_path = str(param[1])
             custom_input_data = np.load(numpy_file_path)
             input_size = input_sizes[idx]
+
+            tf_batch_size = input_size[0]
+            cdata_batch_size = custom_input_data.shape[0]
+            if isinstance(tf_batch_size, int) and tf_batch_size != cdata_batch_size and cdata_batch_size > 1:
+                custom_input_data = custom_input_data[0:tf_batch_size, ...]
+            elif tf_batch_size is None and cdata_batch_size > 1:
+                custom_input_data = custom_input_data[0:1, ...]
 
             if list(custom_input_data.shape) != input_size:
                 error_msg = f'' + \

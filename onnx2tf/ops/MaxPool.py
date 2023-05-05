@@ -60,6 +60,8 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
 
+    non_verbose = bool(kwargs['non_verbose'])
+
     # Pre-process transpose
     input_tensor = pre_process_transpose(
         value_before_transpose=input_tensor,
@@ -199,11 +201,12 @@ def make_node(
 
     # add extra pad layer if needed
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
-        warning_msg = \
-            f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-            f'Tensorflow incompatible padding detected. ' \
-            f'Extra pad layer is inserted automatically. '
-        print(warning_msg)
+        if not non_verbose:
+            warning_msg = \
+                f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+                f'Tensorflow incompatible padding detected. ' \
+                f'Extra pad layer is inserted automatically. '
+            print(warning_msg)
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
