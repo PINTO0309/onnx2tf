@@ -1,5 +1,4 @@
 import sys
-import copy
 import random
 random.seed(0)
 import numpy as np
@@ -16,9 +15,9 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     transpose_with_flexing_deterrence,
-    get_tf_model_inputs,
     dummy_tf_inference,
     onnx_tf_tensor_validation,
+    acquisition_of_validation_data,
 )
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
@@ -78,85 +77,16 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
-        kwargs['onnx_tensor_infos_for_validation']
-    test_data_nhwc: np.ndarray = \
-        kwargs['test_data_nhwc']
-    custom_input_op_name_np_data_path: str = \
-        kwargs['custom_input_op_name_np_data_path']
-
-    # Get the output tensor of one previous OP of TensorFlow only once
-    tf_model_inputs = get_tf_model_inputs(
-        tf_layers_dict=tf_layers_dict,
-    )
-    val_model = None
-    if not isinstance(input_tensor_1, np.ndarray) \
-        and not isinstance(input_tensor_2, np.ndarray):
-        val_model = tf.keras.Model(
-            inputs=tf_model_inputs,
-            outputs=[
-                input_tensor_1,
-                input_tensor_2,
-            ],
+    # Obtain ONNX inference results and
+    # TensorFlow inference results up to the previous layer of TensorFlow
+    onnx_tensor_infos, validation_data_1, validation_data_2 = \
+        acquisition_of_validation_data(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            graph_node_output=graph_node_output,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
         )
-    elif not isinstance(input_tensor_1, np.ndarray) \
-        and isinstance(input_tensor_2, np.ndarray):
-        val_model = tf.keras.Model(
-            inputs=tf_model_inputs,
-            outputs=[
-                input_tensor_1
-            ],
-        )
-    elif isinstance(input_tensor_1, np.ndarray) \
-        and not isinstance(input_tensor_2, np.ndarray):
-        val_model = tf.keras.Model(
-            inputs=tf_model_inputs,
-            outputs=[
-                input_tensor_2
-            ],
-        )
-
-    else:
-        # TODO: Error
-        pass
-
-    # TF dummy inference
-    #   Get the output tensor of the previous layer of MatMul
-    #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
-    #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
-    tf_pre_tensor_infos = {}
-    try:
-        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
-            model=val_model,
-            inputs=tf_model_inputs,
-            test_data_nhwc=test_data_nhwc,
-            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-        )
-    except Exception as ex:
-        pass
-    del val_model
-
-    # Get np.ndarray for validation
-    validation_data_1 = None
-    validation_data_2 = None
-    if len(tf_pre_tensor_infos) == 2:
-        validation_data_1 = list(tf_pre_tensor_infos.values())[0]
-        validation_data_2 = list(tf_pre_tensor_infos.values())[1]
-    elif len(tf_pre_tensor_infos) == 1:
-        if not isinstance(input_tensor_1, np.ndarray):
-            validation_data_1 = list(tf_pre_tensor_infos.values())[0]
-            validation_data_2 = copy.deepcopy(input_tensor_2)
-        else:
-            validation_data_1 = copy.deepcopy(input_tensor_1)
-            validation_data_2 = list(tf_pre_tensor_infos.values())[0]
-
-    # Get ONNX inference results
-    onnx_tensor_infos = None
-    if onnx_tensor_infos_for_validation is not None:
-        onnx_tensor_infos = {
-            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
-        }
-        del onnx_tensor_infos_for_validation
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
@@ -259,7 +189,7 @@ def make_node(
 
                 # Perform simple accuracy verification
                 # Terminate when the error is less than 1e-3
-                if onnx_tensor_infos is not None:
+                if onnx_tensor_infos:
                     try:
                         # Search for the axis with the smallest error
                         val_model = tf.keras.Model(

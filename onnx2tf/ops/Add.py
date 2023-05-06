@@ -1,7 +1,10 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
+import collections
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -19,7 +22,12 @@ from onnx2tf.utils.common_functions import (
     shape_unmatched_special_avoidance_workaround,
     merge_two_consecutive_identical_ops_into_one,
     deterring_shape_corruption_due_to_broadcast,
+    acquisition_of_validation_data,
+    onnx_tf_tensor_validation,
+    obtaining_an_inverted_pattern_for_brute_force_validation,
+    correction_process_for_accuracy_errors,
 )
+from typing import Any, Dict
 
 
 @print_node_info
@@ -147,6 +155,18 @@ def make_node(
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
         )
+
+    # Correction process for accuracy errors
+    input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        tf_func=tf.math.add,
+        np_func=np.add,
+        graph_node_output_shape=graph_node_output_shape,
+        graph_node_output=graph_node_output,
+        tf_layers_dict=tf_layers_dict,
+        **kwargs,
+    )
 
     # Generation of TF OP
     # Merge two consecutive identical OPs into one

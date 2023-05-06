@@ -18,6 +18,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     deterring_shape_corruption_due_to_broadcast,
+    correction_process_for_accuracy_errors,
 )
 
 
@@ -147,6 +148,18 @@ def make_node(
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
         )
+
+    # Correction process for accuracy errors
+    input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        tf_func=tf.math.mod,
+        np_func=np.mod,
+        graph_node_output_shape=graph_node_output_shape,
+        graph_node_output=graph_node_output,
+        tf_layers_dict=tf_layers_dict,
+        **kwargs,
+    )
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \

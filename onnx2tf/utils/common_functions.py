@@ -8,6 +8,7 @@ import random
 import requests
 random.seed(0)
 import itertools
+import collections
 import traceback
 import subprocess
 import numpy as np
@@ -56,16 +57,16 @@ def replace_parameter(
     value_before_replacement: Any,
     param_target: str,
     param_name: str,
-    **kwargs: dict,
+    **kwargs: Dict,
 ):
     """Replace attributes, INPUT constants, and INPUT initializers with the specified values.
 
     Parameters
     ----------
     value_before_replacement: Any
-    param_target: dict
-    param_name: dict
-    **kwargs: dict
+    param_target: str
+    param_name: str
+    **kwargs: Dict
 
     Returns
     ----------
@@ -112,16 +113,16 @@ def pre_process_transpose(
     value_before_transpose: Any,
     param_target: str,
     param_name: str,
-    **kwargs: dict,
+    **kwargs: Dict,
 ):
     """Add Transpose as a post-processing step for Reshape OP.
 
     Parameters
     ----------
     value_before_transpose: tf_op
-    param_target: dict
-    param_name: dict
-    **kwargs: dict
+    param_target: str
+    param_name: str
+    **kwargs: Dict
 
     Returns
     ----------
@@ -148,7 +149,7 @@ def post_process_transpose(
     value_before_transpose: Any,
     param_target: str,
     param_name: str,
-    **kwargs: dict,
+    **kwargs: Dict,
 ):
     """Add Transpose as a post-processing step for Reshape OP.
 
@@ -2122,7 +2123,7 @@ def disable_unnecessary_transpose(
     graph_node_input_2: Any,
     input_tensor_1: Any,
     input_tensor_2: Any,
-    **kwargs: dict,
+    **kwargs: Dict,
 ) -> Tuple[Any, Any, Any, Any]:
     """Remove unnecessary Transpose to NHWC.
 
@@ -2224,8 +2225,8 @@ def shape_unmatched_special_avoidance_workaround(
     graph_node_input_2: Any,
     input_tensor_1: Any,
     input_tensor_2: Any,
-    tf_layers_dict: dict,
-    **kwargs: dict,
+    tf_layers_dict: Dict,
+    **kwargs: Dict,
 ) -> Tuple[Any, Any]:
     """Force correction of the shape mismatch between input X and input Y to NHWC format
     only if the output of the immediately preceding OP is definitively NHWC.
@@ -2485,7 +2486,7 @@ def transpose_with_flexing_deterrence(
     perm: List[int],
     output_shape: List[int] = None,
     name: str = None,
-    **kwargs: dict,
+    **kwargs: Dict,
 ) -> Any:
     """Transpose tensors of 7 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -2858,7 +2859,7 @@ def stridedslice_with_flexing_deterrence(
     onnx_slice_dims_count: int,
     output_shape: List[int] = None,
     name: str = None,
-    **kwargs: dict,
+    **kwargs: Dict,
 ) -> Any:
     """StridedSlice tensors of 6 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -3885,7 +3886,7 @@ def broadcast_for_gpu_delegate(
     *,
     input_tensor_1: Any,
     input_tensor_2: Any,
-    **kwargs: dict,
+    **kwargs: Dict,
 ):
     """Tensor broadcast when optimizing to GPU Delegate.
     'MUL requires one tensor that not less than second in all dimensions.'
@@ -5199,4 +5200,272 @@ def deterring_shape_corruption_due_to_broadcast(
             perm=input_tensor_2_final_perm,
         )
 
+    return input_tensor_1, input_tensor_2
+
+
+
+def acquisition_of_validation_data(
+    *,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+    graph_node_output: gs.Variable,
+    tf_layers_dict: Dict,
+    **kwargs: Dict,
+) -> Tuple[Dict, np.ndarray, np.ndarray]:
+    """Acquisition of Validation Data.
+
+    Parameters
+    ----------
+    input_tensor_1: Any
+        The output OP immediately before the OP to be verified or a constant.
+
+    input_tensor_2: Any
+        The output OP immediately before the OP to be verified or a constant.
+
+    graph_node_output: gs.Variable
+        ONNX OP output information
+
+    tf_layers_dict: Dict
+        TensorFlow Model Structure Dictionary
+
+    Returns
+    -------
+    total_perm_combination_list: List[List[int]]
+        Shape transposition pattern perms
+    """
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+        kwargs['onnx_tensor_infos_for_validation']
+    test_data_nhwc: np.ndarray = \
+        kwargs['test_data_nhwc']
+    custom_input_op_name_np_data_path: str = \
+        kwargs['custom_input_op_name_np_data_path']
+
+    # Get the output tensor of one previous OP of TensorFlow only once
+    tf_model_inputs = get_tf_model_inputs(
+        tf_layers_dict=tf_layers_dict,
+    )
+    val_model = None
+    if not isinstance(input_tensor_1, np.ndarray) \
+        and not isinstance(input_tensor_2, np.ndarray):
+        val_model = tf.keras.Model(
+            inputs=tf_model_inputs,
+            outputs=[
+                input_tensor_1,
+                input_tensor_2,
+            ],
+        )
+    elif not isinstance(input_tensor_1, np.ndarray) \
+        and isinstance(input_tensor_2, np.ndarray):
+        val_model = tf.keras.Model(
+            inputs=tf_model_inputs,
+            outputs=[
+                input_tensor_1
+            ],
+        )
+    elif isinstance(input_tensor_1, np.ndarray) \
+        and not isinstance(input_tensor_2, np.ndarray):
+        val_model = tf.keras.Model(
+            inputs=tf_model_inputs,
+            outputs=[
+                input_tensor_2
+            ],
+        )
+
+    else:
+        # TODO: Error
+        pass
+
+    # TF dummy inference
+    #   Get the output tensor of the previous layer of MatMul
+    #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
+    #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
+    tf_pre_tensor_infos = {}
+    try:
+        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+            model=val_model,
+            inputs=tf_model_inputs,
+            test_data_nhwc=test_data_nhwc,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        )
+    except Exception as ex:
+        pass
+    del val_model
+
+    # Get np.ndarray for validation
+    validation_data_1 = None
+    validation_data_2 = None
+    if len(tf_pre_tensor_infos) == 2:
+        validation_data_1 = list(tf_pre_tensor_infos.values())[0]
+        validation_data_2 = list(tf_pre_tensor_infos.values())[1]
+    elif len(tf_pre_tensor_infos) == 1:
+        if not isinstance(input_tensor_1, np.ndarray):
+            validation_data_1 = list(tf_pre_tensor_infos.values())[0]
+            validation_data_2 = copy.deepcopy(input_tensor_2)
+        else:
+            validation_data_1 = copy.deepcopy(input_tensor_1)
+            validation_data_2 = list(tf_pre_tensor_infos.values())[0]
+
+    # Get ONNX inference results
+    onnx_tensor_infos = {}
+    if onnx_tensor_infos_for_validation is not None:
+        onnx_tensor_infos = {
+            graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+        }
+        del onnx_tensor_infos_for_validation
+
+    return onnx_tensor_infos, validation_data_1, validation_data_2
+
+
+def obtaining_an_inverted_pattern_for_brute_force_validation(
+    *,
+    tensor_shape: List[int],
+) -> List[List[int]]:
+    """Obtaining reversal patterns for brute force verification.
+
+    Parameters
+    ----------
+    tensor_shape: List[int]
+        Shape of tensor for transposed pattern acquisition
+
+    Returns
+    -------
+    total_perm_combination_list: List[List[int]]
+        Shape transposition pattern perms
+    """
+    # Finding parts of a dimension with the same value
+    unique_dims = list(set(tensor_shape))
+    groups = {}
+    for dim in unique_dims:
+        groups[dim] = [i for i, x in enumerate(tensor_shape) if x == dim]
+
+    # Get the permutation of the index for each group
+    index_permutations = {}
+    for key, group in groups.items():
+        index_permutations[key] = list(itertools.permutations(group))
+
+    # For each combination, swap the shape and generate a new array
+    index_permutations_key_list = list(index_permutations.keys())
+    index_combinations = [i for i in itertools.product(*index_permutations.values())]
+    total_perm_combination_list = []
+    for index_combination in index_combinations:
+        partial_combination_list = [-1] * len(tensor_shape)
+        for target_key, indexes in zip(index_permutations_key_list, index_combination):
+            target_key_indexes_idx = 0
+            for idx, s in enumerate(tensor_shape):
+                if s == target_key:
+                    partial_combination_list[idx] = indexes[target_key_indexes_idx]
+                    target_key_indexes_idx += 1
+        total_perm_combination_list.append(partial_combination_list)
+
+    return total_perm_combination_list
+
+
+def correction_process_for_accuracy_errors(
+        *,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        tf_func: Any,
+        np_func: Any,
+        graph_node_output_shape: List,
+        graph_node_output: gs.Variable,
+        tf_layers_dict: Dict,
+        **kwargs,
+) -> Tuple[Any, Any]:
+    if graph_node_output_shape is not None:
+        onnx_output_shape = [dim if not isinstance(dim, str) else -1 for dim in graph_node_output_shape]
+        onnx_output_same_shape_counts = collections.Counter(onnx_output_shape)
+        if sum([1 if dim > 1 and cnt > 1 else 0 for dim, cnt in onnx_output_same_shape_counts.items()]) >= 1:
+            # Generate dummy op
+            dummy_op = tf_func(
+                x=input_tensor_1,
+                y=input_tensor_2,
+            )
+            if dummy_op.shape != tf.TensorShape(None):
+                tf_output_shape = [dim if dim is not None else -1 for dim in dummy_op.shape]
+                number_of_dim_other_than_1 = sum([1 if i != 1 else 0 for i in onnx_output_shape])
+                # Processing continues only if there are two or more dimensions other than 1
+                if number_of_dim_other_than_1 >= 2:
+                    # Processing continues only when ONNX output shape and TensorFlow output shape match
+                    if onnx_output_shape == tf_output_shape:
+                        # Obtain ONNX inference results and
+                        # TensorFlow inference results up to the previous layer of TensorFlow
+                        onnx_tensor_infos, validation_data_1, validation_data_2 = \
+                            acquisition_of_validation_data(
+                                input_tensor_1=input_tensor_1 \
+                                    if not hasattr(input_tensor_1, 'numpy') else input_tensor_1.numpy(),
+                                input_tensor_2=input_tensor_2 \
+                                    if not hasattr(input_tensor_2, 'numpy') else input_tensor_2.numpy(),
+                                graph_node_output=graph_node_output,
+                                tf_layers_dict=tf_layers_dict,
+                                **kwargs,
+                            )
+                        # Perform simple accuracy verification
+                        # Terminate when the error is less than 1e-3
+                        if onnx_tensor_infos:
+                            min_abs_err = sys.maxsize
+                            min_abs_err_perm_1: int = [idx for idx in range(len(validation_data_1.shape))]
+                            min_abs_err_perm_2: int = [idx for idx in range(len(validation_data_2.shape))]
+                            tensor_1_candidate_for_transpositions = \
+                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_1.shape)
+                            tensor_2_candidate_for_transpositions = \
+                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_2.shape)
+                            for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+                                for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                                    try:
+                                        tf_tensor_infos: Dict[Any] = \
+                                            {
+                                                'dummy_result': \
+                                                    np_func(
+                                                        validation_data_1.transpose(tensor_1_candidate_for_transposition), \
+                                                        validation_data_2.transpose(tensor_2_candidate_for_transposition)
+                                                    )
+                                            }
+                                        # Validation
+                                        onnx_tf_output_pairs = {
+                                            (oi[0], ti[0]): (oi[1], ti[1]) \
+                                                for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                                        }
+                                        del tf_tensor_infos
+                                        """
+                                        check_results: Dict[str, List[np.ndarray, int, float|int]]
+                                            {
+                                                onnx_output_name: [
+                                                    onnx_tensor,
+                                                    matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                                                    max_abs_err,
+                                                ]
+                                            }
+                                        """
+                                        check_results = onnx_tf_tensor_validation(
+                                            output_pairs=onnx_tf_output_pairs,
+                                            rtol=0.0,
+                                            atol=0.0,
+                                        )
+                                        result_err = sum([val[2] for val in check_results.values()])
+                                        if result_err < min_abs_err:
+                                            min_abs_err = result_err
+                                            min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
+                                            min_abs_err_perm_2 = list(tensor_2_candidate_for_transposition)
+                                            if min_abs_err < 1e-3:
+                                                break
+                                    except Exception as ex1:
+                                        pass
+                                else:
+                                    continue
+                                break
+                            if len(min_abs_err_perm_1) > 1:
+                                input_tensor_1 = tf.transpose(
+                                    a=input_tensor_1 \
+                                        if not isinstance(input_tensor_1, np.ndarray) else tf.convert_to_tensor(input_tensor_1),
+                                    perm=min_abs_err_perm_1,
+                                )
+                            if len(min_abs_err_perm_2) > 1:
+                                input_tensor_2 = tf.transpose(
+                                    a=input_tensor_2 \
+                                        if not isinstance(input_tensor_2, np.ndarray) else tf.convert_to_tensor(input_tensor_2),
+                                    perm=min_abs_err_perm_2,
+                                )
+                        del onnx_tensor_infos
+                        del validation_data_1
+                        del validation_data_2
     return input_tensor_1, input_tensor_2

@@ -20,6 +20,7 @@ from onnx2tf.utils.common_functions import (
     broadcast_for_gpu_delegate,
     merge_two_consecutive_identical_ops_into_one,
     deterring_shape_corruption_due_to_broadcast,
+    correction_process_for_accuracy_errors,
 )
 
 
@@ -155,6 +156,18 @@ def make_node(
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
         )
+
+    # Correction process for accuracy errors
+    input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
+        input_tensor_1=input_tensor_1,
+        input_tensor_2=input_tensor_2,
+        tf_func=tf.math.multiply,
+        np_func=np.multiply,
+        graph_node_output_shape=graph_node_output_shape,
+        graph_node_output=graph_node_output,
+        tf_layers_dict=tf_layers_dict,
+        **kwargs,
+    )
 
     # Generation of TF OP
     # TODO: Temporarily Revert due to missing decision conditions

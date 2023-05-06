@@ -11,8 +11,6 @@
       "param_name": "axis",
       "values": 3
     },
-
-
     {
       "op_name": "/model/backbone/layers.3/blocks.0/Reshape",
       "param_target": "inputs",
@@ -20,30 +18,10 @@
       "pre_process_transpose_perm": [0,2,1]
     },
     {
-      "op_name": "/model/backbone/layers.3/blocks.0/Add",
-      "param_target": "outputs",
-      "param_name": "/model/backbone/layers.3/blocks.0/Add_output_0",
-      "post_process_transpose_perm": [0,2,1]
-    },
-    {
-      "op_name": "/model/backbone/layers.3/blocks.0/mlp/fc2/Add",
-      "param_target": "outputs",
-      "param_name": "/model/backbone/layers.3/blocks.0/mlp/fc2/Add_output_0",
-      "post_process_transpose_perm": [0,2,1]
-    },
-
-
-    {
-      "op_name": "/model/backbone/layers.3/blocks.1/Reshape_9",
-      "param_target": "outputs",
-      "param_name": "/model/backbone/layers.3/blocks.1/Reshape_9_output_0",
-      "post_process_transpose_perm": [0,2,1]
-    },
-    {
-      "op_name": "/model/backbone/layers.3/blocks.1/mlp/fc2/Add",
-      "param_target": "outputs",
-      "param_name": "/model/backbone/layers.3/blocks.1/mlp/fc2/Add_output_0",
-      "post_process_transpose_perm": [0,2,1]
+    "op_name": "/model/backbone/layers.3/blocks.0/Add",
+    "param_target": "outputs",
+    "param_name": "/model/backbone/layers.3/blocks.0/Add_output_0",
+    "post_process_transpose_perm": [0,2,1]
     }
   ]
 }
