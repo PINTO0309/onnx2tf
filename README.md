@@ -241,7 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.10.3
+  ghcr.io/pinto0309/onnx2tf:1.11.0
 
   or
 
@@ -795,6 +795,7 @@ usage: onnx2tf
 [-dsft]
 [-nodaftc]
 [-dsfs]
+[-dsm]
 [-nodafsc]
 [-ofgd]
 [-rari64 | -rarf32 | -rafi64 | -raff32]
@@ -1027,6 +1028,13 @@ optional arguments:
   -dsfs, --disable_suppression_flexstridedslice
     Disables FlexStridedSlice generation suppression.
 
+  -dsm, --disable_strict_mode
+    If specified, the conversion speed is greatly accelerated because the strict accuracy
+    correction process is skipped, but the frequency of transposition errors increases
+    and accuracy errors are more likely to occur. Strict mode is enabled by default.
+    As of 2023.05.07, this is a work in progress and is an experimental feature.
+    Therefore, only some OPs are converted in exact mode for accuracy correction.
+
   -nodafsc, --number_of_dimensions_after_flexstridedslice_compression
     Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
     Default: 5
@@ -1232,6 +1240,7 @@ convert(
   disable_suppression_flextranspose: Optional[bool] = False,
   number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
   disable_suppression_flexstridedslice: Optional[bool] = False,
+  disable_strict_mode: Optional[bool] = False,
   number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
   optimization_for_gpu_delegate: Optional[bool] = False,
   replace_argmax_to_reducemax_and_indicies_is_int64: Union[bool, NoneType] = False,
@@ -1283,7 +1292,7 @@ convert(
       Output model in TF v1 (.pb) format.
 
     output_weights: Optional[bool]
-        Output weights in hdf5 format.
+      Output weights in hdf5 format.
 
     copy_onnx_input_output_names_to_tflite: Optional[bool]
       Copy the input/output OP name of ONNX to the input/output OP name of tflite.
@@ -1404,20 +1413,20 @@ convert(
       Ignores batch_size if specified at the same time as batch_size.
 
     no_large_tensor: Optional[bool]
-        Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
-        See: https://github.com/daquexian/onnx-simplifier/issues/178
+      Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
+      See: https://github.com/daquexian/onnx-simplifier/issues/178
 
     output_nms_with_dynamic_tensor: Optional[bool]
-        The number of bounding boxes in the NMS output results is
-        not fixed at the maximum number of max_output_boxes_per_class,
-        but rather at the smallest possible number of dynamic tensors.
-        If this option is disabled, NMS output is padded to the number
-        set in the max_output_boxes_per_class attribute.
-        e.g.
-        disable --output_nms_with_dynamic_tensor:
-            output_tensor_shape: [100, 7]
-        enable --output_nms_with_dynamic_tensor:
-            output_tensor_shape: [N, 7]
+      The number of bounding boxes in the NMS output results is
+      not fixed at the maximum number of max_output_boxes_per_class,
+      but rather at the smallest possible number of dynamic tensors.
+      If this option is disabled, NMS output is padded to the number
+      set in the max_output_boxes_per_class attribute.
+      e.g.
+      disable --output_nms_with_dynamic_tensor:
+          output_tensor_shape: [100, 7]
+      enable --output_nms_with_dynamic_tensor:
+          output_tensor_shape: [N, 7]
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
       Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
@@ -1436,10 +1445,10 @@ convert(
       keep_nwc_or_nhwc_or_ndhwc_input_names=['input0','input1','input2']
 
     keep_shape_absolutely_input_names: Optional[List[str]]
-        Name of the INPUT that unconditionally maintains its shape.
-        If a nonexistent INPUT OP name is specified, it is ignored.
-        e.g.
-        keep_shape_absolutely_input_names=['input0','input1','input2']
+      Name of the INPUT that unconditionally maintains its shape.
+      If a nonexistent INPUT OP name is specified, it is ignored.
+      e.g.
+      keep_shape_absolutely_input_names=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
       Output names that interrupt model conversion.
@@ -1470,15 +1479,22 @@ convert(
       Default: 6
 
     disable_suppression_flexstridedslice: Optional[bool]
-        Disables FlexStridedSlice generation suppression.
+      Disables FlexStridedSlice generation suppression.
+
+    disable_strict_mode: Optional[bool]
+      If specified, the conversion speed is greatly accelerated because the strict accuracy
+      correction process is skipped, but the frequency of transposition errors increases
+      and accuracy errors are more likely to occur. Strict mode is enabled by default.
+      As of 2023.05.07, this is a work in progress and is an experimental feature.
+      Therefore, only some OPs are converted in strict mode for accuracy correction.
 
     number_of_dimensions_after_flexstridedslice_compression: Optional[int]
-        Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
-        Default: 5
+      Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
+      Default: 5
 
     optimization_for_gpu_delegate: Optional[bool]
-        Replace operations that do not support gpu delegate with those
-        that do as much as possible.
+      Replace operations that do not support gpu delegate with those
+      that do as much as possible.
 
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indicies are int64.

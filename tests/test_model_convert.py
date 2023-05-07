@@ -113,6 +113,7 @@ def _report_convert_model(file_path):
             input_onnx_file_path=file_path,
             output_folder_path=_CFG['output_directory'],
             output_nms_with_dynamic_tensor=True,
+            disable_strict_mode=True,
             non_verbose=True,
         )
         os.remove(file_path)

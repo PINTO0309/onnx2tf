@@ -75,6 +75,8 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
+
     # Param replacement
     input_tensor_1 = replace_parameter(
         value_before_replacement=input_tensor_1,
@@ -158,16 +160,17 @@ def make_node(
         )
 
     # Correction process for accuracy errors
-    input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        tf_func=tf.math.multiply,
-        np_func=np.multiply,
-        graph_node_output_shape=graph_node_output_shape,
-        graph_node_output=graph_node_output,
-        tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
+    if not disable_strict_mode:
+        input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_func=tf.math.multiply,
+            np_func=np.multiply,
+            graph_node_output_shape=graph_node_output_shape,
+            graph_node_output=graph_node_output,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
 
     # Generation of TF OP
     # TODO: Temporarily Revert due to missing decision conditions

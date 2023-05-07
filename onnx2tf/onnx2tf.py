@@ -80,6 +80,7 @@ def convert(
     enable_batchmatmul_unfold: Optional[bool] = False,
     enable_rnn_unroll: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
+    disable_strict_mode: Optional[bool] = False,
     number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
     disable_suppression_flexstridedslice: Optional[bool] = False,
     number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
@@ -293,6 +294,11 @@ def convert(
 
     disable_suppression_flextranspose: Optional[bool]
         Disables FlexTranspose generation suppression.
+
+    disable_strict_mode: Optional[bool]
+        If specified, the conversion speed is greatly accelerated because the strict accuracy\n
+        correction process is skipped, but the frequency of transposition errors increases\n
+        and accuracy errors are more likely to occur. Strict mode is enabled by default.
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
@@ -703,6 +709,7 @@ def convert(
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
         'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
         'disable_suppression_flexstridedslice': disable_suppression_flexstridedslice,
+        'disable_strict_mode': disable_strict_mode,
         'number_of_dimensions_after_flexstridedslice_compression': number_of_dimensions_after_flexstridedslice_compression,
         'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
         'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
@@ -1829,6 +1836,15 @@ def main():
             'Disables FlexStridedSlice generation suppression.'
     )
     parser.add_argument(
+        '-dsm',
+        '--disable_strict_mode',
+        action='store_true',
+        help=\
+            'If specified, the conversion speed is greatly accelerated because the strict accuracy \n' +
+            'correction process is skipped, but the frequency of transposition errors increases \n' +
+            'and accuracy errors are more likely to occur. Strict mode is enabled by default.'
+    )
+    parser.add_argument(
         '-nodafsc',
         '--number_of_dimensions_after_flexstridedslice_compression',
         type=int,
@@ -2081,6 +2097,7 @@ def main():
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
         enable_rnn_unroll=args.enable_rnn_unroll,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
+        disable_strict_mode=args.disable_strict_mode,
         number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
         disable_suppression_flexstridedslice=args.disable_suppression_flexstridedslice,
         number_of_dimensions_after_flexstridedslice_compression=args.number_of_dimensions_after_flexstridedslice_compression,
