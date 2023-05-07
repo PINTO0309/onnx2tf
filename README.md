@@ -1033,7 +1033,7 @@ optional arguments:
     correction process is skipped, but the frequency of transposition errors increases
     and accuracy errors are more likely to occur. Strict mode is enabled by default.
     As of 2023.05.07, this is a work in progress and is an experimental feature.
-    Therefore, only some OPs are converted in exact mode for accuracy correction.
+    Therefore, only some OPs are converted in strict mode for accuracy correction.
 
   -nodafsc, --number_of_dimensions_after_flexstridedslice_compression
     Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.
