@@ -19,6 +19,7 @@ from onnx2tf.utils.common_functions import (
     shape_unmatched_special_avoidance_workaround,
     merge_two_consecutive_identical_ops_into_one,
     deterring_shape_corruption_due_to_broadcast,
+    correction_process_for_accuracy_errors,
 )
 
 
@@ -72,6 +73,8 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
 
     # Param replacement
     input_tensor_1 = replace_parameter(
@@ -146,6 +149,19 @@ def make_node(
             graph_node_output_shape=graph_node_output_shape,
             input_tensor_1=input_tensor_1,
             input_tensor_2=input_tensor_2,
+        )
+
+    # Correction process for accuracy errors
+    if not disable_strict_mode:
+        input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_func=tf.math.divide,
+            np_func=np.divide,
+            graph_node_output_shape=graph_node_output_shape,
+            graph_node_output=graph_node_output,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
         )
 
     # Generation of TF OP
