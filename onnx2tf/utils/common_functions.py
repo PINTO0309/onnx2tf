@@ -5371,6 +5371,36 @@ def correction_process_for_accuracy_errors(
         tf_layers_dict: Dict,
         **kwargs,
 ) -> Tuple[Any, Any]:
+    """Correction process for accuracy errors.
+
+    Parameters
+    ----------
+    input_tensor_1: Any
+        Tensor subject to accuracy check and accuracy correction
+
+    input_tensor_2: Any
+        Tensor subject to accuracy check and accuracy correction
+
+    tf_func: Any
+        TensorFlow OP to be generated after accuracy correction
+
+    np_func: Any
+        Numpy functions used for accuracy checks and accuracy corrections
+
+    graph_node_output_shape: List
+        ONNX OP output shape
+
+    tf_layers_dict: Dict
+        TensorFlow Model Structure Dictionary
+
+    Returns
+    -------
+    input_tensor_1: Any
+        TensorFlow tensor after accuracy check and accuracy correction
+
+    input_tensor_2: Any
+        TensorFlow tensor after accuracy check and accuracy correction
+    """
     if graph_node_output_shape is not None:
         onnx_output_shape = [dim if not isinstance(dim, str) else -1 for dim in graph_node_output_shape]
         onnx_output_same_shape_counts = collections.Counter(onnx_output_shape)
