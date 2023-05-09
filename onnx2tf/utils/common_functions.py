@@ -5407,8 +5407,8 @@ def correction_process_for_accuracy_errors(
         if sum([1 if dim > 1 and cnt > 1 else 0 for dim, cnt in onnx_output_same_shape_counts.items()]) >= 1:
             # Generate dummy op
             dummy_op = tf_func(
-                x=input_tensor_1,
-                y=input_tensor_2,
+                input_tensor_1,
+                input_tensor_2,
             )
             if dummy_op.shape != tf.TensorShape(None):
                 tf_output_shape = [dim if dim is not None else -1 for dim in dummy_op.shape]
