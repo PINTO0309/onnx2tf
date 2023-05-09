@@ -23,7 +23,7 @@ try:
 except Exception as ex:
     pass
 from onnx2tf.utils.colors import Color
-from typing import Any, List, Optional, Union, Tuple, Dict, Callable
+from typing import Any, List, Optional, Union, Tuple, Dict
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
