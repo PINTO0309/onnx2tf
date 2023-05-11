@@ -280,7 +280,7 @@ or
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
   !python3.9 -m pip install tensorflow==2.12.0 \
-    && python3.9 -m pip install -U onnx \
+    && python3.9 -m pip install -U onnx==1.13.1 \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U onnxruntime==1.13.1 \
