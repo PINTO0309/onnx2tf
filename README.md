@@ -213,7 +213,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ![render1665941718294](https://user-images.githubusercontent.com/33194443/196049928-57520fc2-842d-459c-9f28-7ee5f040c226.gif)
 
 ## Environment
-- onnx
+- onnx==1.13.1
 - onnxruntime==1.13.1 See: [When using onnxruntime v1.14.1, all output values of Sigmoid are Nan. #14885](https://github.com/microsoft/onnxruntime/issues/14885)
 - onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
 - onnx_graphsurgeon
