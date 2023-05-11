@@ -12,7 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install -U onnx \
+    && pip install -U onnx==1.13.1 \
     && pip install -U onnxsim==0.4.17 \
     && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnx2tf \
