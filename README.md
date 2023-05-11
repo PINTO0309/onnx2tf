@@ -241,11 +241,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.11.1
+  ghcr.io/pinto0309/onnx2tf:1.11.2
 
   or
 
-  $ pip install -U onnx \
+  $ pip install -U onnx==1.13.1 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.13.1 \
@@ -280,7 +280,7 @@ or
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
   !python3.9 -m pip install tensorflow==2.12.0 \
-    && python3.9 -m pip install -U onnx \
+    && python3.9 -m pip install -U onnx==1.13.1 \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U onnxruntime==1.13.1 \
