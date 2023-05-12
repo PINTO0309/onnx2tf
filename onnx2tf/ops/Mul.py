@@ -21,6 +21,7 @@ from onnx2tf.utils.common_functions import (
     merge_two_consecutive_identical_ops_into_one,
     deterring_shape_corruption_due_to_broadcast,
     correction_process_for_accuracy_errors,
+    nhwc_determination_of_output_value_of_binary_input_op,
 )
 
 
@@ -68,6 +69,12 @@ def make_node(
         'optype': graph_node.op,
         'shape': graph_node_output_shape,
         'dtype': dtype,
+        'nhwc': \
+            nhwc_determination_of_output_value_of_binary_input_op(
+                graph_node_input_1=graph_node_input_1,
+                graph_node_input_2=graph_node_input_2,
+                tf_layers_dict=tf_layers_dict
+            )
     }
 
     input_tensor_1 = tf_layers_dict[graph_node_input_1.name]['tf_node'] \

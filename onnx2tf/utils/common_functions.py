@@ -5499,3 +5499,41 @@ def correction_process_for_accuracy_errors(
                         del validation_data_1
                         del validation_data_2
     return input_tensor_1, input_tensor_2
+
+
+def nhwc_determination_of_output_value_of_binary_input_op(
+    *,
+    graph_node_input_1: Any,
+    graph_node_input_2: Any,
+    tf_layers_dict: Dict,
+):
+    """NHWC determination of output value of binary input OP.
+
+    Parameters
+    ----------
+    graph_node_input_1: Any
+        Input variable to be verified
+
+    graph_node_input_2: Any
+        Input variable to be verified
+
+    tf_layers_dict: Dict
+        TensorFlow Model Structure Dictionary
+
+    Returns
+    -------
+    NHWC or not NHWC: bool
+        True: "NHWC"
+        False: not "NHWC"
+    """
+    is_output_nhwc_1 = \
+        tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+            if isinstance(graph_node_input_1, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+
+    is_output_nhwc_2 = \
+        tf_layers_dict[graph_node_input_2.name]['nhwc'] \
+            if isinstance(graph_node_input_2, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
+
+    return is_output_nhwc_1 or is_output_nhwc_2
