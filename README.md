@@ -310,6 +310,17 @@ $ onnx2tf -i resnet18-v1-7.onnx
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
+# Override undefined batch size or other dimensions with static values.
+# The `-b` option overwrites the zero-dimensional batch size with the number specified without input OP name.
+# Note that if there are multiple input OPs, the zero dimension of all input OPs is forced to be rewritten.
+# The `-ois` option allows undefined dimensions in all dimensions, including the zero dimensionality,
+# to be overwritten to a static shape, but requires the input OP name to be specified.
+# e.g. -ois data1:1,3,224,224 data2:1,255 data3:1,224,6
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx -b 1
+or
+$ onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
+
 # Keras h5 format
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
