@@ -326,7 +326,7 @@ $ onnx2tf -i resnet18-v1-7.onnx -b 1
 or
 $ onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
 
-# Suppress automatic transposition of input OPs from NCH, NCHW, NCDHW to NHC, NHWC, NDHWC.
+# Suppress automatic transposition of input OPs from NCW, NCHW, NCDHW to NWC, NHWC, NDHWC.
 # onnx2tf is a specification that automatically transposes the input OP to [N,H,W,C] format
 # before converting the model. However, since onnx2tf cannot determine from the structure of
 # the model whether the input data is image, audio data, or something else, it unconditionally
