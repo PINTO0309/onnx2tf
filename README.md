@@ -326,6 +326,20 @@ $ onnx2tf -i resnet18-v1-7.onnx -b 1
 or
 $ onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
 
+# Suppress automatic transposition of input OPs from NCH, NCHW, NCDHW to NHC, NHWC, NDHWC.
+# onnx2tf is a specification that automatically transposes the input OP to [N,H,W,C] format
+# before converting the model. However, since onnx2tf cannot determine from the structure of
+# the model whether the input data is image, audio data, or something else, it unconditionally
+# transposes the channels. Therefore, it is the models of STT/TTS models where the input is
+# not NHWC that tend to have particular problems with the automatic transposition of the
+# input OP.
+# If you do not want input OPs to be automatically transposed, you can disable automatic
+# transposition of input OPs by specifying the `-kat` option.
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.28/double_gru.onnx
+# INPUT OPs: "spec": float32[1,3,257,1], "states_in": float32[2,1,32]
+# The following command suppresses the automatic transposition of "states_in" and converts it.
+$ onnx2tf -i double_gru.onnx -kat states_in
+
 # Keras h5 format
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
