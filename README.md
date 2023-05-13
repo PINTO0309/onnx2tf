@@ -311,6 +311,8 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
 # Override undefined batch size or other dimensions with static values.
+# If the model has undefined dimensions, rewriting them to a static size will significantly
+# improve the success rate of the conversion.
 # The `-b` option overwrites the zero-dimensional batch size with the number specified
 # without input OP name.
 # Note that if there are multiple input OPs, the zero dimension of all input OPs is
