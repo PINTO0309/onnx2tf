@@ -2031,6 +2031,7 @@ The above differences often cannot be dealt with by simply converting the model 
 11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
 12. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
 13. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
+14. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
