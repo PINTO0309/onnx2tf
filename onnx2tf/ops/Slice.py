@@ -65,12 +65,12 @@ def make_node(
         and before_op_output_shape_trans_4 \
         and before_op_output_shape_trans_5
 
-    input_tensor = get_constant_or_variable(
+    graph_node_input = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
-    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
-        if isinstance(input_tensor, gs.Variable) else input_tensor
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -171,6 +171,9 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': tf_layers_dict[graph_node_input.name]['nhwc'] \
+            if isinstance(graph_node_input, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
     # Param replacement - OP replacement
