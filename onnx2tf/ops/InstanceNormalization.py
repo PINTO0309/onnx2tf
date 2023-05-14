@@ -16,8 +16,6 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
-INF_INDEX_VALUE: int = 4294967296
-
 
 @print_node_info
 @inverted_operation_enable_disable
