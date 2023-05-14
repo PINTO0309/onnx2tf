@@ -195,6 +195,13 @@ def make_node(
     }
 
     # Generation of TF OP
+    # Workaround for problem with TFLite runtime outputting anomalous values with INT64 padding specification
+    # https://github.com/PINTO0309/onnx2tf/issues/351
+    if isinstance(paddings, np.ndarray):
+        paddings = tf.cast(tf.convert_to_tensor(paddings), dtype=tf.int32)
+    else:
+        paddings = tf.cast(paddings, dtype=tf.int32)
+
     if mode != 'edge':
         # mode != 'edge'
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
