@@ -100,56 +100,43 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
-        'nhwc': True,
+        'nhwc': tf_layers_dict[graph_node_input.name]['nhwc'] \
+            if isinstance(graph_node_input, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
-    # transpose
-    try:
-        if graph_node.i().op == 'Reshape':
-            onnx_input_shape = [
-                dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
-            ]
-            tf_input_shape = [
-                dim if isinstance(dim, int) else None for dim in input_tensor_shape
-            ]
-            if len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
-                and onnx_input_shape == tf_input_shape:
+    # ONNX   : N,C,W
+    # TF     : N,W,C
+    # TF-axes: [1]
+    #
+    # ONNX: N,C,H,W
+    # TF  : N,H,W,C
+    # TF-axes: [1,2]
+    #
+    # ONNX: N,C,D,H,W
+    # TF  : N,D,H,W,C
+    # TF-axes: [1,2,3]
 
-                shape_for_judging_skip = [
-                    dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
-                ]
-                if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
-                    if len(onnx_input_shape) == 3:
-                        # 1D
-                        input_tensor = transpose_with_flexing_deterrence(
-                            input_tensor=input_tensor,
-                            perm=[0,2,1],
-                            **kwargs,
-                        )
-                    elif len(onnx_input_shape) == 4:
-                        # 2D
-                        input_tensor = transpose_with_flexing_deterrence(
-                            input_tensor=input_tensor,
-                            perm=[0,2,3,1],
-                            **kwargs,
-                        )
-    except:
-        pass
+    # NCHW -> NHWC
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ]
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if onnx_input_shape == tf_input_shape:
+        input_tensor = transpose_with_flexing_deterrence(
+            input_tensor=input_tensor,
+            perm=[0] + [i+2 for i in range(input_tensor_rank-2)] + [1],
+            **kwargs,
+        )
 
     # Generation of TF OP
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
-    mean = tf.reduce_mean(
-        input_tensor=input_tensor,
-        axis=axes,
-        keepdims=True,
-    )
-    variance = tf.math.reduce_variance(
-        input_tensor=input_tensor,
-        axis=axes,
-        keepdims=True,
-    )
+    mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
+
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        (input_tensor - mean) / tf.math.sqrt(variance + epsilon) * scale + B
+        scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
