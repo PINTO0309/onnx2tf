@@ -5157,7 +5157,31 @@ def deterring_shape_corruption_due_to_broadcast(
 
     # Perform dummy calculations to find out
     # the total number of tf tensor elements after the calculation
-    dummy_tensor = input_tensor_1 * input_tensor_2
+    try:
+        dummy_tensor = input_tensor_1 * input_tensor_2
+    except Exception as ex1:
+        # To avoid Abort on shape mismatch error.
+        tensor_1_candidate_for_transpositions = \
+            list(itertools.permutations(range(len(input_tensor_1_shape)))) \
+                if input_tensor_1_shape not in [tf.TensorShape([]), tf.TensorShape(None)] else [None]
+        tensor_2_candidate_for_transpositions = \
+            list(itertools.permutations(range(len(input_tensor_2_shape)))) \
+                if input_tensor_2_shape not in [tf.TensorShape([]), tf.TensorShape(None)] else [None]
+        for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                try:
+                    dummy_tensor = \
+                        tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition) * \
+                            tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition)
+                    input_tensor_1 = tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition)
+                    input_tensor_2 = tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition)
+                    break
+                except Exception as ex2:
+                    pass
+            else:
+                continue
+            break
+
     dummy_tensor_elements = np.prod(dummy_tensor.shape)
 
     # If the total number of output elements in ONNX matches the total number of
@@ -5167,8 +5191,12 @@ def deterring_shape_corruption_due_to_broadcast(
 
     # If the total number of output elements in ONNX does not match the total number of
     # output elements in TensorFlow, search for an arrangement with matching geometry
-    input_tensor_1_shape_perms = list(itertools.permutations(range(len(input_tensor_1_shape))))
-    input_tensor_2_shape_perms = list(itertools.permutations(range(len(input_tensor_2_shape))))
+    input_tensor_1_shape_perms = \
+        list(itertools.permutations(range(len(input_tensor_1_shape)))) \
+            if input_tensor_1_shape not in [tf.TensorShape([]), tf.TensorShape(None)] else [None]
+    input_tensor_2_shape_perms = \
+        list(itertools.permutations(range(len(input_tensor_2_shape)))) \
+            if input_tensor_2_shape not in [tf.TensorShape([]), tf.TensorShape(None)] else [None]
     input_tensor_1_final_perm = None
     input_tensor_2_final_perm = None
     for input_tensor_1_shape_perm in input_tensor_1_shape_perms:
