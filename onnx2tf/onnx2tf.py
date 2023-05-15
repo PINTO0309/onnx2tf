@@ -903,19 +903,61 @@ def convert(
 
         # Output in Keras h5 format
         if output_h5:
-            if not non_verbose:
-                print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
-            model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
-            if not non_verbose:
-                print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+            try:
+                if not non_verbose:
+                    print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
+                model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
+                if not non_verbose:
+                    print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+            except ValueError as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    for s in msg_list:
+                        if 'Unable to serialize VariableSpec' in s:
+                            print(
+                                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
+                                f'but is not output because h5 does not support GroupConvolution. ' +
+                                f'If h5 is needed, specify --disable_group_convolution to retransform the model.'
+                            )
+                            break
+                else:
+                    print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                    import traceback
+                    traceback.print_exc()
+            except Exception as e:
+                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                import traceback
+                traceback.print_exc()
 
         # Output in Keras keras_v3 format
         if output_keras_v3:
-            if not non_verbose:
-                print(f'{Color.REVERCE}keras_v3 output started{Color.RESET}', '=' * 61)
-            model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
-            if not non_verbose:
-                print(f'{Color.GREEN}keras_v3 output complete!{Color.RESET}')
+            try:
+                if not non_verbose:
+                    print(f'{Color.REVERCE}keras_v3 output started{Color.RESET}', '=' * 61)
+                model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
+                if not non_verbose:
+                    print(f'{Color.GREEN}keras_v3 output complete!{Color.RESET}')
+            except ValueError as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    for s in msg_list:
+                        if 'Unable to serialize VariableSpec' in s:
+                            print(
+                                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
+                                f'but is not output because keras_v3 does not support GroupConvolution. ' +
+                                f'If keras_v3 is needed, specify --disable_group_convolution to retransform the model.'
+                            )
+                            break
+                else:
+                    print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                    import traceback
+                    traceback.print_exc()
+            except Exception as e:
+                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                import traceback
+                traceback.print_exc()
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
@@ -940,11 +982,12 @@ def convert(
             # Switch to .pb
             if not non_verbose:
                 print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
-        except KeyError as e:
+        except (KeyError, AssertionError) as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
                 for s in msg_list:
-                    if 'Failed to add concrete function' in s:
+                    if 'Failed to add concrete function' in s \
+                        or "Tried to export a function which references an 'untracked' resource" in s:
                         print(
                             f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
                             f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
@@ -964,6 +1007,8 @@ def convert(
         # TFv1 .pb
         if output_tfv1_pb:
             try:
+                if not non_verbose:
+                    print(f'{Color.REVERCE}TFv1 v1 .pb output started{Color.RESET}', '=' * 58)
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
                 imported = tf.saved_model.load(output_folder_path)
                 f = imported.signatures[SIGNATURE_KEY]
@@ -977,6 +1022,12 @@ def convert(
                 )
                 if not non_verbose:
                     print(f'{Color.GREEN}TFv1 .pb output complete!{Color.RESET}')
+            except KeyError as e:
+                print(
+                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                    f'Probably due to GroupConvolution, saved_model could not be generated successfully, ' +
+                    f'so onnx2tf skip the output of TensorFlow v1 pb.'
+                )
             except Exception as e:
                 print(f'{Color.RED}ERROR:{Color.RESET}', e)
                 import traceback
