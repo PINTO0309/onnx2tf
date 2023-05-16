@@ -257,8 +257,6 @@ def make_node(
         elif tf.keras.backend.is_keras_tensor(sizes):
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
     elif scales is not None:
-        print(f'nguyencse ==> scales is not None')
-
         # only scales is defined
         if hasattr(graph_node_output, 'shape') \
             and graph_node_output.shape is not None:
@@ -288,10 +286,6 @@ def make_node(
                 ),
                 tf.int32,
             )
-
-            print(f'nguyencse ==> new_size: {new_size}')
-            print(f'nguyencse ==> h_w_scale: {h_w_scale}')
-            print(f'nguyencse ==> h_w_shape: {h_w_shape}')
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
