@@ -906,7 +906,7 @@ def convert(
             try:
                 if not non_verbose:
                     print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
-                model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
+                model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
                 if not non_verbose:
                     print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
             except ValueError as e:
