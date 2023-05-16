@@ -12,6 +12,17 @@ jobs:
   conversion-test:
     runs-on: ubuntu-20.04
     steps:
+    - name: Check space before cleanup
+      run: df -h
+    - name: Clean space as per https://github.com/actions/virtual-environments/issues/709
+      run: |
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        docker rmi $(docker image ls -q --filter "reference=node*")
+        docker rmi $(docker image ls -q --filter "reference=buildpack*")
+        docker rmi $(docker image ls -q --filter "reference=debian*")
+        docker rmi $(docker image ls -q --filter "reference=alpine*")
+        df -h
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
       with:
