@@ -1068,13 +1068,9 @@ def upsampling3d_bicubic(
     half_pixel_centers,
     name,
 ):
-    # d = new_size.shape[0]
-    # h = new_size.shape[1]
-    # w = new_size.shape[2]
-
-    d = np.shape(new_size)[0]
-    h = np.shape(new_size)[1]
-    w = np.shape(new_size)[2]
+    d = new_size[0]
+    h = new_size[1]
+    w = new_size[2]
 
     # Dpeth (height x width)
     resized_list = []
@@ -1113,13 +1109,11 @@ def upsampling3d_nearest(
     half_pixel_centers,
     name,
 ):
-    # d = new_size.shape[0]
-    # h = new_size.shape[1]
-    # w = new_size.shape[2]
+    print(f'nguyencse ==> upsampling3d_nearest: {new_size}')
     
-    d = np.shape(new_size)[0]
-    h = np.shape(new_size)[1]
-    w = np.shape(new_size)[2]
+    d = new_size[0]
+    h = new_size[1]
+    w = new_size[2]
 
     # Dpeth (height x width)
     resized_list = []
@@ -1127,7 +1121,8 @@ def upsampling3d_nearest(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[h, w],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -1141,13 +1136,14 @@ def upsampling3d_nearest(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[d, h],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
                 name=name,
             )
-            )
+        )
     stack_img_dh = tf.stack(resized_list, axis=3)
     return stack_img_dh
 

@@ -257,12 +257,15 @@ def make_node(
         elif tf.keras.backend.is_keras_tensor(sizes):
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
     elif scales is not None:
+        print(f'nguyencse ==> scales is not None')
+
         # only scales is defined
         if hasattr(graph_node_output, 'shape') \
             and graph_node_output.shape is not None:
             numeric_bools = np.asarray([isinstance(graph_node_output.shape[-(idx+1)], int) for idx in range(input_tensor_rank-2)])
             if numeric_bools.all():
-                new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+                # new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+                new_size = graph_node_output.shape[-len(numeric_bools):len(graph_node_output.shape)]
             else:
                 h_w_scale = scales[1:input_tensor_rank-1]
                 h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
@@ -285,6 +288,10 @@ def make_node(
                 ),
                 tf.int32,
             )
+
+            print(f'nguyencse ==> new_size: {new_size}')
+            print(f'nguyencse ==> h_w_scale: {h_w_scale}')
+            print(f'nguyencse ==> h_w_shape: {h_w_shape}')
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
