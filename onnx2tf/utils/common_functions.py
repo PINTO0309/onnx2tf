@@ -1071,7 +1071,7 @@ def upsampling3d_bicubic(
     d = new_size[0]
     h = new_size[1]
     w = new_size[2]
-
+    
     # Dpeth (height x width)
     resized_list = []
     unstack_img_list = tf.unstack(input_tensor, axis=1)
@@ -1109,8 +1109,6 @@ def upsampling3d_nearest(
     half_pixel_centers,
     name,
 ):
-    print(f'nguyencse ==> upsampling3d_nearest: {new_size}')
-    
     d = new_size[0]
     h = new_size[1]
     w = new_size[2]
