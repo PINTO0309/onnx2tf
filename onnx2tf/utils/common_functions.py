@@ -1078,7 +1078,8 @@ def upsampling3d_bicubic(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[h, w],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -1092,7 +1093,8 @@ def upsampling3d_bicubic(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[d, h],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
