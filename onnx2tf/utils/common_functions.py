@@ -1071,13 +1071,15 @@ def upsampling3d_bicubic(
     d = new_size[0]
     h = new_size[1]
     w = new_size[2]
+    
     # Dpeth (height x width)
     resized_list = []
     unstack_img_list = tf.unstack(input_tensor, axis=1)
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[h, w],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -1091,7 +1093,8 @@ def upsampling3d_bicubic(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[d, h],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -1111,13 +1114,15 @@ def upsampling3d_nearest(
     d = new_size[0]
     h = new_size[1]
     w = new_size[2]
+
     # Dpeth (height x width)
     resized_list = []
     unstack_img_list = tf.unstack(input_tensor, axis=1)
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[h, w],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
@@ -1131,13 +1136,14 @@ def upsampling3d_nearest(
     for i in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
-                images=input_tensor,
+                # images=input_tensor,
+                images=i,
                 size=[d, h],
                 align_corners=align_corners,
                 half_pixel_centers=half_pixel_centers,
                 name=name,
             )
-            )
+        )
     stack_img_dh = tf.stack(resized_list, axis=3)
     return stack_img_dh
 

@@ -262,7 +262,8 @@ def make_node(
             and graph_node_output.shape is not None:
             numeric_bools = np.asarray([isinstance(graph_node_output.shape[-(idx+1)], int) for idx in range(input_tensor_rank-2)])
             if numeric_bools.all():
-                new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+                # new_size = graph_node_output.shape[-2:len(graph_node_output.shape)] # Estimated from ONNX output shape
+                new_size = graph_node_output.shape[-len(numeric_bools):len(graph_node_output.shape)]
             else:
                 h_w_scale = scales[1:input_tensor_rank-1]
                 h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
