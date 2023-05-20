@@ -82,6 +82,8 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |GridSample|:heavy_check_mark:|
   |GroupNormalization|**Help wanted**|
   |GRU|:heavy_check_mark:|
+  |HammingWindow|**Help wanted**|
+  |HannWindow|**Help wanted**|
   |Hardmax|:heavy_check_mark:|
   |HardSigmoid|:heavy_check_mark:|
   |HardSwish|:heavy_check_mark:|
