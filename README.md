@@ -53,6 +53,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Cosh|:heavy_check_mark:|
   |Cos|:heavy_check_mark:|
   |CumSum|:heavy_check_mark:|
+  |DeformConv|**Help wanted**|
   |DepthToSpace|:heavy_check_mark:|
   |Det|:heavy_check_mark:|
   |DequantizeLinear|:heavy_check_mark:|
