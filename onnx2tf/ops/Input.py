@@ -334,19 +334,20 @@ def make_node(
 
     # The output_shape_trans stores the result of determining
     output_shape_trans = False
-    for onnx_dim, tf_dim in zip(shape, tf_input_shape):
-        onnx_dim = onnx_dim if isinstance(onnx_dim, int) else None
-        if onnx_dim is None and tf_dim is None:
-            pass
-        elif onnx_dim is None and tf_dim is not None:
-            output_shape_trans = True
-        elif onnx_dim is not None and tf_dim is None:
-            output_shape_trans = True
-        elif onnx_dim is not None and tf_dim is not None:
-            if onnx_dim == tf_dim:
+    if shape is not None and tf_input_shape is not None:
+        for onnx_dim, tf_dim in zip(shape, tf_input_shape):
+            onnx_dim = onnx_dim if isinstance(onnx_dim, int) else None
+            if onnx_dim is None and tf_dim is None:
                 pass
-            else:
+            elif onnx_dim is None and tf_dim is not None:
                 output_shape_trans = True
-        else:
-            pass
+            elif onnx_dim is not None and tf_dim is None:
+                output_shape_trans = True
+            elif onnx_dim is not None and tf_dim is not None:
+                if onnx_dim == tf_dim:
+                    pass
+                else:
+                    output_shape_trans = True
+            else:
+                pass
     tf_layers_dict[graph_input_name]['before_op_output_shape_trans'] = output_shape_trans
