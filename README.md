@@ -82,8 +82,8 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |GridSample|:heavy_check_mark:|
   |GroupNormalization|**Help wanted**|
   |GRU|:heavy_check_mark:|
-  |HammingWindow|**Help wanted**|
-  |HannWindow|**Help wanted**|
+  |HammingWindow|:white_check_mark:|
+  |HannWindow|:white_check_mark:|
   |Hardmax|:heavy_check_mark:|
   |HardSigmoid|:heavy_check_mark:|
   |HardSwish|:heavy_check_mark:|
@@ -243,7 +243,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.12.4
+  ghcr.io/pinto0309/onnx2tf:1.12.5
 
   or
 
