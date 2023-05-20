@@ -79,7 +79,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |GlobalMaxPool|:heavy_check_mark:|
   |GreaterOrEqual|:heavy_check_mark:|
   |Greater|:heavy_check_mark:|
-  |GridSample|:heavy_check_mark:|
+  |GridSample|:white_check_mark:|
   |GroupNormalization|**Help wanted**|
   |GRU|:heavy_check_mark:|
   |HammingWindow|:white_check_mark:|
