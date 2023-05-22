@@ -813,6 +813,18 @@ def explicit_broadcast(
     if graph_node_input_shape1 == [] or graph_node_input_shape2 == []:
         return const_or_var_1, const_or_var_2
 
+    # If all dimensions are undefined dimensions, return without doing anything
+    if graph_node_input_shape1 is not None \
+        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape1]) == len(graph_node_input_shape1):
+        return const_or_var_1, const_or_var_2
+    if graph_node_input_shape2 is not None \
+        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape2]) == len(graph_node_input_shape2):
+        return const_or_var_1, const_or_var_2
+
+    # If the input shape of ONNX is None, return without doing anything.
+    if graph_node_input_shape1 is None or graph_node_input_shape2 is None:
+        return const_or_var_1, const_or_var_2
+
     # If either operand have shape of all 1's, do not broadcast and return as is
     shape_for_judging_skip_processing_1 = [
         i if i is not None else INF_INDEX_VALUE for i in const_or_var_1.shape

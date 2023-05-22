@@ -58,14 +58,16 @@ def make_node(
         before_op_output_shape_trans_1 \
         and before_op_output_shape_trans_2
 
-    graph_node_input_1 = get_constant_or_variable(
-        graph_node.inputs[0],
-        before_op_output_shape_trans,
-    )
-    graph_node_input_2 = get_constant_or_variable(
-        graph_node.inputs[1],
-        before_op_output_shape_trans,
-    )
+    graph_node_input_1 = \
+        get_constant_or_variable(
+            graph_node.inputs[0],
+            before_op_output_shape_trans,
+        )
+    graph_node_input_2 = \
+        get_constant_or_variable(
+            graph_node.inputs[1],
+            before_op_output_shape_trans,
+        )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     graph_node_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -91,18 +93,20 @@ def make_node(
     disable_strict_mode: bool = kwargs['disable_strict_mode']
 
     # Param replacement
-    input_tensor_1 = replace_parameter(
-        value_before_replacement=input_tensor_1,
-        param_target='inputs',
-        param_name=graph_node.inputs[0].name,
-        **kwargs,
-    )
-    input_tensor_2 = replace_parameter(
-        value_before_replacement=input_tensor_2,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
-        **kwargs,
-    )
+    input_tensor_1 = \
+        replace_parameter(
+            value_before_replacement=input_tensor_1,
+            param_target='inputs',
+            param_name=graph_node.inputs[0].name,
+            **kwargs,
+        )
+    input_tensor_2 = \
+        replace_parameter(
+            value_before_replacement=input_tensor_2,
+            param_target='inputs',
+            param_name=graph_node.inputs[1].name,
+            **kwargs,
+        )
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
@@ -136,26 +140,29 @@ def make_node(
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
-    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
+    input_tensor_1, input_tensor_2 = \
+        shape_unmatched_special_avoidance_workaround(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
 
-    input_tensor_1, input_tensor_2 = pre_explicit_broadcast(
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-    )
+    input_tensor_1, input_tensor_2 = \
+        pre_explicit_broadcast(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+        )
 
-    input_tensor_1, input_tensor_2 = explicit_broadcast(
-        const_or_var_1=input_tensor_1,
-        const_or_var_2=input_tensor_2,
-        graph_node=graph_node,
-        tf_layers_dict= tf_layers_dict,
-    )
+    input_tensor_1, input_tensor_2 = \
+        explicit_broadcast(
+            const_or_var_1=input_tensor_1,
+            const_or_var_2=input_tensor_2,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
 
     # Deterring shape corruption due to broadcast
     input_tensor_1, input_tensor_2 = \
@@ -167,16 +174,17 @@ def make_node(
 
     # Correction process for accuracy errors
     if not disable_strict_mode:
-        input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-            tf_func=tf.math.add,
-            np_func=np.add,
-            graph_node_output_shape=graph_node_output_shape,
-            graph_node_output=graph_node_output,
-            tf_layers_dict=tf_layers_dict,
-            **kwargs,
-        )
+        input_tensor_1, input_tensor_2 = \
+            correction_process_for_accuracy_errors(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+                tf_func=tf.math.add,
+                np_func=np.add,
+                graph_node_output_shape=graph_node_output_shape,
+                graph_node_output=graph_node_output,
+                tf_layers_dict=tf_layers_dict,
+                **kwargs,
+            )
 
     # Generation of TF OP
     # Merge two consecutive identical OPs into one
@@ -195,25 +203,27 @@ def make_node(
     # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
     # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
     # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
-    _, tf_type = merge_two_consecutive_identical_ops_into_one(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        graph_node_output=graph_node_output,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        graph_node=graph_node,
-        tf_layers_dict=tf_layers_dict,
-        tf_func='Add'
-    )
+    _, tf_type = \
+        merge_two_consecutive_identical_ops_into_one(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            graph_node_output=graph_node_output,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            graph_node=graph_node,
+            tf_layers_dict=tf_layers_dict,
+            tf_func='Add'
+        )
 
     # Post-process transpose
-    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
-        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
-        param_target='outputs',
-        param_name=graph_node.outputs[0].name,
-        **kwargs,
-    )
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        post_process_transpose(
+            value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+            param_target='outputs',
+            param_name=graph_node.outputs[0].name,
+            **kwargs,
+        )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
