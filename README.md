@@ -245,7 +245,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.13.1
+  ghcr.io/pinto0309/onnx2tf:1.13.2
 
   or
 
@@ -844,6 +844,7 @@ usage: onnx2tf
 [-coton]
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
+[-dms]
 [-n]
 
 optional arguments:
@@ -1235,6 +1236,9 @@ optional arguments:
     The absolute tolerance parameter.
     Default: 1e-4
 
+  -dms, --disable_model_save
+    Does not save the converted model. For CIs RAM savings.
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -1293,6 +1297,7 @@ convert(
   check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
+  disable_model_save: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -1651,44 +1656,48 @@ convert(
       """
 
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
-        Returns "Matches" if the output of onnx and the output of TF are
-        within acceptable proximity element by element.
-        Returns "Unmatched" if the output of onnx and the output of TF are
-        not within acceptable proximity element by element.
-        If the output of onnx is 1D, it returns "Skipped" and skips the comparison
-        between the output of onnx and that of TF. This is because when undefined
-        dimensions are present, a situation often arises where very large index
-        values are compared, causing OutOfMemory.
-        Only the output content of the models final output OP is checked.
+      Returns "Matches" if the output of onnx and the output of TF are
+      within acceptable proximity element by element.
+      Returns "Unmatched" if the output of onnx and the output of TF are
+      not within acceptable proximity element by element.
+      If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+      between the output of onnx and that of TF. This is because when undefined
+      dimensions are present, a situation often arises where very large index
+      values are compared, causing OutOfMemory.
+      Only the output content of the models final output OP is checked.
 
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
-        Returns "Matches" if the output of onnx and the output of TF are
-        within acceptable proximity element by element.
-        Check the output of all OPs in sequence from the beginning,
-        including all but the final output OP of the model.
-        Returns "Unmatched" if the output of onnx and the output of TF are
-        not within acceptable proximity element by element.
-        If the output of onnx is 1D, it returns "Skipped" and skips the comparison
-        between the output of onnx and that of TF. This is because when undefined
-        dimensions are present, a situation often arises where very large index
-        values are compared, causing OutOfMemory.
-        It is very time consuming because it performs as many inferences as
-        there are operations.
+      Returns "Matches" if the output of onnx and the output of TF are
+      within acceptable proximity element by element.
+      Check the output of all OPs in sequence from the beginning,
+      including all but the final output OP of the model.
+      Returns "Unmatched" if the output of onnx and the output of TF are
+      not within acceptable proximity element by element.
+      If the output of onnx is 1D, it returns "Skipped" and skips the comparison
+      between the output of onnx and that of TF. This is because when undefined
+      dimensions are present, a situation often arises where very large index
+      values are compared, causing OutOfMemory.
+      It is very time consuming because it performs as many inferences as
+      there are operations.
 
     check_onnx_tf_outputs_sample_data_normalization: Optional[str]
-        norm: Validate using random data normalized to the range 0.0 to 1.0
-        denorm: Validate using random data in the range 0.0 to 255.0
-        If there is a normalization layer at the models entry point, or
-        if the model was trained on denormalized data, "denorm" must be specified.
-        Default: "norm"
+      norm: Validate using random data normalized to the range 0.0 to 1.0
+      denorm: Validate using random data in the range 0.0 to 255.0
+      If there is a normalization layer at the models entry point, or
+      if the model was trained on denormalized data, "denorm" must be specified.
+      Default: "norm"
 
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float]
-        The relative tolerance parameter.
-        Default: 0.0
+      The relative tolerance parameter.
+      Default: 0.0
 
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
-        The absolute tolerance parameter.
-        Default: 1e-4
+      The absolute tolerance parameter.
+      Default: 1e-4
+
+    disable_model_save: Optional[bool]
+      Does not save the converted model. For CIs RAM savings.
+      Default: False
 
     non_verbose: Optional[bool]
       Do not show all information logs. Only error logs are displayed.

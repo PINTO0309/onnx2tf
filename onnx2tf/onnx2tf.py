@@ -99,6 +99,7 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
+    disable_model_save: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -418,6 +419,10 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
         The absolute tolerance parameter.\n
         Default: 1e-4
+
+    disable_model_save: Optional[bool]
+        Does not save the converted model. For CIs RAM savings.\n
+        Default: False
 
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
@@ -847,6 +852,7 @@ def convert(
                     for ops_output_name, onnx_output_for_validation \
                         in zip(full_ops_output_names, onnx_outputs_for_validation)
             }
+            del onnx_outputs_for_validation
         except Exception as ex:
             print(
                 f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
@@ -901,6 +907,10 @@ def convert(
             print('')
             model.summary(line_length=140)
             print('')
+
+        # The process ends normally without saving the model.
+        if disable_model_save:
+            return model
 
         # Output in Keras h5 format
         if output_h5:
@@ -2078,6 +2088,12 @@ def main():
             'Default: 1e-4'
     )
     parser.add_argument(
+        '-dms',
+        '--disable_model_save',
+        action='store_true',
+        help='Does not save the converted model. For CIs RAM savings.'
+    )
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -2168,6 +2184,7 @@ def main():
         check_onnx_tf_outputs_elementwise_close_rtol=args.check_onnx_tf_outputs_elementwise_close_rtol,
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
+        disable_model_save=args.disable_model_save,
         non_verbose=args.non_verbose,
     )
 
