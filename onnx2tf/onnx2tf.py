@@ -830,37 +830,36 @@ def convert(
                 full_ops_output_names_sub.append(graph_node_output.name)
             full_ops_output_names.extend(full_ops_output_names_sub)
         # Models with errors during inference in onnxruntime skip dummy inference.
-        if not disable_strict_mode:
-            try:
-                onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
-                    onnx_graph=onnx_graph,
-                    output_names=full_ops_output_names,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    tf_layers_dict=tf_layers_dict,
-                )
-                """
-                onnx_tensor_infos_for_validation:
-                    {
-                        onnx_output_name: np.ndarray,
-                        onnx_output_name: np.ndarray,
-                        onnx_output_name: np.ndarray,
-                                    :
-                    }
-                """
-                onnx_tensor_infos_for_validation = {
-                    ops_output_name: onnx_output_for_validation \
-                        for ops_output_name, onnx_output_for_validation \
-                            in zip(full_ops_output_names, onnx_outputs_for_validation)
+        try:
+            onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=full_ops_output_names,
+                test_data_nhwc=test_data_nhwc,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                tf_layers_dict=tf_layers_dict,
+            )
+            """
+            onnx_tensor_infos_for_validation:
+                {
+                    onnx_output_name: np.ndarray,
+                    onnx_output_name: np.ndarray,
+                    onnx_output_name: np.ndarray,
+                                :
                 }
-                del onnx_outputs_for_validation
-            except Exception as ex:
-                print(
-                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
-                    f'The optimization process for shape estimation is skipped ' +
-                    f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
-                )
-                print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
+            """
+            onnx_tensor_infos_for_validation = {
+                ops_output_name: onnx_output_for_validation \
+                    for ops_output_name, onnx_output_for_validation \
+                        in zip(full_ops_output_names, onnx_outputs_for_validation)
+            }
+            del onnx_outputs_for_validation
+        except Exception as ex:
+            print(
+                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                f'The optimization process for shape estimation is skipped ' +
+                f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
+            )
+            print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
         additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
