@@ -23,8 +23,7 @@ RUN pip install pip -U \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
     && pip install psutil==5.9.5 \
-    && pip install onnxruntime==1.15.0 \
-    && python -m pip cache purge
+    && pip install onnxruntime==1.15.0
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
