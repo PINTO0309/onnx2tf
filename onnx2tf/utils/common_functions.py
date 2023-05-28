@@ -4,6 +4,7 @@ import io
 import sys
 import copy
 import json
+import psutil
 import random
 import requests
 random.seed(0)
@@ -3517,8 +3518,11 @@ def dummy_onnx_inference(
 
     new_onnx_graph = gs.export_onnx(gs_graph)
     serialized_graph = onnx._serialize(new_onnx_graph)
+    sess_options = ort.SessionOptions()
+    sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
     onnx_session = ort.InferenceSession(
         path_or_bytes=serialized_graph,
+        sess_options=sess_options,
         providers=['CPUExecutionProvider'],
     )
     onnx_inputs = gs_graph.inputs

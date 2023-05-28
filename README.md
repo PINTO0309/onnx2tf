@@ -217,11 +217,12 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - onnx==1.13.1
-- onnxruntime==1.13.1 See: [When using onnxruntime v1.14.1, all output values of Sigmoid are Nan. #14885](https://github.com/microsoft/onnxruntime/issues/14885)
+- onnxruntime==1.15.0
 - onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.13.0rc0
+- psutil==5.9.5
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
   # Custom flatc binary for Ubuntu 20.04+
@@ -244,18 +245,19 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.12.7
+  ghcr.io/pinto0309/onnx2tf:1.13.0
 
   or
 
   $ pip install -U onnx==1.13.1 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
-  && pip install -U onnxruntime==1.13.1 \
+  && pip install -U onnxruntime==1.15.0 \
   && pip install -U onnxsim==0.4.17 \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
-  && pip install -U h5py==3.7.0
+  && pip install -U h5py==3.7.0 \
+  && pip install -U psutil==5.9.5
 
   or
 
@@ -286,12 +288,13 @@ or
     && python3.9 -m pip install -U onnx==1.13.1 \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
-    && python3.9 -m pip install -U onnxruntime==1.13.1 \
+    && python3.9 -m pip install -U onnxruntime==1.15.0 \
     && python3.9 -m pip install -U onnxsim==0.4.17 \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
     && python3.9 -m pip install -U protobuf==3.20.3 \
-    && python3.9 -m pip install -U h5py==3.7.0
+    && python3.9 -m pip install -U h5py==3.7.0 \
+    && python3.9 -m pip install -U psutil==5.9.5
   ```
 
 ### 2. Run test
