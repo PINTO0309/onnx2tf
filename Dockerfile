@@ -12,16 +12,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install -U onnx==1.13.1 \
-    && pip install -U onnxsim==0.4.17 \
-    && python3 -m pip install -U onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U onnx2tf \
-    && pip install -U onnx2tf \
-    && pip install -U simple_onnx_processing_tools \
+    && pip install onnx==1.13.1 \
+    && pip install onnxsim==0.4.17 \
+    && pip install nvidia-pyindex \
+    && pip install onnx_graphsurgeon \
+    && pip install onnx2tf \
+    && pip install onnx2tf \
+    && pip install simple_onnx_processing_tools \
     && pip install tensorflow==2.13.0rc0 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
-    && pip install -U onnxruntime==1.13.1 \
+    && pip install psutil==5.9.5 \
+    && pip install onnxruntime==1.15.0 \
     && python -m pip cache purge
 
 # Re-release flatc with some customizations of our own to address
