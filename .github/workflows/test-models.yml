@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   conversion-test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - name: Check space before cleanup
       run: df -h
