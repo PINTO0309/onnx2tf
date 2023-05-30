@@ -18,7 +18,6 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
-    transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
