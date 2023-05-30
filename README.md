@@ -242,6 +242,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ### 1. Install
 - HostPC
   ```
+  $ docker login ghcr.io
+  Username (xxxx): {Enter}
+  Password: {Personal Access Token}
+  Login Succeeded
+  
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
