@@ -400,21 +400,25 @@ def make_node(
             else:
                 onnx_slice_dims_count = len(starts)
 
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                stridedslice_with_flexing_deterrence(
-                    input_tensor=input_tensor,
-                    begin=begin_,
-                    end=end_,
-                    strides=strides_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                    ignore_axes=axes,
-                    compression_defult_value=COMPRESSION_DEFAULT_VALUE,
-                    onnx_slice_dims_count=onnx_slice_dims_count,
-                    output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
-                    name=graph_node.name,
-                    **kwargs,
-                )
+            if onnx_slice_dims_count > COMPRESSION_DEFAULT_VALUE:
+                ignore_axes = axes
+                if axes is None:
+                    ignore_axes = [idx for idx in range(input_tensor_rank)]
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    stridedslice_with_flexing_deterrence(
+                        input_tensor=input_tensor,
+                        begin=begin_,
+                        end=end_,
+                        strides=strides_,
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
+                        ignore_axes=ignore_axes,
+                        compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                        onnx_slice_dims_count=onnx_slice_dims_count,
+                        output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
+                        name=graph_node.name,
+                        **kwargs,
+                    )
     else:
         # OP replacement
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
