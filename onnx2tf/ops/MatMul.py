@@ -64,6 +64,8 @@ def make_node(
     onnx_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -141,118 +143,119 @@ def make_node(
                 name=target_name,
             )
 
-    tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
-    if len(input_tensor_1.shape) == 3:
-        tensor_1_candidate_for_transpositions = tensor_1_candidate_for_transpositions[:2]
-    tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
-    if len(input_tensor_2.shape) == 3:
-        tensor_2_candidate_for_transpositions = tensor_2_candidate_for_transpositions[:2]
+    if not disable_strict_mode:
+        tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+        if len(input_tensor_1.shape) == 3:
+            tensor_1_candidate_for_transpositions = tensor_1_candidate_for_transpositions[:2]
+        tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+        if len(input_tensor_2.shape) == 3:
+            tensor_2_candidate_for_transpositions = tensor_2_candidate_for_transpositions[:2]
 
-    for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
-        for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
-            try:
-                # Build TF dummy model
-                input_1 = tf.keras.Input(
-                    shape=validation_data_1.shape[1:],
-                    batch_size=validation_data_1.shape[0] \
-                        if isinstance(validation_data_1.shape[0], int) else None,
-                    name='dummy_input_1',
-                    dtype=validation_data_1.dtype,
-                )
-                input_2 = tf.keras.Input(
-                    shape=validation_data_2.shape[1:],
-                    batch_size=validation_data_2.shape[0] \
-                        if isinstance(validation_data_2.shape[0], int) else None,
-                    name='dummy_input_2',
-                    dtype=validation_data_2.dtype,
-                )
-                dummy_matmul = define_matmul(
-                    target_input_tensor_1=input_1,
-                    target_perm_1=list(tensor_1_candidate_for_transposition),
-                    target_input_tensor_2=input_2,
-                    target_perm_2=list(tensor_2_candidate_for_transposition),
-                    taget_output_dtype=output_dtype,
-                    target_name=graph_node.name,
-                    **kwargs
-                )
-                # Verify that the output shape matches that of ONNX
-                # If the combination of each value of a dimension is not correct,
-                # invalidate the normal processing judgment.
-                onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
-                matmul_output_shapes = list(dummy_matmul.shape)
-                matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
-                if onnx_output_shape_prod != matmul_output_shape_prod:
-                    del input_1
-                    del input_2
-                    del dummy_matmul
-                    continue
-
-                # Perform simple accuracy verification
-                # Terminate when the error is less than 1e-3
-                if onnx_tensor_infos:
-                    try:
-                        # Search for the axis with the smallest error
-                        val_model = tf.keras.Model(
-                            inputs=[
-                                input_1,
-                                input_2,
-                            ],
-                            outputs=[
-                                dummy_matmul,
-                            ],
-                        )
-
-                        # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                            model=val_model,
-                            inputs=[
-                                input_1,
-                                input_2,
-                            ],
-                            verification_datas=[
-                                validation_data_1,
-                                validation_data_2,
-                            ],
-                        )
+        for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                try:
+                    # Build TF dummy model
+                    input_1 = tf.keras.Input(
+                        shape=validation_data_1.shape[1:],
+                        batch_size=validation_data_1.shape[0] \
+                            if isinstance(validation_data_1.shape[0], int) else None,
+                        name='dummy_input_1',
+                        dtype=validation_data_1.dtype,
+                    )
+                    input_2 = tf.keras.Input(
+                        shape=validation_data_2.shape[1:],
+                        batch_size=validation_data_2.shape[0] \
+                            if isinstance(validation_data_2.shape[0], int) else None,
+                        name='dummy_input_2',
+                        dtype=validation_data_2.dtype,
+                    )
+                    dummy_matmul = define_matmul(
+                        target_input_tensor_1=input_1,
+                        target_perm_1=list(tensor_1_candidate_for_transposition),
+                        target_input_tensor_2=input_2,
+                        target_perm_2=list(tensor_2_candidate_for_transposition),
+                        taget_output_dtype=output_dtype,
+                        target_name=graph_node.name,
+                        **kwargs
+                    )
+                    # Verify that the output shape matches that of ONNX
+                    # If the combination of each value of a dimension is not correct,
+                    # invalidate the normal processing judgment.
+                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                    matmul_output_shapes = list(dummy_matmul.shape)
+                    matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
+                    if onnx_output_shape_prod != matmul_output_shape_prod:
                         del input_1
                         del input_2
                         del dummy_matmul
-                        del val_model
+                        continue
 
-                        # Validation
-                        onnx_tf_output_pairs = {
-                            (oi[0], ti[0]): (oi[1], ti[1]) \
-                                for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
-                        }
-                        """
-                        check_results: Dict[str, List[np.ndarray, int, float|int]]
-                            {
-                                onnx_output_name: [
-                                    onnx_tensor,
-                                    matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
-                                    max_abs_err,
-                                ]
+                    # Perform simple accuracy verification
+                    # Terminate when the error is less than 1e-3
+                    if onnx_tensor_infos:
+                        try:
+                            # Search for the axis with the smallest error
+                            val_model = tf.keras.Model(
+                                inputs=[
+                                    input_1,
+                                    input_2,
+                                ],
+                                outputs=[
+                                    dummy_matmul,
+                                ],
+                            )
+
+                            # TF dummy inference
+                            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                                model=val_model,
+                                inputs=[
+                                    input_1,
+                                    input_2,
+                                ],
+                                verification_datas=[
+                                    validation_data_1,
+                                    validation_data_2,
+                                ],
+                            )
+                            del input_1
+                            del input_2
+                            del dummy_matmul
+                            del val_model
+
+                            # Validation
+                            onnx_tf_output_pairs = {
+                                (oi[0], ti[0]): (oi[1], ti[1]) \
+                                    for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
                             }
-                        """
-                        check_results = onnx_tf_tensor_validation(
-                            output_pairs=onnx_tf_output_pairs,
-                            rtol=0.0,
-                            atol=0.0,
-                        )
-                        result_err = sum([val[2] for val in check_results.values()])
-                        if result_err < min_abs_err:
-                            min_abs_err = result_err
-                            min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
-                            min_abs_err_perm_2 = list(tensor_2_candidate_for_transposition)
-                            if min_abs_err < 1e-3:
-                                break
-                    except Exception as ex1:
-                        pass
-            except Exception as ex2:
-                pass
-        else:
-            continue
-        break
+                            """
+                            check_results: Dict[str, List[np.ndarray, int, float|int]]
+                                {
+                                    onnx_output_name: [
+                                        onnx_tensor,
+                                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                                        max_abs_err,
+                                    ]
+                                }
+                            """
+                            check_results = onnx_tf_tensor_validation(
+                                output_pairs=onnx_tf_output_pairs,
+                                rtol=0.0,
+                                atol=0.0,
+                            )
+                            result_err = sum([val[2] for val in check_results.values()])
+                            if result_err < min_abs_err:
+                                min_abs_err = result_err
+                                min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
+                                min_abs_err_perm_2 = list(tensor_2_candidate_for_transposition)
+                                if min_abs_err < 1e-3:
+                                    break
+                        except Exception as ex1:
+                            pass
+                except Exception as ex2:
+                    pass
+            else:
+                continue
+            break
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         define_matmul(
