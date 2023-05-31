@@ -241,6 +241,9 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ## Sample Usage
 ### 1. Install
 - HostPC
+  - When using Docker, see `Authenticating to the Container registry`
+
+    https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
   ```
   $ docker login ghcr.io
   Username (xxxx): {Enter}
