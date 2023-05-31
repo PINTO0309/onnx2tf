@@ -385,8 +385,21 @@ def make_node(
                 end_mask=end_mask_,
                 name=graph_node.name,
             )
-        # FlexStridedSlice generation suppression process
-        if input_tensor.shape != tf.TensorShape(None):
+
+        check_input_shape = list(input_tensor_shape)
+        check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
+        if None not in check_input_shape \
+            and None not in check_output_shape \
+            and check_input_shape == check_output_shape:
+            # Disable useless slice
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.identity(
+                    input=input_tensor,
+                    name=graph_node.name,
+                )
+
+        elif input_tensor.shape != tf.TensorShape(None):
+            # FlexStridedSlice generation suppression process
             COMPRESSION_DEFAULT_VALUE = 5
             onnx_slice_dims_count = 0
             if isinstance(starts, np.ndarray):
