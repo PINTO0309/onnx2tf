@@ -2047,14 +2047,15 @@ The above differences often cannot be dealt with by simply converting the model 
 4. [tensorflowjs_converter](https://github.com/tensorflow/tfjs)
 5. [coremltools](https://github.com/apple/coremltools)
 6. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
-7. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
-8. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
-9. [onnx](https://github.com/onnx/onnx)
-10. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-11. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
-12. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
-13. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
-14. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
+7. [tflite-input-output-rewriter](https://github.com/PINTO0309/tflite-input-output-rewriter)
+8. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
+9. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
+10. [onnx](https://github.com/onnx/onnx)
+11. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
+12. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
+13. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
+14. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
+15. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
