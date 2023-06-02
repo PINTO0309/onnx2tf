@@ -1,0 +1,49 @@
+{
+  "model": "https://github.com/PINTO0309/onnx2tf/issues/381",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/381",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/encoder/stage2/features.5/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.5/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.6/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.6/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.7/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.7/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.8/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.8/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.9/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.9/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.10/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.10/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "/encoder/stage2/features.11/Gather_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/stage2/features.11/Gather_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    }
+  ]
+}
