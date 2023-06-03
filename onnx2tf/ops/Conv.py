@@ -1,7 +1,10 @@
+import sys
+import copy
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
 import tensorflow as tf
 from tensorflow.python.keras.layers import (
     Conv1D,
@@ -18,6 +21,8 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     dummy_tf_inference,
     transpose_with_flexing_deterrence,
+    get_tf_model_inputs,
+    onnx_tf_tensor_validation,
 )
 from typing import Any, Dict
 from onnx2tf.utils.colors import Color
@@ -87,6 +92,10 @@ def make_node(
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
     disable_group_convolution: bool = kwargs['disable_group_convolution']
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
+    custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -111,6 +120,7 @@ def make_node(
         dim if isinstance(dim, int) else None for dim in input_tensor_shape
     ]
 
+    all_axes_same = False
     if onnx_input_shape is not None \
         and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
@@ -142,7 +152,57 @@ def make_node(
                     perm=[0,2,3,4,1],
                     **kwargs,
                 )
+        else:
+            all_axes_same = True
+            # Get the output tensor of one previous OP of TensorFlow only once
+            if not disable_strict_mode:
+                tf_model_inputs = get_tf_model_inputs(
+                    tf_layers_dict=tf_layers_dict,
+                )
+                val_model = None
+                if not isinstance(input_tensor, np.ndarray):
+                    val_model = tf.keras.Model(
+                        inputs=tf_model_inputs,
+                        outputs=[
+                            input_tensor,
+                        ],
+                    )
+                else:
+                    pass
 
+            # TF dummy inference
+            #   Get the output tensor of the previous layer of MatMul
+            #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
+            #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
+            tf_pre_tensor_infos = {}
+            if not disable_strict_mode:
+                try:
+                    tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+                        model=val_model,
+                        inputs=tf_model_inputs,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    )
+                except Exception as ex:
+                    pass
+                del val_model
+
+            # Get np.ndarray for validation
+            validation_data = None
+            if not disable_strict_mode:
+                if len(tf_pre_tensor_infos) == 1:
+                    if not isinstance(input_tensor, np.ndarray):
+                        validation_data = list(tf_pre_tensor_infos.values())[0]
+                    else:
+                        validation_data = copy.deepcopy(input_tensor)
+
+                # Get ONNX inference results
+                onnx_tensor_infos = None
+                if onnx_tensor_infos_for_validation is not None:
+                    onnx_tensor_infos = {
+                        graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+                    }
+                    del onnx_tensor_infos_for_validation
     """
     Conv1D
     Conv2D
@@ -214,24 +274,171 @@ def make_node(
         if not isinstance(input_bias, np.ndarray) \
             else tf.convert_to_tensor(input_bias)
 
+
+    def conv_bias(input_tensor, input_weights, strides, pad_mode, dilations, input_bias):
+        return \
+            tf.add(
+                tf.nn.convolution(
+                    input=input_tensor,
+                    filters=input_weights,
+                    strides=strides,
+                    padding=pad_mode,
+                    dilations=dilations,
+                ),
+                input_bias,
+            )
+
+    def group_conv1d_bias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor, input_bias):
+        return \
+            tf.add(
+                x=Conv1D(
+                    filters=input_weights.shape[-1],
+                    kernel_size=input_weights.shape[:1],
+                    strides=strides,
+                    padding=pad_mode.lower(),
+                    dilation_rate=dilations,
+                    groups=group,
+                    use_bias=False,
+                    kernel_initializer=tf.keras.initializers.constant(input_weights),
+                    name=graph_node.name,
+                )(input_tensor),
+                y=input_bias,
+            )
+
+    def group_conv2d_bias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor, input_bias):
+        return \
+            tf.add(
+                x=Conv2D(
+                    filters=input_weights.shape[-1],
+                    kernel_size=input_weights.shape[:2],
+                    strides=strides,
+                    padding=pad_mode.lower(),
+                    dilation_rate=dilations,
+                    groups=group,
+                    use_bias=False,
+                    kernel_initializer=tf.keras.initializers.constant(input_weights),
+                    name=graph_node.name,
+                )(input_tensor),
+                y=input_bias,
+            )
+
+    def sep_conv_bias(input_tensor, input_weights, pad_mode, strides, dilations, input_bias):
+        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        return \
+            tf.add(
+                tf.concat(
+                    values=[
+                        tf.nn.convolution(
+                            input=input_tensor_split,
+                            filters=weight_split,
+                            padding=pad_mode,
+                            strides=strides,
+                            dilations=dilations,
+                        ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                    ],
+                    axis=-1
+                ),
+                input_bias,
+            )
+
+    def depth_conv_bias(input_tensor, input_weights, pad_mode, strides, dilations, input_bias):
+        return \
+            tf.add(
+                tf.nn.depthwise_conv2d(
+                    input=input_tensor,
+                    filter=input_weights,
+                    padding=pad_mode,
+                    strides=strides,
+                    dilations=dilations,
+                ),
+                input_bias,
+            )
+
+    def conv_nobias(input_tensor, input_weights, strides, pad_mode, dilations):
+        return \
+            tf.nn.convolution(
+                input=input_tensor,
+                filters=input_weights,
+                strides=strides,
+                padding=pad_mode,
+                dilations=dilations,
+            )
+
+    def group_conv1d_nobias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor):
+        return \
+            Conv1D(
+                filters=input_weights.shape[-1],
+                kernel_size=input_weights.shape[:1],
+                strides=strides,
+                padding=pad_mode.lower(),
+                dilation_rate=dilations,
+                groups=group,
+                use_bias=False,
+                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                name=graph_node.name,
+            )(input_tensor)
+
+    def group_conv2d_nobias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor):
+        return \
+            Conv2D(
+                filters=input_weights.shape[-1],
+                kernel_size=input_weights.shape[:2],
+                strides=strides,
+                padding=pad_mode.lower(),
+                dilation_rate=dilations,
+                groups=group,
+                use_bias=False,
+                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                name=graph_node.name,
+            )(input_tensor)
+
+    def sep_conv_nobias(input_tensor, input_weights, pad_mode, strides, dilations):
+        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
+        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        return \
+            tf.concat(
+                values=[
+                    tf.nn.convolution(
+                        input=input_tensor_split,
+                        filters=weight_split,
+                        padding=pad_mode,
+                        strides=strides,
+                        dilations=dilations,
+                    ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
+                ],
+                axis=-1
+            )
+
+    def depth_conv_nobias(input_tensor, input_weights, pad_mode, strides, dilations):
+        return \
+            tf.nn.depthwise_conv2d(
+                input=input_tensor,
+                filter=input_weights,
+                padding=pad_mode,
+                strides=strides,
+                dilations=dilations,
+            )
+
+
     # Conv
     tf_op_type = None
+    error_check_tf_op_type = ''
     if input_bias is not None:
         if not depthwise:
             if group == 1:
                 # Conv1D, Conv2D, Conv3D - Bias Add
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.add(
-                        tf.nn.convolution(
-                            input=input_tensor,
-                            filters=input_weights,
-                            strides=strides,
-                            padding=pad_mode,
-                            dilations=dilations,
-                        ),
+                    conv_bias(
+                        input_tensor,
+                        input_weights,
+                        strides,
+                        pad_mode,
+                        dilations,
                         input_bias,
                     )
                 tf_op_type = tf.nn.convolution
+                error_check_tf_op_type = 'conv_bias'
 
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
@@ -244,39 +451,33 @@ def make_node(
                 # GroupedConvolution - Conv1D, Conv2D, Conv3D - Bias Add
                 if kernel_size == 1 and not disable_group_convolution:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.add(
-                            x=Conv1D(
-                                filters=input_weights.shape[-1],
-                                kernel_size=input_weights.shape[:1],
-                                strides=strides,
-                                padding=pad_mode.lower(),
-                                dilation_rate=dilations,
-                                groups=group,
-                                use_bias=False,
-                                kernel_initializer=tf.keras.initializers.constant(input_weights),
-                                name=graph_node.name,
-                            )(input_tensor),
-                            y=input_bias,
+                        group_conv1d_bias(
+                            input_weights,
+                            strides,
+                            pad_mode,
+                            dilations,
+                            group,
+                            graph_node,
+                            input_tensor,
+                            input_bias,
                         )
                     tf_op_type = 'GroupedConvolution1D'
+                    error_check_tf_op_type = 'group_conv1d_bias'
 
                 elif kernel_size == 2 and not disable_group_convolution:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.add(
-                            x=Conv2D(
-                                filters=input_weights.shape[-1],
-                                kernel_size=input_weights.shape[:2],
-                                strides=strides,
-                                padding=pad_mode.lower(),
-                                dilation_rate=dilations,
-                                groups=group,
-                                use_bias=False,
-                                kernel_initializer=tf.keras.initializers.constant(input_weights),
-                                name=graph_node.name,
-                            )(input_tensor),
-                            y=input_bias,
+                        group_conv2d_bias(
+                            input_weights,
+                            strides,
+                            pad_mode,
+                            dilations,
+                            group,
+                            graph_node,
+                            input_tensor,
+                            input_bias,
                         )
                     tf_op_type = 'GroupedConvolution2D'
+                    error_check_tf_op_type = 'group_conv2d_bias'
 
                 # TODO: As of TensorFlow Lite v2.10.0, GroupedConvolution3D is converted to FlexConv3D.
                 # TODO: Uncomment out when TensorFlow Lite officially supports GroupedConvolution3D.
@@ -297,58 +498,53 @@ def make_node(
                 #             y=input_bias,
                 #         )
                 #     tf_op_type = 'GroupedConvolution3D'
+                #     error_check_tf_op_type = 'group_conv3d_bias'
 
                 else:
                     # SeparableConv
                     input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
                     weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.add(
-                            tf.concat(
-                                values=[
-                                    tf.nn.convolution(
-                                        input=input_tensor_split,
-                                        filters=weight_split,
-                                        padding=pad_mode,
-                                        strides=strides,
-                                        dilations=dilations,
-                                    ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
-                                ],
-                                axis=-1
-                            ),
+                        sep_conv_bias(
+                            input_tensor,
+                            input_weights,
+                            pad_mode,
+                            strides,
+                            dilations,
                             input_bias,
                         )
                     tf_op_type = tf.nn.convolution
+                    error_check_tf_op_type = 'sep_conv_bias'
 
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.add(
-                    tf.nn.depthwise_conv2d(
-                        input=input_tensor,
-                        filter=input_weights,
-                        padding=pad_mode,
-                        strides=strides,
-                        dilations=dilations,
-                    ),
+                depth_conv_bias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
                     input_bias,
                 )
             tf_op_type = tf.nn.depthwise_conv2d
+            error_check_tf_op_type = 'depth_conv_bias'
 
     else:
         if not depthwise:
             if group == 1:
                 # Conv1D, Conv2D, Conv3D - No Bias
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.nn.convolution(
-                        input=input_tensor,
-                        filters=input_weights,
-                        strides=strides,
-                        padding=pad_mode,
-                        dilations=dilations,
+                    conv_nobias(
+                        input_tensor,
+                        input_weights,
+                        strides,
+                        pad_mode,
+                        dilations,
                     )
                 tf_op_type = tf.nn.convolution
+                error_check_tf_op_type = 'conv_nobias'
 
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
@@ -361,33 +557,31 @@ def make_node(
                 # GroupedConvolution - Conv1D, Conv2D, Conv3D - No Bias
                 if kernel_size == 1 and not disable_group_convolution:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        Conv1D(
-                            filters=input_weights.shape[-1],
-                            kernel_size=input_weights.shape[:1],
-                            strides=strides,
-                            padding=pad_mode.lower(),
-                            dilation_rate=dilations,
-                            groups=group,
-                            use_bias=False,
-                            kernel_initializer=tf.keras.initializers.constant(input_weights),
-                            name=graph_node.name,
-                        )(input_tensor)
+                        group_conv1d_nobias(
+                            input_weights,
+                            strides,
+                            pad_mode,
+                            dilations,
+                            group,
+                            graph_node,
+                            input_tensor,
+                        )
                     tf_op_type = 'GroupedConvolution1D'
+                    error_check_tf_op_type = 'group_conv1d_nobias'
 
                 elif kernel_size == 2 and not disable_group_convolution:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        Conv2D(
-                            filters=input_weights.shape[-1],
-                            kernel_size=input_weights.shape[:2],
-                            strides=strides,
-                            padding=pad_mode.lower(),
-                            dilation_rate=dilations,
-                            groups=group,
-                            use_bias=False,
-                            kernel_initializer=tf.keras.initializers.constant(input_weights),
-                            name=graph_node.name,
-                        )(input_tensor)
+                        group_conv2d_nobias(
+                            input_weights,
+                            strides,
+                            pad_mode,
+                            dilations,
+                            group,
+                            graph_node,
+                            input_tensor,
+                        )
                     tf_op_type = 'GroupedConvolution2D'
+                    error_check_tf_op_type = 'group_conv2d_nobias'
 
                 # TODO: As of TensorFlow Lite v2.10.0, GroupedConvolution3D is converted to FlexConv3D.
                 # TODO: Uncomment out when TensorFlow Lite officially supports GroupedConvolution3D.
@@ -405,38 +599,320 @@ def make_node(
                 #             name=graph_node.name,
                 #         )(input_tensor)
                 #     tf_op_type = 'GroupedConvolution3D'
+                #     error_check_tf_op_type = 'group_conv3d_nobias'
 
                 else:
                     # SeparableConv
                     input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
                     weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                        tf.concat(
-                            values=[
-                                tf.nn.convolution(
-                                    input=input_tensor_split,
-                                    filters=weight_split,
-                                    padding=pad_mode,
-                                    strides=strides,
-                                    dilations=dilations,
-                                ) for (input_tensor_split, weight_split) in zip(input_tensor_splits, weight_splits)
-                            ],
-                            axis=-1
+                        sep_conv_nobias(
+                            input_tensor,
+                            input_weights,
+                            pad_mode,
+                            strides,
+                            dilations,
                         )
                     tf_op_type = tf.nn.convolution
+                    error_check_tf_op_type = 'sep_conv_nobias'
 
         else:
             # DepthwiseConv2D
             strides = [1] + strides + [1]
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.nn.depthwise_conv2d(
-                    input=input_tensor,
-                    filter=input_weights,
-                    padding=pad_mode,
-                    strides=strides,
-                    dilations=dilations,
+                depth_conv_nobias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
                 )
             tf_op_type = tf.nn.depthwise_conv2d
+            error_check_tf_op_type = 'depth_conv_nobias'
+
+    # Automatic correction of accuracy degradation
+    min_abs_err = sys.maxsize
+    min_abs_err_perm_1: int = [idx for idx in range(input_tensor_rank)]
+
+    if not disable_strict_mode and all_axes_same:
+        if onnx_tensor_infos is not None:
+            tensor_1_candidate_for_transpositions = list(itertools.permutations(range(input_tensor_rank)))
+            tensor_1_candidate_for_transpositions = [
+                trans_perm for trans_perm in tensor_1_candidate_for_transpositions \
+                    if trans_perm[0] == 0
+            ]
+            # Search for the axis with the smallest error
+            for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+                try:
+                    target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
+                    # Build TF dummy model
+                    input = tf.keras.Input(
+                        shape=target_validation_data.shape[1:],
+                        batch_size=target_validation_data.shape[0] \
+                            if isinstance(target_validation_data.shape[0], int) else None,
+                        name='dummy_input',
+                        dtype=target_validation_data.dtype,
+                    )
+                    # op_type
+                    tmp_conv_op = None
+                    if error_check_tf_op_type == 'conv_bias':
+                        tmp_conv_op = \
+                            conv_bias(
+                                input,
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                                input_bias,
+                            )
+                    elif error_check_tf_op_type == 'group_conv1d_bias':
+                        tmp_conv_op = \
+                            group_conv1d_bias(
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                                group,
+                                graph_node,
+                                input,
+                                input_bias,
+                            )
+                    elif error_check_tf_op_type == 'group_conv2d_bias':
+                        tmp_conv_op = \
+                            group_conv2d_bias(
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                                group,
+                                graph_node,
+                                input,
+                                input_bias,
+                            )
+                    elif error_check_tf_op_type == 'sep_conv_bias':
+                        tmp_conv_op = \
+                            sep_conv_bias(
+                                input,
+                                input_weights,
+                                pad_mode,
+                                strides,
+                                dilations,
+                                input_bias,
+                            )
+                    elif error_check_tf_op_type == 'depth_conv_bias':
+                        tmp_conv_op = \
+                            depth_conv_bias(
+                                input,
+                                input_weights,
+                                pad_mode,
+                                strides,
+                                dilations,
+                                input_bias,
+                            )
+                    elif error_check_tf_op_type == 'conv_nobias':
+                        tmp_conv_op = \
+                            conv_nobias(
+                                input,
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                            )
+                    elif error_check_tf_op_type == 'group_conv1d_nobias':
+                        tmp_conv_op = \
+                            group_conv1d_nobias(
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                                group,
+                                graph_node,
+                                input,
+                            )
+                    elif error_check_tf_op_type == 'group_conv2d_nobias':
+                        tmp_conv_op = \
+                            group_conv2d_nobias(
+                                input_weights,
+                                strides,
+                                pad_mode,
+                                dilations,
+                                group,
+                                graph_node,
+                                input,
+                            )
+                    elif error_check_tf_op_type == 'sep_conv_nobias':
+                        tmp_conv_op = \
+                            sep_conv_nobias(
+                                input,
+                                input_weights,
+                                pad_mode,
+                                strides,
+                                dilations,
+                            )
+                    elif error_check_tf_op_type == 'depth_conv_nobias':
+                        tmp_conv_op = \
+                            depth_conv_nobias(
+                                input,
+                                input_weights,
+                                pad_mode,
+                                strides,
+                                dilations,
+                            )
+                    # define model
+                    val_model = tf.keras.Model(
+                        inputs=[
+                            input,
+                        ],
+                        outputs=[
+                            tmp_conv_op
+                        ],
+                    )
+                    # TF dummy inference
+                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                        model=val_model,
+                        inputs=[
+                            input,
+                        ],
+                        verification_datas=[
+                            target_validation_data,
+                        ],
+                    )
+                    del input
+                    del val_model
+
+                    # Validation
+                    onnx_tf_output_pairs = {
+                        (oi[0], ti[0]): (oi[1], ti[1]) \
+                            for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                    }
+                    """
+                    check_results: Dict[str, List[np.ndarray, int, float|int]]
+                        {
+                            onnx_output_name: [
+                                onnx_tensor,
+                                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                                max_abs_err,
+                            ]
+                        }
+                    """
+                    check_results = onnx_tf_tensor_validation(
+                        output_pairs=onnx_tf_output_pairs,
+                        rtol=0.0,
+                        atol=0.0,
+                    )
+                    result_err = sum([val[2] for val in check_results.values()])
+                    if result_err < min_abs_err:
+                        min_abs_err = result_err
+                        min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
+                        if min_abs_err < 1e-3:
+                            break
+                except Exception as ex:
+                    pass
+
+        input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
+        if error_check_tf_op_type == 'conv_bias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                conv_bias(
+                    input_tensor,
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                    input_bias,
+                )
+        elif error_check_tf_op_type == 'group_conv1d_bias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                group_conv1d_bias(
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                    group,
+                    graph_node,
+                    input_tensor,
+                    input_bias,
+                )
+        elif error_check_tf_op_type == 'group_conv2d_bias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                group_conv2d_bias(
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                    group,
+                    graph_node,
+                    input_tensor,
+                    input_bias,
+                )
+        elif error_check_tf_op_type == 'sep_conv_bias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                sep_conv_bias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
+                    input_bias,
+                )
+        elif error_check_tf_op_type == 'depth_conv_bias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                depth_conv_bias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
+                    input_bias,
+                )
+        elif error_check_tf_op_type == 'conv_nobias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                conv_nobias(
+                    input_tensor,
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                )
+        elif error_check_tf_op_type == 'group_conv1d_nobias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                group_conv1d_nobias(
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                    group,
+                    graph_node,
+                    input_tensor,
+                )
+        elif error_check_tf_op_type == 'group_conv2d_nobias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                group_conv2d_nobias(
+                    input_weights,
+                    strides,
+                    pad_mode,
+                    dilations,
+                    group,
+                    graph_node,
+                    input_tensor,
+                )
+        elif error_check_tf_op_type == 'sep_conv_nobias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                sep_conv_nobias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
+                )
+        elif error_check_tf_op_type == 'depth_conv_nobias':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                depth_conv_nobias(
+                    input_tensor,
+                    input_weights,
+                    pad_mode,
+                    strides,
+                    dilations,
+                )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
