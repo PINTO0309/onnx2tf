@@ -253,7 +253,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.13.6
+  ghcr.io/pinto0309/onnx2tf:1.13.7
 
   or
 
@@ -319,8 +319,8 @@ $ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#11-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#12-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#12-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#13-conversion-to-coreml
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -508,7 +508,44 @@ print("[TFLite] Model Predictions:", tf_lite_output)
 ```
 ![image](https://user-images.githubusercontent.com/33194443/223318437-b89e56c1-4376-4e91-8c0c-08d29a604637.png)
 
-### 5. Embed metadata in tflite
+### 5. Rewriting of tflite input/output OP names and `signature_defs`
+If you do not like tflite input/output names such as `serving_default_*:0` or `StatefulPartitionedCall:0`, you can rewrite them using the following tools and procedures. It can be rewritten from any name to any name, so it does not have to be `serving_default_*:0` or `StatefulPartitionedCall:0`.
+
+https://github.com/PINTO0309/tflite-input-output-rewriter
+
+```bash
+# Install custom flatc
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && sudo chmod +x flatc \
+    && sudo mv flatc /usr/bin/ \
+    && rm flatc.tar.gz
+
+# Path check
+$ which flatc
+/usr/bin/flatc
+
+# Install tfliteiorewriter
+$ pip install -U tfliteiorewriter
+```
+- Before
+
+  ![01](https://github.com/PINTO0309/onnx2tf/assets/33194443/967ea56f-f771-4ccd-bdad-e4db41710396)
+
+  ```bash
+  $ tfliteiorewriter \
+  -i xxxx.tflite \
+  -r serving_default_input_1:0 aaa \
+  -r StatefulPartitionedCall:0 bbb
+  ```
+  ![02](https://github.com/PINTO0309/onnx2tf/assets/33194443/841ce41e-dd3e-4156-883d-888d89e507c3)
+
+- After
+
+  ![03](https://github.com/PINTO0309/onnx2tf/assets/33194443/f7b7be16-c69c-4593-b8b5-e1cc23e61be9)
+
+
+### 6. Embed metadata in tflite
 If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as I do not want to write byte arrays to the tflite file that are not essential to its operation.
 
 - Adding metadata to TensorFlow Lite models
@@ -516,7 +553,7 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
-### 6. If the accuracy of the INT8 quantized model degrades significantly
+### 7. If the accuracy of the INT8 quantized model degrades significantly
 It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445, and  https://github.com/PINTO0309/onnx2tf/issues/269
 
 If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
@@ -570,7 +607,7 @@ The accuracy error rates after quantization for different activation functions a
     |`ReLU6`<br>![image](https://user-images.githubusercontent.com/33194443/233639086-721e5e80-08c3-4785-9c1a-002bbfc0fa3d.png)<br>Paper: [A Quantization-Friendly Separable Convolution for MobileNets](https://arxiv.org/pdf/1803.08607.pdf) https://arxiv.org/pdf/1803.08607.pdf|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
 
 
-### 7. Calibration data creation for INT8 quantization
+### 8. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-cind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
@@ -622,7 +659,7 @@ e.g. How to specify calibration data in CLI or Script respectively.
 """
 ```
 
-### 8. INT8 quantization of models with multiple inputs requiring non-image data
+### 9. INT8 quantization of models with multiple inputs requiring non-image data
 If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest.
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. The `-b` option is used to convert the batch size by rewriting it as a static integer.
@@ -702,7 +739,7 @@ https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
-### 9. Fixing the output of NonMaxSuppression (NMS)
+### 10. Fixing the output of NonMaxSuppression (NMS)
 PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppression` are not fully compatible. TorchVision's NMS is very inefficient. Therefore, it is inevitable that converting ONNX using NMS in object detection models and other models will be very redundant and will be converted with a structure that is difficult for TensorFlow.js and TFLite models to take advantage of in devices. This is due to the indefinite number of tensors output by the NMS. In this chapter, I share how to easily tune the ONNX generated using TorchVision's redundant NMS to generate an optimized NMS.
 
 1. There are multiple issues with TorchVision's NMS. First, the batch size specification is not supported; second, the `max_output_boxes_per_class` parameter cannot be specified. Please see the NMS sample ONNX part I generated. The `max_output_boxes_per_class` has been changed to `896` instead of `-Infinity`. The biggest problem with TorchVision NMS is that it generates ONNX with `max_output_boxes_per_class` set to `-Infinity` or `9223372036854775807 (Maximum value of INT64)`, resulting in a variable number of NMS outputs from zero to infinite. Thus, by rewriting `-Infinity` or `9223372036854775807 (Maximum value of INT64)` to a constant value, it is possible to output an NMS that can be effortlessly inferred by TFJS or TFLite.
@@ -739,7 +776,7 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
     I would be happy if this is a reference for Android + Java or TFJS implementations. There are tons more tricky model optimization techniques described in my blog posts, so you'll have to find them yourself. I don't dare to list the URL here because it is annoying to see so many `issues` being posted. And unfortunately, all articles are in Japanese.
     ![image](https://user-images.githubusercontent.com/33194443/230780749-9967a34b-abf6-47fe-827d-92e0f6bddf46.png)
 
-### 10. RNN (RNN, GRU, LSTM) Inference Acceleration
+### 11. RNN (RNN, GRU, LSTM) Inference Acceleration
 TensorFlow's RNN has a speedup option called `unroll`. The network will be unrolled, else a symbolic loop will be used. Unrolling can speed-up a RNN, although it tends to be more memory-intensive. Unrolling is only suitable for short sequences. onnx2tf allows you to deploy RNNs into memory-intensive operations by specifying the `--enable_rnn_unroll` or `-eru` options. The `--enable_rnn_unroll` option is available for `RNN`, `GRU`, and `LSTM`.
 
 - Keras https://keras.io/api/layers/recurrent_layers/lstm/
@@ -761,7 +798,7 @@ An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` opti
 
   ![image](https://user-images.githubusercontent.com/33194443/234149995-7b68b550-90d9-4070-abd0-158d1e824315.png)
 
-### 11. Conversion to TensorFlow.js
+### 12. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -780,7 +817,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 12. Conversion to CoreML
+### 13. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
