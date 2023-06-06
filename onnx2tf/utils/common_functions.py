@@ -897,6 +897,7 @@ def explicit_broadcast(
         const_or_var_2.shape (ONNX const pettern): [3,128]
         new_const_or_var_2.shape (ONNX): [1,3,128] -> [1,128,3]
     """
+    tmp_graph_node_input_shape2 = list(const_or_var_2.shape)
     for _ in range(len(const_or_var_1.shape) - len(const_or_var_2.shape)):
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2 = const_or_var_2[np.newaxis, ...]
@@ -911,7 +912,9 @@ def explicit_broadcast(
                 input=const_or_var_2,
                 axis=0,
             )
-        graph_node_input_shape2 = [1] + graph_node_input_shape2
+        tmp_graph_node_input_shape2 = [1] + tmp_graph_node_input_shape2
+    if len(tmp_graph_node_input_shape2) == len(const_or_var_1.shape):
+        graph_node_input_shape2 = tmp_graph_node_input_shape2
 
     # Swap operands to apply transpose to correct target if needed
     # second operand is always target of transpose
