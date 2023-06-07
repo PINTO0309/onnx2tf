@@ -1081,7 +1081,7 @@ optional arguments:
 
   -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
       --output_names_to_interrupt_model_conversion OUTPUT_NAMES [OUTPUT_NAMES ...]
-    Output names that interrupt model conversion.
+    Output names of ONNX that interrupt model conversion.
     Interrupts model transformation at the specified output name and outputs the
     model partitioned into subgraphs.
     e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
@@ -1537,7 +1537,7 @@ convert(
       keep_shape_absolutely_input_names=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
-      Output names that interrupt model conversion.
+      Output names of ONNX that interrupt model conversion.
       Interrupts model transformation at the specified output name
       and outputs the model partitioned into subgraphs.
       e.g.
