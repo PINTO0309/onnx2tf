@@ -267,23 +267,26 @@ def make_node(
 
     # Transpose to match ONNX output shape
     post_matmul_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
-    if sum([1 if dim is None else 0 for dim in post_matmul_shape]) <= 1 \
+    post_matmul_shape_none_count = sum([1 if dim is None else 0 for dim in post_matmul_shape])
+    if post_matmul_shape_none_count <= 1 \
         and post_matmul_shape != list(onnx_output_shape):
 
         onnx_output_shape = [
             dim if not isinstance(dim, str) else None for dim in onnx_output_shape
         ]
-        post_transpose_perm = []
-        for dim in onnx_output_shape:
-            idx = post_matmul_shape.index(dim)
-            post_transpose_perm.append(idx)
-            post_matmul_shape[idx] = -999
+        onnx_output_shape_none_count = sum([1 if dim is None else 0 for dim in onnx_output_shape])
+        if post_matmul_shape_none_count == onnx_output_shape_none_count:
+            post_transpose_perm = []
+            for dim in onnx_output_shape:
+                idx = post_matmul_shape.index(dim)
+                post_transpose_perm.append(idx)
+                post_matmul_shape[idx] = -999
 
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.transpose(
-                a=tf_layers_dict[graph_node_output.name]['tf_node'],
-                perm=post_transpose_perm,
-            )
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.transpose(
+                    a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                    perm=post_transpose_perm,
+                )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

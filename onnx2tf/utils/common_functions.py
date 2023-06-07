@@ -814,6 +814,10 @@ def explicit_broadcast(
     if graph_node_input_shape1 == [] or graph_node_input_shape2 == []:
         return const_or_var_1, const_or_var_2
 
+    # If const_or_var_1 and const_or_var_2 of TF have exactly the same shape, skip processing
+    if list(const_or_var_1.shape) == list(const_or_var_2.shape):
+        return const_or_var_1, const_or_var_2
+
     # If all dimensions are undefined dimensions, return without doing anything
     if graph_node_input_shape1 is not None \
         and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape1]) == len(graph_node_input_shape1):

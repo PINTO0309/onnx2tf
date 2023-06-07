@@ -246,7 +246,7 @@ def make_node(
                     if result_err < min_abs_err:
                         min_abs_err = result_err
                         min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
-                        if min_abs_err < 1e-3:
+                        if min_abs_err < 1e-2:
                             break
                 except Exception as ex:
                     pass
