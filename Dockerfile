@@ -17,7 +17,6 @@ RUN pip install pip -U \
     && pip install nvidia-pyindex \
     && pip install onnx_graphsurgeon \
     && pip install onnx2tf \
-    && pip install onnx2tf \
     && pip install simple_onnx_processing_tools \
     && pip install tensorflow==2.13.0rc0 \
     && pip install protobuf==3.20.3 \
