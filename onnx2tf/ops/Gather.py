@@ -53,6 +53,8 @@ def make_node(
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
         before_op_output_shape_trans,
+        is_bias=True \
+            if graph_node.inputs[1].shape is None or len(graph_node.inputs[1].shape) == 1 else False
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
