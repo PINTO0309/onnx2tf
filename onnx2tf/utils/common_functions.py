@@ -868,6 +868,21 @@ def explicit_broadcast(
         if var2_rehsape_possible:
             const_or_var_2 = tf.reshape(const_or_var_2, shape=shape_for_judging_skip_processing_1)
             return const_or_var_1, const_or_var_2
+    # https://github.com/PINTO0309/onnx2tf/issues/394
+    elif len(const_or_var_1.shape) > len(const_or_var_2.shape) \
+        and None not in const_or_var_1.shape \
+        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
+        and None not in const_or_var_2.shape \
+        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
+        and len(const_or_var_2.shape) == 1 \
+        and graph_node.op == 'BatchNormalization':
+
+        const_or_var_2_shape_dim = const_or_var_2.shape[0]
+        for idx, shape_for_judging_skip_processing_1_dim in enumerate(shape_for_judging_skip_processing_1[::-1]):
+            if shape_for_judging_skip_processing_1_dim == const_or_var_2_shape_dim:
+                for _ in range(idx):
+                    const_or_var_2 = tf.expand_dims(const_or_var_2, -1)
+                return const_or_var_1, const_or_var_2
 
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
     swapped = 0
