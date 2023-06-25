@@ -1,5 +1,3 @@
-import sys
-import math
 import random
 random.seed(0)
 import numpy as np
@@ -20,6 +18,7 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.colors import Color
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 INF_INDEX_VALUE: int = 4294967296
 
@@ -52,9 +51,15 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
-    graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
-    dtype = graph_node_output.dtype
+    graph_node_output_1: gs.Variable = graph_node.outputs[0]
+    shape_1 = graph_node_output_1.shape
+    dtype_1 = graph_node_output_1.dtype
+
+    graph_node_output_2 = None
+    if len(graph_node.outputs) > 1:
+        graph_node_output_2: gs.Variable = graph_node.outputs[1]
+        shape_2 = graph_node_output_2.shape
+        dtype_2 = graph_node_output_2.dtype
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
@@ -112,16 +117,6 @@ def make_node(
                     **kwargs,
                 )
 
-    if len(graph_node.outputs) > 1:
-        error_msg = \
-            f'{Color.RED}ERROR:{Color.RESET} ' \
-            f'MaxPoolWithArgmax is not yet implemented. ' \
-            f'Pull requests are welcome. \n' \
-            f'https://github.com/onnx/onnx-tensorflow/blob/f9ebc35dba8a9555112a8d0b84f5a3d51278cca9/onnx_tf/handlers/backend/dilated_pooling.py#L544 \n' \
-            f'graph_node.name: {graph_node.name}'
-        print(error_msg)
-        raise NotImplementedError(error_msg)
-
     filter = None
 
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
@@ -132,6 +127,17 @@ def make_node(
     pads = graph_node.attrs.get('pads', [0] * spatial_size * 2)
     storage_order = graph_node.attrs.get('storage_order', 0)
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
+
+    if len(graph_node.outputs) > 1 and dilations != [1] * spatial_size:
+        error_msg = \
+            f'{Color.RED}ERROR:{Color.RESET} ' \
+            f'MaxPoolWithArgmax with dilations is not yet implemented. ' \
+            f'Pull requests are welcome. \n' \
+            f'graph_node.name: {graph_node.name}, dilations: {dilations}'
+        print(error_msg)
+        raise NotImplementedError(error_msg)
+
+    with_argmax = len(graph_node.outputs) > 1
 
     input_tensor_shape = input_tensor.shape.as_list()
     is_known_shape = None not in input_tensor_shape[1:]
@@ -230,100 +236,131 @@ def make_node(
         padded_tensor = input_tensor
 
     # Preserving Graph Structure (Dict)
-    tf_layers_dict[graph_node_output.name] = {
+    tf_layers_dict[graph_node_output_1.name] = {
         'optype': graph_node.op,
-        'shape': shape,
-        'dtype': dtype,
+        'shape': shape_1,
+        'dtype': dtype_1,
         'nhwc': True,
     }
+    if with_argmax:
+        tf_layers_dict[graph_node_output_2.name] = {
+            'optype': graph_node.op,
+            'shape': shape_2,
+            'dtype': dtype_2,
+            'nhwc': True,
+        }
 
     # Generation of TF OP
     tf_op_type = None
+    argmax_indicies = None
 
-    # tf.nn.dilation2d
-    if spatial_size == 2 and dilations != [1] * spatial_size:
-        strides = [1] + list(strides) + [1]
-        dilations = [1] + list(dilations) + [1]
+    if not with_argmax:
+        # tf.nn.dilation2d
+        if spatial_size == 2 and dilations != [1] * spatial_size:
+            strides = [1] + list(strides) + [1]
+            dilations = [1] + list(dilations) + [1]
 
-        # tf.nn.dilation2d only support data_format='NHWC'
-        filter = tf.zeros(
-            [kernel_shape[0], kernel_shape[1], input_tensor_shape[-1]],
-            input_tensor_dtype,
-        )
-        pooled_tensor = tf.nn.dilation2d(
-            input=padded_tensor,
-            filters=filter,
-            strides=strides,
-            dilations=dilations,
-            padding=tf_pad_mode.upper(),
-            data_format="NHWC",
-        )
-        tf_op_type = tf.nn.dilation2d
-
-    # if spatial_size < 4 and strides == 1 or dilation == 1 use tf.nn.pool
-    elif spatial_size < 4 and (strides == [1] * spatial_size or dilations == [1] * spatial_size):
-        # if strides == 1 and not LpPool use tf.nn.pool directly
-        if strides == [1] * spatial_size:
-            pooled_tensor = tf.nn.pool(
+            # tf.nn.dilation2d only support data_format='NHWC'
+            filter = tf.zeros(
+                [kernel_shape[0], kernel_shape[1], input_tensor_shape[-1]],
+                input_tensor_dtype,
+            )
+            pooled_tensor = tf.nn.dilation2d(
                 input=padded_tensor,
-                window_shape=kernel_shape,
-                dilations=dilations,
+                filters=filter,
                 strides=strides,
+                dilations=dilations,
+                padding=tf_pad_mode.upper(),
+                data_format="NHWC",
+            )
+            tf_op_type = tf.nn.dilation2d
+
+        # if spatial_size < 4 and strides == 1 or dilation == 1 use tf.nn.pool
+        elif spatial_size < 4 and (strides == [1] * spatial_size or dilations == [1] * spatial_size):
+            # if strides == 1 and not LpPool use tf.nn.pool directly
+            if strides == [1] * spatial_size:
+                pooled_tensor = tf.nn.pool(
+                    input=padded_tensor,
+                    window_shape=kernel_shape,
+                    dilations=dilations,
+                    strides=strides,
+                    padding=tf_pad_mode.upper(),
+                    pooling_type='MAX',
+                )
+                tf_op_type = tf.nn.pool
+            else:
+                # otherwise check the pooling_type and use the correct op
+                pooled_tensor = tf.nn.max_pool(
+                    input=padded_tensor,
+                    ksize=kernel_shape,
+                    strides=strides,
+                    padding=tf_pad_mode.upper(),
+                )
+                tf_op_type = tf.nn.max_pool
+        # in any other case we use custom implementation _remove_dilations
+        # to reduce atrous/dilated pooling into regular pooling and selecting
+        # only the values of the input that should have been selected by
+        # applying the strides and dilations. Then use tf.nn.pool with
+        # strides = kernel_shape and no dilations
+        else:
+            # TODO: Dilated MaxPool with strides is broken for 3D and above, need to be fixed
+            if spatial_size >= 3:
+                error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
+                            f'Dilated MaxPool with strides is not supported for 3D and above for now. '
+                print(error_msg)
+                raise NotImplementedError(error_msg)
+
+            input_tensor = remove_dilations(
+                input_tensor=padded_tensor,
+                kernel_shape=kernel_shape,
+                spatial_size=spatial_size,
+                strides=strides,
+                dilations=dilations,
+            )
+            tf_pad_mode = 'VALID'
+            pooled_tensor = tf.nn.pool(
+                input=input_tensor,
+                window_shape=kernel_shape,
+                strides=kernel_shape,
                 padding=tf_pad_mode.upper(),
                 pooling_type='MAX',
             )
             tf_op_type = tf.nn.pool
-        else:
-            # otherwise check the pooling_type and use the correct op
-            pooled_tensor = tf.nn.max_pool(
+    else:
+        # MaxPoolWithArgmax
+        pooled_tensor, argmax_indicies = \
+            tf.nn.max_pool_with_argmax(
                 input=padded_tensor,
                 ksize=kernel_shape,
                 strides=strides,
                 padding=tf_pad_mode.upper(),
+                output_dtype=NUMPY_DTYPES_TO_TF_DTYPES[dtype_2],
+                include_batch_in_index=True,
             )
-            tf_op_type = tf.nn.max_pool
-    # in any other case we use custom implementation _remove_dilations
-    # to reduce atrous/dilated pooling into regular pooling and selecting
-    # only the values of the input that should have been selected by
-    # applying the strides and dilations. Then use tf.nn.pool with
-    # strides = kernel_shape and no dilations
-    else:
-        # TODO: Dilated MaxPool with strides is broken for 3D and above, need to be fixed
-        if spatial_size >= 3:
-            error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
-                        f'Dilated MaxPool with strides is not supported for 3D and above for now. '
-            print(error_msg)
-            raise NotImplementedError(error_msg)
+        tf_op_type = tf.nn.max_pool_with_argmax
 
-        input_tensor = remove_dilations(
-            input_tensor=padded_tensor,
-            kernel_shape=kernel_shape,
-            spatial_size=spatial_size,
-            strides=strides,
-            dilations=dilations,
-        )
-        tf_pad_mode = 'VALID'
-        pooled_tensor = tf.nn.pool(
-            input=input_tensor,
-            window_shape=kernel_shape,
-            strides=kernel_shape,
-            padding=tf_pad_mode.upper(),
-            pooling_type='MAX',
-        )
-        tf_op_type = tf.nn.pool
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = pooled_tensor
+    tf_layers_dict[graph_node_output_1.name]['tf_node'] = pooled_tensor
+    if with_argmax:
+        tf_layers_dict[graph_node_output_2.name]['tf_node'] = argmax_indicies
 
     # Post-process transpose
-    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
-        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+    tf_layers_dict[graph_node_output_1.name]['tf_node'] = post_process_transpose(
+        value_before_transpose=tf_layers_dict[graph_node_output_1.name]['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
         **kwargs,
     )
+    if with_argmax:
+        tf_layers_dict[graph_node_output_2.name]['tf_node'] = post_process_transpose(
+            value_before_transpose=tf_layers_dict[graph_node_output_2.name]['tf_node'],
+            param_target='outputs',
+            param_name=graph_node.outputs[1].name,
+            **kwargs,
+        )
 
     # Generation of Debug Info
-    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+    tf_outputs = {f"output{idx}": value for idx, value in enumerate([pooled_tensor, argmax_indicies])}
+    tf_layers_dict[graph_node_output_1.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
                 'tf_op_type': tf_op_type,
@@ -336,8 +373,6 @@ def make_node(
                     'padding': tf_pads if tf_pad_mode != 'same' else tf_pad_mode,
                     'ceil_mode': ceil_mode,
                 },
-                'tf_outputs': {
-                    'output': pooled_tensor,
-                },
+                'tf_outputs': tf_outputs,
             }
         )

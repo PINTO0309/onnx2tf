@@ -894,6 +894,14 @@ def convert(
             tf_layers_dict=tf_layers_dict,
             output_names=output_names,
         )
+        if not outputs:
+            output_names = [output_name.replace(':','_') for output_name in output_names]
+            if output_signaturedefs or output_integer_quantized_tflite:
+                output_names = [re.sub('^/', '', output_name) for output_name in output_names]
+            outputs = get_tf_model_outputs(
+                tf_layers_dict=tf_layers_dict,
+                output_names=output_names,
+            )
 
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
