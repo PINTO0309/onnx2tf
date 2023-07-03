@@ -216,6 +216,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ![render1665941718294](https://user-images.githubusercontent.com/33194443/196049928-57520fc2-842d-459c-9f28-7ee5f040c226.gif)
 
 ## Environment
+- Linux / Windows (Use of OSX is strongly discouraged. https://github.com/PINTO0309/onnx2tf/issues/399)
 - onnx==1.13.1
 - onnxruntime==1.15.0
 - onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
