@@ -17,6 +17,19 @@ body:
         - Others
     validations:
       required: true
+  - type: dropdown
+    id: os-type
+    attributes:
+      label: OS
+      description: OS of your working machine.
+      multiple: false
+      options:
+        - Linux
+        - Windows
+        - OSX
+        - Others
+    validations:
+      required: true
   - type: input
     id: onnx2tf-version
     attributes:
