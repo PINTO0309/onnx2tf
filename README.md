@@ -216,13 +216,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ![render1665941718294](https://user-images.githubusercontent.com/33194443/196049928-57520fc2-842d-459c-9f28-7ee5f040c226.gif)
 
 ## Environment
-- Linux / Windows (Use of OSX is strongly discouraged. https://github.com/PINTO0309/onnx2tf/issues/399)
+- Linux / Windows
 - onnx==1.13.1
 - onnxruntime==1.15.0
 - onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.13.0rc0
+- tensorflow==2.13.0
 - psutil==5.9.5
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
@@ -254,7 +254,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.13.13
+  ghcr.io/pinto0309/onnx2tf:1.14.0
 
   or
 
@@ -293,7 +293,7 @@ or
     && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.13.0rc0 \
+  !python3.9 -m pip install tensorflow==2.13.0 \
     && python3.9 -m pip install -U onnx==1.13.1 \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
