@@ -19,7 +19,7 @@ RUN pip install pip -U \
     && pip install onnx2tf \
     && pip install onnx2tf \
     && pip install simple_onnx_processing_tools \
-    && pip install tensorflow==2.13.0rc0 \
+    && pip install tensorflow==2.13.0 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
     && pip install psutil==5.9.5 \

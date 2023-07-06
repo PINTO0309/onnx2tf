@@ -3554,11 +3554,18 @@ def dummy_onnx_inference(
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
     if check_cuda_enabled():
-        onnx_session = ort.InferenceSession(
-            path_or_bytes=serialized_graph,
-            sess_options=sess_options,
-            providers=['CUDAExecutionProvider','CPUExecutionProvider'],
-        )
+        try:
+            onnx_session = ort.InferenceSession(
+                path_or_bytes=serialized_graph,
+                sess_options=sess_options,
+                providers=['CUDAExecutionProvider','CPUExecutionProvider'],
+            )
+        except Exception as ex:
+            onnx_session = ort.InferenceSession(
+                path_or_bytes=serialized_graph,
+                sess_options=sess_options,
+                providers=['CPUExecutionProvider'],
+            )
     else:
         onnx_session = ort.InferenceSession(
             path_or_bytes=serialized_graph,
