@@ -534,6 +534,17 @@ def get_weights_constant_or_variable(
         return const_or_var
 
 
+def check_cuda_enabled() -> bool:
+    try:
+        output = subprocess.check_output('nvidia-smi', shell=True)
+        if 'nvidia-smi' in output.decode().lower():
+            return True
+        else:
+            return False
+    except Exception as ex:
+        return False
+
+
 def convert_axis(
     *,
     axis: int,
@@ -3542,11 +3553,18 @@ def dummy_onnx_inference(
     serialized_graph = onnx._serialize(new_onnx_graph)
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
-    onnx_session = ort.InferenceSession(
-        path_or_bytes=serialized_graph,
-        sess_options=sess_options,
-        providers=['CPUExecutionProvider'],
-    )
+    if check_cuda_enabled():
+        onnx_session = ort.InferenceSession(
+            path_or_bytes=serialized_graph,
+            sess_options=sess_options,
+            providers=['CUDAExecutionProvider','CPUExecutionProvider'],
+        )
+    else:
+        onnx_session = ort.InferenceSession(
+            path_or_bytes=serialized_graph,
+            sess_options=sess_options,
+            providers=['CPUExecutionProvider'],
+        )
     onnx_inputs = gs_graph.inputs
     input_names: List[str] = [inp.name for inp in onnx_inputs]
     input_sizes: List[int] = [inp.shape for inp in onnx_inputs]

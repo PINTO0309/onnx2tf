@@ -21,7 +21,6 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 tf.random.set_seed(0)
