@@ -51,7 +51,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata (tags, labels) for Docker
-        id: meta
+        id: meta_gh
         uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -60,8 +60,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_gh.outputs.tags }}
+          labels: ${{ steps.meta_gh.outputs.labels }}
 
       - name: Log in to the Docker Container registry
         uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
@@ -70,7 +70,7 @@ jobs:
           username: ${{ env.DOCKER_REGISTRY_USER }}
           password: ${{ secrets.DH_ACCESS_TOKEN }}
       - name: Extract metadata (tags, labels) for Docker
-        id: meta
+        id: meta_dh
         uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
         with:
           images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -79,5 +79,5 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_dh.outputs.tags }}
+          labels: ${{ steps.meta_dh.outputs.labels }}
