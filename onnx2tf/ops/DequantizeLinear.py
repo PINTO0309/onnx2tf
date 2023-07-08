@@ -128,6 +128,10 @@ def make_node(
             y=x_scale,
         )
 
+    if hasattr(tf_layers_dict[graph_node_output.name]['tf_node'], 'numpy'):
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.convert_to_tensor(tf_layers_dict[graph_node_output.name]['tf_node'].numpy())
+
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],

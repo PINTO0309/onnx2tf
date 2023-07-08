@@ -59,10 +59,21 @@ def make_node(
     )
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
     kernel_size = len(kernel_shape)
-    input_weights = get_weights_constant_or_variable(
-        const_or_var=graph_node.inputs[1],
-        kernel_size=kernel_size,
-    )
+    try:
+        input_weights = get_weights_constant_or_variable(
+            const_or_var=graph_node.inputs[1] \
+                if graph_node.i(1).op != 'DequantizeLinear' \
+                    else tf.transpose(
+                            tf_layers_dict[graph_node.inputs[1].name]['tf_node'],
+                            perm=[0]+[len(tf_layers_dict[graph_node.inputs[1].name]['tf_node'].shape)-1]+[i for i in range(1, len(tf_layers_dict[graph_node.inputs[1].name]['tf_node'].shape)-1)]
+                        ),
+            kernel_size=kernel_size,
+        )
+    except Exception as ex:
+        input_weights = get_weights_constant_or_variable(
+            const_or_var=graph_node.inputs[1],
+            kernel_size=kernel_size,
+        )
     input_bias = None
     if len(graph_node.inputs) >= 3:
         input_bias = get_constant_or_variable(
