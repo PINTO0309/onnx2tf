@@ -54,7 +54,10 @@ def make_node(
     )
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        False \
+            if hasattr(graph_node.inputs[1], 'values') \
+                and isinstance(graph_node.inputs[1].values, np.ndarray) \
+                    else before_op_output_shape_trans,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
