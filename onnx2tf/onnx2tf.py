@@ -99,6 +99,7 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
     disable_model_save: Optional[bool] = False,
+    use_cuda: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
@@ -423,6 +424,13 @@ def convert(
         Does not save the converted model. For CIs RAM savings.\n
         Default: False
 
+    use_cuda: Optional[bool]
+        CUDA is used for dummy inference during accuracy checks,\n
+        but accuracy is degraded.\n
+        Note that if you need to convert extended OPs such as com.microsoft.xxx,\n
+        you must enable this flag.\n
+        Default: False
+
     non_verbose: Optional[bool]
         Do not show all information logs. Only error logs are displayed.\n
         Default: False
@@ -634,6 +642,10 @@ def convert(
     if output_tfv1_pb:
         output_signaturedefs = True
 
+    # CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
+    if not use_cuda:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -726,6 +738,7 @@ def convert(
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+        'use_cuda': use_cuda,
     }
 
     tf_layers_dict = {}
@@ -830,13 +843,16 @@ def convert(
             full_ops_output_names.extend(full_ops_output_names_sub)
         # Models with errors during inference in onnxruntime skip dummy inference.
         try:
-            onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
-                output_names=full_ops_output_names,
-                test_data_nhwc=test_data_nhwc,
-                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                tf_layers_dict=tf_layers_dict,
-            )
+            onnx_outputs_for_validation: List[np.ndarray] = \
+                dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=full_ops_output_names,
+                    test_data_nhwc=test_data_nhwc,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    tf_layers_dict=tf_layers_dict,
+                    use_cuda=use_cuda,
+
+                )
             """
             onnx_tensor_infos_for_validation:
                 {
@@ -1479,13 +1495,15 @@ def convert(
             dummy_onnx_outputs = None
             try:
                 # ONNX dummy inference
-                dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
-                    onnx_graph=onnx_graph,
-                    output_names=ops_output_names,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    tf_layers_dict=tf_layers_dict,
-                )
+                dummy_onnx_outputs: List[np.ndarray] = \
+                    dummy_onnx_inference(
+                        onnx_graph=onnx_graph,
+                        output_names=ops_output_names,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        tf_layers_dict=tf_layers_dict,
+                        use_cuda=use_cuda,
+                    )
             except Exception as ex:
                 print(
                     f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
@@ -2101,6 +2119,15 @@ def main():
         help='Does not save the converted model. For CIs RAM savings.'
     )
     parser.add_argument(
+        '-uc',
+        '--use_cuda',
+        action='store_true',
+        help=\
+            'CUDA is used for dummy inference during accuracy checks, but accuracy is degraded. ' +
+            'Note that if you need to convert extended OPs such as com.microsoft.xxx, ' +
+            'you must enable this flag.'
+    )
+    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -2192,6 +2219,7 @@ def main():
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
         disable_model_save=args.disable_model_save,
+        use_cuda=args.use_cuda,
         non_verbose=args.non_verbose,
     )
 
