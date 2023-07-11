@@ -3488,6 +3488,7 @@ def dummy_onnx_inference(
     test_data_nhwc: Optional[np.ndarray] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
     tf_layers_dict: Optional[Dict] = None,
+    use_cuda: bool = False,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3572,14 +3573,22 @@ def dummy_onnx_inference(
     serialized_graph = onnx._serialize(new_onnx_graph)
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
-    if check_cuda_enabled():
-        try:
-            onnx_session = ort.InferenceSession(
-                path_or_bytes=serialized_graph,
-                sess_options=sess_options,
-                providers=['CUDAExecutionProvider','CPUExecutionProvider'],
-            )
-        except Exception as ex:
+
+    if use_cuda:
+        if check_cuda_enabled():
+            try:
+                onnx_session = ort.InferenceSession(
+                    path_or_bytes=serialized_graph,
+                    sess_options=sess_options,
+                    providers=['CUDAExecutionProvider','CPUExecutionProvider'],
+                )
+            except Exception as ex:
+                onnx_session = ort.InferenceSession(
+                    path_or_bytes=serialized_graph,
+                    sess_options=sess_options,
+                    providers=['CPUExecutionProvider'],
+                )
+        else:
             onnx_session = ort.InferenceSession(
                 path_or_bytes=serialized_graph,
                 sess_options=sess_options,

@@ -175,10 +175,13 @@ def make_node(
                 )
                 sys.exit(1)
             onnx_graph = kwargs['onnx_graph']
-            convtranspose_output = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
-                output_names=[graph_node_output.name],
-            )[0]
+            use_cuda = bool(kwargs['use_cuda'])
+            convtranspose_output = \
+                dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=[graph_node_output.name],
+                    use_cuda=use_cuda,
+                )[0]
             onnx_output_shape = list(convtranspose_output.shape)
             tf_output_shape = []
             for idx in range(input_tensor_rank):

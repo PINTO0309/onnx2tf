@@ -15,7 +15,6 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
 
 
 @print_node_info
@@ -52,7 +51,7 @@ def make_node(
             before_op_output_shape_trans_1 \
             and before_op_output_shape_trans_2
 
-    input_tensor = get_constant_or_variable(
+    graph_node_input = get_constant_or_variable(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
@@ -67,8 +66,8 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
-        if isinstance(input_tensor, gs.Variable) else input_tensor
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
     tensor_rank = len(input_tensor.shape)
 
     # Pre-process transpose
@@ -100,6 +99,8 @@ def make_node(
         values = paddings.values
     elif isinstance(paddings, np.ndarray):
         values = paddings
+    elif hasattr(paddings, 'numpy'):
+        values = paddings.numpy()
 
     if values is not None:
         paddings = values.reshape([2, tensor_rank]).transpose()
@@ -192,6 +193,9 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': tf_layers_dict[graph_node_input.name]['nhwc'] \
+            if isinstance(graph_node_input, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
     # Generation of TF OP

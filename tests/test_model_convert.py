@@ -115,6 +115,7 @@ def _report_convert_model(file_path):
             output_nms_with_dynamic_tensor=True,
             disable_strict_mode=True,
             disable_model_save=True,
+            use_cuda=False,
             non_verbose=True,
         )
         os.remove(file_path)

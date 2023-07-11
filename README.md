@@ -219,7 +219,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - Linux / Windows
 - onnx==1.13.1
 - onnxruntime==1.15.0
-- onnx-simplifier==0.4.17 See: https://github.com/PINTO0309/onnx2tf/issues/312
+- onnx-simplifier==0.4.33
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.13.0
@@ -254,14 +254,14 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.14.3
+  ghcr.io/pinto0309/onnx2tf:1.14.4
 
   or
 
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.14.3
+  docker.io/pinto0309/onnx2tf:1.14.4
 
   or
 
@@ -269,7 +269,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.15.0 \
-  && pip install -U onnxsim==0.4.17 \
+  && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
   && pip install -U h5py==3.7.0 \
@@ -305,7 +305,7 @@ or
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U onnxruntime==1.15.0 \
-    && python3.9 -m pip install -U onnxsim==0.4.17 \
+    && python3.9 -m pip install -U onnxsim==0.4.33 \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
     && python3.9 -m pip install -U protobuf==3.20.3 \
@@ -898,6 +898,7 @@ usage: onnx2tf
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
 [-dms]
+[-uc]
 [-n]
 
 optional arguments:
@@ -1292,6 +1293,11 @@ optional arguments:
   -dms, --disable_model_save
     Does not save the converted model. For CIs RAM savings.
 
+  -uc, --use_cuda
+    CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
+    Note that if you need to convert extended OPs such as com.microsoft.xxx,
+    you must enable this flag.
+
   -n, --non_verbose
     Do not show all information logs. Only error logs are displayed.
 ```
@@ -1351,6 +1357,7 @@ convert(
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   disable_model_save: Union[bool, NoneType] = False,
+  use_cuda: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False
 ) -> keras.engine.training.Model
 
@@ -1750,6 +1757,13 @@ convert(
 
     disable_model_save: Optional[bool]
       Does not save the converted model. For CIs RAM savings.
+      Default: False
+
+    use_cuda: Optional[bool]
+      CUDA is used for dummy inference during accuracy checks,
+      but accuracy is degraded.
+      Note that if you need to convert extended OPs such as com.microsoft.xxx,
+      you must enable this flag.
       Default: False
 
     non_verbose: Optional[bool]
