@@ -282,35 +282,26 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 or
 
-- Google Colaboratory Python3.8+
-  - Ref: https://stackoverflow.com/questions/75053660/output-of-conv-op-in-onnx-is-of-shape-none/
+- Google Colaboratory Python3.10
   ```
-  !sudo add-apt-repository -y ppa:deadsnakes/ppa
   !sudo apt-get -y update
-  !sudo apt-get -y install python3.9
-  !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
-  !sudo apt-get -y install python3.9-distutils
+  !sudo apt-get -y install python-is-python3
   !wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
     && tar -zxvf flatc.tar.gz \
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
-  !python3.9 -m pip install -U setuptools \
-    && python3.9 -m pip install -U pip \
-    && python3.9 -m pip install -U distlib
-  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
-  !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.13.0 \
-    && python3.9 -m pip install -U onnx==1.13.1 \
-    && python3.9 -m pip install -U nvidia-pyindex \
-    && python3.9 -m pip install -U onnx-graphsurgeon \
-    && python3.9 -m pip install -U onnxruntime==1.15.0 \
-    && python3.9 -m pip install -U onnxsim==0.4.33 \
-    && python3.9 -m pip install -U simple_onnx_processing_tools \
-    && python3.9 -m pip install -U onnx2tf \
-    && python3.9 -m pip install -U protobuf==3.20.3 \
-    && python3.9 -m pip install -U h5py==3.7.0 \
-    && python3.9 -m pip install -U psutil==5.9.5
+  !pip install -U pip \
+    && pip install tensorflow==2.13.0 \
+    && pip install -U onnx==1.13.1 \
+    && python -m pip install onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
+    && pip install -U onnxruntime==1.15.0 \
+    && pip install -U onnxsim==0.4.33 \
+    && pip install -U simple_onnx_processing_tools \
+    && pip install -U onnx2tf \
+    && pip install -U protobuf==3.20.3 \
+    && pip install -U h5py==3.7.0 \
+    && pip install -U psutil==5.9.5
   ```
 
 ### 2. Run test
