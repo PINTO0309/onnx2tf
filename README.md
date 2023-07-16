@@ -294,7 +294,8 @@ or
   !pip install -U pip \
     && pip install tensorflow==2.13.0 \
     && pip install -U onnx==1.13.1 \
-    && python -m pip install onnx_graphsurgeon --index-url https://pypi.ngc.nvidia.com \
+    && python -m pip install onnx_graphsurgeon \
+          --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnxruntime==1.15.0 \
     && pip install -U onnxsim==0.4.33 \
     && pip install -U simple_onnx_processing_tools \
