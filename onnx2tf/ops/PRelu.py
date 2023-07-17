@@ -96,6 +96,7 @@ def make_node(
     if tf_layers_dict[graph_node_output.name]['nhwc'] == True \
         and input_tensor_shape is not None \
         and input_tensor_rank >= 3 \
+        and sum([1 if isinstance(s, int) and s == input_tensor_shape[1] else 0 for s in input_tensor_shape]) == input_tensor_rank - 1 \
         and slope.shape is not None \
         and len(slope.shape) >= 3 \
         and input_tensor_rank == len(slope.shape) \
