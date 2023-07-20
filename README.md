@@ -242,10 +242,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ## Sample Usage
 ### 1. Install
 - HostPC
-  - When using Docker, see `Authenticating to the Container registry`
+  - When using GHCR, see `Authenticating to the Container registry`
 
     https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
-  ```
+  ```bash
+  # PAT authentication is required to pull from GHCR.
   $ docker login ghcr.io
   Username (xxxx): {Enter}
   Password: {Personal Access Token}
@@ -258,6 +259,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  # Authentication is not required for pulls from Docker Hub.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
