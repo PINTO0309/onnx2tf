@@ -74,7 +74,8 @@ def make_node(
     # The input is a tensor of shape [..., M, M] whose inner-most 2 dimensions form square matrices.
     # The output is a tensor of the same shape as the input containing the inverse for all input submatrices [..., :, :].
     nhwc_flag = tf_layers_dict[graph_node_input.name]['nhwc'] \
-        if 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
+        if not isinstance(graph_node_input, np.ndarray) \
+            and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     inv_transpose = \
