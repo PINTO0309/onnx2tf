@@ -5369,7 +5369,9 @@ def acquisition_of_validation_data(
     )
     val_model = None
     if not isinstance(input_tensor_1, np.ndarray) \
-        and not isinstance(input_tensor_2, np.ndarray):
+        and not hasattr(input_tensor_1, 'numpy') \
+        and not isinstance(input_tensor_2, np.ndarray) \
+        and not hasattr(input_tensor_2, 'numpy'):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
             outputs=[
@@ -5378,6 +5380,7 @@ def acquisition_of_validation_data(
             ],
         )
     elif not isinstance(input_tensor_1, np.ndarray) \
+        and not hasattr(input_tensor_1, 'numpy') \
         and isinstance(input_tensor_2, np.ndarray):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
@@ -5386,7 +5389,8 @@ def acquisition_of_validation_data(
             ],
         )
     elif isinstance(input_tensor_1, np.ndarray) \
-        and not isinstance(input_tensor_2, np.ndarray):
+        and not isinstance(input_tensor_2, np.ndarray) \
+        and not hasattr(input_tensor_2, 'numpy'):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
             outputs=[

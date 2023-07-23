@@ -98,7 +98,8 @@ def make_node(
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.linalg.inv(
-            input=input_tensor,
+            input=tf.convert_to_tensor(input_tensor) \
+                if isinstance(input_tensor, np.ndarray) else input_tensor,
             name=graph_node.name,
         )
 
