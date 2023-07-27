@@ -48,6 +48,9 @@ def make_node(
         before_op_output_shape_trans=False,
         is_bias=True,
     )
+    if isinstance(shape, gs.Variable) \
+        and graph_node.inputs[0].name in tf_layers_dict:
+        shape = tf_layers_dict[graph_node.inputs[0].name]['tf_node']
 
     # make sure the shape dtype is either int32 or int64
     if shape.dtype not in [tf.int64, tf.int32]:
@@ -60,7 +63,7 @@ def make_node(
         value = attr_value.values
         constant_tensor = value[0]
     else:
-        constant_tensor = 0.
+        constant_tensor = 0.0
 
     cons = tf.fill(
         dims=shape,
