@@ -60,7 +60,7 @@ def make_node(
     graph_input_name = kwargs.get('subgraph_input_name', graph_input.name)
 
     shape = graph_input.shape
-    dtype = graph_input.dtype
+    dtype = graph_input.dtype if graph_input.dtype != np.float16 else np.float32
 
     # Overwrite batch or shapes
     if batch_size is not None \
