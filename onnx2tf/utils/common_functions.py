@@ -3594,7 +3594,20 @@ def dummy_onnx_inference(
                     gs_graph.outputs.append(node_output)
 
     new_onnx_graph = gs.export_onnx(gs_graph)
-    serialized_graph = onnx._serialize(new_onnx_graph)
+    tmp_onnx_path = ''
+    tmp_onnx_external_weights_path =''
+    try:
+        serialized_graph = onnx._serialize(new_onnx_graph)
+    except ValueError as ve:
+        tmp_onnx_path = 'tmp.onnx'
+        tmp_onnx_external_weights_path ='tmp_external.weights'
+        onnx.save(
+            proto=new_onnx_graph,
+            f=tmp_onnx_path,
+            save_as_external_data=True,
+            location=tmp_onnx_external_weights_path
+        )
+        serialized_graph = tmp_onnx_path
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
 
@@ -3686,6 +3699,9 @@ def dummy_onnx_inference(
                         perm=[0,3,1,2],
                     ).numpy().astype(input_dtype)
     outputs = onnx_session.run(None, input_datas)
+    if tmp_onnx_path:
+        os.remove(tmp_onnx_path)
+        os.remove(tmp_onnx_external_weights_path)
     return outputs
 
 
