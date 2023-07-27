@@ -407,6 +407,29 @@ def inverted_operation_enable_disable(func):
     return inverted_operation_enable_disable_wrapper_func
 
 
+def auto_cast(func):
+    @wraps(func)
+    def auto_cast_wrapper_func(*args, **kwargs):
+        const_or_var = func(*args, **kwargs)
+        if isinstance(const_or_var, np.ndarray) \
+            and const_or_var.dtype == np.float16:
+            const_or_var = const_or_var.astype(np.float32)
+        elif isinstance(const_or_var, tf.Tensor) \
+            and const_or_var.dtype == tf.float16:
+            const_or_var = tf.cast(const_or_var, dtype=tf.float32)
+        elif not isinstance(const_or_var, np.ndarray) \
+            and not isinstance(const_or_var, gs.Variable) \
+            and not isinstance(const_or_var, gs.Constant) \
+            and tf.keras.backend.is_keras_tensor(const_or_var) \
+            and const_or_var.dtype == tf.float16:
+            const_or_var = tf.cast(const_or_var, dtype=tf.float32)
+        else:
+            pass
+        return const_or_var
+    return auto_cast_wrapper_func
+
+
+@auto_cast
 def get_constant_or_variable(
     const_or_var: Any,
     before_op_output_shape_trans: bool,
@@ -443,6 +466,7 @@ def get_constant_or_variable(
         return const_or_var
 
 
+@auto_cast
 def get_weights_constant_or_variable(
     const_or_var: Any,
     kernel_size: int,
