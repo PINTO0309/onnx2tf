@@ -8,6 +8,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     print_node_info,
     make_tf_node_info,
+    get_constant_or_variable,
 )
 
 
@@ -28,7 +29,6 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     shape = graph_node_output.shape
@@ -43,7 +43,14 @@ def make_node(
 
     # Generation of TF OP
     # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/handlers/backend/constant_of_shape.py
-    shape = tf_layers_dict[graph_node_input.name]['tf_node']
+    shape = get_constant_or_variable(
+        graph_node.inputs[0],
+        before_op_output_shape_trans=False,
+        is_bias=True,
+    )
+    if isinstance(shape, gs.Variable) \
+        and graph_node.inputs[0].name in tf_layers_dict:
+        shape = tf_layers_dict[graph_node.inputs[0].name]['tf_node']
 
     # make sure the shape dtype is either int32 or int64
     if shape.dtype not in [tf.int64, tf.int32]:
@@ -56,7 +63,7 @@ def make_node(
         value = attr_value.values
         constant_tensor = value[0]
     else:
-        constant_tensor = 0.
+        constant_tensor = 0.0
 
     cons = tf.fill(
         dims=shape,
