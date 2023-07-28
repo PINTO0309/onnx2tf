@@ -11,7 +11,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 @print_node_info
@@ -110,8 +110,7 @@ def make_node(
         beta = activation_params[1]
         conv_act_op = tf.maximum(0.0, tf.minimum(1.0, alpha * conv_op + beta))
     else:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'FusedConv {activation} is not yet supported. ' +
             f'graph_node.name: {graph_node.name}'
         )

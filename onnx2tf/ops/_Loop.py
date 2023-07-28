@@ -14,7 +14,7 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 import importlib
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 class While_Loop_CustomLayer(tf.keras.layers.Layer):
@@ -125,8 +125,8 @@ def make_node(
             try:
                 op = importlib.import_module(f'onnx2tf.ops.Input')
             except ModuleNotFoundError as ex:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+                error(
+                    f'{optype} OP is not yet implemented.'
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
@@ -147,8 +147,8 @@ def make_node(
             try:
                 op = importlib.import_module(f'onnx2tf.ops.{optype}')
             except ModuleNotFoundError as ex:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+                error(
+                    f'{optype} OP is not yet implemented.'
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
@@ -249,8 +249,7 @@ def make_node(
         )
     # M is None and cond is None
     else:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'Both M and cond in Loop are not set at the same time ' +
             f'Tensorflow.(PS. if you want to create a do-while loop ' +
             f'then please set cond to True or 1)\n' +

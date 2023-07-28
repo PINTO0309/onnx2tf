@@ -16,7 +16,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import gen_image_ops
@@ -277,8 +277,7 @@ def make_node(
     num_batches = boxes.shape[0]
 
     if num_batches is None:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'It is not possible to specify a dynamic shape ' +
             f'for the batch size of the input tensor in NonMaxSuppression. ' +
             f'Use the --batch_size option to change the batch size to a fixed size. \n' +

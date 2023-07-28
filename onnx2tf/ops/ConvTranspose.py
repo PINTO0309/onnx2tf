@@ -18,7 +18,7 @@ from onnx2tf.utils.common_functions import (
     dummy_onnx_inference,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 @print_node_info
@@ -104,8 +104,7 @@ def make_node(
             dilations_ = op_rep_param.get('dilations', None)
 
             if output_shape_ is None or strides_ is None:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f'When replacing ConvTranspose OP, "filters", "output_shape" and "strides" must be specified in replace.json. ' +
                     f'Check the specification of tf.nn.convXd_transpose in TensorFlow and specify the appropriate parameters. ' +
                     f'https://www.tensorflow.org/api_docs/python/tf/nn/conv1d_transpose or ' +
@@ -167,8 +166,7 @@ def make_node(
             try:
                 import onnxruntime as ort
             except Exception as ex:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +\
+                error(\
                     f'The information needed to estimate the output shape of the ConvTranspose ' +\
                     f'was missing and must be estimated using onnxruntime. ' +\
                     f'Install onnxruntime. pip install onnxruntime'
@@ -197,13 +195,13 @@ def make_node(
         pad_mode = "VALID"
     elif auto_pad == "SAME_LOWER":
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
     else:
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
@@ -217,7 +215,7 @@ def make_node(
         conv_func = tf.nn.conv3d_transpose
     else:
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Transposed convolution for {spatial_size}d is not implemented in Tensorflow.'
         print(error_msg)
         assert False, error_msg

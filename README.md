@@ -1293,7 +1293,12 @@ optional arguments:
     you must enable this flag.
 
   -n, --non_verbose
-    Do not show all information logs. Only error logs are displayed.
+    Shorthand to specify a verbosity of "error".
+
+  -v, --verbosity
+    Change the level of information printed.
+    Values are "debug", "info", "warn", and "error".
+    Default: "debug" (for backwards compatability)
 ```
 
 ## In-script Usage
@@ -1352,7 +1357,8 @@ convert(
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   disable_model_save: Union[bool, NoneType] = False,
   use_cuda: Union[bool, NoneType] = False,
-  non_verbose: Union[bool, NoneType] = False
+  non_verbose: Union[bool, NoneType] = False,
+  verbosity: Optional[str] = 'debug'
 ) -> keras.engine.training.Model
 
     Convert ONNX to TensorFlow models.
@@ -1761,8 +1767,13 @@ convert(
       Default: False
 
     non_verbose: Optional[bool]
-      Do not show all information logs. Only error logs are displayed.
+      Shorthand to specify a verbosity of "error".
       Default: False
+
+    verbosity: Optional[str]
+      Change the level of information printed.
+      Values are "debug", "info", "warn", and "error".
+      Default: "debug" (for backwards compatability)
 
     Returns
     ----------

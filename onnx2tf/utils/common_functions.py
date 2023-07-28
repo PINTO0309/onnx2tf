@@ -23,7 +23,7 @@ try:
     import onnxruntime as ort
 except Exception as ex:
     pass
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from typing import Any, List, Optional, Union, Tuple, Dict
 from functools import wraps
 from collections import namedtuple
@@ -251,38 +251,37 @@ def print_node_info(func):
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
         tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
-        non_verbose: bool = kwargs.get('non_verbose', False)
-        if not non_verbose:
+        if get_log_level() <= LOG_LEVELS['debug']:
             if graph_input is not None:
-                print(
-                    f'{Color.GREEN}INFO:{Color.RESET} '+
-                    f'{Color.GREEN}input_op_name{Color.RESET}: {graph_input.name} '+
-                    f'{Color.GREEN}shape{Color.RESET}: {graph_input.shape} '+
-                    f'{Color.GREEN}dtype{Color.RESET}: {graph_input.dtype}'
+                debug(
+                    Color.GREEN(f'INFO:') + ' '+
+                    Color.GREEN(f'input_op_name') + f': {graph_input.name} '+
+                    Color.GREEN(f'shape') + f': {graph_input.shape} '+
+                    Color.GREEN(f'dtype') + f': {graph_input.dtype}'
                 )
             elif graph_node is not None:
-                print('')
-                print(
-                    f'{Color.GREEN}INFO:{Color.RESET} {Color.MAGENTA}onnx_op_type{Color.RESET}: '+
-                    f'{graph_node.op} {Color.MAGENTA}onnx_op_name{Color.RESET}: {graph_node.name}')
+                debug('')
+                debug(
+                    Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': '+
+                    f'{graph_node.op}' + Color.MAGENTA('onnx_op_name') + f': {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
-                    print(
-                        f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN} input_name.{idx+1}{Color.RESET}: {graph_node_input.name} '+
-                        f'{Color.CYAN}shape{Color.RESET}: {graph_node_input.shape} '+
-                        f'{Color.CYAN}dtype{Color.RESET}: {graph_node_input.dtype}'
+                    debug(
+                        Color.GREEN(f'INFO:') + ' '+
+                        Color.CYAN(f' input_name.{idx+1}') + f': {graph_node_input.name} '+
+                        Color.CYAN(f'shape') + f': {graph_node_input.shape} '+
+                        Color.CYAN(f'dtype') + f': {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
-                    print(
-                        f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.CYAN} output_name.{idx+1}{Color.RESET}: {graph_node_output.name} '+
-                        f'{Color.CYAN}shape{Color.RESET}: {graph_node_output.shape} '+
-                        f'{Color.CYAN}dtype{Color.RESET}: {graph_node_output.dtype}'
+                    debug(
+                        Color.GREEN(f'INFO:') + ' '+
+                        Color.CYAN(f' output_name.{idx+1}') + f': {graph_node_output.name} '+
+                        Color.CYAN(f'shape') + f': {graph_node_output.shape} '+
+                        Color.CYAN(f'dtype') + f': {graph_node_output.dtype}'
                     )
         try:
             result = func(*args, **kwargs)
 
-            if not non_verbose:
+            if get_log_level() <= LOG_LEVELS['debug']:
                 if graph_node is not None and tf_layers_dict is not None:
                     for idx, graph_node_output in enumerate(graph_node.outputs):
                         tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
@@ -290,64 +289,59 @@ def print_node_info(func):
                             tf_node_info = tf_layer_info.get('tf_node_info', None)
                             if tf_node_info is not None:
                                 tf_op_type = tf_node_info.get('tf_op_type', None)
-                                print(
-                                    f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                    f'{Color.MAGENTA}tf_op_type{Color.RESET}: {tf_op_type}'
+                                debug(
+                                    Color.GREEN(f'INFO:') + ' ' + \
+                                    Color.MAGENTA(f'tf_op_type') + f': {tf_op_type}'
                                 )
 
                                 tf_inputs = tf_node_info.get('tf_inputs', None)
                                 if tf_inputs is not None:
                                     for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
                                         input_info_text = \
-                                            f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE} input.{input_idx+1}.{input_key}{Color.RESET}: '
+                                            Color.GREEN(f'INFO:') + ' ' + \
+                                            Color.BLUE(f' input.{input_idx+1}.{input_key}') + ': '
                                         for input_attr_name, input_attr_value in input_values.items():
                                             input_info_text += \
-                                                f'{Color.BLUE}{input_attr_name}{Color.RESET}: {input_attr_value} ' \
+                                                Color.BLUE(f'{input_attr_name}') + f': {input_attr_value} ' \
                                                 if input_attr_value  is not None else ''
-                                        print(input_info_text)
+                                        debug(input_info_text)
 
                                 tf_outputs = tf_node_info.get('tf_outputs', None)
                                 if tf_outputs is not None:
                                     for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
                                         output_info_text = \
-                                            f'{Color.GREEN}INFO:{Color.RESET} ' + \
-                                            f'{Color.BLUE} output.{output_idx+1}.{output_key}{Color.RESET}: '
+                                            Color.GREEN(f'INFO:') + ' ' + \
+                                            Color.BLUE(f' output.{output_idx+1}.{output_key}') + ': '
                                         for output_attr_name, output_attr_value in output_values.items():
                                             output_info_text += \
-                                                f'{Color.BLUE}{output_attr_name}{Color.RESET}: {output_attr_value} ' \
+                                                Color.BLUE(f'{output_attr_name}') + f': {output_attr_value} ' \
                                                 if output_attr_value  is not None else ''
-                                        print(output_info_text)
+                                        debug(output_info_text)
             return result
         except:
-            print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
-            traceback.print_exc()
+            error(f'The trace log is below.')
+            import traceback
+            error(traceback.format_exc(), prefix=False)
             if input_onnx_file_path is not None:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f'input_onnx_file_path: {input_onnx_file_path}'
                 )
             if graph_node is not None:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f'onnx_op_name: {graph_node.name}'
                 )
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
             )
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'Alternatively, if the input OP has a dynamic dimension, ' +
                 f'use the -b or -ois option to rewrite it to a static shape and try again.'
             )
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'If the input OP of ONNX before conversion is NHWC or ' +
                 f'an irregular channel arrangement other than NCHW, use the -kt or -kat option.'
             )
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'Also, for models that include NonMaxSuppression in the post-processing, ' +
                 f'try the -onwdt option.'
             )
@@ -1343,7 +1337,7 @@ def alternative_argmax(
         )
     else:
         error_msg = f''+\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Please specify epsilon for unknown input data type. '
         print(error_msg)
         assert False, error_msg
@@ -3776,7 +3770,7 @@ def dummy_tf_inference(
 
             if list(custom_input_data.shape) != input_size:
                 error_msg = f'' + \
-                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    Color.RED(f'ERROR:') + ' ' + \
                     f"The format of custom input data is different from Tensorflow's format. " + \
                     f"Therefore, you cannot use custom input. "
 
@@ -4195,7 +4189,7 @@ def calc_tf_pooling_pads(input_shape, kernel, strides):
         axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
 
         padded_valid_output_shape = math.floor((i + axis_pads - k) / s) + 1
-        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+        error_msg = Color.RED(f'ERROR:') + ' ' + \
                     f'Wrong padding calculation.'
         assert same_output_shape == padded_valid_output_shape, error_msg
 
@@ -4243,17 +4237,16 @@ def calc_extra_padding_with_ceil(
 
     if not len(input_shape) == len(kernel) == len(pads) // 2 == len(dilations) == len(strides):
         error_msg = f'' + \
-                    f'{Color.RED}ERROR:{Color.RESET} ' + \
+                    Color.RED(f'ERROR:') + ' ' + \
                     f'Wrong input shapes for extra padding calculation.'
         print(error_msg)
         raise ValueError(error_msg)
 
-    warning_msg = \
-        f'{Color.YELLOW}WARNING:{Color.RESET} ' \
+    warn(
         f'Current pooling with ceil_mode = 1 follows pytorch implementation ' \
         f'since current onnx implementation generates nan values. ' \
         f'Please refer to https://github.com/PINTO0309/onnx2tf/issues/207.'
-    print(warning_msg)
+    )
 
     pads_begin = pads[:len(pads) // 2]
     pads_end = pads[len(pads) // 2:]
@@ -4346,7 +4339,6 @@ def rewrite_tflite_inout_opname(
     tflite_file_name: str,
     onnx_input_names: List[str],
     onnx_output_names: List[str],
-    non_verbose: bool = False,
 ):
     """Rewrite the input/output OP name of tflite to the input/output OP name of ONNX.
     Pre-installation of flatc is required.
@@ -4364,9 +4356,6 @@ def rewrite_tflite_inout_opname(
 
     onnx_output_names: List[str]
         List of ONNX output OP names
-
-    non_verbose: bool
-        Do not show all information logs. Only error logs are displayed.
     """
     try:
         # Check to see if flatc is installed
@@ -4493,16 +4482,14 @@ def rewrite_tflite_inout_opname(
             os.remove(f'{json_file_path}')
 
     except Exception as ex:
-        if not non_verbose:
-            print(
-                f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                'If you want tflite input OP name and output OP name ' +
-                'to match ONNX input and output names, ' +
-                'convert them after installing "flatc". ' +
-                'Also, do not use symbols such as slashes in input/output OP names. ' +
-                'debian/ubuntu: apt install -y flatbuffers-compiler ' +
-                'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
-            )
+        warn(
+            'If you want tflite input OP name and output OP name ' +
+            'to match ONNX input and output names, ' +
+            'convert them after installing "flatc". ' +
+            'Also, do not use symbols such as slashes in input/output OP names. ' +
+            'debian/ubuntu: apt install -y flatbuffers-compiler ' +
+            'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
+        )
 
 
 def make_tf_partial_model_inputs(

@@ -15,7 +15,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
@@ -94,8 +94,7 @@ def make_node(
         if split_shape.shape[0] == 1:
             split_sizes = split
         else:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} '+
+            error(
                 f'Split to sequence with scalar split is not supported due to API limitations.\n'+
                 f'graph_node.name: {graph_node.name} split.shape: {split_shape}'
             )

@@ -23,7 +23,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
 )
@@ -210,8 +210,7 @@ def make_node(
         elif input_tensor_rank == 5:
             tf_resize = upsampling3d_bilinear
         else:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} '+
+            error(
                 f'Currently, Resize operations other than 4D and 5D are not supported. '+
                 'Pull requests are welcome. \n'+
                 f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'
@@ -224,8 +223,7 @@ def make_node(
         elif input_tensor_rank == 5:
             tf_resize = upsampling3d_bicubic
         else:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} '+
+            error(
                 f'Currently, Resize operations other than 4D and 5D are not supported. '+
                 'Pull requests are welcome. \n'+
                 f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'
@@ -238,8 +236,7 @@ def make_node(
         elif input_tensor_rank == 5:
             tf_resize = upsampling3d_nearest
         else:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} '+
+            error(
                 f'Currently, Resize operations other than 4D and 5D are not supported. '+
                 'Pull requests are welcome. \n'+
                 f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'

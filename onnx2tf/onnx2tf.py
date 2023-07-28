@@ -48,7 +48,7 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_outputs,
     rewrite_tflite_inout_opname,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
 def convert(
@@ -101,6 +101,7 @@ def convert(
     disable_model_save: Optional[bool] = False,
     use_cuda: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
+    verbosity: Optional[str] = 'debug',
 ) -> tf.keras.Model:
     """Convert ONNX to TensorFlow models.
 
@@ -432,18 +433,27 @@ def convert(
         Default: False
 
     non_verbose: Optional[bool]
-        Do not show all information logs. Only error logs are displayed.\n
+        Shorthand to specify a verbosity of "error".\n
         Default: False
+
+    verbosity: Optional[str]
+        Change the level of information printed.\n
+        Values are "debug", "info", "warn", and "error".\n
+        Default: "debug" (for backwards compatability)
 
     Returns
     ----------
     model: tf.keras.Model
         Model
     """
+
+    if verbosity is None:
+        verbosity = 'debug'
+    set_log_level('error' if non_verbose else verbosity)
+
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'One of input_onnx_file_path or onnx_graph must be specified.'
         )
         sys.exit(1)
@@ -458,8 +468,7 @@ def convert(
 
     # Input file existence check
     if not os.path.exists(input_onnx_file_path) and not onnx_graph:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'The specified *.onnx file does not exist. ' +
             f'input_onnx_file_path: {input_onnx_file_path}'
         )
@@ -476,8 +485,7 @@ def convert(
 
     # batch_size
     if batch_size is not None and batch_size <= 0:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'batch_size must be greater than or equal to 1. batch_size: {batch_size}'
         )
         sys.exit(1)
@@ -485,8 +493,7 @@ def convert(
     # overwrite_input_shape
     if overwrite_input_shape is not None \
         and not isinstance(overwrite_input_shape, list):
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'overwrite_input_shape must be specified by list.'
         )
         sys.exit(1)
@@ -495,8 +502,7 @@ def convert(
     if custom_input_op_name_np_data_path is not None:
         for param in custom_input_op_name_np_data_path:
             if len(param) not in [2, 4]:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
                 )
                 sys.exit(1)
@@ -512,8 +518,7 @@ def convert(
         replace_argmax_to_fused_argmax_and_indicies_is_float32,
     ]
     if ra_option_list.count(True) > 1:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and ' +
             f'replace_argmax_to_reducemax_and_indicies_is_float32 and ' +
             f'replace_argmax_to_fused_argmax_and_indicies_is_int64 and ' +
@@ -523,8 +528,7 @@ def convert(
 
     # fused_argmax_scale_ratio
     if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'fused_argmax_scale_ratio must be specified in the range '+
             f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
             f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
@@ -533,8 +537,7 @@ def convert(
 
     # number_of_dimensions_after_flextranspose_compression
     if number_of_dimensions_after_flextranspose_compression < 2:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
             f'number_of_dimensions_after_flextranspose_compression: ' +
             f'{number_of_dimensions_after_flextranspose_compression}'
@@ -543,8 +546,7 @@ def convert(
 
     # number_of_dimensions_after_flexstridedslice_compression
     if number_of_dimensions_after_flexstridedslice_compression < 1:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} ' +
+        error(
             f'number_of_dimensions_after_flexstridedslice_compression must be at least 1. '+
             f'number_of_dimensions_after_flexstridedslice_compression: ' +
             f'{number_of_dimensions_after_flexstridedslice_compression}'
@@ -554,8 +556,7 @@ def convert(
     replacement_parameters = None
     if param_replacement_file:
         if not os.path.isfile(param_replacement_file):
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'File specified in param_replacement_file not found. \n' +
                 f'param_replacement_file: {param_replacement_file}'
             )
@@ -568,8 +569,7 @@ def convert(
                     if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
         except json.decoder.JSONDecodeError as ex:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +
+            error(
                 f'The file specified in param_replacement_file is not in JSON format. \n' +
                 f'param_replacement_file: {param_replacement_file}'
             )
@@ -581,9 +581,8 @@ def convert(
     # I have no choice but to use subprocesses that we do not want to use.
     if not not_use_onnxsim:
         try:
-            if not non_verbose:
-                print('')
-                print(f'{Color.REVERCE}Model optimizing started{Color.RESET}', '=' * 60)
+            info('')
+            info(Color.REVERSE(f'Model optimizing started'), '=' * 60)
             for _ in range(3):
                 append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
                     if overwrite_input_shape is not None else []
@@ -597,24 +596,19 @@ def convert(
                     ] + append_param,
                     stderr=subprocess.PIPE
                 ).decode('utf-8')
-                if not non_verbose:
-                    print(result)
-            if not non_verbose:
-                print(f'{Color.GREEN}Model optimizing complete!{Color.RESET}')
+                info(result)
+            info(Color.GREEN(f'Model optimizing complete!'))
         except Exception as e:
-            if not non_verbose:
-                import traceback
-                traceback.print_exc()
-                print(
-                    f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                    'Failed to optimize the onnx file.'
-                )
+            import traceback
+            warn(traceback.format_exc(), prefix=False)
+            warn(
+                'Failed to optimize the onnx file.'
+            )
 
     # Automatic generation of each OP name - sng4onnx
     if not not_use_opname_auto_generate:
-        if not non_verbose:
-            print('')
-            print(f'{Color.REVERCE}Automatic generation of each OP name started{Color.RESET}', '=' * 40)
+        info('')
+        info(Color.REVERSE(f'Automatic generation of each OP name started'), '=' * 40)
         try:
             op_name_auto_generate(
                 input_onnx_file_path=f'{input_onnx_file_path}',
@@ -622,16 +616,13 @@ def convert(
                 output_onnx_file_path=f'{input_onnx_file_path}',
                 non_verbose=True,
             )
-            if not non_verbose:
-                print(f'{Color.GREEN}Automatic generation of each OP name complete!{Color.RESET}')
+            info(Color.GREEN(f'Automatic generation of each OP name complete!'))
         except Exception as e:
-            if not non_verbose:
-                import traceback
-                traceback.print_exc()
-                print(
-                    f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                    'Failed to automatic generation of each OP name.'
-                )
+            import traceback
+            warn(traceback.format_exc(), prefix=False)
+            warn(
+                'Failed to automatic generation of each OP name.'
+            )
 
     # quantization_type
     disable_per_channel = False \
@@ -663,8 +654,7 @@ def convert(
         try:
             from sne4onnx import extraction
         except Exception as ex:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
+            error(
                 f'If --output_names_to_interrupt_model_conversion is specified, ' +\
                 f'you must install sne4onnx. pip install sne4onnx'
             )
@@ -703,9 +693,8 @@ def convert(
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
 
-    if not non_verbose:
-        print('')
-        print(f'{Color.REVERCE}Model loaded{Color.RESET}', '=' * 72)
+    info('')
+    info(Color.REVERSE(f'Model loaded'), '=' * 72)
 
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
@@ -719,7 +708,6 @@ def convert(
         'onnx_graph': onnx_graph,
         'opset': graph.opset,
         'batch_size': batch_size,
-        'non_verbose': non_verbose,
         'disable_group_convolution': disable_group_convolution,
         'enable_rnn_unroll': enable_rnn_unroll,
         'disable_suppression_flextranspose': disable_suppression_flextranspose,
@@ -743,9 +731,8 @@ def convert(
 
     tf_layers_dict = {}
 
-    if not non_verbose:
-        print('')
-        print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
+    info('')
+    info(Color.REVERSE(f'Model conversion started'), '=' * 60)
 
     with graph.node_ids():
 
@@ -775,8 +762,7 @@ def convert(
             if output_integer_quantized_tflite \
                 and custom_input_op_name_np_data_path is None \
                 and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f'For INT8 quantization, the input data type must be Float32. ' +
                     f'Also, if --custom_input_op_name_np_data_path is not specified, ' +
                     f'all input OPs must assume 4D tensor image data. ' +
@@ -869,12 +855,11 @@ def convert(
             }
             del onnx_outputs_for_validation
         except Exception as ex:
-            print(
-                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+            warn(
                 f'The optimization process for shape estimation is skipped ' +
                 f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
             )
-            print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
+            warn(f'{ex}')
         additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
@@ -886,8 +871,8 @@ def convert(
             try:
                 op = importlib.import_module(f'onnx2tf.ops.{optype}')
             except ModuleNotFoundError as ex:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+                error(
+                    f'{optype} OP is not yet implemented.'
                 )
                 sys.exit(1)
 
@@ -926,10 +911,10 @@ def convert(
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        if not non_verbose:
-            print('')
+        if get_log_level() <= LOG_LEVELS['debug']:
+            debug('')
             model.summary(line_length=140)
-            print('')
+            debug('')
 
         # The process ends normally without saving the model.
         if disable_model_save:
@@ -938,60 +923,54 @@ def convert(
         # Output in Keras h5 format
         if output_h5:
             try:
-                if not non_verbose:
-                    print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
+                info(Color.REVERSE(f'h5 output started'), '=' * 67)
                 model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
-                if not non_verbose:
-                    print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+                info(Color.GREEN(f'h5 output complete!'))
             except ValueError as e:
                 msg_list = [s for s in e.args if isinstance(s, str)]
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            print(
-                                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                            warn(
                                 f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                                 f'but is not output because h5 does not support GroupConvolution. ' +
                                 f'If h5 is needed, specify --disable_group_convolution to retransform the model.'
                             )
                             break
                 else:
-                    print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                    error(e)
                     import traceback
-                    traceback.print_exc()
+                    error(traceback.format_exc(), prefix=False)
             except Exception as e:
-                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                error(e)
                 import traceback
-                traceback.print_exc()
+                error(traceback.format_exc(), prefix=False)
 
         # Output in Keras keras_v3 format
         if output_keras_v3:
             try:
-                if not non_verbose:
-                    print(f'{Color.REVERCE}keras_v3 output started{Color.RESET}', '=' * 61)
+                info(Color.REVERSE(f'keras_v3 output started'), '=' * 61)
                 model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
-                if not non_verbose:
-                    print(f'{Color.GREEN}keras_v3 output complete!{Color.RESET}')
+                info(Color.GREEN(f'keras_v3 output complete!'))
             except ValueError as e:
                 msg_list = [s for s in e.args if isinstance(s, str)]
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            print(
-                                f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                            warn(
                                 f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                                 f'but is not output because keras_v3 does not support GroupConvolution. ' +
                                 f'If keras_v3 is needed, specify --disable_group_convolution to retransform the model.'
                             )
                             break
                 else:
-                    print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                    error(e)
                     import traceback
-                    traceback.print_exc()
+                    error(traceback.format_exc(), prefix=False)
             except Exception as e:
-                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                error(e)
                 import traceback
-                traceback.print_exc()
+                error(traceback.format_exc(), prefix=False)
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
@@ -1004,45 +983,40 @@ def convert(
         # saved_model
         try:
             # concrete_func
-            if not non_verbose:
-                print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
+            info(Color.REVERSE(f'saved_model output started'), '=' * 58)
             if not output_signaturedefs and not output_integer_quantized_tflite:
                 tf.saved_model.save(concrete_func, output_folder_path)
             else:
                 tf.saved_model.save(model, output_folder_path)
-            if not non_verbose:
-                print(f'{Color.GREEN}saved_model output complete!{Color.RESET}')
+            info(Color.GREEN(f'saved_model output complete!'))
         except TypeError as e:
             # Switch to .pb
-            if not non_verbose:
-                print(f'{Color.GREEN}Switch to the output of an optimized protocol buffer file (.pb).{Color.RESET}')
+            info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
         except (KeyError, AssertionError) as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
                 for s in msg_list:
                     if 'Failed to add concrete function' in s \
                         or "Tried to export a function which references an 'untracked' resource" in s:
-                        print(
-                            f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                        warn(
                             f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                             f'but is not output because saved_model does not support GroupConvolution. ' +
                             f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
                         )
                         break
             else:
-                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                error(e)
                 import traceback
-                traceback.print_exc()
+                error(traceback.format_exc(), prefix=False)
         except Exception as e:
-            print(f'{Color.RED}ERROR:{Color.RESET}', e)
+            error(e)
             import traceback
-            traceback.print_exc()
+            error(traceback.format_exc(), prefix=False)
 
         # TFv1 .pb
         if output_tfv1_pb:
             try:
-                if not non_verbose:
-                    print(f'{Color.REVERCE}TFv1 v1 .pb output started{Color.RESET}', '=' * 58)
+                info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
                 imported = tf.saved_model.load(output_folder_path)
                 f = imported.signatures[SIGNATURE_KEY]
@@ -1054,18 +1028,16 @@ def convert(
                     name=f'{output_file_name}_float32.pb',
                     as_text=False,
                 )
-                if not non_verbose:
-                    print(f'{Color.GREEN}TFv1 .pb output complete!{Color.RESET}')
+                info(Color.GREEN(f'TFv1 .pb output complete!'))
             except KeyError as e:
-                print(
-                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                warn(
                     f'Probably due to GroupConvolution, saved_model could not be generated successfully, ' +
                     f'so onnx2tf skip the output of TensorFlow v1 pb.'
                 )
             except Exception as e:
-                print(f'{Color.RED}ERROR:{Color.RESET}', e)
+                error(e)
                 import traceback
-                traceback.print_exc()
+                error(traceback.format_exc(), prefix=False)
 
         # TFLite
         """
@@ -1104,8 +1076,7 @@ def convert(
                 extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float32.tflite',
                 output_weights_file_path=f'{output_folder_path}/{output_file_name}_float32_weights.h5',
             )
-        if not non_verbose:
-            print(f'{Color.GREEN}Float32 tflite output complete!{Color.RESET}')
+        info(Color.GREEN(f'Float32 tflite output complete!'))
 
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_types = [tf.float16]
@@ -1128,8 +1099,7 @@ def convert(
                 extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float16.tflite',
                 output_weights_file_path=f'{output_folder_path}/{output_file_name}_float16_weights.h5',
             )
-        if not non_verbose:
-            print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
+        info(Color.GREEN(f'Float16 tflite output complete!'))
 
         # Run TFLite ModelAnalyzer on the generated Float16 tflite model
         # to check if the model can be supported by GPU Delegate.
@@ -1141,13 +1111,11 @@ def convert(
                     gpu_compatibility=True,
                 )
             except Exception as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'TFLite ModelAnalyzer failed.'
-                    )
+                import traceback
+                warn(traceback.format_exc(), prefix=False)
+                warn(
+                    'TFLite ModelAnalyzer failed.'
+                )
 
         # Quantized TFLite
         MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
@@ -1160,15 +1128,14 @@ def convert(
             input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
             input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
             input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
-            if not non_verbose:
-                print(f'{Color.BLUE}Input signature information for quantization{Color.RESET}')
-                print(f'{Color.BLUE}signature_name{Color.RESET}: {SIGNATURE_KEY}')
-                for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
-                    print(
-                        f'{Color.BLUE}input_name.{idx}{Color.RESET}: {input_key} '+
-                        f'{Color.BLUE}shape{Color.RESET}: {input_shape} '+
-                        f'{Color.BLUE}dtype{Color.RESET}: {input_dtype}'
-                    )
+            info(Color.BLUE(f'Input signature information for quantization'))
+            info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
+            for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
+                info(
+                    Color.BLUE(f'input_name.{idx}') + f': {input_key} '+
+                    Color.BLUE(f'shape') + f': {input_shape} '+
+                    Color.BLUE(f'dtype') + f': {input_dtype}'
+                )
 
             # INT8 Converter
             converter = tf.lite.TFLiteConverter.from_saved_model(
@@ -1199,16 +1166,13 @@ def convert(
                         extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite',
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant_weights.h5',
                     )
-                if not non_verbose:
-                    print(f'{Color.GREEN}Dynamic Range Quantization tflite output complete!{Color.RESET}')
+                info(Color.GREEN(f'Dynamic Range Quantization tflite output complete!'))
             except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'Dynamic Range Quantization tflite output failed.'
-                    )
+                import traceback
+                warn(traceback.format_exc(), prefix=False)
+                warn(
+                    'Dynamic Range Quantization tflite output failed.'
+                )
 
             # Download sample calibration data - MS-COCO x20 images
             # Used only when there is only one input OP, a 4D tensor image,
@@ -1230,8 +1194,7 @@ def convert(
                     if model_input.dtype != tf.float32 \
                         or len(model_input.shape) != 4 \
                         or model_input.shape[-1] != 3:
-                        print(
-                            f'{Color.RED}ERROR:{Color.RESET} ' +
+                        error(
                             f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
                             f'using non-rgb-image input tensors, specify the calibration data with '+
                             f'--quant_calib_input_op_name_np_data_path. '+
@@ -1251,8 +1214,7 @@ def convert(
             elif custom_input_op_name_np_data_path is not None:
                 for param in custom_input_op_name_np_data_path:
                     if len(param) != 4:
-                        print(
-                            f"{Color.RED}ERROR:{Color.RESET} " +
+                        error(
                             "If you want to use custom input with the '-oiqt' option, " +
                             "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. " +
                             f"However, you have only entered {len(param)} options. "
@@ -1308,8 +1270,7 @@ def convert(
                         extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
                     )
-                if not non_verbose:
-                    print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
+                info(Color.GREEN(f'INT8 Quantization tflite output complete!'))
 
                 # Full Integer Quantization
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -1344,16 +1305,13 @@ def convert(
                         extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite',
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant_weights.h5',
                     )
-                if not non_verbose:
-                    print(f'{Color.GREEN}Full INT8 Quantization tflite output complete!{Color.RESET}')
+                info(Color.GREEN(f'Full INT8 Quantization tflite output complete!'))
             except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'Full INT8 Quantization tflite output failed.'
-                    )
+                import traceback
+                warn(traceback.format_exc(), prefix=False)
+                warn(
+                    'Full INT8 Quantization tflite output failed.'
+                )
 
             # Integer quantization with int16 activations
             try:
@@ -1378,16 +1336,13 @@ def convert(
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                     )
-                if not non_verbose:
-                    print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+                info(Color.GREEN(f'INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'INT8 Quantization with int16 activations tflite output failed.'
-                    )
+                import traceback
+                warn(traceback.format_exc(), prefix=False)
+                warn(
+                    'INT8 Quantization with int16 activations tflite output failed.'
+                )
 
             # Full Integer quantization with int16 activations
             try:
@@ -1412,16 +1367,13 @@ def convert(
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                     )
-                if not non_verbose:
-                    print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+                info(Color.GREEN(f'Full INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'Full INT8 Quantization with int16 activations tflite output failed.'
-                    )
+                import traceback
+                warn(traceback.format_exc(), prefix=False)
+                warn(
+                    'Full INT8 Quantization with int16 activations tflite output failed.'
+                )
 
         # Returns true if the two arrays, the output of onnx and the output of TF,
         # are elementwise equal within an acceptable range.
@@ -1432,22 +1384,21 @@ def convert(
                 import onnxruntime
                 import sne4onnx
             except Exception as ex:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +\
+                error(
                     f'If --check_onnx_tf_outputs_elementwise_close is specified, ' +\
                     f'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
                 )
                 sys.exit(1)
 
-            if not non_verbose:
-                print('')
-                print(f'{Color.REVERCE}ONNX and TF output value validation started{Color.RESET}', '=' * 41)
-                print(
-                    f'{Color.GREEN}INFO:{Color.RESET} {Color.GREEN}validation_conditions{Color.RESET}: '+
-                    f'np.allclose(onnx_outputs, tf_outputs, '+
-                    f'rtol={check_onnx_tf_outputs_elementwise_close_rtol}, '+
-                    f'atol={check_onnx_tf_outputs_elementwise_close_atol}, '+
-                    f'equal_nan=True)')
+            info('')
+            info(Color.REVERSE(f'ONNX and TF output value validation started'), '=' * 41)
+            info(
+                Color.GREEN(f'INFO:') + ' ' + Color.GREEN(f'validation_conditions') + ': '+
+                f'np.allclose(onnx_outputs, tf_outputs, '+
+                f'rtol={check_onnx_tf_outputs_elementwise_close_rtol}, '+
+                f'atol={check_onnx_tf_outputs_elementwise_close_atol}, '+
+                f'equal_nan=True)'
+            )
 
             # Listing of output_names
             # --check_onnx_tf_outputs_elementwise_close_full lists all output names
@@ -1505,12 +1456,11 @@ def convert(
                         use_cuda=use_cuda,
                     )
             except Exception as ex:
-                print(
-                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                warn(
                     f'The accuracy error measurement process was skipped ' +
                     f'because the standard onnxruntime contains OPs that cannot be inferred.'
                 )
-                print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
+                warn(f'{ex}')
             else:
                 # TF dummy inference
                 tf_tensor_infos: Dict[Any] = dummy_tf_inference(
@@ -1564,23 +1514,23 @@ def convert(
                     message = ''
                     if matched_flg == 0:
                         message = \
-                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                            f'{Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET} ' +\
-                            f'{Color.GREEN}max_abs_error{Color.RESET}: {max_abs_err}'
+                            Color.GREEN(f'validate_result') + ': ' +\
+                            Color.REVERSE(f'{Color.YELLOW} Unmatched ') + ' ' +\
+                            Color.GREEN(f'max_abs_error') + f': {max_abs_err}'
                     elif matched_flg == 1:
                         message = \
-                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                            f'{Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                            Color.GREEN(f'validate_result') + ': ' +\
+                            Color.REVERSE(f'{Color.GREEN} Matches ')
                     elif matched_flg == 2:
                         message = \
-                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                            f'{Color.REVERCE}{Color.BLUE} Skipped (Deleted or Shape Unmatched) {Color.RESET}'
+                            Color.GREEN(f'validate_result') + ': ' +\
+                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) ')
                     print(
-                        f'{Color.GREEN}INFO:{Color.RESET} '+
-                        f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
-                        f'{Color.GREEN}tf_output_name{Color.RESET}: {tf_output_name} '+
-                        f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
-                        f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
+                        Color.GREEN(f'INFO:') + ' '+
+                        Color.GREEN(f'onnx_output_name') + f': {onnx_output_name} '+
+                        Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
+                        Color.GREEN(f'shape') + f': {validated_onnx_tensor.shape} '+
+                        Color.GREEN(f'dtype') + f': {validated_onnx_tensor.dtype} '+
                         f'{message}'
                     )
 
@@ -2131,7 +2081,17 @@ def main():
         '-n',
         '--non_verbose',
         action='store_true',
-        help='Do not show all information logs. Only error logs are displayed.'
+        help='Shorthand to specify a verbosity of "error".'
+    )
+    parser.add_argument(
+        '-v',
+        '--verbosity',
+        type=str,
+        choices=['debug', 'info', 'warn', 'error'],
+        default='debug',
+        help=\
+            'Change the level of information printed. ' +
+            'Default: "debug" (for backwards compatability)'
     )
     args = parser.parse_args()
 
@@ -2221,6 +2181,7 @@ def main():
         disable_model_save=args.disable_model_save,
         use_cuda=args.use_cuda,
         non_verbose=args.non_verbose,
+        verbosity=args.verbosity,
     )
 
 

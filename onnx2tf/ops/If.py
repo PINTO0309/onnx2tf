@@ -18,7 +18,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 @print_node_info
@@ -61,8 +61,8 @@ def make_node(
         try:
             op = importlib.import_module(f'onnx2tf.ops.{optype}')
         except ModuleNotFoundError as ex:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+            error(
+                f'{optype} OP is not yet implemented.'
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons
@@ -103,8 +103,8 @@ def make_node(
         try:
             op = importlib.import_module(f'onnx2tf.ops.{optype}')
         except ModuleNotFoundError as ex:
-            print(
-                f'{Color.RED}ERROR:{Color.RESET} {optype} OP is not yet implemented.'
+            error(
+                f'{optype} OP is not yet implemented.'
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons

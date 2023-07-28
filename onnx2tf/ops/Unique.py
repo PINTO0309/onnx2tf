@@ -15,7 +15,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import Color
 
 
 class tfUnique(tf.keras.layers.Layer):
@@ -103,7 +103,7 @@ def make_node(
     if sorted:
         # TODO: implement sort
         error_msg = f'' + \
-                    f'{Color.RED}WARNING:{Color.RESET} ' + \
+                    Color.RED(f'WARNING:') + ' ' + \
                     f'Sort option in Unique ops is not implemented yet.'
         print(error_msg)
         assert False, error_msg

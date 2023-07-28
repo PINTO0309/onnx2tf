@@ -19,7 +19,7 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict, List
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
     TF_DTYPES_TO_NUMPY_DTYPES,
@@ -153,8 +153,7 @@ def make_node(
     if 4 <= input_tensor_rank <= 5:
         pass
     else:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'Currently, ScaleAndTranslate operations other than 4D and 5D are not supported. '+
             'Pull requests are welcome. \n'+
             f'graph_node.name: {graph_node.name} shape: {input_tensor_shape}'

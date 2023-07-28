@@ -13,7 +13,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 def _dequantize_tensor(
@@ -180,8 +180,7 @@ def make_node(
     if len(input_weights_zero_point.shape) == 0:
         input_weights_zero_point = tf.fill([input_tensor.shape[-1]//group], input_weights_zero_point)
     elif len(input_weights_zero_point.shape) > 1:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'Unsupported zero point: {graph_node.name} {input_weights_zero_point}'
         )
         sys.exit(1)
@@ -191,8 +190,7 @@ def make_node(
         weights_scale_is_scalar = True
         input_weights_scale = tf.fill([input_tensor.shape[-1]//group], input_weights_scale)
     elif len(input_weights_scale.shape) > 1:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'Unsupported scalet: {graph_node.name} {input_weights_scale}'
         )
         sys.exit(1)
@@ -245,13 +243,13 @@ def make_node(
         pad_mode = "VALID"
     elif auto_pad == "SAME_LOWER":
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
     else:
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg

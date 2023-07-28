@@ -18,7 +18,7 @@ from onnx2tf.utils.common_functions import (
     stridedslice_with_flexing_deterrence,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 @print_node_info
@@ -245,8 +245,7 @@ def make_node(
             shrink_axis_mask_ = op_rep_param.get('shrink_axis_mask', 0)
 
             if begin_ is None or end_ is None:
-                print(
-                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                error(
                     f'When replacing Slice OP, "begin" and "end" must be specified in replace.json. ' +
                     f'Check the specification of tf.strided_slice in TensorFlow and specify the appropriate parameters. ' +
                     f'https://www.tensorflow.org/api_docs/python/tf/strided_slice'
