@@ -894,6 +894,7 @@ usage: onnx2tf
 [-dms]
 [-uc]
 [-n]
+[-v]
 
 optional arguments:
   -h, --help
