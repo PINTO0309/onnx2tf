@@ -25,7 +25,7 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
 )
 from typing import Any, Dict
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 INF_INDEX_VALUE: int = 4294967296
 
@@ -248,13 +248,13 @@ def make_node(
         pad_mode = "VALID"
     elif auto_pad == "SAME_LOWER":
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
     else:
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'Invalid auto_pad attribute: {auto_pad}'
         print(error_msg)
         assert False, error_msg
@@ -453,8 +453,7 @@ def make_node(
 
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                    warn(
                         f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                         f'but is not output because saved_model does not support GroupConvolution. ' +
                         f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
@@ -559,8 +558,7 @@ def make_node(
 
             else:
                 if kernel_size in (1, 2, 3) and not disable_group_convolution:
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                    warn(
                         f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
                         f'but is not output because saved_model does not support GroupConvolution. ' +
                         f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'

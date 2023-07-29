@@ -14,7 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 class StringNormalizer(tf.keras.layers.Layer):
@@ -112,7 +112,7 @@ def make_node(
     locale = graph_node.attrs.get('locale', 'en_US')
     if locale != 'en_US':
         error_msg = f'' + \
-                    f'{Color.RED}WARNING:{Color.RESET} ' + \
+                    Color.RED(f'WARNING:') + ' ' + \
                     f'locale option in StringNormalizer ops is not implemented yet.'
         print(error_msg)
     stopwords = graph_node.attrs.get('stopwords', [])

@@ -16,7 +16,7 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 INF_INDEX_VALUE: int = 4294967296
 
@@ -97,8 +97,7 @@ def make_node(
 
     ENABLE_MODES = ['bilinear']
     if mode not in ENABLE_MODES:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'The current implementation of GridSample supports only mode={ENABLE_MODES}. '+
             f'Pull requests are welcome. \n'+
             f'mode: {mode}'
@@ -107,8 +106,7 @@ def make_node(
 
     ENABLE_PADDING_MODES = ['zeros']
     if padding_mode not in ENABLE_PADDING_MODES:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'The current implementation of GridSample supports only mode={ENABLE_PADDING_MODES}. '+
             f'Pull requests are welcome. \n'+
             f'mode: {padding_mode}'

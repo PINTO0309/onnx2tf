@@ -15,7 +15,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 
 
 @print_node_info
@@ -69,7 +69,7 @@ def make_node(
     noop_with_empty_axes = bool(graph_node.attrs.get('noop_with_empty_axes', 0))
     if noop_with_empty_axes and axes is None:
         error_msg = f'' +\
-            f'{Color.RED}ERROR:{Color.RESET} ' +\
+            Color.RED(f'ERROR:') + ' ' +\
             f'TensorFlow does not support noop_with_empty_axes=1 (True).'
         print(error_msg)
         assert not noop_with_empty_axes, error_msg

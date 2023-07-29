@@ -116,7 +116,7 @@ def _report_convert_model(file_path):
             disable_strict_mode=True,
             disable_model_save=True,
             use_cuda=False,
-            non_verbose=True,
+            verbosity="error",
         )
         os.remove(file_path)
         for tflitepath in glob.glob(f"{_CFG['output_directory']}/*.tflite"):

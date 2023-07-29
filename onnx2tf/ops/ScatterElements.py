@@ -17,7 +17,7 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
@@ -108,8 +108,7 @@ def make_node(
     reduction = graph_node.attrs.get('reduction', 'none')
     enable_reductions = ['none']
     if reduction not in enable_reductions:
-        print(
-            f'{Color.RED}ERROR:{Color.RESET} '+
+        error(
             f'ScatterElements currently supports only reduction={enable_reductions}. '+
             f'Pull requests are welcome. \n'+
             f'graph_node.name: {graph_node.name} reduction: {reduction}'

@@ -5,7 +5,7 @@ np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from typing import List
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.common_functions import (
     print_node_info,
 )
@@ -271,7 +271,7 @@ def make_node(
             and keep_ncw_or_nchw_or_ncdhw_input_names \
             and graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f'' +\
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
@@ -281,7 +281,7 @@ def make_node(
             and keep_nwc_or_nhwc_or_ndhwc_input_names \
             and graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
             error_msg = f'' +\
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
@@ -307,7 +307,7 @@ def make_node(
             and keep_ncw_or_nchw_or_ncdhw_input_names \
             and graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
             error_msg = f''+\
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)
@@ -317,7 +317,7 @@ def make_node(
             and keep_nwc_or_nhwc_or_ndhwc_input_names \
             and graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
             error_msg = f'' +\
-                f'{Color.RED}ERROR:{Color.RESET} ' +\
+                Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
                 f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
             print(error_msg)

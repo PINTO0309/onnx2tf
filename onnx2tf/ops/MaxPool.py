@@ -17,7 +17,7 @@ from onnx2tf.utils.common_functions import (
     calc_extra_padding_with_ceil,
     transpose_with_flexing_deterrence,
 )
-from onnx2tf.utils.colors import Color
+from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 INF_INDEX_VALUE: int = 4294967296
@@ -64,8 +64,6 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
-
-    non_verbose = bool(kwargs['non_verbose'])
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -130,7 +128,7 @@ def make_node(
 
     if len(graph_node.outputs) > 1 and dilations != [1] * spatial_size:
         error_msg = \
-            f'{Color.RED}ERROR:{Color.RESET} ' \
+            Color.RED(f'ERROR:') + ' ' \
             f'MaxPoolWithArgmax with dilations is not yet implemented. ' \
             f'Pull requests are welcome. \n' \
             f'graph_node.name: {graph_node.name}, dilations: {dilations}'
@@ -144,7 +142,7 @@ def make_node(
     input_tensor_dtype = input_tensor.dtype
 
     if storage_order:
-        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+        error_msg = Color.RED(f'ERROR:') + ' ' + \
                     f'storage_order option is not implemented yet.'
         print(error_msg)
         raise NotImplementedError(error_msg)
@@ -201,18 +199,16 @@ def make_node(
         tf_pads = [0] * spatial_size * 2
 
     else:
-        error_msg = f'{Color.RED}ERROR:{Color.RESET} ' + \
+        error_msg = Color.RED(f'ERROR:') + ' ' + \
                     f'Wrong auto_pad parameter in MaxPool: {auto_pad}.'
         raise ValueError(error_msg)
 
     # add extra pad layer if needed
     if is_explicit_padding and tf_pads != [0] * spatial_size * 2:
-        if not non_verbose:
-            warning_msg = \
-                f'{Color.YELLOW}WARNING:{Color.RESET} ' \
-                f'Tensorflow incompatible padding detected. ' \
-                f'Extra pad layer is inserted automatically. '
-            print(warning_msg)
+        warn(
+            f'Tensorflow incompatible padding detected. ' \
+            f'Extra pad layer is inserted automatically. '
+        )
 
         if auto_pad == 'SAME_LOWER':
             # switch the order of pads
@@ -305,7 +301,7 @@ def make_node(
         else:
             # TODO: Dilated MaxPool with strides is broken for 3D and above, need to be fixed
             if spatial_size >= 3:
-                error_msg = f'{Color.RED}ERROR:{Color.RESET} ' \
+                error_msg = Color.RED(f'ERROR:') + ' ' \
                             f'Dilated MaxPool with strides is not supported for 3D and above for now. '
                 print(error_msg)
                 raise NotImplementedError(error_msg)
