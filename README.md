@@ -255,7 +255,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.15.3
+  ghcr.io/pinto0309/onnx2tf:1.15.4
 
   or
 
@@ -263,7 +263,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.15.3
+  docker.io/pinto0309/onnx2tf:1.15.4
 
   or
 
@@ -1298,11 +1298,6 @@ optional arguments:
   -dms, --disable_model_save
     Does not save the converted model. For CIs RAM savings.
 
-  -uc, --use_cuda
-    CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
-    Note that if you need to convert extended OPs such as com.microsoft.xxx,
-    you must enable this flag.
-
   -n, --non_verbose
     Shorthand to specify a verbosity of "error".
 
@@ -1367,7 +1362,6 @@ convert(
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
   disable_model_save: Union[bool, NoneType] = False,
-  use_cuda: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False,
   verbosity: Optional[str] = 'debug'
 ) -> keras.engine.training.Model
@@ -1768,13 +1762,6 @@ convert(
 
     disable_model_save: Optional[bool]
       Does not save the converted model. For CIs RAM savings.
-      Default: False
-
-    use_cuda: Optional[bool]
-      CUDA is used for dummy inference during accuracy checks,
-      but accuracy is degraded.
-      Note that if you need to convert extended OPs such as com.microsoft.xxx,
-      you must enable this flag.
       Default: False
 
     non_verbose: Optional[bool]

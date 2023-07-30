@@ -69,3 +69,7 @@ TF_DTYPES_TO_NUMPY_DTYPES = {
 
     tf.bool: np.dtype('bool_'),
 }
+
+CUDA_ONLY_OPS = [
+    'GroupNorm',
+]

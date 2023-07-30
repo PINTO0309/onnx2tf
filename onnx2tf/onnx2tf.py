@@ -47,6 +47,10 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     get_tf_model_outputs,
     rewrite_tflite_inout_opname,
+    check_cuda_enabled,
+)
+from onnx2tf.utils.enums import (
+    CUDA_ONLY_OPS,
 )
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
@@ -99,7 +103,6 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
     mvn_epsilon: Optional[float] = 0.0000000001,
     disable_model_save: Optional[bool] = False,
-    use_cuda: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
     verbosity: Optional[str] = 'debug',
 ) -> tf.keras.Model:
@@ -425,13 +428,6 @@ def convert(
         Does not save the converted model. For CIs RAM savings.\n
         Default: False
 
-    use_cuda: Optional[bool]
-        CUDA is used for dummy inference during accuracy checks,\n
-        but accuracy is degraded.\n
-        Note that if you need to convert extended OPs such as com.microsoft.xxx,\n
-        you must enable this flag.\n
-        Default: False
-
     non_verbose: Optional[bool]
         Shorthand to specify a verbosity of "error".\n
         Default: False
@@ -633,10 +629,6 @@ def convert(
     if output_tfv1_pb:
         output_signaturedefs = True
 
-    # CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
-    if not use_cuda:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
@@ -692,6 +684,22 @@ def convert(
     except Exception as ex:
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
+
+    # Check if there is an OP that can work only with CUDA
+    # Automatically set use_cuda to True if there is an OP that can run only on CUDA
+    op_type_list = list(set([node.op for node in graph.nodes]))
+    use_cuda = sum([1 if op_type in CUDA_ONLY_OPS else 0 for op_type in op_type_list]) > 0
+    # Suggests that if there is an OP that can only work with CUDA and CUDA is disabled, the conversion may fail
+    if use_cuda and not check_cuda_enabled():
+        error(
+            f'If the following OPs are included, CUDA must be available and onnxruntime-gpu must be installed. ' +
+            f'{CUDA_ONLY_OPS}'
+        )
+        sys.exit(1)
+
+    # CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
+    if not use_cuda:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     info('')
     info(Color.REVERSE(f'Model loaded'), '=' * 72)
@@ -2069,15 +2077,6 @@ def main():
         help='Does not save the converted model. For CIs RAM savings.'
     )
     parser.add_argument(
-        '-uc',
-        '--use_cuda',
-        action='store_true',
-        help=\
-            'CUDA is used for dummy inference during accuracy checks, but accuracy is degraded. ' +
-            'Note that if you need to convert extended OPs such as com.microsoft.xxx, ' +
-            'you must enable this flag.'
-    )
-    parser.add_argument(
         '-n',
         '--non_verbose',
         action='store_true',
@@ -2179,7 +2178,6 @@ def main():
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
         mvn_epsilon=args.mvn_epsilon,
         disable_model_save=args.disable_model_save,
-        use_cuda=args.use_cuda,
         non_verbose=args.non_verbose,
         verbosity=args.verbosity,
     )
