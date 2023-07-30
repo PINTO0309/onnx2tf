@@ -326,6 +326,16 @@ $ onnx2tf -i resnet18-v1-7.onnx
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
+# In the interest of efficiency for my development and debugging of onnx2tf,
+# the default configuration shows a large amount of debug level logs.
+# However, for most users, a large number of debug logs are unnecessary.
+# If you want to reduce the amount of information displayed in the conversion log,
+# you can change the amount of information in the log by specifying the
+# `--verbosity` or `-v` option as follows.
+# Possible values are "debug", "info", "warn", and "error".
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx -v info
+
 # Override undefined batch size or other dimensions with static values.
 # If the model has undefined dimensions, rewriting them to a static size will significantly
 # improve the success rate of the conversion.
