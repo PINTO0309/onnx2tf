@@ -61,13 +61,13 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = bool(graph_node.attrs.get('axis', -1))
+    axis = graph_node.attrs.get('axis', -1)
     axis = convert_axis(
         axis=axis,
         tensor_rank=input_tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
-    p = bool(graph_node.attrs.get('p', 2))
+    p = graph_node.attrs.get('p', 2)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
