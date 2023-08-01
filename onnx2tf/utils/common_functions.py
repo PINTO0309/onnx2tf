@@ -263,7 +263,7 @@ def print_node_info(func):
                 debug('')
                 debug(
                     Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': '+
-                    f'{graph_node.op}' + Color.MAGENTA('onnx_op_name') + f': {graph_node.name}')
+                    f'{graph_node.op}' + Color.MAGENTA(' onnx_op_name') + f': {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     debug(
                         Color.GREEN(f'INFO:') + ' '+
