@@ -107,11 +107,11 @@ def make_node(
             tf.identity(input=input_tensor)
         tf_type = tf.identity
     else:
-        # tf.math.multiply does not support bool therefore use int8
+        # tf.math.multiply does not support bool therefore use int32
         expanded_tensor = None
         if input_tensor.dtype is tf.bool:
-            ones = tf.ones(input_tensor_shape, dtype=tf.int8)
-            r = tf.cast(input_tensor, tf.int8) * ones
+            ones = tf.ones(input_tensor_shape, dtype=tf.int32)
+            r = tf.cast(input_tensor, tf.int32) * ones
             expanded_tensor = tf.cast(r, tf.bool)
         else:
             ones = tf.ones(input_tensor_shape, dtype=input_tensor.dtype)
