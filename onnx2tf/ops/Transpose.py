@@ -54,7 +54,8 @@ def make_node(
     tensor_rank = len(input_tensor_shape)
 
     perm = graph_node.attrs.get('perm', [idx for idx in reversed(range(tensor_rank))])
-    if 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name] \
+    if not isinstance(graph_node_input, np.ndarray) \
+        and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name] \
         and tf_layers_dict[graph_node_input.name]['nwc_nhwc_ndhwc_keep'] == True:
         perm = [i for i in range(tensor_rank)]
 
