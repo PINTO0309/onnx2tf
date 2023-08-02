@@ -222,7 +222,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier==0.4.33
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.13.0
+- tensorflow==2.13.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
 - psutil==5.9.5
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
