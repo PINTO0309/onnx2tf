@@ -130,11 +130,29 @@ def make_node(
     )
 
     # Preserving Graph Structure (Dict)
-    tf_layers_dict[graph_node_output.name] = {
-        'optype': graph_node.op,
-        'shape': shape,
-        'dtype': dtype,
-    }
+    nhwc_judge = True
+    for graph_node_input in graph_node.inputs:
+        if isinstance(graph_node_input, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() \
+            and tf_layers_dict[graph_node_input.name]['nhwc'] == True:
+                nhwc_judge = nhwc_judge and True
+        else:
+            nhwc_judge = nhwc_judge and False
+
+    # Set NHWC flag to True if all input tensors are determined by NHWC
+    if nhwc_judge:
+        tf_layers_dict[graph_node_output.name] = {
+            'optype': graph_node.op,
+            'shape': shape,
+            'dtype': dtype,
+            'nhwc': True,
+        }
+    else:
+        tf_layers_dict[graph_node_output.name] = {
+            'optype': graph_node.op,
+            'shape': shape,
+            'dtype': dtype,
+        }
 
     # Generation of TF OP
 
