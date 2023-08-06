@@ -810,7 +810,150 @@ An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` opti
 
   ![image](https://user-images.githubusercontent.com/33194443/234149995-7b68b550-90d9-4070-abd0-158d1e824315.png)
 
-### 12. Conversion to TensorFlow.js
+### 12. Inference with dynamic tensors in TFLite
+For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441)
+
+
+First, download the sample ONNX file.
+```
+wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_441/osnet_x0_25_msmt17.onnx
+```
+
+This model calculates the similarity of features by cosine similarity. The batch size dimension of the input tensor is `batch`, allowing various numbers of images to be input simultaneously. This is often used, for example, to achieve tracking by calculating the similarity of people or objects reflected between successive video frames. However, the total number of objects to be tracked changes rapidly with each video frame because the number of people and objects in the image constantly increases and decreases. Therefore, there is a very significant use case for generating models with variable settings for the number of input images (batch size) of the model.
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/fb523260-c25b-4308-a856-5f0624ccb531)
+
+Convert the downloaded `OSNet` to `tflite` and `saved_model` as a variable batch. If you do not specify the `-b` or `-ois` options, onnx2tf does not change the batch size as `N`. The only important point is to convert the model with the `-osd` and `-coion` options. Note that if you use the `-coion` option, you must install `flatbuffers-compiler` with `apt-get install`, run the commands for building the environment described first in this [README](https://github.com/PINTO0309/onnx2tf#environment), or use a [Docker container](https://github.com/PINTO0309/onnx2tf#1-install).
+
+```
+onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion
+```
+
+  - `.tflite`
+    When viewing tflite in Netron, the batch size appears to be fixed at `1`.
+    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/87bbe421-b657-4a81-8f03-c73718cf6c97)
+  - `saved_model`
+    However, checking the structure of `saved_model`, the batch size is correctly set to `-1`.
+    ```bash
+    saved_model_cli show --dir saved_model/ --all
+
+    MetaGraphDef with tag-set: 'serve' contains the following SignatureDefs:
+
+    signature_def['__saved_model_init_op']:
+      The given SavedModel SignatureDef contains the following input(s):
+      The given SavedModel SignatureDef contains the following output(s):
+        outputs['__saved_model_init_op'] tensor_info:
+            dtype: DT_INVALID
+            shape: unknown_rank
+            name: NoOp
+      Method name is:
+
+    signature_def['serving_default']:
+      The given SavedModel SignatureDef contains the following input(s):
+        inputs['images'] tensor_info:
+            dtype: DT_FLOAT
+            shape: (-1, 256, 128, 3)
+            name: serving_default_images:0
+      The given SavedModel SignatureDef contains the following output(s):
+        outputs['output'] tensor_info:
+            dtype: DT_FLOAT
+            shape: (-1, 512)
+            name: PartitionedCall:0
+      Method name is: tensorflow/serving/predict
+    ```
+
+  To prove that the tflite structure has been converted correctly, I will convert the tflite to JSON and look at the structure.
+  ```bash
+  docker run --rm -it \
+  -v `pwd`:/home/user/workdir \
+  ghcr.io/pinto0309/tflite2json2tflite:latest
+
+  ./flatc -t \
+  --strict-json \
+  --defaults-json \
+  -o workdir \
+  ./schema.fbs -- workdir/saved_model/osnet_x0_25_msmt17_float32.tflite
+
+  ls -l workdir
+
+  -rw-rw-r-- 1 user user   921564 Aug  4 10:24 osnet_x0_25_msmt17.onnx
+  -rw-r--r-- 1 user user 10369524 Aug  4 10:30 osnet_x0_25_msmt17_float32.json
+  drwxrwxr-x 4 user user     4096 Aug  4 10:26 saved_model
+  ```
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/6e58545c-2742-4ee2-89db-35a0937a5e61)
+  - `osnet_x0_25_msmt17_float32.json`
+    `"shape_signature"` is correctly set to `-1`. However, `"shape"` is set to `1`. This could be a problem with TFLiteConverter, or it could be a problem with Netron's graphical display capabilities.
+    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/523e8cd8-d003-4cd9-a9a0-a5f669196e02)
+
+In other words, although onnx2tf converts TFLiteConverer as specified, with the batch size of `-1` without any model processing, only Netron's display is broken. This is a problem I have known for quite some time. However, the inference itself does not cause the problem.
+
+If you want to infer in variable batches, you need to infer using `signature`. In such cases, the `-coion` option must be specified when converting the model. Note that I have identified a problem with quantization with the `-coion` option, which can corrupt tflite files. https://github.com/PINTO0309/onnx2tf/issues/429
+
+`'shape_signature': array([ -1, 256, 128,   3], dtype=int32)`
+`interpreter.get_signature_runner()`
+
+https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputoutput-order-to-onnx
+
+- `test.py` - Batch size: `5`
+  ```python
+  import numpy as np
+  import tensorflow as tf
+  from pprint import pprint
+
+  interpreter = tf.lite.Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
+  tf_lite_model = interpreter.get_signature_runner()
+  inputs = {
+      'images': np.ones([5,256,128,3], dtype=np.float32),
+  }
+  tf_lite_output = tf_lite_model(**inputs)
+  print(f"[TFLite] Model Predictions shape: {tf_lite_output['output'].shape}")
+  print(f"[TFLite] Model Predictions:")
+  pprint(tf_lite_output)
+  ```
+- Results
+  ```
+  [TFLite] Model Predictions shape: (5, 512)
+  [TFLite] Model Predictions:
+  {'output': array([[0.0000000e+00, 2.4730086e-04, 0.0000000e+00, ..., 1.0528549e+00,
+          3.7874988e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730086e-04, 0.0000000e+00, ..., 1.0528549e+00,
+          3.7874988e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730086e-04, 0.0000000e+00, ..., 1.0528549e+00,
+          3.7874988e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730086e-04, 0.0000000e+00, ..., 1.0528549e+00,
+          3.7874988e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730084e-04, 0.0000000e+00, ..., 1.0528525e+00,
+          3.7874976e-01, 0.0000000e+00]], dtype=float32)}
+  ```
+- `test.py` - Batch size: `3`
+  ```python
+  import numpy as np
+  import tensorflow as tf
+  from pprint import pprint
+
+  interpreter = tf.lite.Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
+  tf_lite_model = interpreter.get_signature_runner()
+  inputs = {
+      'images': np.ones([3,256,128,3], dtype=np.float32),
+  }
+  tf_lite_output = tf_lite_model(**inputs)
+  print(f"[TFLite] Model Predictions shape: {tf_lite_output['output'].shape}")
+  print(f"[TFLite] Model Predictions:")
+  pprint(tf_lite_output)
+  ```
+- Results
+  ```
+  [TFLite] Model Predictions shape: (3, 512)
+  [TFLite] Model Predictions:
+  {'output': array([[0.0000000e+00, 2.4730084e-04, 0.0000000e+00, ..., 1.0528525e+00,
+          3.7874976e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730084e-04, 0.0000000e+00, ..., 1.0528525e+00,
+          3.7874976e-01, 0.0000000e+00],
+         [0.0000000e+00, 2.4730084e-04, 0.0000000e+00, ..., 1.0528525e+00,
+          3.7874976e-01, 0.0000000e+00]], dtype=float32)}
+  ```
+
+### 13. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -829,7 +972,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 13. Conversion to CoreML
+### 14. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
