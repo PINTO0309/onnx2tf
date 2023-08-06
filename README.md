@@ -894,11 +894,6 @@ If you want to infer in variable batches, you need to infer using `signature`. I
 
 https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputoutput-order-to-onnx
 
-- Convert
-  ```bash
-  onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion --non_verbose
-  ```
-  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/7d090b8b-87e3-455a-bd81-43cf994e427b)
 - `test.py` - Batch size: `5`
   ```python
   import numpy as np
