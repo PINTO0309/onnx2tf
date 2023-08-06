@@ -830,9 +830,12 @@ onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion
 ```
 
   - `.tflite`
+
     When viewing tflite in Netron, the batch size appears to be fixed at `1`.
-    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/87bbe421-b657-4a81-8f03-c73718cf6c97)
+    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/46cb6daa-df58-472a-aa1b-bc494a9cf767)
+
   - `saved_model`
+
     However, checking the structure of `saved_model`, the batch size is correctly set to `-1`.
     ```bash
     saved_model_cli show --dir saved_model/ --all
@@ -882,15 +885,13 @@ onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion
   ```
   ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/6e58545c-2742-4ee2-89db-35a0937a5e61)
   - `osnet_x0_25_msmt17_float32.json`
+
     `"shape_signature"` is correctly set to `-1`. However, `"shape"` is set to `1`. This could be a problem with TFLiteConverter, or it could be a problem with Netron's graphical display capabilities.
     ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/523e8cd8-d003-4cd9-a9a0-a5f669196e02)
 
 In other words, although onnx2tf converts TFLiteConverer as specified, with the batch size of `-1` without any model processing, only Netron's display is broken. This is a problem I have known for quite some time. However, the inference itself does not cause the problem.
 
 If you want to infer in variable batches, you need to infer using `signature`. In such cases, the `-coion` option must be specified when converting the model. Note that I have identified a problem with quantization with the `-coion` option, which can corrupt tflite files. https://github.com/PINTO0309/onnx2tf/issues/429
-
-`'shape_signature': array([ -1, 256, 128,   3], dtype=int32)`
-`interpreter.get_signature_runner()`
 
 https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputoutput-order-to-onnx
 
