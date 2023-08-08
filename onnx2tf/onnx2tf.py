@@ -668,17 +668,48 @@ def convert(
     def sanitizing(node):
         if hasattr(node, 'name'):
             node.name = node.name.replace(':','_')
+            if hasattr(node, 'outputs'):
+                for o in node.outputs:
+                    if hasattr(o, 'name'):
+                        o.name = o.name.replace(':','_')
+                    elif hasattr(o, '_name'):
+                        o._name = o._name.replace(':','_')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node.name = re.sub('^/', 'wa/', node.name)
+                if hasattr(node, 'outputs'):
+                    for o in node.outputs:
+                        if hasattr(o, 'name'):
+                            o.name = re.sub('^/', 'wa/', o.name)
+                        elif hasattr(o, '_name'):
+                            o._name = re.sub('^/', 'wa/', o._name)
         elif hasattr(node, '_name'):
             node._name = node._name.replace(':','_')
+            if hasattr(node, 'outputs'):
+                for o in node.outputs:
+                    if hasattr(o, 'name'):
+                        o.name = o.name.replace(':','_')
+                    elif hasattr(o, '_name'):
+                        o._name = o._name.replace(':','_')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node._name = re.sub('^/', 'wa/', node._name)
+                if hasattr(node, 'outputs'):
+                    for o in node.outputs:
+                        if hasattr(o, 'name'):
+                            o.name = re.sub('^/', 'wa/', o.name)
+                        elif hasattr(o, '_name'):
+                            o._name = re.sub('^/', 'wa/', o._name)
 
     # sanitizing ':', '/'
     _ = [sanitizing(graph_input) for graph_input in graph.inputs]
     _ = [sanitizing(graph_node) for graph_node in graph.nodes]
     _ = [sanitizing(graph_output) for graph_output in graph.outputs]
+    if output_signaturedefs or output_integer_quantized_tflite:
+        new_output_names = []
+        for output_name in output_names:
+            output_name = output_name.replace(':','_')
+            output_name = re.sub('^/', 'wa/', output_name)
+            new_output_names.append(output_name)
+        output_names = new_output_names
     try:
         onnx_graph = gs.export_onnx(graph)
     except Exception as ex:
