@@ -130,7 +130,7 @@ def make_node(
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
-            body_input.name = body_input.name.replace(':','_')
+            body_input.name = body_input.name.replace(':','__')
             # Substitution because saved_model does not allow leading slashes in op names
             if kwargs['output_signaturedefs']:
                 body_input.name = re.sub('^/', 'wa/', body_input.name)
@@ -152,7 +152,7 @@ def make_node(
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
-            body_node.name = body_node.name.replace(':','_')
+            body_node.name = body_node.name.replace(':','__')
             # Substitution because saved_model does not allow leading slashes in op names
             if kwargs['output_signaturedefs']:
                 body_node.name = re.sub('^/', 'wa/', body_node.name)

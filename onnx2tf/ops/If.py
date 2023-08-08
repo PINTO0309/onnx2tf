@@ -66,7 +66,7 @@ def make_node(
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons
-        then_branch_graph_node.name = then_branch_graph_node.name.replace(':','_')
+        then_branch_graph_node.name = then_branch_graph_node.name.replace(':','__')
         # Substitution because saved_model does not allow leading slashes in op names
         if kwargs['output_signaturedefs']:
             then_branch_graph_node.name = re.sub('^/', 'wa/', then_branch_graph_node.name)
@@ -108,7 +108,7 @@ def make_node(
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons
-        else_branch_graph_node.name = else_branch_graph_node.name.replace(':','_')
+        else_branch_graph_node.name = else_branch_graph_node.name.replace(':','__')
         # Substitution because saved_model does not allow leading slashes in op names
         if kwargs['output_signaturedefs']:
             else_branch_graph_node.name = re.sub('^/', 'wa/', else_branch_graph_node.name)

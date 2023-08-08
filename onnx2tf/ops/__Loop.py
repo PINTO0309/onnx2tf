@@ -89,10 +89,10 @@ def make_node(
     ) if M is not None else tf.constant(tf.int32.max, tf.int32)
     M_name = None
     if not isinstance(graph_node_input_1, np.ndarray):
-        graph_node_input_1.name = graph_node_input_1.name.replace(':','_')
+        graph_node_input_1.name = graph_node_input_1.name.replace(':','__')
         M_name = graph_node_input_1.name
     else:
-        M_name = graph_node.inputs[0].name.replace(':','_')
+        M_name = graph_node.inputs[0].name.replace(':','__')
     M_name = f'{M_name}_M'
     if kwargs['output_signaturedefs']:
         M_name = re.sub('^/', 'wa/', M_name)
@@ -113,10 +113,10 @@ def make_node(
 
     cond_init_name = None
     if not isinstance(graph_node_input_2, np.ndarray):
-        graph_node_input_2.name = graph_node_input_2.name.replace(':','_')
+        graph_node_input_2.name = graph_node_input_2.name.replace(':','__')
         cond_init_name = graph_node_input_2.name
     else:
-        cond_init_name = graph_node.inputs[0].name.replace(':','_')
+        cond_init_name = graph_node.inputs[0].name.replace(':','__')
     cond_init_name = f'{cond_init_name}_cond_init'
     if kwargs['output_signaturedefs']:
         cond_init_name = re.sub('^/', 'wa/', cond_init_name)
@@ -182,7 +182,7 @@ def make_node(
     #             )
     #             sys.exit(1)
     #         # substitution because saved_model does not allow colons
-    #         body_input.name = body_input.name.replace(':','_')
+    #         body_input.name = body_input.name.replace(':','__')
     #         # Substitution because saved_model does not allow leading slashes in op names
     #         if kwargs['output_signaturedefs']:
     #             body_input.name = re.sub('^/', 'wa/', body_input.name)
@@ -204,7 +204,7 @@ def make_node(
     #             )
     #             sys.exit(1)
     #         # substitution because saved_model does not allow colons
-    #         body_node.name = body_node.name.replace(':','_')
+    #         body_node.name = body_node.name.replace(':','__')
     #         # Substitution because saved_model does not allow leading slashes in op names
     #         if kwargs['output_signaturedefs']:
     #             body_node.name = re.sub('^/', 'wa/', body_node.name)
@@ -243,7 +243,7 @@ def make_node(
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
-            body_input.name = body_input.name.replace(':','_')
+            body_input.name = body_input.name.replace(':','__')
             # Substitution because saved_model does not allow leading slashes in op names
             if kwargs['output_signaturedefs']:
                 body_input.name = re.sub('^/', 'wa/', body_input.name)
@@ -265,7 +265,7 @@ def make_node(
                 )
                 sys.exit(1)
             # substitution because saved_model does not allow colons
-            body_node.name = body_node.name.replace(':','_')
+            body_node.name = body_node.name.replace(':','__')
             # Substitution because saved_model does not allow leading slashes in op names
             if kwargs['output_signaturedefs']:
                 body_node.name = re.sub('^/', 'wa/', body_node.name)
@@ -309,7 +309,7 @@ def make_node(
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons
-        body_input.name = body_input.name.replace(':','_')
+        body_input.name = body_input.name.replace(':','__')
         # Substitution because saved_model does not allow leading slashes in op names
         if kwargs['output_signaturedefs']:
             body_input.name = re.sub('^/', 'wa/', body_input.name)
@@ -332,7 +332,7 @@ def make_node(
             )
             sys.exit(1)
         # substitution because saved_model does not allow colons
-        body_node.name = body_node.name.replace(':','_')
+        body_node.name = body_node.name.replace(':','__')
         # Substitution because saved_model does not allow leading slashes in op names
         if kwargs['output_signaturedefs']:
             body_node.name = re.sub('^/', 'wa/', body_node.name)
