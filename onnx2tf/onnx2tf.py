@@ -667,13 +667,13 @@ def convert(
 
     def sanitizing(node):
         if hasattr(node, 'name'):
-            node.name = node.name.replace(':','_')
+            node.name = node.name.replace(':','__')
             if hasattr(node, 'outputs'):
                 for o in node.outputs:
                     if hasattr(o, 'name'):
-                        o.name = o.name.replace(':','_')
+                        o.name = o.name.replace(':','__')
                     elif hasattr(o, '_name'):
-                        o._name = o._name.replace(':','_')
+                        o._name = o._name.replace(':','__')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node.name = re.sub('^/', 'wa/', node.name)
                 if hasattr(node, 'outputs'):
@@ -683,13 +683,13 @@ def convert(
                         elif hasattr(o, '_name'):
                             o._name = re.sub('^/', 'wa/', o._name)
         elif hasattr(node, '_name'):
-            node._name = node._name.replace(':','_')
+            node._name = node._name.replace(':','__')
             if hasattr(node, 'outputs'):
                 for o in node.outputs:
                     if hasattr(o, 'name'):
-                        o.name = o.name.replace(':','_')
+                        o.name = o.name.replace(':','__')
                     elif hasattr(o, '_name'):
-                        o._name = o._name.replace(':','_')
+                        o._name = o._name.replace(':','__')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node._name = re.sub('^/', 'wa/', node._name)
                 if hasattr(node, 'outputs'):
@@ -706,7 +706,7 @@ def convert(
     if output_signaturedefs or output_integer_quantized_tflite:
         new_output_names = []
         for output_name in output_names:
-            output_name = output_name.replace(':','_')
+            output_name = output_name.replace(':','__')
             output_name = re.sub('^/', 'wa/', output_name)
             new_output_names.append(output_name)
         output_names = new_output_names
@@ -934,7 +934,7 @@ def convert(
             output_names=output_names,
         )
         if not outputs:
-            output_names = [output_name.replace(':','_') for output_name in output_names]
+            output_names = [output_name.replace(':','__') for output_name in output_names]
             if output_signaturedefs or output_integer_quantized_tflite:
                 output_names = [re.sub('^/', '', output_name) for output_name in output_names]
             outputs = get_tf_model_outputs(
@@ -945,7 +945,7 @@ def convert(
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
             if hasattr(output, 'node'):
-                output.node.layer._name = name.replace(':','_')
+                output.node.layer._name = name.replace(':','__')
                 if output_signaturedefs or output_integer_quantized_tflite:
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
