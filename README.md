@@ -618,6 +618,18 @@ The accuracy error rates after quantization for different activation functions a
     |`HardSwish`<br>![image](https://user-images.githubusercontent.com/33194443/226223099-c7344bcf-d24d-4b35-a1d6-2a03dbfce8c7.png)|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
     |`ReLU6`<br>![image](https://user-images.githubusercontent.com/33194443/233639086-721e5e80-08c3-4785-9c1a-002bbfc0fa3d.png)<br>Paper: [A Quantization-Friendly Separable Convolution for MobileNets](https://arxiv.org/pdf/1803.08607.pdf) https://arxiv.org/pdf/1803.08607.pdf|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
 
+- Quantization range collapse due to non-zero constant padding
+
+  If padding is performed with a constant other than zero, the padding value may destroy the quantization range of the input tensor. For example, the pattern is shown in the figure below. The `MaxPool2D` is done after padding the 4 sides of the input tensor with the minimum value of Float32. It seems that if INT8 quantization is performed with this structure, the quantization range is determined by `MaxPool2D` during quantization, including the values padded to the tensor.
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/5442f3f8-76a2-4bc4-9067-2b819eb7f6e0)
+
+  Therefore, the following two similar examples are equally likely to result in divergent output values for the model after INT8 quantization, with all output values being Nan or zero.
+
+  1. Pattern with fixed value `-255.0` padded on 4 sides of tensor 
+    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/5ae0ed5f-7938-48d9-801d-fbab01eb2704)
+  
+  2. Pattern with fixed value `-128.0` padded on 4 sides of tensor
+    ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35c7d540-b304-4662-894a-af0e053642d7)
 
 ### 8. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-cind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
