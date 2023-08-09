@@ -65,6 +65,8 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
 
+    output_integer_quantized_tflite = bool(kwargs['output_integer_quantized_tflite'])
+
     # Pre-process transpose
     input_tensor = pre_process_transpose(
         value_before_transpose=input_tensor,
@@ -221,11 +223,15 @@ def make_node(
             [[0, 0]]
 
         # use minimum limit value of data type for explicit padding value since this is max pooling
+        # https://github.com/PINTO0309/onnx2tf/issues/444
+        # Implemented a workaround to deal with the problem that padding with the minimum value causes
+        # the output error of `MaxPool2D` to be maximized only when quantizing with INT8 quantization.
         padded_tensor = tf.pad(
             tensor=input_tensor,
             paddings=tf_pads,
             mode='CONSTANT',
-            constant_values=input_tensor.dtype.min
+            constant_values=input_tensor.dtype.min \
+                if not output_integer_quantized_tflite else 0.0
         )
 
     else:
