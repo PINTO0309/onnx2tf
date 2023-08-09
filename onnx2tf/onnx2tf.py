@@ -765,6 +765,7 @@ def convert(
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+        'output_integer_quantized_tflite': output_integer_quantized_tflite,
         'use_cuda': use_cuda,
     }
 
