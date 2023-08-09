@@ -620,7 +620,7 @@ The accuracy error rates after quantization for different activation functions a
 
 - Quantization range collapse due to non-zero constant padding
 
-  If padding is performed with a constant other than zero, the padding value may destroy the quantization range of the input tensor. For example, the pattern is shown in the figure below. The `MaxPool2D` is done after padding the 4 sides of the input tensor with the minimum value of Float32. It seems that if INT8 quantization is performed with this structure, the quantization range is determined by `MaxPool2D` during quantization, including the values padded to the tensor.
+  If padding is performed with a constant other than zero, the padding value may destroy the quantization range of the input tensor. For example, the pattern is shown in the figure below. The `MaxPool2D` is done after padding the 4 sides of the input tensor with the minimum value of Float32. It seems that if INT8 quantization is performed with this structure, the quantization range is determined by `MaxPool2D` during quantization, including the values padded to the tensor. See: [#444](https://github.com/PINTO0309/onnx2tf/issues/444)
   ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/5442f3f8-76a2-4bc4-9067-2b819eb7f6e0)
 
   Therefore, the following two similar examples are equally likely to result in divergent output values for the model after INT8 quantization, with all output values being Nan or zero.
