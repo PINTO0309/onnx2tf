@@ -321,8 +321,8 @@ $ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#12-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#13-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#13-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#14-conversion-to-coreml
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
