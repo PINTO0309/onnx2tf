@@ -58,6 +58,9 @@ def make_node(
         graph_node_input_3 = get_constant_or_variable(
             graph_node.inputs[2],
             before_op_output_shape_trans,
+            is_bias=True \
+                if graph_node.inputs[2].shape is not None \
+                    and len(graph_node.inputs[2].shape) == 1 else False,
         )
     else:
         graph_node_input_3 = 0
@@ -194,15 +197,18 @@ def make_node(
         z = tf.cast(z, tf.float32)
         if not optimization_for_gpu_delegate:
             if z is not None:
-                result = alpha * tf.matmul(x, y) + beta * z
+                result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) + tf.convert_to_tensor(beta) * z
             else:
-                result = alpha * tf.matmul(x, y) + beta
+                result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) + tf.convert_to_tensor(beta)
 
         else:
-            result = alpha * tf.matmul(x, y) - (beta * z) * -1
+            result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) - (tf.convert_to_tensor(beta) * z) * tf.convert_to_tensor(-1)
 
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.cast(result, input_tensor_x_dtype)
+        if result.dtype != input_tensor_x_dtype:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.cast(result, input_tensor_x_dtype)
+        else:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = result
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
