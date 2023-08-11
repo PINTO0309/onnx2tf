@@ -255,7 +255,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.15.10
+  ghcr.io/pinto0309/onnx2tf:1.15.11
 
   or
 
@@ -263,7 +263,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.15.10
+  docker.io/pinto0309/onnx2tf:1.15.11
 
   or
 
@@ -625,9 +625,9 @@ The accuracy error rates after quantization for different activation functions a
 
   Therefore, the following two similar examples are equally likely to result in divergent output values for the model after INT8 quantization, with all output values being Nan or zero.
 
-  1. Pattern with fixed value `-255.0` padded on 4 sides of tensor 
+  1. Pattern with fixed value `-255.0` padded on 4 sides of tensor
     ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/5ae0ed5f-7938-48d9-801d-fbab01eb2704)
-  
+
   2. Pattern with fixed value `-128.0` padded on 4 sides of tensor
     ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35c7d540-b304-4662-894a-af0e053642d7)
 
