@@ -231,8 +231,8 @@ def make_node(
     # for onnx pads that diff on the side of axes
     # for example [3,1] or [3,3,3,1]
     pads_axes_opposite_same = True
-    for i in range(0, spatial_size):
-        if pads[i * 2] != pads[i * 2 + 1]:
+    for axis_begin, axis_end in zip(pads[0:spatial_size:1], pads[spatial_size::1]):
+        if axis_begin != axis_end:
             pads_axes_opposite_same = False
             break
 
