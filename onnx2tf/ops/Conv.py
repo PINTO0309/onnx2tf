@@ -227,8 +227,18 @@ def make_node(
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
     padded = False
+
+    # for onnx pads that diff on the side of axes
+    # for example [3,1] or [3,3,3,1]
+    pads_axes_opposite_same = True
+    for i in range(0, spatial_size):
+        if pads[i * 2] != pads[i * 2 + 1]:
+            pads_axes_opposite_same = False
+            break
+
     if auto_pad == 'NOTSET':
-        if input_tensor_rank >=2 \
+        if pads_axes_opposite_same \
+            and input_tensor_rank >=2 \
             and graph_node.inputs[0].shape is not None \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
