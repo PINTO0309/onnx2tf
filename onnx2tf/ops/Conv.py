@@ -522,8 +522,6 @@ def make_node(
 
                 else:
                     # SeparableConv
-                    input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-                    weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         sep_conv_bias(
                             input_tensor,
@@ -622,8 +620,6 @@ def make_node(
 
                 else:
                     # SeparableConv
-                    input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-                    weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         sep_conv_nobias(
                             input_tensor,
