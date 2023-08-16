@@ -8,6 +8,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   conversion-test:
     runs-on: ubuntu-latest
@@ -104,8 +107,6 @@ jobs:
         pip install onnxruntime==1.15.0
         pip install -e .
     - name: Download models
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         curl "https://s3.us-central-1.wasabisys.com/onnx2tf-en/models/resources.tar.gz" -o resources.tar.gz
         tar -zxvf resources.tar.gz
@@ -114,11 +115,9 @@ jobs:
       run: |
         python tests/test_model_convert.py -m models -o wiki -v
     - name: Update wiki content
-      uses: Andrew-Chen-Wang/github-wiki-action@7f44b142379b209235c748351558937d3e7546a7
+      uses: Andrew-Chen-Wang/github-wiki-action@v4
       continue-on-error: true
-      env:
-        WIKI_DIR: wiki/
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GH_NAME: ${{ secrets.GH_REPO_OWNER }}
-        GH_MAIL: ${{ secrets.GH_EMAIL }}
-        EXCLUDED_FILES: "test_model_pb/"
+      with:
+        path: wiki/
+        ignore: |
+          test_model_pb/
