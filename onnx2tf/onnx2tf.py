@@ -711,7 +711,7 @@ def convert(
             new_output_names.append(output_name)
         output_names = new_output_names
     try:
-        onnx_graph = gs.export_onnx(graph)
+        onnx_graph = gs.export_onnx(graph=graph, do_type_check=False)
     except Exception as ex:
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
