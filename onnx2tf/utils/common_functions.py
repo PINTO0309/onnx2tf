@@ -3587,7 +3587,7 @@ def dummy_onnx_inference(
                 if node_output.dtype is not None:
                     gs_graph.outputs.append(node_output)
 
-    new_onnx_graph = gs.export_onnx(gs_graph)
+    new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False)
     tmp_onnx_path = ''
     tmp_onnx_external_weights_path =''
     try:
