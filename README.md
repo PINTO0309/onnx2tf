@@ -838,6 +838,7 @@ unzip prelu_check.onnx.zip
 The part of the downloaded model where the problem occurs is the `PRelu` part in the figure below.
 
 - ONNX
+
   ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/4e6315ae-aa77-4d6e-a664-bc203bee05f3)
 
 Reproduce the problem. The following command converts an ONNX file to a TFLite file.
@@ -849,9 +850,11 @@ onnx2tf -i prelu_check.onnx -cotof
 The conversion was successful and, as shown in the figure below, the inference test results from ONNX and the inference results for the Float32 model in TensorFlow (Keras) match perfectly. It is important to note that the comparison of inference results between ONNX and TensorFlow transformed models is comparing ONNX models with TensorFlow (Keras) models, not ONNX models with TFLite models.
 
 - Conversion results
+
   ![20230817175146](https://github.com/PINTO0309/onnx2tf/assets/33194443/3e1b0b5f-000a-430b-b9e9-b600596c1403)
 
 - tflite
+
   ![20230817175530](https://github.com/PINTO0309/onnx2tf/assets/33194443/6ef39376-4182-4bdc-910b-d0b01c35364f)
 
 Now, let's try inference with the TFLite runtime instead of the TensorFlow runtime.
@@ -892,6 +895,7 @@ Now, let's try inference with the TFLite runtime instead of the TensorFlow runti
 Oddly enough, the output value of `PReLU` contains multiple `nan`. However, as can be seen by converting the ONNX model to the middle of the model using the `-onimc` option, `nan` does not occur until just before `PReLU`. Thus, it is clear that the `PReLU` OP in the TFLite runtime has a problem with divergent inference results.
 
 - TFLite inference results
+
   ![20230817175454](https://github.com/PINTO0309/onnx2tf/assets/33194443/96b7b564-8114-443a-8cac-17d367625125)
 
 
@@ -904,16 +908,19 @@ onnx2tf -i prelu_check.onnx -cotof -rtpo PReLU
 As before, the inference results from ONNX and TensorFlow (Keras) match perfectly.
 
 - Conversion results
+
   ![20230817175614](https://github.com/PINTO0309/onnx2tf/assets/33194443/4c6b0b66-4f39-4918-8191-e4e3c5734cc2)
 
 However, `-rtpo PReLU` will generate a .tflite file with the `PRelu` OP replaced by a primitive OP combination.
 
 - tflite
+
   ![20230817175724](https://github.com/PINTO0309/onnx2tf/assets/33194443/ee5c125c-1b94-472c-9b35-02eee1b3c291)
 
 Again, run the test code to check the inference results. The figure below shows that no `nan` occurs when inference is performed by replacing the `PReLU` OP with only combinations of primitive operations. In other words, it is important to know that large arithmetic errors are not only due to the broken structure of the model, but can also be caused by internal implementations such as the TFLite runtime. I have implemented the `-rtpo` option to replace operators as a work-around to avoid such runtime problems.
 
 - TFLite inference results
+
   ![20230817175701](https://github.com/PINTO0309/onnx2tf/assets/33194443/cf1f7b8c-de8f-4f66-a9a7-02fa01506391)
 
 ### 13. Inference with dynamic tensors in TFLite
