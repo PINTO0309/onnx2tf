@@ -321,8 +321,8 @@ $ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#13-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#14-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#14-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#15-conversion-to-coreml
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -822,7 +822,108 @@ An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` opti
 
   ![image](https://user-images.githubusercontent.com/33194443/234149995-7b68b550-90d9-4070-abd0-158d1e824315.png)
 
-### 12. Inference with dynamic tensors in TFLite
+### 12. If the accuracy of the Float32 model degrades significantly
+The pattern of accuracy degradation of the converted model does not only occur when INT8 quantization is performed. A special edge case is when there is a problem with the implementation of a particular OP on the TFLite runtime side. Below, I will reproduce the problem by means of a very simple CNN model and further explain its workaround. Here is the issue that prompted me to add this explanation. [[Conv-TasNet] Facing issue in converting Conv-TasNet model #447](https://github.com/PINTO0309/onnx2tf/issues/447)
+
+Download a sample model for validation.
+
+```bash
+curl \
+-L https://github.com/PINTO0309/onnx2tf/files/12367312/prelu_check.onnx.zip \
+-o prelu_check.onnx.zip
+
+unzip prelu_check.onnx.zip
+```
+
+The part of the downloaded model where the problem occurs is the `PRelu` part in the figure below.
+
+- ONNX
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/4e6315ae-aa77-4d6e-a664-bc203bee05f3)
+
+Reproduce the problem. The following command converts an ONNX file to a TFLite file.
+
+```bash
+onnx2tf -i prelu_check.onnx -cotof
+```
+
+The conversion was successful and, as shown in the figure below, the inference test results from ONNX and the inference results for the Float32 model in TensorFlow (Keras) match perfectly. It is important to note that the comparison of inference results between ONNX and TensorFlow transformed models is comparing ONNX models with TensorFlow (Keras) models, not ONNX models with TFLite models.
+
+- Conversion results
+
+  ![20230817175146](https://github.com/PINTO0309/onnx2tf/assets/33194443/3e1b0b5f-000a-430b-b9e9-b600596c1403)
+
+- tflite
+
+  ![20230817175530](https://github.com/PINTO0309/onnx2tf/assets/33194443/6ef39376-4182-4bdc-910b-d0b01c35364f)
+
+Now, let's try inference with the TFLite runtime instead of the TensorFlow runtime.
+
+- `test.py`
+  ```python
+  import time
+  import numpy as np
+  np.random.seed(0)
+  import tensorflow as tf
+
+  # Load TFLite model
+  interpreter = tf.lite.Interpreter(model_path="./saved_model/prelu_check_float32.tflite")
+  interpreter.allocate_tensors()
+  tensor_shape = (256, 20)
+  input_data = {'waveform': np.random.randn(*tensor_shape).astype(np.float32)}
+
+  # Load and preprocess
+  input_details = interpreter.get_input_details()
+  input_shape = input_details[0]['shape']
+  print(input_shape)
+
+  # Run inference
+  interpreter.set_tensor(input_details[0]['index'], input_data["waveform"])
+  separate_time = time.time()
+  interpreter.invoke()
+  print("Done! {:.3f} s".format(time.time() - separate_time))
+  output_details = interpreter.get_output_details()
+  output_data = interpreter.get_tensor(output_details[0]['index'])
+
+  output_data = []
+  for output_detail in output_details:
+      output_data.append(interpreter.get_tensor(output_detail['index']))
+
+  print(output_data)
+  ```
+
+Oddly enough, the output value of `PReLU` contains multiple `nan`. However, as can be seen by converting the ONNX model to the middle of the model using the `-onimc` option, `nan` does not occur until just before `PReLU`. Thus, it is clear that the `PReLU` OP in the TFLite runtime has a problem with divergent inference results.
+
+- TFLite inference results
+
+  ![20230817175454](https://github.com/PINTO0309/onnx2tf/assets/33194443/96b7b564-8114-443a-8cac-17d367625125)
+
+
+The following is a work-around to avoid this problem. Use the `-rtpo` option to replace `PReLU` with a similar primitive operation when transforming a model, and then perform the model transformation.
+
+```bash
+onnx2tf -i prelu_check.onnx -cotof -rtpo PReLU
+```
+
+As before, the inference results from ONNX and TensorFlow (Keras) match perfectly.
+
+- Conversion results
+
+  ![20230817175614](https://github.com/PINTO0309/onnx2tf/assets/33194443/4c6b0b66-4f39-4918-8191-e4e3c5734cc2)
+
+However, `-rtpo PReLU` will generate a .tflite file with the `PRelu` OP replaced by a primitive OP combination.
+
+- tflite
+
+  ![20230817175724](https://github.com/PINTO0309/onnx2tf/assets/33194443/ee5c125c-1b94-472c-9b35-02eee1b3c291)
+
+Again, run the test code to check the inference results. The figure below shows that no `nan` occurs when inference is performed by replacing the `PReLU` OP with only combinations of primitive operations. In other words, it is important to know that large arithmetic errors are not only due to the broken structure of the model, but can also be caused by internal implementations such as the TFLite runtime. I have implemented the `-rtpo` option to replace operators as a work-around to avoid such runtime problems.
+
+- TFLite inference results
+
+  ![20230817175701](https://github.com/PINTO0309/onnx2tf/assets/33194443/cf1f7b8c-de8f-4f66-a9a7-02fa01506391)
+
+### 13. Inference with dynamic tensors in TFLite
 For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441)
 
 
@@ -966,7 +1067,7 @@ https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputo
           3.7874976e-01, 0.0000000e+00]], dtype=float32)}
   ```
 
-### 13. Conversion to TensorFlow.js
+### 14. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -985,7 +1086,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 14. Conversion to CoreML
+### 15. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
