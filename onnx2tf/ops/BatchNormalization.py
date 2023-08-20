@@ -175,7 +175,7 @@ def make_node(
                     else tf.convert_to_tensor(scale),
             variance_epsilon=epsilon,
         )
-    except:
+    except Exception as e:
         # Workaround for inconsistent "C" position
         input_tensor_rank = len(input_tensor.shape)
         if input_tensor_rank >= 3 \
@@ -199,6 +199,8 @@ def make_node(
                         else tf.convert_to_tensor(scale),
                 variance_epsilon=epsilon,
             )
+        else:
+            raise
 
 
     # Post-process transpose
