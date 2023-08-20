@@ -158,22 +158,50 @@ def make_node(
             tf_layers_dict= tf_layers_dict,
         )
 
-    tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
-        x=input_tensor,
-        mean=mean \
-            if not isinstance(mean, np.ndarray) \
-                else tf.convert_to_tensor(mean),
-        variance=var \
-            if not isinstance(var, np.ndarray) \
-                else tf.convert_to_tensor(var),
-        offset=offset \
-            if not isinstance(offset, np.ndarray) \
-                else tf.convert_to_tensor(offset),
-        scale=scale \
-            if not isinstance(scale, np.ndarray) \
-                else tf.convert_to_tensor(scale),
-        variance_epsilon=epsilon,
-    )
+    try:
+        tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
+            x=input_tensor,
+            mean=mean \
+                if not isinstance(mean, np.ndarray) \
+                    else tf.convert_to_tensor(mean),
+            variance=var \
+                if not isinstance(var, np.ndarray) \
+                    else tf.convert_to_tensor(var),
+            offset=offset \
+                if not isinstance(offset, np.ndarray) \
+                    else tf.convert_to_tensor(offset),
+            scale=scale \
+                if not isinstance(scale, np.ndarray) \
+                    else tf.convert_to_tensor(scale),
+            variance_epsilon=epsilon,
+        )
+    except Exception as e:
+        # Workaround for inconsistent "C" position
+        input_tensor_rank = len(input_tensor.shape)
+        if input_tensor_rank >= 3 \
+            and input_tensor.shape[1] is not None \
+            and input_tensor.shape[1] == offset.shape[0]:
+
+            perm = [0] + [i for i in range(2, input_tensor_rank)] + [1]
+            tf_layers_dict[Y.name]['tf_node'] = tf.nn.batch_normalization(
+                x=tf.transpose(input_tensor, perm=perm),
+                mean=mean \
+                    if not isinstance(mean, np.ndarray) \
+                        else tf.convert_to_tensor(mean),
+                variance=var \
+                    if not isinstance(var, np.ndarray) \
+                        else tf.convert_to_tensor(var),
+                offset=offset \
+                    if not isinstance(offset, np.ndarray) \
+                        else tf.convert_to_tensor(offset),
+                scale=scale \
+                    if not isinstance(scale, np.ndarray) \
+                        else tf.convert_to_tensor(scale),
+                variance_epsilon=epsilon,
+            )
+        else:
+            raise
+
 
     # Post-process transpose
     tf_layers_dict[Y.name]['tf_node'] = post_process_transpose(
