@@ -1,6 +1,6 @@
 {
   "model": "https://github.com/opencv/opencv_zoo/blob/4e2830df5b8bfbf361f3d4fc8b076020df5d5292/models/object_tracking_vttrack/vttrack.onnx",
-  "command": "onnx2tf -i vttrack.onnx -prf replace_vttrack.json -cotof",
+  "command": "onnx2tf -i vttrack.onnx -prf replace_vttrack.json -cotof -rtpo Erf",
   "format_version": 1,
   "operations": [
     {
