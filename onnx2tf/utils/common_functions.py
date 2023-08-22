@@ -2397,23 +2397,62 @@ def shape_unmatched_special_avoidance_workaround(
         for idx, (same_input_shape_as_onnx, nhwc_flag) in enumerate(zip(same_input_shape_as_onnxs, nhwc_flags)):
             if same_input_shape_as_onnx and not nhwc_flag:
                 if len(values[idx].shape) == 3:
-                    values[idx] = transpose_with_flexing_deterrence(
-                        input_tensor=values[idx],
-                        perm=[0,2,1],
-                        **kwargs,
-                    )
+                    values[idx] = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=values[idx],
+                            perm=[0,2,1],
+                            **kwargs,
+                        )
                 elif len(values[idx].shape) == 4:
-                    values[idx] = transpose_with_flexing_deterrence(
-                        input_tensor=values[idx],
-                        perm=[0,2,3,1],
-                        **kwargs,
-                    )
+                    values[idx] = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=values[idx],
+                            perm=[0,2,3,1],
+                            **kwargs,
+                        )
                 elif len(values[idx].shape) == 5:
-                    values[idx] = transpose_with_flexing_deterrence(
-                        input_tensor=values[idx],
-                        perm=[0,2,3,4,1],
-                        **kwargs,
-                    )
+                    values[idx] = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=values[idx],
+                            perm=[0,2,3,4,1],
+                            **kwargs,
+                        )
+
+        # Transpose until the nhwc flag matches the shape toward True
+        #   1. Either one of the nhwc flags is True and either one is False
+        #   2. len(A.shape) == len(B.shape)
+        #   3. None not in A.shape
+        #   4. None not in B.shape
+        #   5. No two or more identical values exist in the A and B shapes.
+        #   6. Number of shape matches < len(A.shape)-1
+        if True in nhwc_flags and False in nhwc_flags:
+            input_tensor_1_shape = input_tensor_1.shape
+            input_tensor_2_shape = input_tensor_2.shape
+            if len(input_tensor_1_shape) == len(input_tensor_2_shape) \
+                and None not in input_tensor_1_shape \
+                and None not in input_tensor_2_shape \
+                and len(input_tensor_1_shape) == len(set(input_tensor_1_shape)) \
+                and len(input_tensor_2_shape) == len(set(input_tensor_2_shape)) \
+                and sum(1 for s1, s2 in zip(input_tensor_1_shape, input_tensor_2_shape) if s1 == s2) < len(input_tensor_1_shape) - 1:
+
+                false_indices = nhwc_flags.index(False)
+                no_transpose_target_tensor = values[1 - false_indices]
+                transpose_target_tensor = values[false_indices]
+                seq = [i for i in range(len(transpose_target_tensor.shape))]
+                perms = list(itertools.permutations(seq))[1:]
+                for perm in perms:
+                    try:
+                        tmp_trans_value = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=transpose_target_tensor,
+                                perm=perm,
+                                **kwargs,
+                            )
+                        dummy_mul = no_transpose_target_tensor * tmp_trans_value
+                        values[false_indices] = tmp_trans_value
+                    except:
+                        pass
+
         input_tensor_1 = values[0]
         input_tensor_2 = values[1]
 

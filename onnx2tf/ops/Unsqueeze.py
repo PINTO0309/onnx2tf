@@ -64,6 +64,10 @@ def make_node(
         axes = None
     axes = graph_node.attrs.get('axes', axes)
 
+    nhwc: bool = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+        if isinstance(graph_node_input_1, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+
     if input_tensor.shape != tf.TensorShape(None):
         input_tensor_shape = list(input_tensor.shape)
         tensor_rank = len(input_tensor_shape)
@@ -77,19 +81,39 @@ def make_node(
         tensor_rank = len(input_tensor_shape)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-        axes = [
-            convert_axis(
-                axis=idx,
-                tensor_rank=tensor_rank+len(axes),
-                before_op_output_shape_trans=before_op_output_shape_trans,
-            ) for idx in axes
-        ]
+        if nhwc:
+            axes = [
+                convert_axis(
+                    axis=idx,
+                    tensor_rank=tensor_rank+len(axes),
+                    before_op_output_shape_trans=before_op_output_shape_trans,
+                ) for idx in axes
+            ]
+        elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
+            axes = [
+                convert_axis(
+                    axis=idx,
+                    tensor_rank=tensor_rank+len(axes),
+                    before_op_output_shape_trans=before_op_output_shape_trans,
+                ) for idx in axes
+            ]
+        else:
+            axes = [idx for idx in axes]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-        axes = convert_axis(
-            axis=axes,
-            tensor_rank=tensor_rank+1,
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        )
+        if nhwc:
+            axes = convert_axis(
+                axis=axes,
+                tensor_rank=tensor_rank+1,
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            )
+        elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
+            axes = [
+                convert_axis(
+                    axis=idx,
+                    tensor_rank=tensor_rank+len(axes),
+                    before_op_output_shape_trans=before_op_output_shape_trans,
+                ) for idx in axes
+            ]
         axes = list(axes[np.newaxis])
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:
@@ -106,6 +130,8 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+            if nhwc and len(axes) == 1 and tensor_rank is not None and axes not in [0, -1, tensor_rank] else False
     }
 
     # Param replacement - OP replacement
@@ -188,6 +214,17 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.identity(input=input_tensor)
         tf_type = tf.identity
+
+    elif nhwc \
+        and len(axes) == 1 \
+        and not isinstance(axes, int):
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.expand_dims(
+                input=input_tensor,
+                axis=axes[0],
+                name=graph_node.name,
+            )
+        tf_type = tf.expand_dims
 
     elif len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
