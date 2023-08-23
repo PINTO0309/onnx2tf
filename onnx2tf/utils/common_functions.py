@@ -2428,30 +2428,35 @@ def shape_unmatched_special_avoidance_workaround(
         if True in nhwc_flags and False in nhwc_flags:
             input_tensor_1_shape = input_tensor_1.shape
             input_tensor_2_shape = input_tensor_2.shape
+
             if len(input_tensor_1_shape) == len(input_tensor_2_shape) \
                 and None not in input_tensor_1_shape \
-                and None not in input_tensor_2_shape \
-                and len(input_tensor_1_shape) == len(set(input_tensor_1_shape)) \
-                and len(input_tensor_2_shape) == len(set(input_tensor_2_shape)) \
-                and sum(1 for s1, s2 in zip(input_tensor_1_shape, input_tensor_2_shape) if s1 == s2) < len(input_tensor_1_shape) - 1:
+                and None not in input_tensor_2_shape:
 
-                false_indices = nhwc_flags.index(False)
-                no_transpose_target_tensor = values[1 - false_indices]
-                transpose_target_tensor = values[false_indices]
-                seq = [i for i in range(len(transpose_target_tensor.shape))]
-                perms = list(itertools.permutations(seq))[1:]
-                for perm in perms:
-                    try:
-                        tmp_trans_value = \
-                            transpose_with_flexing_deterrence(
-                                input_tensor=transpose_target_tensor,
-                                perm=perm,
-                                **kwargs,
-                            )
-                        dummy_mul = no_transpose_target_tensor * tmp_trans_value
-                        values[false_indices] = tmp_trans_value
-                    except:
-                        pass
+                input_tensor_1_shape_wo_one = [dim for dim in input_tensor_1.shape if dim != 1]
+                input_tensor_2_shape_wo_one = [dim for dim in input_tensor_2.shape if dim != 1]
+
+                if  len(input_tensor_1_shape_wo_one) == len(set(input_tensor_1_shape_wo_one)) \
+                    and len(input_tensor_2_shape_wo_one) == len(set(input_tensor_2_shape_wo_one)) \
+                    and sum(1 if s1 == s2 else 0 for s1, s2 in zip(input_tensor_1_shape, input_tensor_2_shape)) < len(input_tensor_1_shape) - 1:
+
+                    false_indices = nhwc_flags.index(False)
+                    no_transpose_target_tensor = values[1 - false_indices]
+                    transpose_target_tensor = values[false_indices]
+                    seq = [i for i in range(len(transpose_target_tensor.shape))]
+                    perms = list(itertools.permutations(seq))[1:]
+                    for perm in perms:
+                        try:
+                            tmp_trans_value = \
+                                transpose_with_flexing_deterrence(
+                                    input_tensor=transpose_target_tensor,
+                                    perm=perm,
+                                    **kwargs,
+                                )
+                            dummy_mul = no_transpose_target_tensor * tmp_trans_value
+                            values[false_indices] = tmp_trans_value
+                        except:
+                            pass
 
         input_tensor_1 = values[0]
         input_tensor_2 = values[1]
