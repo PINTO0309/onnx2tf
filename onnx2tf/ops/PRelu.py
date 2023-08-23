@@ -104,6 +104,17 @@ def make_node(
         convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
         slope = slope.transpose(convertion_table)
 
+    input_tensor, slope = pre_explicit_broadcast(
+        input_tensor_1=input_tensor,
+        input_tensor_2=slope,
+    )
+    input_tensor, slope = explicit_broadcast(
+        const_or_var_1=input_tensor,
+        const_or_var_2=slope,
+        graph_node=graph_node,
+        tf_layers_dict= tf_layers_dict,
+    )
+
     # Pre-process transpose
     before_trans_shape = input_tensor_shape
     input_tensor = pre_process_transpose(
