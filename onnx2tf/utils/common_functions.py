@@ -757,6 +757,15 @@ def pre_explicit_broadcast(
         and None not in input_tensor_2.shape \
         and len(input_tensor_1.shape) == len(input_tensor_2.shape):
 
+        # Broadcasting of the operation Checks whether the operation functions normally,
+        # and if so, terminates the process without doing anything.
+        try:
+            dummy_mul = input_tensor_1 * input_tensor_2
+        except Exception as e:
+            pass
+        else:
+            return input_tensor_1, input_tensor_2
+
         input_tensor_2_shape = input_tensor_2.shape
         squeezed_input_tensor_2_shape = [idx for idx in input_tensor_2_shape if idx != 1]
         squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
