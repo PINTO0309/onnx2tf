@@ -757,6 +757,18 @@ def pre_explicit_broadcast(
         and None not in input_tensor_2.shape \
         and len(input_tensor_1.shape) == len(input_tensor_2.shape):
 
+        # Broadcasting of the operation Checks whether the operation functions normally,
+        # and if so, terminates the process without doing anything.
+        try:
+            dummy_mul = input_tensor_1 * input_tensor_2
+            max_shape_prod = max(np.prod(input_tensor_1.shape), np.prod(input_tensor_2.shape))
+            if np.prod(dummy_mul.shape) <= max_shape_prod:
+                return input_tensor_1, input_tensor_2
+        except Exception as e:
+            pass
+        else:
+            return input_tensor_1, input_tensor_2
+
         input_tensor_2_shape = input_tensor_2.shape
         squeezed_input_tensor_2_shape = [idx for idx in input_tensor_2_shape if idx != 1]
         squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
@@ -886,6 +898,10 @@ def explicit_broadcast(
         i if i is not None else INF_INDEX_VALUE for i in const_or_var_2.shape
     ]
     if np.prod(shape_for_judging_skip_processing_1) == 1 or np.prod(shape_for_judging_skip_processing_2) == 1:
+        return const_or_var_1, const_or_var_2
+
+    # If the two tensors to be processed have exactly the same number of axes, skip the process.
+    if len(const_or_var_1.shape) == len(const_or_var_2.shape):
         return const_or_var_1, const_or_var_2
 
     # Dealing with tricky BatchNormalization
