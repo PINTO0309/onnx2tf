@@ -64,18 +64,6 @@ def make_node(
 
     replace_prelu_to_pseudo_prelu = "prelu" in kwargs['replace_to_pseudo_operators']
 
-    _, slope = pre_explicit_broadcast(
-        input_tensor_1=input_tensor,
-        input_tensor_2=slope,
-    )
-
-    _, slope = explicit_broadcast(
-        const_or_var_1=input_tensor,
-        const_or_var_2=slope,
-        graph_node=graph_node,
-        tf_layers_dict= tf_layers_dict
-    )
-
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -89,6 +77,19 @@ def make_node(
             if isinstance(graph_node_input_1, gs.Variable) \
                 and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
+
+    input_tensor, slope = \
+        pre_explicit_broadcast(
+            input_tensor_1=input_tensor,
+            input_tensor_2=slope,
+        )
+    input_tensor, slope = \
+        explicit_broadcast(
+            const_or_var_1=input_tensor,
+            const_or_var_2=slope,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
 
     # input_tensor: [1, 4, 4, 4]
     # slope: [4, 1, 1] -> [1, 4, 1, 1]
@@ -104,18 +105,7 @@ def make_node(
         convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
         slope = slope.transpose(convertion_table)
 
-    input_tensor, slope = \
-        pre_explicit_broadcast(
-            input_tensor_1=input_tensor,
-            input_tensor_2=slope,
-        )
-    input_tensor, slope = \
-        explicit_broadcast(
-            const_or_var_1=input_tensor,
-            const_or_var_2=slope,
-            graph_node=graph_node,
-            tf_layers_dict= tf_layers_dict,
-        )
+    slope = tf.convert_to_tensor(slope)
 
     # Pre-process transpose
     before_trans_shape = input_tensor_shape
