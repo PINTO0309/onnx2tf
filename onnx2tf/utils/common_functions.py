@@ -2460,7 +2460,7 @@ def shape_unmatched_special_avoidance_workaround(
                     no_transpose_target_tensor = values[1 - false_indices]
                     transpose_target_tensor = values[false_indices]
                     seq = [i for i in range(len(transpose_target_tensor.shape))]
-                    perms = list(itertools.permutations(seq))[1:]
+                    perms = list(itertools.permutations(seq))
                     for perm in perms:
                         try:
                             tmp_trans_value = \
@@ -2471,6 +2471,7 @@ def shape_unmatched_special_avoidance_workaround(
                                 )
                             dummy_mul = no_transpose_target_tensor * tmp_trans_value
                             values[false_indices] = tmp_trans_value
+                            break
                         except:
                             pass
 
