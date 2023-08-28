@@ -59,6 +59,7 @@ def make_node(
     }
 
     replace_erf_to_pseudo_erf = "erf" in kwargs['replace_to_pseudo_operators']
+    gelu_replace_op_names: dict = kwargs['gelu_replace_op_names']
 
     # Generation of TF OP
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
@@ -78,27 +79,41 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
-    if not replace_erf_to_pseudo_erf:
+
+    # Replace with GeLU if available.
+    gelu_op_names = [op_name for op_names in gelu_replace_op_names.values() for op_name in op_names]
+    enable_gelu = graph_node.name in gelu_op_names
+
+    if not enable_gelu:
+        if not replace_erf_to_pseudo_erf:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.math.erf(
+                    x=input_tensor,
+                    name=graph_node.name,
+                )
+        else:
+            # https://stackoverflow.com/questions/457408/is-there-an-easily-available-implementation-of-erf-for-python
+            eps = 1e-11
+            x_abs = tf.math.abs(input_tensor)
+            sign = tf.math.divide(input_tensor, tf.math.abs(input_tensor)+eps)
+            a1 =  0.254829592
+            a2 = -0.284496736
+            a3 =  1.421413741
+            a4 = -1.453152027
+            a5 =  1.061405429
+            p  =  0.3275911
+            t = 1.0/(1.0 + p*x_abs)
+            y = 1.0 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*tf.math.exp(-x_abs*x_abs)
+            erf_tensor = sign*y
+            tf_layers_dict[graph_node_output.name]['tf_node'] = erf_tensor
+        tf_type = tf.math.erf
+    else:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.math.erf(
-                x=input_tensor,
+            tf.identity(
+                input=input_tensor,
                 name=graph_node.name,
             )
-    else:
-        # https://stackoverflow.com/questions/457408/is-there-an-easily-available-implementation-of-erf-for-python
-        eps = 1e-11
-        x_abs = tf.math.abs(input_tensor)
-        sign = tf.math.divide(input_tensor, tf.math.abs(input_tensor)+eps)
-        a1 =  0.254829592
-        a2 = -0.284496736
-        a3 =  1.421413741
-        a4 = -1.453152027
-        a5 =  1.061405429
-        p  =  0.3275911
-        t = 1.0/(1.0 + p*x_abs)
-        y = 1.0 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*tf.math.exp(-x_abs*x_abs)
-        erf_tensor = sign*y
-        tf_layers_dict[graph_node_output.name]['tf_node'] = erf_tensor
+        tf_type = tf.identity
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
@@ -118,7 +133,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.math.erf,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'x': input_tensor,
                 },

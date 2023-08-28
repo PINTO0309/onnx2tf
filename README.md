@@ -255,7 +255,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.15.18
+  ghcr.io/pinto0309/onnx2tf:1.16.0
 
   or
 
@@ -263,7 +263,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.15.18
+  docker.io/pinto0309/onnx2tf:1.16.0
 
   or
 
@@ -392,7 +392,7 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 $ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
 
 # Suppress generation of Flex OP and replace with Pseudo-Function
-# [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf]
+# [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU]
 # Below is a sample of replacing GELU / Erf with another set of operations.
 $ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
 $ onnx2tf -i gelu_11.onnx -rtpo Erf
@@ -1440,7 +1440,7 @@ optional arguments:
     Replace list of operators to pseudo operators.
     Full name of the target operators should be given.
     Currently supported operators :
-    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU
 
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
@@ -1907,7 +1907,7 @@ convert(
       Replace list of operators to pseudo operators.
       Full name of the target operators should be given.
       Currently supported operators :
-      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.
@@ -2355,6 +2355,7 @@ The above differences often cannot be dealt with by simply converting the model 
 - [x] Add process to replace `Neg` with `pseudo-Neg`.
 - [x] Add process to replace `ArgMax` with `pseudo-ArgMax`.
 - [x] Add process to replace `Erf` with `pseudo-Erf`.
+- [x] Add process to replace `GeLU` with `pseudo-GeLU`.
 - [x] Added option to fix dynamic batch size `N` to a specified number.
 - [x] Added option to overwrite dynamic shape input OPs with static shape. `--overwrite_input_shape`
 - [x] Output in Keras H5 format.
