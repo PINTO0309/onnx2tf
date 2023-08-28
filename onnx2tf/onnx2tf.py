@@ -369,7 +369,7 @@ def convert(
         Replace list of operators to pseudo operators. \n
         Full name of the target operators should be given. \n
         Currently supported operators : \n
-        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
+        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -766,6 +766,7 @@ def convert(
         'output_signaturedefs': output_signaturedefs,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
         'output_integer_quantized_tflite': output_integer_quantized_tflite,
+        'gelu_replace_op_names': {},
         'use_cuda': use_cuda,
     }
 
@@ -2009,7 +2010,7 @@ def main():
             'Replace list of operators to pseudo operators. \n ' +
             'Full name of the target operators should be given. \n ' +
             'Currently supported operators : \n' +
-            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf'
+            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU'
     )
     parser.add_argument(
         '-me',

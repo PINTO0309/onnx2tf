@@ -83,6 +83,7 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     disable_strict_mode: bool = kwargs['disable_strict_mode']
+    gelu_replace_op_names: dict = kwargs['gelu_replace_op_names']
 
     # Param replacement
     input_tensor_1 = replace_parameter(
@@ -185,41 +186,71 @@ def make_node(
             )
 
     # Generation of TF OP
-    # TODO: Temporarily Revert due to missing decision conditions
-    # # Merge two consecutive identical OPs into one
-    # # https://github.com/PINTO0309/onnx2tf/issues/230
-    # #   A constant is calculated in advance only
-    # #   when one of the operations of the current OP
-    # #   is a constant and one of the operations of
-    # #   the next OP is also a constant.
-    # # By merging two OPs into one, an accuracy error always occurs
-    # # in the merged OP during the accuracy check.
-    # # 1. `Mul` -> `Mul` to `Single-Mul` : `10 * 5 * 8 -> 10 * 40`
-    # # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
-    # # 3. `Div` -> `Mul` to `Single-Mul` : `10 / 5 * 8 -> 10 * 1.6`
-    # # 4. `Div` -> `Div` to `Single-Mul` : `10 / 5 / 8 -> 10 * 0.025`
-    # # 5. `Sub` -> `Sub` to `Single-Sub` : `10 - 5 - 8 -> 10 - 13`
-    # # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
-    # # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
-    # # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
-    # _, tf_type = merge_two_consecutive_identical_ops_into_one(
-    #     graph_node_input_1=graph_node_input_1,
-    #     graph_node_input_2=graph_node_input_2,
-    #     graph_node_output=graph_node_output,
-    #     before_op_output_shape_trans=before_op_output_shape_trans,
-    #     input_tensor_1=input_tensor_1,
-    #     input_tensor_2=input_tensor_2,
-    #     graph_node=graph_node,
-    #     tf_layers_dict=tf_layers_dict,
-    #     tf_func='Mul'
-    # )
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.math.multiply(
-            x=input_tensor_1,
-            y=input_tensor_2,
-            name=graph_node.name,
-        )
-    tf_type = tf.math.multiply
+
+    # Replace with GeLU if available.
+    gelu_op_names = [op_name for op_names in gelu_replace_op_names.values() for op_name in op_names]
+    enable_gelu = graph_node.name in gelu_op_names
+
+    if not enable_gelu:
+        # TODO: Temporarily Revert due to missing decision conditions
+        # # Merge two consecutive identical OPs into one
+        # # https://github.com/PINTO0309/onnx2tf/issues/230
+        # #   A constant is calculated in advance only
+        # #   when one of the operations of the current OP
+        # #   is a constant and one of the operations of
+        # #   the next OP is also a constant.
+        # # By merging two OPs into one, an accuracy error always occurs
+        # # in the merged OP during the accuracy check.
+        # # 1. `Mul` -> `Mul` to `Single-Mul` : `10 * 5 * 8 -> 10 * 40`
+        # # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
+        # # 3. `Div` -> `Mul` to `Single-Mul` : `10 / 5 * 8 -> 10 * 1.6`
+        # # 4. `Div` -> `Div` to `Single-Mul` : `10 / 5 / 8 -> 10 * 0.025`
+        # # 5. `Sub` -> `Sub` to `Single-Sub` : `10 - 5 - 8 -> 10 - 13`
+        # # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
+        # # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
+        # # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
+        # _, tf_type = merge_two_consecutive_identical_ops_into_one(
+        #     graph_node_input_1=graph_node_input_1,
+        #     graph_node_input_2=graph_node_input_2,
+        #     graph_node_output=graph_node_output,
+        #     before_op_output_shape_trans=before_op_output_shape_trans,
+        #     input_tensor_1=input_tensor_1,
+        #     input_tensor_2=input_tensor_2,
+        #     graph_node=graph_node,
+        #     tf_layers_dict=tf_layers_dict,
+        #     tf_func='Mul'
+        # )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.math.multiply(
+                x=input_tensor_1,
+                y=input_tensor_2,
+                name=graph_node.name,
+            )
+        tf_type = tf.math.multiply
+    else:
+        if len(graph_node.inputs) == 2 \
+            and graph_node.inputs[0].name in tf_layers_dict \
+            and tf_layers_dict[graph_node.inputs[0].name]['optype'] == 'Input':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.identity(
+                    input=tf_layers_dict[graph_node.inputs[1].name]['tf_node'],
+                    name=graph_node.name,
+                )
+        elif len(graph_node.inputs) == 2 \
+            and graph_node.inputs[1].name in tf_layers_dict \
+            and tf_layers_dict[graph_node.inputs[1].name]['optype'] == 'Input':
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.identity(
+                    input=tf_layers_dict[graph_node.inputs[0].name]['tf_node'],
+                    name=graph_node.name,
+                )
+        else:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.identity(
+                    input=input_tensor_1 if graph_node.i(0).name in gelu_op_names else input_tensor_2,
+                    name=graph_node.name,
+                )
+        tf_type = tf.identity
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

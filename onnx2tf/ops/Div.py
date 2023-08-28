@@ -82,6 +82,7 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     disable_strict_mode: bool = kwargs['disable_strict_mode']
+    replace_erf_to_pseudo_gelu = "gelu" in kwargs['replace_to_pseudo_operators']
 
     # Param replacement
     input_tensor_1 = replace_parameter(
@@ -217,12 +218,71 @@ def make_node(
     #     tf_layers_dict=tf_layers_dict,
     #     tf_func='Div'
     # )
-    divided_tensor = tf.math.divide(
-        x=input_tensor_1,
-        y=input_tensor_2,
-        name=graph_node.name,
-    )
-    tf_type = tf.math.divide
+
+    # GeLU replace check
+    # https://github.com/PINTO0309/onnx2tf/issues/465
+    # a. x -> b.Div (a*1.4142135381698608) -> c.Erf (b) -> d.Add (c+1.0) -> e.Mul (a*d) -> f.Mul (f*0.5)
+    enable_gelu = False
+    if hasattr(input_tensor_2, 'numpy') and input_tensor_2.numpy() == 1.4142135:
+        try:
+            input_node_name = graph_node_input_1.name
+            erf_node: gs.Node = None
+            add_node: gs.Node = None
+            mul_1_node: gs.Node = None
+            mul_2_node: gs.Node = None
+            if graph_node.o().op == 'Erf':
+
+                erf_node = graph_node.o()
+
+                if erf_node.o().op == 'Add' \
+                    and len(erf_node.o().inputs) == 2 \
+                    and isinstance(graph_node.o().o().inputs[1], gs.Constant) \
+                    and hasattr(erf_node.o().inputs[1], 'values') \
+                    and erf_node.o().inputs[1].values == 1.0:
+
+                    add_node = erf_node.o()
+
+                    if add_node.o().op == 'Mul' \
+                        and len(add_node.o().inputs) == 2 \
+                        and add_node.o().inputs[0].name == input_node_name:
+
+                        mul_1_node = add_node.o()
+
+                        if mul_1_node.o().op == 'Mul' \
+                            and isinstance(mul_1_node.o().inputs[1], gs.Constant) \
+                            and hasattr(mul_1_node.o().inputs[1], 'values') \
+                            and mul_1_node.o().inputs[1].values == 0.5:
+
+                            mul_2_node = mul_1_node.o()
+
+                            # Save the name of the OP set to be replaced to GeLU
+                            # Div, Erf, Add, Mul, Mul
+                            if 'gelu_replace_op_names' not in kwargs:
+                                kwargs['gelu_replace_op_names'] = {}
+                            kwargs['gelu_replace_op_names'][graph_node.name] = [
+                                erf_node.name,
+                                add_node.name,
+                                mul_1_node.name,
+                                mul_2_node.name,
+                            ]
+                            enable_gelu = True
+        except:
+            pass
+
+    # Replace with GeLU if available.
+    if not enable_gelu:
+        divided_tensor = tf.math.divide(
+            x=input_tensor_1,
+            y=input_tensor_2,
+            name=graph_node.name,
+        )
+        tf_type = tf.math.divide
+    else:
+        divided_tensor = tf.nn.gelu(
+            features=input_tensor_1,
+            approximate=replace_erf_to_pseudo_gelu,
+        )
+        tf_type = tf.identity
 
     # Post-process transpose
     divided_tensor = post_process_transpose(
