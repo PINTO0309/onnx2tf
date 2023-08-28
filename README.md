@@ -217,8 +217,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - Linux / Windows
-- onnx==1.13.1
-- onnxruntime==1.15.0
+- onnx==1.14.0
+- onnxruntime==1.15.1
 - onnx-simplifier==0.4.33
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
@@ -267,10 +267,10 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
-  $ pip install -U onnx==1.13.1 \
+  $ pip install -U onnx==1.14.0 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
-  && pip install -U onnxruntime==1.15.0 \
+  && pip install -U onnxruntime==1.15.1 \
   && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
@@ -295,10 +295,10 @@ or
     && sudo mv flatc /usr/bin/
   !pip install -U pip \
     && pip install tensorflow==2.13.0 \
-    && pip install -U onnx==1.13.1 \
+    && pip install -U onnx==1.14.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U onnxruntime==1.15.0 \
+    && pip install -U onnxruntime==1.15.1 \
     && pip install -U onnxsim==0.4.33 \
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
