@@ -12,7 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install onnx==1.13.1 \
+    && pip install onnx==1.14.0 \
     && pip install onnxsim==0.4.33 \
     && pip install nvidia-pyindex \
     && pip install onnx_graphsurgeon \
@@ -23,7 +23,7 @@ RUN pip install pip -U \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
     && pip install psutil==5.9.5 \
-    && pip install onnxruntime==1.15.0
+    && pip install onnxruntime==1.15.1
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
