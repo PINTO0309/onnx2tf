@@ -83,6 +83,7 @@ def make_node(
 
     disable_strict_mode: bool = kwargs['disable_strict_mode']
     replace_erf_to_pseudo_gelu = "gelu" in kwargs['replace_to_pseudo_operators']
+    mul_div_replace_op_names: dict = kwargs['mul_div_replace_op_names']
 
     # Param replacement
     input_tensor_1 = replace_parameter(
@@ -270,13 +271,42 @@ def make_node(
             pass
 
     # Replace with GeLU if available.
+    mul_div_op_names = [op_name for op_names in mul_div_replace_op_names.values() for op_name in op_names]
+    disable_div = graph_node.name in mul_div_op_names
+
+    # Replace with GeLU if available.
     if not enable_gelu:
-        divided_tensor = tf.math.divide(
-            x=input_tensor_1,
-            y=input_tensor_2,
-            name=graph_node.name,
-        )
-        tf_type = tf.math.divide
+        if not disable_div:
+            divided_tensor = tf.math.divide(
+                x=input_tensor_1,
+                y=input_tensor_2,
+                name=graph_node.name,
+            )
+            tf_type = tf.math.divide
+        else:
+            if len(graph_node.inputs) == 2 \
+                and graph_node.inputs[0].name in tf_layers_dict \
+                and tf_layers_dict[graph_node.inputs[0].name]['optype'] == 'Input':
+                divided_tensor = \
+                    tf.identity(
+                        input=tf_layers_dict[graph_node.inputs[1].name]['tf_node'],
+                        name=graph_node.name,
+                    )
+            elif len(graph_node.inputs) == 2 \
+                and graph_node.inputs[1].name in tf_layers_dict \
+                and tf_layers_dict[graph_node.inputs[1].name]['optype'] == 'Input':
+                divided_tensor = \
+                    tf.identity(
+                        input=tf_layers_dict[graph_node.inputs[0].name]['tf_node'],
+                        name=graph_node.name,
+                    )
+            else:
+                divided_tensor = \
+                    tf.identity(
+                        input=input_tensor_1 if graph_node.i(0).name in mul_div_replace_op_names else input_tensor_2,
+                        name=graph_node.name,
+                    )
+            tf_type = tf.identity
     else:
         divided_tensor = tf.nn.gelu(
             features=input_tensor_1,

@@ -220,13 +220,57 @@ def make_node(
         #     tf_layers_dict=tf_layers_dict,
         #     tf_func='Mul'
         # )
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.math.multiply(
-                x=input_tensor_1,
-                y=input_tensor_2,
-                name=graph_node.name,
-            )
-        tf_type = tf.math.multiply
+
+        # Mul -> Mul avoid
+        mul_div_node: gs.Node = None
+        if hasattr(input_tensor_2, 'numpy'):
+            try:
+                if graph_node.o().op == 'Div':
+                    if len(graph_node.o().inputs) == 2 \
+                        and isinstance(graph_node.o().inputs[1], gs.Constant) \
+                        and hasattr(graph_node.o().inputs[1], 'values') \
+                        and isinstance(graph_node.o().inputs[1].values, np.ndarray):
+
+                        # Only when there is only one subsequent OP to be processed
+                        try:
+                            graph_node.o(1)
+                        except:
+                            mul_div_node = graph_node.o()
+
+                            # Save the name of the OP Div
+                            if 'mul_div_replace_op_names' not in kwargs:
+                                kwargs['mul_div_replace_op_names'] = {}
+                            kwargs['mul_div_replace_op_names'][graph_node.name] = [
+                                mul_div_node.name,
+                            ]
+            except:
+                pass
+
+        if mul_div_node is None:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.math.multiply(
+                    x=input_tensor_1,
+                    y=input_tensor_2,
+                    name=graph_node.name,
+                )
+            tf_type = tf.math.multiply
+        else:
+            try:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.math.multiply(
+                        x=input_tensor_1,
+                        y=input_tensor_2 / tf.convert_to_tensor(mul_div_node.inputs[1].values),
+                        name=graph_node.name,
+                    )
+            except:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.math.multiply(
+                        x=input_tensor_1,
+                        y=input_tensor_2,
+                        name=graph_node.name,
+                    )
+                kwargs['mul_div_replace_op_names'][graph_node.name] = {}
+            tf_type = tf.math.multiply
     else:
         if len(graph_node.inputs) == 2 \
             and graph_node.inputs[0].name in tf_layers_dict \
