@@ -131,26 +131,29 @@ def make_node(
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
-    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
+    input_tensor_1, input_tensor_2 = \
+        shape_unmatched_special_avoidance_workaround(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
 
-    input_tensor_1, input_tensor_2 = pre_explicit_broadcast(
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-    )
+    input_tensor_1, input_tensor_2 = \
+        pre_explicit_broadcast(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+        )
 
-    input_tensor_1, input_tensor_2 = explicit_broadcast(
-        const_or_var_1=input_tensor_1,
-        const_or_var_2=input_tensor_2,
-        graph_node=graph_node,
-        tf_layers_dict= tf_layers_dict,
-    )
+    input_tensor_1, input_tensor_2 = \
+        explicit_broadcast(
+            const_or_var_1=input_tensor_1,
+            const_or_var_2=input_tensor_2,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
 
     # Deterring shape corruption due to broadcast
     input_tensor_1, input_tensor_2 = \
@@ -162,16 +165,17 @@ def make_node(
 
     # Correction process for accuracy errors
     if not disable_strict_mode:
-        input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-            tf_func=tf.math.divide,
-            np_func=np.divide,
-            graph_node_output_shape=graph_node_output_shape,
-            graph_node_output=graph_node_output,
-            tf_layers_dict=tf_layers_dict,
-            **kwargs,
-        )
+        input_tensor_1, input_tensor_2 = \
+            correction_process_for_accuracy_errors(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+                tf_func=tf.math.divide,
+                np_func=np.divide,
+                graph_node_output_shape=graph_node_output_shape,
+                graph_node_output=graph_node_output,
+                tf_layers_dict=tf_layers_dict,
+                **kwargs,
+            )
 
     # Generation of TF OP
     target_cast_dtype = [

@@ -256,12 +256,23 @@ def make_node(
             tf_type = tf.math.multiply
         else:
             try:
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.math.multiply(
-                        x=input_tensor_1,
-                        y=input_tensor_2 / tf.convert_to_tensor(mul_div_node.inputs[1].values),
-                        name=graph_node.name,
-                    )
+                # Skip precomputation if broadcast changes the tensor shape
+                precalculated_tensor = input_tensor_2 / tf.convert_to_tensor(mul_div_node.inputs[1].values)
+                if input_tensor_1.shape == precalculated_tensor.shape:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.math.multiply(
+                            x=input_tensor_1,
+                            y=precalculated_tensor,
+                            name=graph_node.name,
+                        )
+                else:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.math.multiply(
+                            x=input_tensor_1,
+                            y=input_tensor_2,
+                            name=graph_node.name,
+                        )
+                    kwargs['mul_div_replace_op_names'][graph_node.name] = {}
             except:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.math.multiply(
