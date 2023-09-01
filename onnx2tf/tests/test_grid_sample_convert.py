@@ -69,15 +69,17 @@ def test_grid_sample_convert():
         model_name = "grid_sample_reproduction"
 
         # 1. pytorch sample input i.e. 4D feature map dimension: NCHW
-        n = 32
-        c = 16
-        h = 36
-        w = 64
+        n = np.random.randint(low=12, high=48)
+        c = np.random.randint(low=16, high=64)
+        h_in = np.random.randint(low=32, high=56)
+        w_in = np.random.randint(low=48, high=80)
+        h_out = np.random.randint(low=32, high=56)
+        w_out = np.random.randint(low=48, high=80)
 
-        input = np.random.randn(n, c, h, w).astype(np.float32)
-        grid = np.random.random(size=[n, h, w, 2]).astype(np.float32)
+        input = np.random.randn(n, c, h_in, w_in).astype(np.float32)
+        grid = np.random.random(size=[n, h_out, w_out, 2]).astype(np.float32)
         grid = 2.0 * grid - 1.0
-        info(Color.GREEN(f"[GridSampleTest] create sample input: {n}x{c}x{h}x{w}."))
+        info(Color.GREEN(f"[GridSampleTest] create sample input: {n}x{c}x{h_in}x{w_in}, grid: {n}x{h_out}x{w_out}x2."))
 
         # 2. pytorch model export to onnx
         onnx_model_file = os.path.join(tmp_path, f"{model_name}.onnx")
