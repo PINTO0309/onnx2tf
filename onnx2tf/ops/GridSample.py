@@ -162,27 +162,16 @@ def make_node(
     grid
         [N, grid_H, grid_W, 2]
     """
-    split11, split12 = tf.split(grid, num_or_size_splits=2, axis=3) # x, y
+    n, h_in, w_in, c = image.shape
+    _, h_out, w_out, _ = grid.shape
 
     if align_corners:
-        add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
-        mul1 = tf.math.multiply(add1, tf.convert_to_tensor((image.shape[2]-1)*0.5, dtype=tf.float32)) # Mul_output_0
+        mul1 = tf.math.multiply(grid + 1.0, tf.convert_to_tensor([(w_in - 1) * 0.5, (h_in - 1) * 0.5], dtype=tf.float32))
     else:
-        add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
-        mul00 = tf.math.multiply(add1, tf.convert_to_tensor(image.shape[2], dtype=tf.float32)) # Mul_output_0
-        sub1 = tf.math.subtract(mul00, tf.convert_to_tensor(1, dtype=tf.float32)) # Sub_output_0
-        mul1 = tf.math.multiply(sub1, tf.convert_to_tensor(0.5, dtype=tf.float32)) # Div_output_0
-    reshape1 = tf.reshape(mul1, [tf.shape(mul1)[0], tf.reduce_prod(tf.shape(mul1)[1:])]) # Reshape_output_0
-
-    if align_corners:
-        add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_1_output_0
-        mul2 = tf.math.multiply(add2, tf.convert_to_tensor((image.shape[1]-1)*0.5, dtype=tf.float32)) # Mul_1_output_0
-    else:
-        add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_output_0
-        mul01 = tf.math.multiply(add2, tf.convert_to_tensor(image.shape[1], dtype=tf.float32)) # Mul_output_0
-        sub2 = tf.math.subtract(mul01, tf.convert_to_tensor(1, dtype=tf.float32)) # Sub_output_0
-        mul2 = tf.math.multiply(sub2, tf.convert_to_tensor(0.5, dtype=tf.float32)) # Div_output_0
-    reshape2 = tf.reshape(mul2, [tf.shape(mul2)[0], tf.reduce_prod(tf.shape(mul2)[1:])]) # Reshape_1_output_0
+        mul1 = (tf.math.multiply(grid + 1.0, tf.convert_to_tensor([w_in, h_in], dtype=tf.float32)) - 1.0) * 0.5
+    reshape1, reshape2 = tf.split(mul1, num_or_size_splits=2, axis=-1)
+    reshape1 = tf.reshape(reshape1, [n, h_out * w_out])
+    reshape2 = tf.reshape(reshape2, [n, h_out * w_out])
 
     floor1 = tf.math.floor(reshape1) # Floor_output_0
     sub11 = tf.math.subtract(reshape1, floor1) # Sub_3_output_0
