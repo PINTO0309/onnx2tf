@@ -83,6 +83,7 @@ def make_node(
 
     disable_strict_mode: bool = kwargs['disable_strict_mode']
     replace_erf_to_pseudo_gelu = "gelu" in kwargs['replace_to_pseudo_operators']
+    mul_div_replace_op_names: dict = kwargs['mul_div_replace_op_names']
 
     # Param replacement
     input_tensor_1 = replace_parameter(
@@ -130,26 +131,29 @@ def make_node(
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
-    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
+    input_tensor_1, input_tensor_2 = \
+        shape_unmatched_special_avoidance_workaround(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
 
-    input_tensor_1, input_tensor_2 = pre_explicit_broadcast(
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-    )
+    input_tensor_1, input_tensor_2 = \
+        pre_explicit_broadcast(
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+        )
 
-    input_tensor_1, input_tensor_2 = explicit_broadcast(
-        const_or_var_1=input_tensor_1,
-        const_or_var_2=input_tensor_2,
-        graph_node=graph_node,
-        tf_layers_dict= tf_layers_dict,
-    )
+    input_tensor_1, input_tensor_2 = \
+        explicit_broadcast(
+            const_or_var_1=input_tensor_1,
+            const_or_var_2=input_tensor_2,
+            graph_node=graph_node,
+            tf_layers_dict= tf_layers_dict,
+        )
 
     # Deterring shape corruption due to broadcast
     input_tensor_1, input_tensor_2 = \
@@ -161,16 +165,17 @@ def make_node(
 
     # Correction process for accuracy errors
     if not disable_strict_mode:
-        input_tensor_1, input_tensor_2 = correction_process_for_accuracy_errors(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-            tf_func=tf.math.divide,
-            np_func=np.divide,
-            graph_node_output_shape=graph_node_output_shape,
-            graph_node_output=graph_node_output,
-            tf_layers_dict=tf_layers_dict,
-            **kwargs,
-        )
+        input_tensor_1, input_tensor_2 = \
+            correction_process_for_accuracy_errors(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+                tf_func=tf.math.divide,
+                np_func=np.divide,
+                graph_node_output_shape=graph_node_output_shape,
+                graph_node_output=graph_node_output,
+                tf_layers_dict=tf_layers_dict,
+                **kwargs,
+            )
 
     # Generation of TF OP
     target_cast_dtype = [
@@ -270,13 +275,42 @@ def make_node(
             pass
 
     # Replace with GeLU if available.
+    mul_div_op_names = [op_name for op_names in mul_div_replace_op_names.values() for op_name in op_names]
+    disable_div = graph_node.name in mul_div_op_names
+
+    # Replace with GeLU if available.
     if not enable_gelu:
-        divided_tensor = tf.math.divide(
-            x=input_tensor_1,
-            y=input_tensor_2,
-            name=graph_node.name,
-        )
-        tf_type = tf.math.divide
+        if not disable_div:
+            divided_tensor = tf.math.divide(
+                x=input_tensor_1,
+                y=input_tensor_2,
+                name=graph_node.name,
+            )
+            tf_type = tf.math.divide
+        else:
+            if len(graph_node.inputs) == 2 \
+                and graph_node.inputs[0].name in tf_layers_dict \
+                and tf_layers_dict[graph_node.inputs[0].name]['optype'] == 'Input':
+                divided_tensor = \
+                    tf.identity(
+                        input=tf_layers_dict[graph_node.inputs[1].name]['tf_node'],
+                        name=graph_node.name,
+                    )
+            elif len(graph_node.inputs) == 2 \
+                and graph_node.inputs[1].name in tf_layers_dict \
+                and tf_layers_dict[graph_node.inputs[1].name]['optype'] == 'Input':
+                divided_tensor = \
+                    tf.identity(
+                        input=tf_layers_dict[graph_node.inputs[0].name]['tf_node'],
+                        name=graph_node.name,
+                    )
+            else:
+                divided_tensor = \
+                    tf.identity(
+                        input=input_tensor_1 if graph_node.i(0).name in mul_div_replace_op_names else input_tensor_2,
+                        name=graph_node.name,
+                    )
+            tf_type = tf.identity
     else:
         divided_tensor = tf.nn.gelu(
             features=input_tensor_1,

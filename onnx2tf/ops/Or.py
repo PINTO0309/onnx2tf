@@ -79,14 +79,15 @@ def make_node(
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
-    input_tensor_1, input_tensor_2 = shape_unmatched_special_avoidance_workaround(
-        graph_node_input_1=graph_node_input_1,
-        graph_node_input_2=graph_node_input_2,
-        input_tensor_1=input_tensor_1,
-        input_tensor_2=input_tensor_2,
-        tf_layers_dict=tf_layers_dict,
-        **kwargs,
-    )
+    input_tensor_1, input_tensor_2 = \
+        shape_unmatched_special_avoidance_workaround(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_2,
+            input_tensor_1=input_tensor_1,
+            input_tensor_2=input_tensor_2,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
