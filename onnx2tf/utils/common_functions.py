@@ -3787,12 +3787,9 @@ def dummy_onnx_inference(
         # Total bytes
         total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
 
-    # 1. When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 96 GB
-    # 2. If exact inference mode is disabled and the total size of the tensor of inference results exceeds about 2 GB
+    # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 96 GB
     STRICT_MAXIMUM_OUTPUT_SIZE = 96
-    NOT_STRICT_MAXIMUM_OUTPUT_SIZE = 2
-    if (not disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > STRICT_MAXIMUM_OUTPUT_SIZE) \
-        or (disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > NOT_STRICT_MAXIMUM_OUTPUT_SIZE):
+    if (not disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > STRICT_MAXIMUM_OUTPUT_SIZE):
         if tmp_onnx_path:
             os.remove(tmp_onnx_path)
             os.remove(tmp_onnx_external_weights_path)
