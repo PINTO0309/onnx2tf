@@ -252,11 +252,24 @@ def make_node(
                     pass
 
     # Generation of TF OP
-    input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
-    mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
+    try:
+        input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
+        mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
+    except Exception as e:
+        # Workaround for inconsistent "C" position
+        input_tensor_rank = len(input_tensor.shape)
+        if input_tensor_rank >= 3 \
+            and input_tensor.shape[1] is not None \
+            and input_tensor.shape[1] == B.shape[0]:
+            perm = [0] + [i for i in range(2, input_tensor_rank)] + [1]
+            input_tensor = tf.transpose(a=input_tensor, perm=perm)
+            mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
+        else:
+            raise
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

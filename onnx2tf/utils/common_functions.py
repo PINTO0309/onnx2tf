@@ -3568,6 +3568,7 @@ def dummy_onnx_inference(
     custom_input_op_name_np_data_path: Optional[str] = None,
     tf_layers_dict: Optional[Dict] = None,
     use_cuda: bool = False,
+    disable_strict_mode: bool = False,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3589,6 +3590,12 @@ def dummy_onnx_inference(
         TensorFlow Model Structure Dictionary.
         Used to determine if the input OP needs to be transposed
         from NHWC to NCHW when checking accuracy.
+
+    use_cuda: Optional[bool]
+        True if CUDA is used for inference, False if not.
+
+    disable_strict_mode: Optional[bool]
+        True to disable strict inference mode, False to enable it.
 
     Returns
     ----------
@@ -3753,6 +3760,46 @@ def dummy_onnx_inference(
                         ),
                         perm=[0,3,1,2],
                     ).numpy().astype(input_dtype)
+
+    dtype_sizes = {
+        np.dtype('float16'): 2,
+        np.dtype('float32'): 4,
+        np.dtype('float64'): 8,
+
+        np.dtype('uint8'): 1,
+        np.dtype('uint16'): 2,
+        np.dtype('uint32'): 4,
+        np.dtype('uint64'): 8,
+
+        np.dtype('int8'): 1,
+        np.dtype('int16'): 2,
+        np.dtype('int32'): 4,
+        np.dtype('int64'): 8,
+
+        np.dtype('bool_'): 1,
+    }
+    total_output_size: int = 0
+    for gs_graph_output in gs_graph.outputs:
+        op_output_size: int = 1
+        for s in gs_graph_output.shape:
+            if isinstance(s, int):
+                op_output_size *= s
+        # Total bytes
+        total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
+
+    # 1. When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 96 GB
+    # 2. If exact inference mode is disabled and the total size of the tensor of inference results exceeds about 2 GB
+    STRICT_MAXIMUM_OUTPUT_SIZE = 96
+    NOT_STRICT_MAXIMUM_OUTPUT_SIZE = 2
+    if (not disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > STRICT_MAXIMUM_OUTPUT_SIZE) \
+        or (disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > NOT_STRICT_MAXIMUM_OUTPUT_SIZE):
+        if tmp_onnx_path:
+            os.remove(tmp_onnx_path)
+            os.remove(tmp_onnx_external_weights_path)
+        raise Exception(
+            f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {STRICT_MAXIMUM_OUTPUT_SIZE} GB.'
+        )
+
     outputs = onnx_session.run(None, input_datas)
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)

@@ -7,7 +7,7 @@ with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
     __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
 import sys
-sys.setrecursionlimit(10000)
+sys.setrecursionlimit(2147483647) # C int maximum
 import ast
 import json
 import logging
@@ -879,7 +879,7 @@ def convert(
                     custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                     tf_layers_dict=tf_layers_dict,
                     use_cuda=use_cuda,
-
+                    disable_strict_mode=disable_strict_mode,
                 )
             """
             onnx_tensor_infos_for_validation:
