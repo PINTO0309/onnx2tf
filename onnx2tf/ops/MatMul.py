@@ -269,6 +269,7 @@ def make_node(
     post_matmul_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
     post_matmul_shape_none_count = sum([1 if dim is None else 0 for dim in post_matmul_shape])
     if post_matmul_shape_none_count <= 1 \
+        and onnx_output_shape is not None \
         and post_matmul_shape != list(onnx_output_shape):
 
         onnx_output_shape = [
