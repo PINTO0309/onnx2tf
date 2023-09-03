@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    stridedslice_with_flexing_deterrence,
 )
 
 
@@ -205,6 +206,53 @@ def make_node(
         paddings = tf.cast(tf.convert_to_tensor(paddings), dtype=tf.int32)
     else:
         paddings = tf.cast(paddings, dtype=tf.int32)
+
+    # Support for negative number padding
+    # No relief when paddings are not constants
+    # https://github.com/PINTO0309/onnx2tf/issues/473
+    if input_tensor.shape != tf.TensorShape(None) \
+        and None not in input_tensor.shape \
+        and hasattr(paddings, 'numpy') and (paddings.numpy() < 0).any():
+
+        begin_ = [-1 if padding[0] >=0 else -padding[0].numpy() for padding in paddings]
+        begin_mask_ = tf.convert_to_tensor(sum([2 ** idx if begin == -1 else 0 for idx, begin in enumerate(begin_)]))
+        end_ = [-1 if padding[1] >=0 else -padding[1].numpy() for padding in paddings]
+        end_mask_ = tf.convert_to_tensor(sum([2 ** idx if end == -1 else 0 for idx, end in enumerate(end_)]))
+        begin_ = tf.convert_to_tensor([0 if val == -1 else val for val in begin_])
+        end_ = [0 if val == -1 else input_tensor.shape[idx] - val for idx, val in enumerate(end_)]
+        end_ = tf.convert_to_tensor(end_)
+        strides_ = None
+
+        COMPRESSION_DEFAULT_VALUE = 5
+        input_tensor_rank = len(input_tensor.shape)
+        if input_tensor_rank > COMPRESSION_DEFAULT_VALUE:
+            ignore_axes = [idx for idx in range(input_tensor_rank)]
+            input_tensor = \
+                stridedslice_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    strides=strides_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                    ignore_axes=ignore_axes,
+                    compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                    onnx_slice_dims_count=input_tensor_rank,
+                    **kwargs,
+                )
+        else:
+            input_tensor = \
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    strides=strides_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                )
+        paddings_numpy: np.ndarray = paddings.numpy()
+        paddings_numpy[paddings_numpy < 0] = 0
+        paddings = tf.convert_to_tensor(paddings_numpy)
 
     if mode != 'edge':
         # mode != 'edge'
