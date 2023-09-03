@@ -5808,8 +5808,8 @@ def nhwc_determination_of_output_value_of_binary_input_op(
 def shape_is_equal_ignore_order(
     shape_list_1: List[int],
     shape_list_2: List[int],
-):
-    """NHWC determination of output value of binary input OP.
+) -> bool:
+    """Verify that all axis size combinations match.
 
     Parameters
     ----------
@@ -5818,9 +5818,6 @@ def shape_is_equal_ignore_order(
 
     shape_list_2: List[int]
         List of shapes to be verified
-
-    tf_layers_dict: Dict
-        TensorFlow Model Structure Dictionary
 
     Returns
     -------
