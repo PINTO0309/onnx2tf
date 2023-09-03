@@ -711,6 +711,9 @@ def make_node(
             axis=0,
         )
 
+    if len(output.shape) == 4:
+        output = tf.transpose(output, perm=[2,1,0,3])
+
     tf_layers_dict[graph_node_output1.name]['tf_node'] = output
     if graph_node_output2 is not None:
         tf_layers_dict[graph_node_output2.name]['tf_node'] = hidden_state
