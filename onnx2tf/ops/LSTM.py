@@ -493,18 +493,26 @@ def make_node(
     # sequence_lens [batch_size]
     sequence_lens = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) and graph_node_input_5.name != '' else graph_node_input_5
+    if isinstance(graph_node_input_5, gs.Variable) and graph_node_input_5.is_empty():
+        sequence_lens = None
     # initial_h [num_directions, batch_size, hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     initial_h = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
         if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
+    if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.is_empty():
+        initial_h = None
     # initial_c [num_directions, batch_size, hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     initial_c = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
         if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
+    if isinstance(graph_node_input_7, gs.Variable) and graph_node_input_7.is_empty():
+        initial_c = None
     # P [num_directions, 3*hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     P = tf_layers_dict[graph_node_input_8.name]['tf_node'] \
         if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.name != '' else graph_node_input_8
+    if isinstance(graph_node_input_8, gs.Variable) and graph_node_input_8.is_empty():
+        P = None
 
     # Always three or more present if specified
     #   forward, reverse: 3 items
@@ -985,6 +993,9 @@ def make_node(
             ],
             axis=0,
         )
+
+    if len(output.shape) == 4:
+        output = tf.transpose(output, perm=[2,1,0,3])
 
     tf_layers_dict[graph_node_output1.name]['tf_node'] = output
     if graph_node_output2 is not None:

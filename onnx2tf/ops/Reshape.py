@@ -96,10 +96,11 @@ def make_node(
         ) for idx in range(tensor_rank)
     ]
 
-    # NHWC -> HCHW
+    # NHWC -> NCHW
     try:
         if graph_node.i().op not in ['LSTM', 'RNN', 'GRU']:
-            transposed_tensor = transpose_with_flexing_deterrence(
+            transposed_tensor = \
+                transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=list(perm) if perm is not None else None,
                     output_shape=output_shape,
@@ -109,7 +110,8 @@ def make_node(
         else:
             transposed_tensor = input_tensor
     except:
-        transposed_tensor = transpose_with_flexing_deterrence(
+        transposed_tensor = \
+            transpose_with_flexing_deterrence(
                 input_tensor=input_tensor,
                 perm=list(perm) if perm is not None else None,
                 output_shape=output_shape,
