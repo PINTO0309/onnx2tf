@@ -5803,3 +5803,28 @@ def nhwc_determination_of_output_value_of_binary_input_op(
                 and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
 
     return is_output_nhwc_1 or is_output_nhwc_2
+
+
+def shape_is_equal_ignore_order(
+    shape_list_1: List[int],
+    shape_list_2: List[int],
+):
+    """NHWC determination of output value of binary input OP.
+
+    Parameters
+    ----------
+    shape_list_1: List[int]
+        List of shapes to be verified
+
+    shape_list_2: List[int]
+        List of shapes to be verified
+
+    tf_layers_dict: Dict
+        TensorFlow Model Structure Dictionary
+
+    Returns
+    -------
+    True: Matches
+    False: Unmatches
+    """
+    return sorted(shape_list_1) == sorted(shape_list_2)
