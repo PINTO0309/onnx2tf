@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     transpose_with_flexing_deterrence,
+    shape_is_equal_ignore_order,
 )
 
 
@@ -122,6 +123,7 @@ def make_node(
     )
 
     # Param replacement
+    before_axis = axis
     axis = replace_parameter(
         value_before_replacement=axis,
         param_target='attributes',
@@ -184,6 +186,44 @@ def make_node(
             axis=axis,
             name=graph_node.name,
         )
+
+    # Attempts to force axis correction when the number of axes in the combined tensor do not exactly match.
+    # However, if more than 2 patterns of correct answers exist, give up the correction.
+    # This workaround is useful when automatic axis correction is practically difficult,
+    # such as when all tensors to be combined originate from Transpose or Reshape.
+    # https://github.com/PINTO0309/onnx2tf/issues/473
+    output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+    if output_tensor_shape != tf.TensorShape(None):
+        output_tensor_rank = len(output_tensor_shape)
+        if graph_node.outputs[0].shape is not None \
+            and axis != 0 \
+            and output_tensor_rank >= 2 \
+            and before_axis == axis:
+
+            # Search for valid Concat patterns
+            if not shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(output_tensor_shape)):
+                matched_axes = []
+                for dummy_axis in range(1, output_tensor_rank):
+                    try:
+                        dummy_concat_tensor = \
+                            tf.concat(
+                                values=values,
+                                axis=dummy_axis,
+                                name=graph_node.name,
+                            )
+                        dummy_output_shape = dummy_concat_tensor.shape
+                        if shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
+                            matched_axes.append(dummy_axis)
+                    except:
+                        pass
+                # Review Concat axes only if there is one valid join pattern
+                if len(matched_axes) == 1:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.concat(
+                            values=values,
+                            axis=matched_axes[0],
+                            name=graph_node.name,
+                        )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

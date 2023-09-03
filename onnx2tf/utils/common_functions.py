@@ -5803,3 +5803,27 @@ def nhwc_determination_of_output_value_of_binary_input_op(
                 and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
 
     return is_output_nhwc_1 or is_output_nhwc_2
+
+
+def shape_is_equal_ignore_order(
+    shape_list_1: List[int],
+    shape_list_2: List[int],
+) -> bool:
+    """Verify that all axis size combinations match.
+
+    Parameters
+    ----------
+    shape_list_1: List[int]
+        List of shapes to be verified
+
+    shape_list_2: List[int]
+        List of shapes to be verified
+
+    Returns
+    -------
+    True: Matches
+    False: Unmatches
+    """
+    shape_list_1 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_1]
+    shape_list_2 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_2]
+    return sorted(shape_list_1) == sorted(shape_list_2)
