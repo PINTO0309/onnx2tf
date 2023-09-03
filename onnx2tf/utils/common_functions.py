@@ -5827,4 +5827,6 @@ def shape_is_equal_ignore_order(
     True: Matches
     False: Unmatches
     """
+    shape_list_1 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_1]
+    shape_list_2 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_2]
     return sorted(shape_list_1) == sorted(shape_list_2)
