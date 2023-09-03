@@ -251,7 +251,7 @@ def make_node(
                     end_mask=end_mask_,
                 )
         paddings_numpy: np.ndarray = paddings.numpy()
-        paddings_numpy[paddings_numpy == -1] = 0
+        paddings_numpy[paddings_numpy < 0] = 0
         paddings = tf.convert_to_tensor(paddings_numpy)
 
     if mode != 'edge':
