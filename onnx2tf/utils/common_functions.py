@@ -3789,12 +3789,13 @@ def dummy_onnx_inference(
 
     # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 80% of available RAM
     mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 //1024
-    if (not disable_strict_mode and (total_output_size // 1024 // 1024 //1024) > mem_available):
+    total_output_size_gb = (total_output_size // 1024 // 1024 //1024)
+    if (not disable_strict_mode and total_output_size_gb > mem_available):
         if tmp_onnx_path:
             os.remove(tmp_onnx_path)
             os.remove(tmp_onnx_external_weights_path)
         raise Exception(
-            f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB.'
+            f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB. (results: {total_output_size_gb} GB)'
         )
 
     outputs = onnx_session.run(None, input_datas)
