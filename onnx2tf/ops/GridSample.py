@@ -166,40 +166,35 @@ def make_node(
     _, h_out, w_out, _ = grid.shape
 
     if align_corners:
-        mul1 = tf.math.multiply(grid + 1.0, tf.convert_to_tensor([(w_in - 1) * 0.5, (h_in - 1) * 0.5], dtype=tf.float32))
+        pixs = tf.math.multiply(grid + 1.0, tf.convert_to_tensor([(w_in - 1) * 0.5, (h_in - 1) * 0.5], dtype=tf.float32))
     else:
-        mul1 = (tf.math.multiply(grid + 1.0, tf.convert_to_tensor([w_in, h_in], dtype=tf.float32)) - 1.0) * 0.5
-    reshape1, reshape2 = tf.split(mul1, num_or_size_splits=2, axis=-1)
-    reshape1 = tf.reshape(reshape1, [n, h_out * w_out])
-    reshape2 = tf.reshape(reshape2, [n, h_out * w_out])
+        pixs = (tf.math.multiply(grid + 1.0, tf.convert_to_tensor([w_in, h_in], dtype=tf.float32)) - 1.0) * 0.5
+    
+    # pixs dimension: [N, H, W, 2]
+    x, y = tf.split(pixs, num_or_size_splits=2, axis=-1)
+    
+    x = tf.reshape(x, [n, h_out * w_out])
+    y = tf.reshape(y, [n, h_out * w_out])
 
-    floor1 = tf.math.floor(reshape1) # Floor_output_0
-    sub11 = tf.math.subtract(reshape1, floor1) # Sub_3_output_0
-    add12 = tf.math.add(floor1, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_2_output_0
-    sub12 = tf.math.subtract(add12, reshape1) # Sub_output_0
+    x0 = tf.math.floor(x)
+    y0 = tf.math.floor(y)
 
-    floor2 = tf.math.floor(reshape2) # Floor_1_output_0
-    sub21 = tf.math.subtract(reshape2, floor2) # Sub_2_output_0
-    add22 = tf.math.add(floor2, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_3_output_0
-    sub22 = tf.math.subtract(add22, reshape2) # Sub_1_output_0
+    dx = tf.expand_dims(tf.math.subtract(x, x0), axis=1)
+    dy = tf.expand_dims(tf.math.subtract(y, y0), axis=1)
 
+    # bilinear interpolation
+    #   image[x, y] = \
+    #       (1 - dy) * (1 - dx) * image[y0, x0] + \
+    #           dy   * (1 - dx) * image[y1, x0] + \
+    #           dy   *    dx    * image[y1, x1] + \
+    #       (1 - dy) *    dx    * image[y0, x1]
+    weights_y0_x0 = (1.0 - dy) * (1.0 - dx)
+    weights_y1_x0 = dy * (1.0 - dx)
+    weights_y1_x1 = dy * dx
+    weights_y0_x1 = (1.0 - dy) * dx
 
-    # Sub_output_0 Sub_1_output_0 -> Mul_2_output_0
-    mul11 = tf.math.multiply(sub12, sub22) # Mul_2_output_0
-    unsqueeze11 = tf.expand_dims(mul11, axis=1) # Unsqueeze_output_0
-
-    # Sub_output_0 Sub_2_output_0 -> Mul_3_output_0
-    mul12 = tf.math.multiply(sub12, sub21) # Mul_3_output_0
-    unsqueeze12 = tf.expand_dims(mul12, axis=1) # Unsqueeze_1_output_0
-
-    # Sub_3_output_0 Sub_2_output_0 -> Mul_5_output_0
-    mul21 = tf.math.multiply(sub11, sub21) # Mul_5_output_0
-    unsqueeze21 = tf.expand_dims(mul21, axis=1) # Unsqueeze_3_output_0
-
-    # Sub_3_output_0 Sub_1_output_0 -> Mul_4_output_0
-    mul22 = tf.math.multiply(sub11, sub22) # Mul_4_output_0
-    unsqueeze22 = tf.expand_dims(mul22, axis=1) # Unsqueeze_2_output_0
-
+    add12 = x0 + 1.0
+    add22 = y0 + 1.0
 
     # Add_2_output_0 Constant_1_output_0 -> Add_4_output_0
     add31 = tf.math.add(add12, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_4_output_0
@@ -440,23 +435,8 @@ def make_node(
     gathernd4 = tf.gather_nd(data_swaped4, index_expanded4)
     gatherelements4 = tf.transpose(gathernd4, perm=[2,1,0]) # GatherElements_output_0
 
-
-    # GatherElements_3_output_0 Unsqueeze_3_output_0 -> Mul_15_output_0
-    mul51 = tf.math.multiply(gatherelements1, unsqueeze21)
-    # GatherElements_2_output_0 Unsqueeze_2_output_0 -> Mul_14_output_0
-    mul52 = tf.math.multiply(gatherelements2, unsqueeze22)
-    # GatherElements_1_output_0 Unsqueeze_1_output_0 -> Mul_13_output_0
-    mul53 = tf.math.multiply(gatherelements3, unsqueeze12)
-    # GatherElements_output_0 Unsqueeze_output_0 -> Mul_12_output_0
-    mul54 = tf.math.multiply(gatherelements4, unsqueeze11)
-
-
-    # Mul_12_output_0 Mul_13_output_0 -> Add_10_output_0
-    add61 = tf.math.add(mul54, mul53)
-    # Add_10_output_0 Mul_14_output_0 -> Add_11_output_0
-    add62 = tf.math.add(add61, mul52)
-    # Add_11_output_0 Mul_15_output_0 -> Add_12_output_0
-    add63 = tf.math.add(add62, mul51)
+    add63 = \
+        gatherelements1 * weights_y1_x1 + gatherelements2 * weights_y0_x1 + gatherelements3 * weights_y1_x0 + gatherelements4 * weights_y0_x0
 
     # Add_12_output_0 Constant_55_output_0 -> output_tensor
     output_shape = [
