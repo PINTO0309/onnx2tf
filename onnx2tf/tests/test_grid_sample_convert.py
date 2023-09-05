@@ -1,6 +1,7 @@
 import pytest
 import os
 import time
+import random
 import tempfile
 from functools import partial
 import numpy as np
@@ -64,24 +65,39 @@ def run_tflite_grid_sampler(input, grid, tflite_model_file):
     return tflite_output
 
 
-def test_grid_sample_convert():
+def test_grid_sample_convert(n, c, h_in, w_in, h_out, w_out):
     with tempfile.TemporaryDirectory() as tmp_path:
         model_name = "grid_sample_reproduction"
 
         # 1. pytorch sample input i.e. 4D feature map dimension: NCHW
-        n = np.random.randint(low=12, high=48)
-        c = np.random.randint(low=16, high=64)
-        h_in = np.random.randint(low=32, high=56)
-        w_in = np.random.randint(low=48, high=80)
-        h_out = np.random.randint(low=32, high=56)
-        w_out = np.random.randint(low=48, high=80)
-
         input = np.random.randn(n, c, h_in, w_in).astype(np.float32)
         grid = np.random.random(size=[n, h_out, w_out, 2]).astype(np.float32)
         grid = 2.0 * grid - 1.0
-        info(Color.GREEN(f"[GridSampleTest] create sample input: {n}x{c}x{h_in}x{w_in}, grid: {n}x{h_out}x{w_out}x2."))
+        info(
+            Color.GREEN(
+                f"[GridSampleTest] create sample input: {n}x{c}x{h_in}x{w_in}, grid: {n}x{h_out}x{w_out}x2."
+            )
+        )
 
-        # 2. pytorch model export to onnx
+        # 2. add randomly Out-Of-Range grids
+        ratio = np.random.uniform(low=0.0, high=0.1)
+        n_grid_pixs = n * h_out * w_out
+        n_grid_outs = int(ratio * n_grid_pixs)
+        outs = random.sample(population=list(range(n_grid_pixs)), k=n_grid_outs)
+        i, j, k = np.unravel_index(outs, shape=[n, h_out, w_out])
+        grid[i, j, k, :] = np.random.uniform(low=2.0, high=100.0, size=[n_grid_outs, 2])
+        grid[i, j, k, :] *= np.where(
+            np.random.uniform(low=0.0, high=1.0, size=[n_grid_outs, 2]) < 0.5,
+            -1.0,
+            1.0,
+        )
+        info(
+            Color.GREEN(
+                f"[GridSampleTest] add random Out-Of-Range outliers, {ratio * 100.0:.2f}% i.e. {n_grid_outs} grids."
+            )
+        )
+
+        # 3. pytorch model export to onnx
         onnx_model_file = os.path.join(tmp_path, f"{model_name}.onnx")
         torch.onnx.export(
             GridSampleOperator(),
@@ -100,7 +116,7 @@ def test_grid_sample_convert():
             )
         )
 
-        # 3. onnx model convert to tflite
+        # 4. onnx model convert to tflite
         tf_model_path = os.path.join(tmp_path, f"{model_name}.tf")
         tflite_model_file = os.path.join(tf_model_path, f"{model_name}_float32.tflite")
         onnx2tf.convert(
@@ -114,7 +130,7 @@ def test_grid_sample_convert():
             )
         )
 
-        # 4. compute model output for pytorch / onnx / tflite
+        # 5. compute model output for pytorch / onnx / tflite
         grid_sampler_funcs = {
             "PYTORCH": run_torch_grid_sampler,
             "ONNX": partial(run_onnx_grid_sampler, onnx_model_file=onnx_model_file),
@@ -133,7 +149,7 @@ def test_grid_sample_convert():
                 )
             )
 
-        # 5. check output consistency for pytorch / onnx / tflite
+        # 6. check output consistency for pytorch / onnx / tflite
         groundtruth = "PYTORCH"
         for framework in grid_sampler_outputs.keys():
             if framework == groundtruth:
@@ -144,8 +160,20 @@ def test_grid_sample_convert():
                 grid_sampler_outputs[groundtruth],
                 atol=1e-6,
                 rtol=1e-6,
-            ), error(Color.RED(f"[GridSampleTest] {framework} runtime consistency check failed!"))
+            ), error(
+                Color.RED(
+                    f"[GridSampleTest] {framework} runtime consistency check failed!"
+                )
+            )
 
 
 if __name__ == "__main__":
-    test_grid_sample_convert()
+    test_grid_sample_convert(32, 16, 32, 64, 48, 54)
+    
+    test_grid_sample_convert(32, 16, 1, 64, 48, 54)
+    test_grid_sample_convert(32, 16, 32, 1, 48, 54)
+    test_grid_sample_convert(32, 16, 1, 1, 48, 54)
+
+    test_grid_sample_convert(32, 16, 32, 64, 1, 54)
+    test_grid_sample_convert(32, 16, 32, 64, 48, 1)
+    test_grid_sample_convert(32, 16, 32, 64, 1, 1)

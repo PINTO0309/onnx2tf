@@ -162,8 +162,7 @@ def make_node(
     grid
         [N, grid_H, grid_W, 2]
     """
-    n, h_in, w_in, c = image.shape
-    _, h_out, w_out, _ = grid.shape
+    _, h_in, w_in, _ = image.shape
 
     if align_corners:
         pixs = tf.math.multiply(grid + 1.0, tf.convert_to_tensor([(w_in - 1) * 0.5, (h_in - 1) * 0.5], dtype=tf.float32))
@@ -173,8 +172,11 @@ def make_node(
     # x/y coordinate map dimension: [N, H, W, 1]
     x, y = tf.split(pixs, num_or_size_splits=2, axis=-1)
 
-    x0 = tf.math.floor(x)
-    y0 = tf.math.floor(y)
+    x0 = tf.clip_by_value(tf.math.floor(x), clip_value_min=0, clip_value_max=w_in - 1)
+    y0 = tf.clip_by_value(tf.math.floor(y), clip_value_min=0, clip_value_max=h_in - 1)
+
+    x1 = tf.clip_by_value(x0 + 1, clip_value_min=0, clip_value_max=w_in - 1)
+    y1 = tf.clip_by_value(y0 + 1, clip_value_min=0, clip_value_max=h_in - 1)
 
     dx = tf.math.subtract(x, x0)
     dy = tf.math.subtract(y, y0)
@@ -194,9 +196,9 @@ def make_node(
     # grid - [N, H_out, W_out, 2]
     # output - [N, H_out, W_out, C]
     v_y0_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x0], axis=-1), dtype=tf.int64), batch_dims=1)
-    v_y1_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0 + 1.0, x0], axis=-1), dtype=tf.int64), batch_dims=1)
-    v_y1_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0 + 1.0, x0 + 1.0], axis=-1), dtype=tf.int64), batch_dims=1)
-    v_y0_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x0 + 1.0], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y1_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y1, x0], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y1_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y1, x1], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y0_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x1], axis=-1), dtype=tf.int64), batch_dims=1)
 
     output = w_y0_x0 * v_y0_x0 + w_y1_x0 * v_y1_x0 + w_y1_x1 * v_y1_x1 + w_y0_x1 * v_y0_x1
     
