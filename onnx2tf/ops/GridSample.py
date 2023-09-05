@@ -170,17 +170,14 @@ def make_node(
     else:
         pixs = (tf.math.multiply(grid + 1.0, tf.convert_to_tensor([w_in, h_in], dtype=tf.float32)) - 1.0) * 0.5
     
-    # pixs dimension: [N, H, W, 2]
+    # x/y coordinate map dimension: [N, H, W, 1]
     x, y = tf.split(pixs, num_or_size_splits=2, axis=-1)
-    
-    x = tf.reshape(x, [n, h_out * w_out])
-    y = tf.reshape(y, [n, h_out * w_out])
 
     x0 = tf.math.floor(x)
     y0 = tf.math.floor(y)
 
-    dx = tf.expand_dims(tf.math.subtract(x, x0), axis=1)
-    dy = tf.expand_dims(tf.math.subtract(y, y0), axis=1)
+    dx = tf.math.subtract(x, x0)
+    dy = tf.math.subtract(y, y0)
 
     # bilinear interpolation
     #   image[x, y] = \
@@ -188,266 +185,33 @@ def make_node(
     #           dy   * (1 - dx) * image[y1, x0] + \
     #           dy   *    dx    * image[y1, x1] + \
     #       (1 - dy) *    dx    * image[y0, x1]
-    weights_y0_x0 = (1.0 - dy) * (1.0 - dx)
-    weights_y1_x0 = dy * (1.0 - dx)
-    weights_y1_x1 = dy * dx
-    weights_y0_x1 = (1.0 - dy) * dx
+    w_y0_x0 = tf.math.multiply(1.0 - dy, 1.0 - dx)
+    w_y1_x0 = tf.math.multiply(dy, 1.0 - dx)
+    w_y1_x1 = tf.math.multiply(dy, dx)
+    w_y0_x1 = tf.math.multiply(1.0 - dy, dx)
 
-    add12 = x0 + 1.0
-    add22 = y0 + 1.0
+    # input - [N, H_in, W_in, C]
+    # grid - [N, H_out, W_out, 2]
+    # output - [N, H_out, W_out, C]
+    v_y0_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x0], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y1_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0 + 1.0, x0], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y1_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0 + 1.0, x0 + 1.0], axis=-1), dtype=tf.int64), batch_dims=1)
+    v_y0_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x0 + 1.0], axis=-1), dtype=tf.int64), batch_dims=1)
 
-    # Add_2_output_0 Constant_1_output_0 -> Add_4_output_0
-    add31 = tf.math.add(add12, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_4_output_0
-    # Add_4_output_0 -> Cast_2_output_0
-    cast31 = tf.cast(add31, dtype=tf.int64) # Cast_2_output_0
-    # Cast_2_output_0 Constant_26_output_0 -> Less_1_output_0
-    less31 = tf.less(cast31, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_1_output_0
-    # Less_1_output_0 Constant_26_output_0 Cast_2_output_0 -> Where_2_output_0
-    where311 = \
-        tf.where(
-            condition=less31,
-            x=tf.convert_to_tensor(0, dtype=tf.int64),
-            y=cast31,
-        )
-    # Where_2_output_0 Constant_27_output_0 -> Greater_1_output_0
-    greter31 = tf.greater(where311, tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64)) # Greater_1_output_0
-    # Greater_1_output_0 Constant_27_output_0 Where_2_output_0 -> Where_3_output_0
-    where312 = \
-        tf.where(
-            condition=greter31,
-            x=tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64),
-            y=where311,
-        )
+    output = w_y0_x0 * v_y0_x0 + w_y1_x0 * v_y1_x0 + w_y1_x1 * v_y1_x1 + w_y0_x1 * v_y0_x1
+    
+    x_invalid = tf.math.logical_or(
+        tf.math.less(x, tf.convert_to_tensor(0.0, dtype=tf.float32)),
+        tf.math.greater(x, tf.convert_to_tensor(w_in - 1.0, dtype=tf.float32)))
+    y_invalid = tf.math.logical_or(
+        tf.math.less(y, tf.convert_to_tensor(0.0, dtype=tf.float32)),
+        tf.math.greater(y, tf.convert_to_tensor(h_in - 1.0, dtype=tf.float32)))
+    invalid = tf.math.logical_or(x_invalid, y_invalid)
 
-
-    # Add_2_output_0 -> Cast_1_output_0
-    cast32 = tf.cast(add12, dtype=tf.int64) # Cast_1_output_0
-    # Cast_1_output_0 Constant_26_output_0 -> Less_output_0
-    less32 = tf.less(cast32, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_output_0
-    # Less_output_0 Constant_26_output_0 Cast_1_output_0 -> Where_output_0
-    where321 = \
-        tf.where(
-            condition=less32,
-            x=tf.convert_to_tensor(0, dtype=tf.int64),
-            y=cast32,
-        )
-    # Where_output_0 Constant_27_output_0 -> Greater_output_0
-    greter32 = tf.greater(where321, tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64)) # Greater_output_0
-    # Greater_output_0 Constant_27_output_0 Where_output_0 -> Where_1_output_0
-    where322 = \
-        tf.where(
-            condition=greter32,
-            x=tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64),
-            y=where321,
-        )
-
-
-    # Add_3_output_0 Constant_1_output_0 -> Add_5_output_0
-    add33 = tf.math.add(add22, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_5_output_0
-    # Add_5_output_0 -> Cast_4_output_0
-    cast33 = tf.cast(add33, dtype=tf.int64) # Cast_4_output_0
-    # Cast_4_output_0 Constant_26_output_0 -> Less_3_output_0
-    less33 = tf.less(cast33, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_3_output_0
-    # Less_3_output_0 Constant_26_output_0 Cast_4_output_0 -> Where_6_output_0
-    where331 = \
-        tf.where(
-            condition=less33,
-            x=tf.convert_to_tensor(0, dtype=tf.int64),
-            y=cast33,
-        )
-    # Where_6_output_0 Constant_32_output_0 -> Greater_3_output_0
-    greter33 = tf.greater(where331, tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64)) # Greater_3_output_0
-    # Greater_3_output_0 Constant_32_output_0 Where_6_output_0 -> Where_7_output_0
-    where332 = \
-        tf.where(
-            condition=greter33,
-            x=tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64),
-            y=where331,
-        )
-    # Where_7_output_0 Constant_37_output_0 -> Mul_8_output_0
-    mul33 = tf.math.multiply(where332, tf.convert_to_tensor(image.shape[2]+2, dtype=tf.int64)) # Mul_8_output_0
-
-
-    # Add_3_output_0 -> Cast_3_output_0
-    cast34 = tf.cast(add22, dtype=tf.int64) # Cast_3_output_0
-    # Cast_3_output_0 Constant_26_output_0 -> Less_2_output_0
-    less34 = tf.less(cast34, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_2_output_0
-    # Less_2_output_0 Constant_26_output_0 Cast_3_output_0 -> Where_4_output_0
-    where341 = \
-        tf.where(
-            condition=less34,
-            x=tf.convert_to_tensor(0, dtype=tf.int64),
-            y=cast34,
-        )
-    # Where_4_output_0 Constant_32_output_0 -> Greater_2_output_0
-    greter34 = tf.greater(where341, tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64)) # Greater_2_output_0
-    # Greater_2_output_0 Constant_32_output_0 Where_4_output_0 -> Where_5_output_0
-    where342 = \
-        tf.where(
-            condition=greter34,
-            x=tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64),
-            y=where341,
-        )
-    # Where_5_output_0 Constant_37_output_0 -> Mul_6_output_0
-    mul34 = tf.math.multiply(where342, tf.convert_to_tensor(image.shape[2]+2, dtype=tf.int64)) # Mul_6_output_0
-
-
-    # Where_3_output_0 Mul_6_output_0 -> Add_8_output_0
-    add41 = tf.math.add(where312, mul34) # Add_8_output_0
-    # Add_8_output_0 Constant_11_output_0 -> Unsqueeze_6_output_0
-    unsqueeze41 = tf.expand_dims(add41, axis=1) # Unsqueeze_6_output_0
-    # Unsqueeze_6_output_0 Where_8_output_0 -> Expand_2_output_0
-    expand41_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-    expand41 = tf.math.multiply(unsqueeze41, expand41_ones) # Expand_2_output_0
-
-    # Where_1_output_0 Mul_6_output_0 -> Add_6_output_0
-    add42 = tf.math.add(where322, mul34) # Add_6_output_0
-    # Add_6_output_0 Constant_11_output_0 -> Unsqueeze_4_output_0
-    unsqueeze42 = tf.expand_dims(add42, axis=1) # Unsqueeze_4_output_0
-    # Unsqueeze_4_output_0 Where_8_output_0 -> Expand_output_0
-    expand42_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-    expand42 = tf.math.multiply(unsqueeze42, expand42_ones) # Expand_output_0
-
-    # Where_3_output_0 Mul_8_output_0 -> Add_9_output_0
-    add43 = tf.math.add(where312, mul33) # Add_9_output_0
-    # Add_9_output_0 Constant_11_output_0 -> Unsqueeze_7_output_0
-    unsqueeze43 = tf.expand_dims(add43, axis=1) # Unsqueeze_7_output_0
-    # Unsqueeze_7_output_0 Where_8_output_0 -> Expand_3_output_0
-    expand43_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-    expand43 = tf.math.multiply(unsqueeze43, expand43_ones) # Expand_3_output_0
-
-    # Where_1_output_0 Mul_8_output_0 -> Add_7_output_0
-    add44 = tf.math.add(where322, mul33) # Add_7_output_0
-    # Add_7_output_0 Constant_11_output_0 -> Unsqueeze_5_output_0
-    unsqueeze44 = tf.expand_dims(add44, axis=1) # Unsqueeze_5_output_0
-    # Unsqueeze_5_output_0 Where_8_output_0 -> Expand_1_output_0
-    expand44_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-    expand44 = tf.math.multiply(unsqueeze44, expand44_ones) # Expand_1_output_0
-
-
-    ################################################## image
-    image_padded = tf.pad(image, paddings=[[0,0],[1,1],[1,1],[0,0]]) # Pad_output_0
-    # Pad_output_0 Constant_36_output_0 -> Reshape_4_output_0
-    image_reshape = tf.reshape(image_padded, shape=[image_padded.shape[0]] + [np.prod(image_padded.shape[1:3])] + [image_padded.shape[3]])
-    image_reshape_transpose = tf.transpose(image_reshape, perm=[0,2,1])
-
-
-    # Reshape_4_output_0 Expand_3_output_0 -> GatherElements_3_output_0
-    axis_perm1 = tf.tensor_scatter_nd_update(
-        tf.range(tf.rank(image_reshape_transpose)),
-        tf.constant([[0], [2]]),
-        tf.constant([2, 0])
-    )
-    data_swaped1 = tf.transpose(image_reshape_transpose, perm=axis_perm1)
-    index_swaped1 = tf.transpose(expand43, perm=axis_perm1)
-    idx_tensors_per_axis1 = [
-        tf.range(tf.shape(index_swaped1, index_swaped1.dtype)[i]) \
-            for i in range(index_swaped1.shape.rank)
-    ]
-    idx_tensors_per_axis1 = tf.meshgrid(
-        *idx_tensors_per_axis1,
-        indexing='ij',
-    )
-    idx_tensors_per_axis1[0] = index_swaped1
-    dim_expanded_idx_tensors_per_axis1 = [
-        tf.expand_dims(idx_tensor, axis=-1)
-        for idx_tensor in idx_tensors_per_axis1
-    ]
-    index_expanded1 = tf.concat(dim_expanded_idx_tensors_per_axis1, axis=-1)
-    gathernd1 = tf.gather_nd(data_swaped1, index_expanded1)
-    gatherelements1 = tf.transpose(gathernd1, perm=[2,1,0]) # GatherElements_3_output_0
-
-
-    # Reshape_4_output_0 Expand_2_output_0 -> GatherElements_2_output_0
-    axis_perm2 = tf.tensor_scatter_nd_update(
-        tf.range(tf.rank(image_reshape_transpose)),
-        tf.constant([[0], [2]]),
-        tf.constant([2, 0])
-    )
-    data_swaped2 = tf.transpose(image_reshape_transpose, perm=axis_perm2)
-    index_swaped2 = tf.transpose(expand41, perm=axis_perm2)
-    idx_tensors_per_axis2 = [
-        tf.range(tf.shape(index_swaped2, index_swaped2.dtype)[i]) \
-            for i in range(index_swaped2.shape.rank)
-    ]
-    idx_tensors_per_axis2 = tf.meshgrid(
-        *idx_tensors_per_axis2,
-        indexing='ij',
-    )
-    idx_tensors_per_axis2[0] = index_swaped2
-    dim_expanded_idx_tensors_per_axis2 = [
-        tf.expand_dims(idx_tensor, axis=-1)
-        for idx_tensor in idx_tensors_per_axis2
-    ]
-    index_expanded2 = tf.concat(dim_expanded_idx_tensors_per_axis2, axis=-1)
-    gathernd2 = tf.gather_nd(data_swaped2, index_expanded2)
-    gatherelements2 = tf.transpose(gathernd2, perm=[2,1,0]) # GatherElements_2_output_0
-
-
-    # Reshape_4_output_0 Expand_1_output_0 -> GatherElements_1_output_0
-    axis_perm3 = tf.tensor_scatter_nd_update(
-        tf.range(tf.rank(image_reshape_transpose)),
-        tf.constant([[0], [2]]),
-        tf.constant([2, 0])
-    )
-    data_swaped3 = tf.transpose(image_reshape_transpose, perm=axis_perm3)
-    index_swaped3 = tf.transpose(expand44, perm=axis_perm3)
-    idx_tensors_per_axis3 = [
-        tf.range(tf.shape(index_swaped3, index_swaped3.dtype)[i]) \
-            for i in range(index_swaped3.shape.rank)
-    ]
-    idx_tensors_per_axis3 = tf.meshgrid(
-        *idx_tensors_per_axis3,
-        indexing='ij',
-    )
-    idx_tensors_per_axis3[0] = index_swaped3
-    dim_expanded_idx_tensors_per_axis3 = [
-        tf.expand_dims(idx_tensor, axis=-1)
-        for idx_tensor in idx_tensors_per_axis3
-    ]
-    index_expanded3 = tf.concat(dim_expanded_idx_tensors_per_axis3, axis=-1)
-    gathernd3 = tf.gather_nd(data_swaped3, index_expanded3)
-    gatherelements3 = tf.transpose(gathernd3, perm=[2,1,0]) # GatherElements_1_output_0
-
-
-    # Reshape_4_output_0 Expand_output_0 -> GatherElements_output_0
-    axis_perm4 = tf.tensor_scatter_nd_update(
-        tf.range(tf.rank(image_reshape_transpose)),
-        tf.constant([[0], [2]]),
-        tf.constant([2, 0])
-    )
-    data_swaped4 = tf.transpose(image_reshape_transpose, perm=axis_perm4)
-    index_swaped4 = tf.transpose(expand42, perm=axis_perm4)
-    idx_tensors_per_axis4 = [
-        tf.range(tf.shape(index_swaped4, index_swaped4.dtype)[i]) \
-            for i in range(index_swaped4.shape.rank)
-    ]
-    idx_tensors_per_axis4 = tf.meshgrid(
-        *idx_tensors_per_axis4,
-        indexing='ij',
-    )
-    idx_tensors_per_axis4[0] = index_swaped4
-    dim_expanded_idx_tensors_per_axis4 = [
-        tf.expand_dims(idx_tensor, axis=-1)
-        for idx_tensor in idx_tensors_per_axis4
-    ]
-    index_expanded4 = tf.concat(dim_expanded_idx_tensors_per_axis4, axis=-1)
-    gathernd4 = tf.gather_nd(data_swaped4, index_expanded4)
-    gatherelements4 = tf.transpose(gathernd4, perm=[2,1,0]) # GatherElements_output_0
-
-    add63 = \
-        gatherelements1 * weights_y1_x1 + gatherelements2 * weights_y0_x1 + gatherelements3 * weights_y1_x0 + gatherelements4 * weights_y0_x0
-
-    # Add_12_output_0 Constant_55_output_0 -> output_tensor
-    output_shape = [
-        image.shape[0],
-        image.shape[3],
-        grid.shape[1],
-        grid.shape[2],
-    ]
-    final_reshape = tf.reshape(add63, shape=output_shape)
-    # NCHW -> NHWC
-    output = tf.transpose(final_reshape, perm=[0,2,3,1])
+    output = tf.where(
+        condition=invalid,
+        x=tf.convert_to_tensor(0.0, dtype=tf.float32),
+        y=output)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = output
 
