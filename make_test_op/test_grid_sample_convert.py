@@ -1,4 +1,3 @@
-import pytest
 import os
 import time
 import random
@@ -35,7 +34,10 @@ def run_torch_grid_sampler(input, grid):
 
 
 def run_onnx_grid_sampler(input, grid, onnx_model_file):
-    session = onnxruntime.InferenceSession(onnx_model_file)
+    session = onnxruntime.InferenceSession(
+        path_or_bytes=onnx_model_file,
+        providers=['CPUExecutionProvider'],
+    )
 
     onnx_output = session.run(None, {"input": input, "grid": grid})
     return onnx_output[0]
@@ -169,7 +171,7 @@ def test_grid_sample_convert(n, c, h_in, w_in, h_out, w_out):
 
 if __name__ == "__main__":
     test_grid_sample_convert(32, 16, 32, 64, 48, 54)
-    
+
     test_grid_sample_convert(32, 16, 1, 64, 48, 54)
     test_grid_sample_convert(32, 16, 32, 1, 48, 54)
     test_grid_sample_convert(32, 16, 1, 1, 48, 54)
