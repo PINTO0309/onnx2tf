@@ -112,7 +112,7 @@ def make_node(
         values = new_values
 
     elif len(values) == 2 \
-        and (not isinstance(values[0], np.ndarray) and isinstance(values[1], np.ndarray)) or (isinstance(values[0], np.ndarray) and not isinstance(values[1], np.ndarray)) \
+        and ((not isinstance(values[0], np.ndarray) and isinstance(values[1], np.ndarray)) or (isinstance(values[0], np.ndarray) and not isinstance(values[1], np.ndarray))) \
         and sum([f for f in nhwc_flags]) == 0:
 
         variable_tensor = values[0] if not isinstance(values[0], np.ndarray) else values[1]
