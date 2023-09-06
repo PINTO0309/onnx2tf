@@ -111,7 +111,13 @@ def make_node(
                 new_values.append(value)
         values = new_values
 
-    elif len(values) == 2 \
+    graph_node_output: gs.Variable = graph_node.outputs[0]
+    shape = graph_node_output.shape
+    dtype = graph_node_output.dtype
+
+    axis = graph_node.attrs.get('axis', 0)
+
+    if len(values) == 2 \
         and ((not isinstance(values[0], np.ndarray) and isinstance(values[1], np.ndarray)) or (isinstance(values[0], np.ndarray) and not isinstance(values[1], np.ndarray))) \
         and sum([f for f in nhwc_flags]) == 0:
 
@@ -122,7 +128,10 @@ def make_node(
             new_values = []
             for tensor_candidate_for_transposition in tensor_candidate_for_transpositions:
                 try:
-                    _ = variable_tensor * constant_tensor.transpose(tensor_candidate_for_transposition)
+                    _ = tf.concat(
+                        values=[variable_tensor, constant_tensor.transpose(tensor_candidate_for_transposition)],
+                        axis=axis
+                    )
                     before_op_output_shape_trans = True
                     if not isinstance(values[0], np.ndarray):
                         new_values.append(values[0])
@@ -131,16 +140,11 @@ def make_node(
                         new_values.append(values[0].transpose(tensor_candidate_for_transposition))
                         new_values.append(values[1])
                     break
-                except:
+                except Exception as ex:
                     pass
             if new_values:
                 values = new_values
 
-    graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
-    dtype = graph_node_output.dtype
-
-    axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
