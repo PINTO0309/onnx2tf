@@ -135,10 +135,12 @@ def make_node(
     }
 
     # Param replacement - OP replacement
+    shape_replaced = False
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == 'op':
             new_shape = op_rep_param.get('new_shape', None)
+            shape_replaced = True
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -215,7 +217,8 @@ def make_node(
             tf.identity(input=input_tensor)
         tf_type = tf.identity
 
-    elif nhwc \
+    elif not shape_replaced \
+        and nhwc \
         and len(axes) == 1 \
         and not isinstance(axes, int):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -226,7 +229,8 @@ def make_node(
             )
         tf_type = tf.expand_dims
 
-    elif len(new_shape) >= 2 \
+    elif not shape_replaced \
+        and len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
         and len(axes) == 1:
