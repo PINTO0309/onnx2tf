@@ -1,32 +1,27 @@
 {
     "name": "onnx2tf dev",
     "image": "ghcr.io/pinto0309/onnx2tf:latest",
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
     "customizations": {
         "vscode": {
-            "settings": {
-                "python.defaultInterpreterPath": "/usr/local/bin/python",
-                "python.linting.enabled": true,
-                "python.linting.pylintEnabled": true,
-                "python.formatting.autopep8Path": "/usr/local/py-utils/bin/autopep8",
-                "python.formatting.blackPath": "/usr/local/py-utils/bin/black",
-                "python.formatting.yapfPath": "/usr/local/py-utils/bin/yapf",
-                "python.linting.banditPath": "/usr/local/py-utils/bin/bandit",
-                "python.linting.flake8Path": "/usr/local/py-utils/bin/flake8",
-                "python.linting.mypyPath": "/usr/local/py-utils/bin/mypy",
-                "python.linting.pycodestylePath": "/usr/local/py-utils/bin/pycodestyle",
-                "python.linting.pydocstylePath": "/usr/local/py-utils/bin/pydocstyle",
-                "python.linting.pylintPath": "/usr/local/py-utils/bin/pylint"
-            },
             "extensions": [
-                "ms-python.python",
-                "ms-python.vscode-pylance"
-            ]
+				"usernamehw.errorlens",
+				"MS-CEINTL.vscode-language-pack-ja",
+				"ms-python.vscode-pylance",
+				"ms-python.python",
+				"redhat.vscode-yaml",
+				"docsmsft.docs-yaml",
+				"oderwat.indent-rainbow",
+				"mosapride.zenkaku",
+				"ryu1kn.partial-diff",
+				"ionutvmi.path-autocomplete",
+				"mechatroner.rainbow-csv",
+				"shardulm94.trailing-spaces"
+			]
         }
     },
-    "remoteUser": "user",
-    "features": {
-        "github-cli": "latest"
-    },
-    "runArgs": [
-    ]
+    "remoteUser": "user"
 }
