@@ -950,7 +950,7 @@ def explicit_broadcast(
 
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
     swapped = 0
-    if len(const_or_var_1.shape) < len(const_or_var_2.shape):
+    if len(const_or_var_1.shape) < len(const_or_var_2.shape) and not graph_node.op in ['Sub', 'Div', 'Mod']:
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
         graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
         graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1

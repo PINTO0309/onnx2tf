@@ -2,6 +2,7 @@ import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -110,6 +111,31 @@ def make_node(
                 new_values.append(value)
         values = new_values
 
+    elif len(values) == 2 \
+        and (not isinstance(values[0], np.ndarray) and isinstance(values[1], np.ndarray)) or (isinstance(values[0], np.ndarray) and not isinstance(values[1], np.ndarray)) \
+        and sum([f for f in nhwc_flags]) == 0:
+
+        variable_tensor = values[0] if not isinstance(values[0], np.ndarray) else values[1]
+        constant_tensor = values[0] if isinstance(values[0], np.ndarray) else values[1]
+        if hasattr(constant_tensor, '__len__'):
+            tensor_candidate_for_transpositions = list(itertools.permutations(range(len(constant_tensor.shape))))
+            new_values = []
+            for tensor_candidate_for_transposition in tensor_candidate_for_transpositions:
+                try:
+                    _ = variable_tensor * constant_tensor.transpose(tensor_candidate_for_transposition)
+                    before_op_output_shape_trans = True
+                    if not isinstance(values[0], np.ndarray):
+                        new_values.append(values[0])
+                        new_values.append(values[1].transpose(tensor_candidate_for_transposition))
+                    else:
+                        new_values.append(values[0].transpose(tensor_candidate_for_transposition))
+                        new_values.append(values[1])
+                    break
+                except:
+                    pass
+            if new_values:
+                values = new_values
+
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
@@ -180,12 +206,42 @@ def make_node(
     ]
 
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.concat(
-            values=values,
-            axis=axis,
-            name=graph_node.name,
-        )
+    try:
+        # normal concat attempt
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.concat(
+                values=values,
+                axis=axis,
+                name=graph_node.name,
+            )
+    except:
+        # Workaround to reduce error rate when merging tensors with undefined dimensions
+        try:
+            # Attempts to bind with the axis specified in ONNX
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.concat(
+                    values=values,
+                    axis=int(graph_node.attrs.get('axis', 0)),
+                    name=graph_node.name,
+                )
+        except:
+            # If not successful with the same axis as ONNX, try to combine by other axes
+            # Trial in reverse order from the axis at the end
+            value_rank = len(values[0].shape)
+            succeed = False
+            for idx in reversed(range(value_rank)):
+                try:
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.concat(
+                            values=values,
+                            axis=idx,
+                            name=graph_node.name,
+                        )
+                    succeed = True
+                except:
+                    pass
+            if not succeed:
+                raise
 
     # Attempts to force axis correction when the number of axes in the combined tensor do not exactly match.
     # However, if more than 2 patterns of correct answers exist, give up the correction.
