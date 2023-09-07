@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    nhwc_determination_of_output_value_of_binary_input_op,
 )
 
 
@@ -73,6 +74,12 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': \
+            nhwc_determination_of_output_value_of_binary_input_op(
+                graph_node_input_1=graph_node_input_2,
+                graph_node_input_2=graph_node_input_3,
+                tf_layers_dict=tf_layers_dict
+            )
     }
 
     # Pre-process transpose
