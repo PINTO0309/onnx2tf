@@ -217,6 +217,8 @@ def make_node(
                                 else tf.convert_to_tensor(updates_tensor),
                         name=graph_node.name,
                     )
+            else:
+                raise
         except:
             raise
 
