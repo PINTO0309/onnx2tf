@@ -86,7 +86,7 @@ def make_node(
                 convert_axis(
                     axis=idx,
                     tensor_rank=tensor_rank+len(axes),
-                    before_op_output_shape_trans=before_op_output_shape_trans,
+                    before_op_output_shape_trans=True,
                 ) for idx in axes
             ]
         elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
@@ -104,7 +104,7 @@ def make_node(
             axes = convert_axis(
                 axis=axes,
                 tensor_rank=tensor_rank+1,
-                before_op_output_shape_trans=before_op_output_shape_trans,
+                before_op_output_shape_trans=True,
             )
         elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
             axes = [
