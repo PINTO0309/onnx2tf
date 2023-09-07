@@ -1,9 +1,7 @@
 import sys
 import copy
 import random
-random.seed(0)
 import numpy as np
-np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -22,6 +20,40 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict
+
+random.seed(0)
+np.random.seed(0)
+
+
+def custom_tf_nn_softmax(logits, axis, name):
+    '''
+        Customer Tensorflow Softmax Op
+            official softmax op limits Dim(input) <= 5, otherwise throw an inference exception error
+        
+        Arguments:
+            [1] logits: tf.Tensor, tf.float32, input logits with arbitrary shape
+            [2] axis:   constant,  int,        axis index
+            [3] name:   constant,  string,     softmax op name
+        
+        Returns:
+            [1] logits: tf.Tensor, tf.float32, output logits with Sum(output[..., axis, ...]) == 1.0
+    '''
+    before_shape = logits.shape
+    if len(before_shape) > 5:
+        head = before_shape[:axis]
+        tail = before_shape[axis:][1:]
+
+        after_shape = []
+        after_shape += ([] if len(head) == 0 else [tf.math.reduce_prod(head)])
+        after_shape += [before_shape[axis]]
+        after_shape += ([] if len(tail) == 0 else [tf.math.reduce_prod(tail)])
+
+        output = \
+            tf.nn.softmax(tf.reshape(logits, shape=after_shape), int(len(head) > 0), name)
+        output = tf.reshape(output, shape=before_shape)
+    else:
+        output = tf.nn.softmax(logits, axis, name)
+    return output
 
 
 @print_node_info
@@ -61,6 +93,7 @@ def make_node(
     tensor_rank = len(input_tensor.shape)
 
     axis = graph_node.attrs.get('axis', tensor_rank - 1)
+    axis = (axis + tensor_rank) % tensor_rank
     pre_convert_axis = axis
     axis = convert_axis(
         axis=axis,
@@ -90,16 +123,16 @@ def make_node(
                 and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name].keys() else False,
     }
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs[
+        'onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
-    custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
+    custom_input_op_name_np_data_path: str = kwargs[
+        'custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
 
     # Get the output tensor of one previous OP of TensorFlow only once
     if not disable_strict_mode:
-        tf_model_inputs = get_tf_model_inputs(
-            tf_layers_dict=tf_layers_dict,
-        )
+        tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict, )
         val_model = None
         if not isinstance(input_tensor, np.ndarray):
             val_model = tf.keras.Model(
@@ -117,16 +150,12 @@ def make_node(
     #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
     tf_pre_tensor_infos = {}
     if not disable_strict_mode:
-        try:
-            tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=val_model,
-                inputs=tf_model_inputs,
-                test_data_nhwc=test_data_nhwc,
-                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-            )
-        except Exception as ex:
-            pass
-        del val_model
+        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+            model=val_model,
+            inputs=tf_model_inputs,
+            test_data_nhwc=test_data_nhwc,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        )
 
     # Get np.ndarray for validation
     validation_data = None
@@ -141,7 +170,8 @@ def make_node(
         onnx_tensor_infos = None
         if onnx_tensor_infos_for_validation is not None:
             onnx_tensor_infos = {
-                graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
+                graph_node_output.name:
+                onnx_tensor_infos_for_validation[graph_node_output.name]
             }
             del onnx_tensor_infos_for_validation
 
@@ -208,68 +238,65 @@ def make_node(
 
             # Search for the axis with the smallest error
             for check_axis in check_axes:
-                try:
-                    # Build TF dummy model
-                    input = tf.keras.Input(
-                        shape=validation_data.shape[1:],
-                        batch_size=validation_data.shape[0] \
-                            if isinstance(validation_data.shape[0], int) else None,
-                        name='dummy_input',
-                        dtype=validation_data.dtype,
-                    )
-                    val_model = tf.keras.Model(
-                        inputs=[
-                            input,
-                        ],
-                        outputs=[
-                            tf.nn.softmax(
-                                logits=input,
-                                axis=check_axis,
-                                name=graph_node.name,
-                            )
-                        ],
-                    )
-                    # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                        model=val_model,
-                        inputs=[
-                            input,
-                        ],
-                        verification_datas=[
-                            validation_data,
-                        ],
-                    )
-                    del input
-                    del val_model
+                # Build TF dummy model
+                input = tf.keras.Input(
+                    shape=validation_data.shape[1:],
+                    batch_size=validation_data.shape[0] \
+                        if isinstance(validation_data.shape[0], int) else None,
+                    name='dummy_input',
+                    dtype=validation_data.dtype,
+                )
+                val_model = tf.keras.Model(
+                    inputs=[
+                        input,
+                    ],
+                    outputs=[
+                        custom_tf_nn_softmax(
+                            logits=input,
+                            axis=check_axis,
+                            name=graph_node.name,
+                        )
+                    ],
+                )
+                # TF dummy inference
+                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    model=val_model,
+                    inputs=[
+                        input,
+                    ],
+                    verification_datas=[
+                        validation_data,
+                    ],
+                )
+                del input
+                del val_model
 
-                    # Validation
-                    onnx_tf_output_pairs = {
-                        (oi[0], ti[0]): (oi[1], ti[1]) \
-                            for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                # Validation
+                onnx_tf_output_pairs = {
+                    (oi[0], ti[0]): (oi[1], ti[1]) \
+                        for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                }
+                """
+                check_results: Dict[str, List[np.ndarray, int, float|int]]
+                    {
+                        onnx_output_name: [
+                            onnx_tensor,
+                            matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                            max_abs_err,
+                        ]
                     }
-                    """
-                    check_results: Dict[str, List[np.ndarray, int, float|int]]
-                        {
-                            onnx_output_name: [
-                                onnx_tensor,
-                                matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
-                                max_abs_err,
-                            ]
-                        }
-                    """
-                    check_results = onnx_tf_tensor_validation(
-                        output_pairs=onnx_tf_output_pairs,
-                        rtol=0.0,
-                        atol=0.0,
-                    )
-                    result_err = sum([val[2] for val in check_results.values()])
-                    if result_err < min_abs_err:
-                        min_abs_err = result_err
-                        min_abs_err_axis = check_axis
-                        if min_abs_err < 1e-3:
-                            break
-                except Exception as ex:
-                    pass
+                """
+                check_results = onnx_tf_tensor_validation(
+                    output_pairs=onnx_tf_output_pairs,
+                    rtol=0.0,
+                    atol=0.0,
+                )
+                result_err = sum([val[2] for val in check_results.values()])
+                if result_err < min_abs_err:
+                    min_abs_err = result_err
+                    min_abs_err_axis = check_axis
+                    if min_abs_err < 1e-3:
+                        break
 
     # Suppress automatic Traspose extrapolation behavior by Softmax in TensorFlow
     flex_deterrent_perm_rev = []
@@ -280,11 +307,11 @@ def make_node(
         ] + [min_abs_err_axis]
         # 0,1,3,4,5,6,2 -> 0,1,6,2,3,4,5
         flex_deterrent_perm_rev = [
-            idx if idx != min_abs_err_axis else tensor_rank - 1 for idx in range(min_abs_err_axis + 1)
-        ] + [
-            idx for idx in range(min_abs_err_axis, tensor_rank - 1)
-        ]
-        transpose_output_shape = np.asarray(input_tensor.shape)[flex_deterrent_perm]
+            idx if idx != min_abs_err_axis else tensor_rank - 1
+            for idx in range(min_abs_err_axis + 1)
+        ] + [idx for idx in range(min_abs_err_axis, tensor_rank - 1)]
+        transpose_output_shape = np.asarray(
+            input_tensor.shape)[flex_deterrent_perm]
         input_tensor = transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
             perm=flex_deterrent_perm,
@@ -295,7 +322,7 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.nn.softmax(
+        custom_tf_nn_softmax(
             logits=input_tensor,
             axis=min_abs_err_axis if not flex_deterrent_perm_rev else tensor_rank - 1,
             name=graph_node.name,
@@ -313,9 +340,11 @@ def make_node(
             )
 
     # Post-process transpose
-    before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+    before_trans_shape = tf_layers_dict[
+        graph_node_output.name]['tf_node'].shape
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
-        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+        value_before_transpose=tf_layers_dict[graph_node_output.name]
+        ['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
         **kwargs,
