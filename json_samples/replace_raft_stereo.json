@@ -1,0 +1,248 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/Einsum",
+      "param_target": "inputs",
+      "param_name": "/fnet/Split_output_0",
+      "pre_process_transpose_perm": [0,3,1,2]
+    },
+    {
+      "op_name": "/Einsum",
+      "param_target": "inputs",
+      "param_name": "/fnet/Split_output_1",
+      "pre_process_transpose_perm": [0,3,1,2]
+    },
+    {
+      "op_name": "/Einsum",
+      "param_target": "outputs",
+      "param_name": "/Einsum_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+
+    {
+      "op_name": "/Concat_12",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_14",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_16",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_18",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_23",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_25",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_27",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_29",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_34",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_36",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_38",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_40",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_45",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_47",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_49",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_51",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_56",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_58",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_60",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_62",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_67",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_69",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_71",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_73",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_78",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_80",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_82",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_84",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_89",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_91",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_93",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_95",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+
+    {
+      "op_name": "/Concat_100",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_102",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_104",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    },
+    {
+      "op_name": "/Concat_106",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 3
+    }
+  ]
+}
