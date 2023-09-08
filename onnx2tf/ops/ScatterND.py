@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    shape_unmatched_special_avoidance_workaround,
 )
 
 
@@ -52,7 +53,7 @@ def make_node(
     )
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans=False,
     )
     graph_node_input_3 = get_constant_or_variable(
         graph_node.inputs[2],
@@ -68,55 +69,6 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     updates_tensor = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
-
-    # Inverted workaround to avoid shape errors as much as possible
-    if not before_op_output_shape_trans \
-        and list(graph_node.inputs[0].shape) != list(input_tensor.shape) \
-        and list(graph_node.inputs[1].shape) == list(indices_tensor.shape) \
-        and list(graph_node.inputs[2].shape) == list(updates_tensor.shape):
-
-        input_tensor_shape = input_tensor.shape
-        input_tensor_rank = len(input_tensor_shape)
-        indices_tensor_shape = indices_tensor.shape
-        updates_tensor_shape = updates_tensor.shape
-        updates_tensor_rank = len(updates_tensor_shape)
-        # Obtaining the number of ranks to be operated
-        number_of_ranks_operate = indices_tensor_shape[-1]
-        # 1. The number of ranks to be operated must be numeric
-        # 2. The number of ranks to be operated on must match the number of ranks in the input tensor
-        # 3. The number of ranks to be operated on must match the number of ranks in the tensor for updating
-        # 4. Forced NHWC conversion if all the above conditions are met
-        if isinstance(number_of_ranks_operate, int) \
-            and input_tensor_rank == number_of_ranks_operate \
-            and updates_tensor_rank == number_of_ranks_operate:
-
-            indices_convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1, input_tensor_rank]
-            indices_gather_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
-            updates_convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
-            # Corrects tensor shape discrepancies
-            if isinstance(indices_tensor, np.ndarray):
-                indices_tensor = indices_tensor.transpose(indices_convertion_table)
-            elif tf.keras.backend.is_keras_tensor(indices_tensor):
-                indices_tensor = tf.transpose(
-                    a=indices_tensor,
-                    perm=indices_convertion_table,
-                )
-            if isinstance(updates_tensor, np.ndarray):
-                updates_tensor = updates_tensor.transpose(updates_convertion_table)
-            elif tf.keras.backend.is_keras_tensor(updates_tensor):
-                updates_tensor = tf.transpose(
-                    a=updates_tensor,
-                    perm=updates_convertion_table,
-                )
-            # Transposition of indices
-            if isinstance(indices_tensor, np.ndarray):
-                indices_tensor = indices_tensor[..., indices_gather_table]
-            elif tf.keras.backend.is_keras_tensor(indices_tensor):
-                indices_tensor = tf.gather(
-                    params=indices_tensor,
-                    indices=indices_gather_table,
-                    axis=-1,
-                )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -148,6 +100,28 @@ def make_node(
         **kwargs,
     )
 
+    # Shape Unmatched Special Avoidance Workaround
+    # At least one True value for same_input_shape_as_onnx
+    # At least one True value in nhwc_flags
+    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
+    input_tensor, updates_tensor = \
+        shape_unmatched_special_avoidance_workaround(
+            graph_node_input_1=graph_node_input_1,
+            graph_node_input_2=graph_node_input_3,
+            input_tensor_1=input_tensor,
+            input_tensor_2=updates_tensor,
+            tf_layers_dict=tf_layers_dict,
+            **kwargs,
+        )
+
+    # When NHWC is fixed, return to NCHW format before processing.
+    nhwc = tf_layers_dict[graph_node_output.name]['nhwc']
+    if nhwc \
+        and len(input_tensor.shape) >= 3:
+        perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
+        input_tensor = tf.transpose(a=input_tensor, perm=perm)
+        updates_tensor = tf.transpose(a=updates_tensor, perm=perm)
+
     # Complex ScatterND -> Simple ScatterND
     simple_scatternd = False
     # Verify if negative numbers need to be converted to positive numbers
@@ -175,52 +149,29 @@ def make_node(
             indices=indices_tensor,
         )
 
-    try:
-        # normal scatter_nd_update
+    # normal scatter_nd_update
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        tf.tensor_scatter_nd_update(
+            tensor=input_tensor \
+                if not isinstance(input_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(input_tensor),
+            indices=indices_tensor \
+                if not isinstance(indices_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(indices_tensor),
+            updates=updates_tensor \
+                if not isinstance(updates_tensor, np.ndarray) \
+                    else tf.convert_to_tensor(updates_tensor),
+            name=graph_node.name,
+        )
+
+    if nhwc \
+        and len(input_tensor.shape) >= 3:
+        perm = [0] + [i for i in range(2, len(input_tensor.shape))] + [1]
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.tensor_scatter_nd_update(
-                tensor=input_tensor \
-                    if not isinstance(input_tensor, np.ndarray) \
-                        else tf.convert_to_tensor(input_tensor),
-                indices=indices_tensor \
-                    if not isinstance(indices_tensor, np.ndarray) \
-                        else tf.convert_to_tensor(indices_tensor),
-                updates=updates_tensor \
-                    if not isinstance(updates_tensor, np.ndarray) \
-                        else tf.convert_to_tensor(updates_tensor),
-                name=graph_node.name,
+            tf.transpose(
+                a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                perm=perm,
             )
-    except:
-        # Workaround to estimate the successful shape in the event of a shape error
-        try:
-            nhwc = bool(tf_layers_dict[graph_node_output.name].get('nhwc', False))
-            indices_tensor_shape = indices_tensor.shape
-            update_tensor_shape = updates_tensor.shape
-            if nhwc \
-                and len(indices_tensor_shape) - 1 == len(update_tensor_shape) \
-                and indices_tensor_shape[:len(update_tensor_shape)-1] == update_tensor_shape[:len(update_tensor_shape)-1] \
-                and indices_tensor_shape[-1] == update_tensor_shape[-1]:
-                # Try replacing only the last two axes of indicies
-                indices_tensor = indices_tensor if not isinstance(indices_tensor, np.ndarray) else tf.convert_to_tensor(indices_tensor)
-                perm = [idx for idx in range(len(update_tensor_shape)-1)] + [len(update_tensor_shape)] + [len(update_tensor_shape)-1]
-                indices_tensor = tf.transpose(a=indices_tensor, perm=perm)
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.tensor_scatter_nd_update(
-                        tensor=input_tensor \
-                            if not isinstance(input_tensor, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor),
-                        indices=indices_tensor \
-                            if not isinstance(indices_tensor, np.ndarray) \
-                                else tf.convert_to_tensor(indices_tensor),
-                        updates=updates_tensor \
-                            if not isinstance(updates_tensor, np.ndarray) \
-                                else tf.convert_to_tensor(updates_tensor),
-                        name=graph_node.name,
-                    )
-            else:
-                raise
-        except:
-            raise
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
