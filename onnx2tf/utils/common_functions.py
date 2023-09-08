@@ -3781,11 +3781,12 @@ def dummy_onnx_inference(
     total_output_size: int = 0
     for gs_graph_output in gs_graph.outputs:
         op_output_size: int = 1
-        for s in gs_graph_output.shape:
-            if isinstance(s, int):
-                op_output_size *= s
-        # Total bytes
-        total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
+        if gs_graph_output.shape is not None:
+            for s in gs_graph_output.shape:
+                if isinstance(s, int):
+                    op_output_size *= s
+            # Total bytes
+            total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
 
     # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 80% of available RAM
     mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 //1024
