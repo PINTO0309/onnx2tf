@@ -236,7 +236,7 @@ def make_node(
     # https://github.com/PINTO0309/onnx2tf/issues/465
     # a. x -> b.Div (a*1.4142135381698608) -> c.Erf (b) -> d.Add (c+1.0) -> e.Mul (a*d) -> f.Mul (f*0.5)
     enable_gelu = False
-    if hasattr(input_tensor_2, 'numpy') and input_tensor_2.numpy() == 1.4142135:
+    if hasattr(input_tensor_2, 'numpy') and np.prod(input_tensor_2.numpy().shape) <= 1 and input_tensor_2.numpy() == 1.4142135:
         try:
             input_node_name = graph_node_input_1.name
             erf_node: gs.Node = None
@@ -251,6 +251,7 @@ def make_node(
                     and len(erf_node.o().inputs) == 2 \
                     and isinstance(graph_node.o().o().inputs[1], gs.Constant) \
                     and hasattr(erf_node.o().inputs[1], 'values') \
+                    and np.prod(erf_node.o().inputs[1].values.shape) <= 1 \
                     and erf_node.o().inputs[1].values == 1.0:
 
                     add_node = erf_node.o()
@@ -264,6 +265,7 @@ def make_node(
                         if mul_1_node.o().op == 'Mul' \
                             and isinstance(mul_1_node.o().inputs[1], gs.Constant) \
                             and hasattr(mul_1_node.o().inputs[1], 'values') \
+                            and np.prod(mul_1_node.o().inputs[1].values.shape) <= 1 \
                             and mul_1_node.o().inputs[1].values == 0.5:
 
                             mul_2_node = mul_1_node.o()
