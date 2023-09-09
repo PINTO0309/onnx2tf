@@ -174,6 +174,10 @@ def make_node(
             and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() \
             and tf_layers_dict[graph_node_input.name]['nhwc'] == True:
                 nhwc_judge = nhwc_judge and True
+        elif isinstance(graph_node_input, gs.Constant) \
+            and hasattr(graph_node_input, 'values') \
+            and isinstance(graph_node_input.values, np.ndarray):
+                nhwc_judge = nhwc_judge or True
         else:
             nhwc_judge = nhwc_judge and False
 
