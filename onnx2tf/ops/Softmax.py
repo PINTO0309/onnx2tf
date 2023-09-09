@@ -29,12 +29,12 @@ def custom_tf_nn_softmax(logits, axis, name):
     '''
         Customer Tensorflow Softmax Op
             official softmax op limits Dim(input) <= 5, otherwise throw an inference exception error
-        
+
         Arguments:
             [1] logits: tf.Tensor, tf.float32, input logits with arbitrary shape
             [2] axis:   constant,  int,        axis index
             [3] name:   constant,  string,     softmax op name
-        
+
         Returns:
             [1] logits: tf.Tensor, tf.float32, output logits with Sum(output[..., axis, ...]) == 1.0
     '''
@@ -132,7 +132,7 @@ def make_node(
 
     # Get the output tensor of one previous OP of TensorFlow only once
     if not disable_strict_mode:
-        tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict, )
+        tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
         val_model = None
         if not isinstance(input_tensor, np.ndarray):
             val_model = tf.keras.Model(
@@ -150,12 +150,16 @@ def make_node(
     #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
     tf_pre_tensor_infos = {}
     if not disable_strict_mode:
-        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
-            model=val_model,
-            inputs=tf_model_inputs,
-            test_data_nhwc=test_data_nhwc,
-            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-        )
+        try:
+            tf_pre_tensor_infos: Dict[Any] = \
+                dummy_tf_inference(
+                    model=val_model,
+                    inputs=tf_model_inputs,
+                    test_data_nhwc=test_data_nhwc,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                )
+        except:
+            pass
 
     # Get np.ndarray for validation
     validation_data = None
@@ -229,7 +233,7 @@ def make_node(
     min_abs_err_axis: int = axis
 
     if not disable_strict_mode:
-        if onnx_tensor_infos is not None:
+        if onnx_tensor_infos is not None and validation_data is not None:
             check_axes = None
             if not error_check_unnecessary_flag:
                 check_axes = reversed([idx for idx in range(tensor_rank)])
