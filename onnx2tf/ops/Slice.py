@@ -178,7 +178,8 @@ def make_node(
     }
 
     # Determine if the axes are randomly placed on the axes.
-    if (isinstance(axes, np.ndarray) or hasattr(axes, 'numpy')):
+    if (isinstance(axes, np.ndarray) or hasattr(axes, 'numpy')) \
+        and len(axes.shape) > 1:
         base_axes = list(axes) if isinstance(axes, np.ndarray) else list(axes.numpy())
         sorted_axes = list(sorted(axes)) if isinstance(axes, np.ndarray) else list(sorted(axes.numpy()))
         if base_axes != sorted_axes:
