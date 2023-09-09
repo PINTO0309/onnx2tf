@@ -74,7 +74,8 @@ def make_node(
 
     scale = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[1].shape is not None and len(graph_node.inputs[1].shape) != 1 else False,
         is_bias=True,
     )
     scale_dtype = NUMPY_DTYPES_TO_TF_DTYPES[scale.dtype] \
@@ -84,7 +85,8 @@ def make_node(
 
     B = get_constant_or_variable(
         graph_node.inputs[2],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[2].shape is not None and len(graph_node.inputs[2].shape) != 1 else False,
         is_bias=True,
     )
     B_dtype = NUMPY_DTYPES_TO_TF_DTYPES[B.dtype] \
