@@ -16,6 +16,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     stridedslice_with_flexing_deterrence,
+    convert_reverse_axis,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.logging import *
@@ -175,6 +176,25 @@ def make_node(
             if isinstance(graph_node_input, gs.Variable) \
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
+
+    # Determine if the axes are randomly placed on the axes.
+    if (isinstance(axes, np.ndarray) or hasattr(axes, 'numpy')):
+        base_axes = list(axes) if isinstance(axes, np.ndarray) else list(axes.numpy())
+        sorted_axes = list(sorted(axes)) if isinstance(axes, np.ndarray) else list(sorted(axes.numpy()))
+        if base_axes != sorted_axes:
+            if tf_layers_dict[graph_node_output.name]['nhwc'] == True:
+                tmp_axes = [
+                    convert_reverse_axis(
+                        axis=idx,
+                        tensor_rank=input_tensor_rank,
+                        before_op_output_shape_trans=True,
+                    ) for idx in base_axes
+                ]
+                starts = starts[tmp_axes]
+                ends = ends[tmp_axes]
+                if steps is not None:
+                    steps = steps[tmp_axes]
+                axes = tf.convert_to_tensor(sorted_axes)
 
     # Param replacement - OP replacement
     """
