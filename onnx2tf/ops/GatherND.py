@@ -125,11 +125,19 @@ def make_node(
         simple_gathernd = False
 
     if not simple_gathernd:
-        indices_tensor = process_neg_idx(
-            data=input_tensor,
-            indices=indices_tensor,
-            batch_dims=batch_dims,
-        )
+        if input_tensor.shape is not None \
+            and indices_tensor.shape is not None \
+            and hasattr(input_tensor.shape, '__len__') \
+            and hasattr(indices_tensor.shape, '__len__') \
+            and len(input_tensor.shape) > 0 \
+            and len(indices_tensor.shape) > 0 \
+            and None not in input_tensor.shape \
+            and None not in indices_tensor.shape:
+            indices_tensor = process_neg_idx(
+                data=input_tensor,
+                indices=indices_tensor,
+                batch_dims=batch_dims,
+            )
 
     if not replace_gathernd_to_pseudo_gathernd:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \

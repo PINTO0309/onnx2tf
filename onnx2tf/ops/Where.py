@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     nhwc_determination_of_output_value_of_binary_input_op,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -58,12 +59,83 @@ def make_node(
         graph_node.inputs[2],
         before_op_output_shape_trans,
     )
-    condition = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
-        if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    X = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
-        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    Y = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
-        if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
+
+    values = [
+        tf_layers_dict[graph_node_input_1.name]['tf_node'] \
+            if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1,
+        tf_layers_dict[graph_node_input_2.name]['tf_node'] \
+            if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2,
+        tf_layers_dict[graph_node_input_3.name]['tf_node'] \
+            if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3,
+    ]
+
+    # Shape Unmatched Special Avoidance Workaround
+    # At least one True value for same_input_shape_as_onnx
+    # At least one True value in nhwc_flags
+    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
+    if hasattr(values[0].shape, '__len__') \
+        and hasattr(values[1].shape, '__len__') \
+        and hasattr(values[2].shape, '__len__') \
+        and len(values[0].shape) == len(values[1].shape) == len(values[2].shape):
+
+        nhwc_flags = []
+        same_input_shape_as_onnxs = []
+
+        def nhwc_judge(const_or_var, graph_node_input):
+            if isinstance(const_or_var, gs.Variable):
+                nhwc_flags.append(
+                    tf_layers_dict[const_or_var.name]['nhwc'] \
+                        if 'nhwc' in tf_layers_dict[const_or_var.name].keys() else False
+                )
+                same_input_shape_as_onnxs.append(
+                    True if graph_node_input.shape is not None and len(graph_node_input.shape) > 0 \
+                        and graph_node_input.shape == tf_layers_dict[const_or_var.name]['tf_node'].shape else False
+                )
+            else:
+                nhwc_flags.append(False)
+                same_input_shape_as_onnxs.append(
+                    True if graph_node_input.shape is not None and len(graph_node_input.shape) > 0 \
+                        and graph_node_input.shape == const_or_var.shape else False
+                )
+
+        nhwc_judge(graph_node_input_1, graph_node.inputs[0])
+        nhwc_judge(graph_node_input_2, graph_node.inputs[1])
+        nhwc_judge(graph_node_input_3, graph_node.inputs[2])
+
+        if True in same_input_shape_as_onnxs and True in nhwc_flags:
+            before_op_output_shape_trans = True
+            for idx, (same_input_shape_as_onnx, nhwc_flag, value) in enumerate(zip(same_input_shape_as_onnxs, nhwc_flags, values)):
+                if same_input_shape_as_onnx and not nhwc_flag:
+                    if len(value.shape) == 3:
+                        value = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=value,
+                                perm=[0,2,1],
+                                **kwargs,
+                            )
+                    elif len(value.shape) == 4:
+                        value = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=value,
+                                perm=[0,2,3,1],
+                                **kwargs,
+                            )
+                    elif len(value.shape) == 5:
+                        value = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=value,
+                                perm=[0,2,3,4,1],
+                                **kwargs,
+                            )
+                    else:
+                        pass
+                else:
+                    pass
+                values[idx] = value
+
+    condition = values[0]
+    X = values[1]
+    Y = values[2]
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -75,6 +147,12 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
         'nhwc': \
+            nhwc_determination_of_output_value_of_binary_input_op(
+                graph_node_input_1=graph_node_input_1,
+                graph_node_input_2=graph_node_input_2,
+                tf_layers_dict=tf_layers_dict
+            ) \
+            or \
             nhwc_determination_of_output_value_of_binary_input_op(
                 graph_node_input_1=graph_node_input_2,
                 graph_node_input_2=graph_node_input_3,
