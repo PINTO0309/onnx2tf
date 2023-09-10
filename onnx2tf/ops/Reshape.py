@@ -368,7 +368,7 @@ def make_node(
         min_abs_err_perm_1: int = [idx for idx in range(tensor_rank)]
 
         if not disable_strict_mode:
-            if onnx_tensor_infos is not None:
+            if onnx_tensor_infos is not None and validation_data is not None:
                 tensor_1_candidate_for_transpositions = list(itertools.permutations(range(tensor_rank)))
                 tensor_1_candidate_for_transpositions = [
                     trans_perm for trans_perm in tensor_1_candidate_for_transpositions \

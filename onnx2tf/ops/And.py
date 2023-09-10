@@ -46,11 +46,13 @@ def make_node(
 
     graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[0].shape is not None and len(graph_node.inputs[0].shape) != 1 else False,
     )
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[1].shape is not None and len(graph_node.inputs[1].shape) != 1 else False,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape

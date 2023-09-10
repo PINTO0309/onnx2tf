@@ -74,7 +74,8 @@ def make_node(
 
     scale = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[1].shape is not None and len(graph_node.inputs[1].shape) != 1 else False,
         is_bias=True,
     )
     scale_dtype = NUMPY_DTYPES_TO_TF_DTYPES[scale.dtype] \
@@ -84,7 +85,8 @@ def make_node(
 
     B = get_constant_or_variable(
         graph_node.inputs[2],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans \
+            if graph_node.inputs[2].shape is not None and len(graph_node.inputs[2].shape) != 1 else False,
         is_bias=True,
     )
     B_dtype = NUMPY_DTYPES_TO_TF_DTYPES[B.dtype] \
@@ -182,7 +184,7 @@ def make_node(
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
 
     if not disable_strict_mode:
-        if onnx_tensor_infos is not None:
+        if onnx_tensor_infos is not None and validation_data is not None:
             tensor_1_candidate_for_transpositions = list(itertools.permutations(range(input_tensor_rank)))
             tensor_1_candidate_for_transpositions = [
                 trans_perm for trans_perm in tensor_1_candidate_for_transpositions \
