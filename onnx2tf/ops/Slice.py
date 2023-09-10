@@ -89,7 +89,8 @@ def make_node(
     if len(graph_node.inputs) >= 2:
         starts = get_constant_or_variable(
             graph_node.inputs[1],
-            before_op_output_shape_trans,
+            before_op_output_shape_trans \
+                if graph_node.inputs[1].shape is not None and len(graph_node.inputs[1].shape) != 1 else False,
         )
         starts = tf_layers_dict[starts.name]['tf_node'] \
             if isinstance(starts, gs.Variable) else starts
@@ -98,7 +99,8 @@ def make_node(
     if len(graph_node.inputs) >= 3:
         ends = get_constant_or_variable(
             graph_node.inputs[2],
-            before_op_output_shape_trans,
+            before_op_output_shape_trans \
+                if graph_node.inputs[2].shape is not None and len(graph_node.inputs[2].shape) != 1 else False,
         )
         ends = tf_layers_dict[ends.name]['tf_node'] \
             if isinstance(ends, gs.Variable) else ends
@@ -116,7 +118,8 @@ def make_node(
     if len(graph_node.inputs) >= 4:
         axes = get_constant_or_variable(
             graph_node.inputs[3],
-            before_op_output_shape_trans,
+            before_op_output_shape_trans \
+                if graph_node.inputs[3].shape is not None and len(graph_node.inputs[3].shape) != 1 else False,
         )
     axes = tf_layers_dict[axes.name]['tf_node'] \
         if isinstance(axes, gs.Variable) else axes
@@ -135,7 +138,8 @@ def make_node(
     if len(graph_node.inputs) >= 5:
         steps = get_constant_or_variable(
             graph_node.inputs[4],
-            before_op_output_shape_trans,
+            before_op_output_shape_trans \
+                if graph_node.inputs[4].shape is not None and len(graph_node.inputs[4].shape) != 1 else False,
         )
     steps = tf_layers_dict[steps.name]['tf_node'] \
         if isinstance(steps, gs.Variable) else steps
