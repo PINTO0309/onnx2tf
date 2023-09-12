@@ -77,6 +77,20 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
+    # Response to the case where the first tensor is 1-dimensional
+    # Response to the case where the second tensor is 1-dimensional
+    # https://numpy.org/doc/stable/reference/generated/numpy.matmul.html
+    input_tensor_1_is_one_d = False
+    input_tensor_2_is_one_d = False
+    if input_tensor_1.shape is not None \
+        and len(input_tensor_1.shape) == 1:
+        input_tensor_1 = tf.expand_dims(input_tensor_2, axis=0)
+        input_tensor_1_is_one_d = True
+    elif input_tensor_2.shape is not None \
+            and len(input_tensor_2.shape) == 1:
+            input_tensor_2 = tf.expand_dims(input_tensor_2, axis=-1)
+            input_tensor_2_is_one_d = True
+
     # Obtain ONNX inference results and
     # TensorFlow inference results up to the previous layer of TensorFlow
     onnx_tensor_infos, validation_data_1, validation_data_2 = \
@@ -260,6 +274,16 @@ def make_node(
             target_name=graph_node.name,
             **kwargs
         )
+
+    # Response to the case where the first tensor is 1-dimensional
+    # Response to the case where the second tensor is 1-dimensional
+    # https://numpy.org/doc/stable/reference/generated/numpy.matmul.html
+    if input_tensor_1_is_one_d:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.squeeze(input=tf_layers_dict[graph_node_output.name]['tf_node'], axis=-2)
+    elif input_tensor_2_is_one_d:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.squeeze(input=tf_layers_dict[graph_node_output.name]['tf_node'], axis=-1)
 
     # Transpose to match ONNX output shape
     post_matmul_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
