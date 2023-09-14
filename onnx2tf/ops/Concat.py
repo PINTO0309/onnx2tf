@@ -18,7 +18,6 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
     transpose_with_flexing_deterrence,
     shape_is_equal_ignore_order,
-    transpose_with_flexing_deterrence,
     dummy_tf_inference,
     onnx_tf_tensor_validation,
     acquisition_of_validation_data,
