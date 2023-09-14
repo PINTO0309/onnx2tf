@@ -906,6 +906,53 @@ def convert(
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
 
+        # Addressing Einsum's shape_inference failure for onnx.
+        # However, relief is provided only when the input tensor does not contain undefined dimensions.
+        is_none_in_inputs = False
+        for graph_input in graph.inputs:
+            if graph_input.shape is not None:
+                for s in graph_input.shape:
+                    if isinstance(s, str):
+                        is_none_in_inputs = True
+                        break
+            else:
+                is_none_in_inputs = True
+                break
+        if onnx_tensor_infos_for_validation is not None and not is_none_in_inputs:
+            einsum_ops = [graph_node for graph_node in graph.nodes if graph_node.op == 'Einsum']
+            if len(einsum_ops) > 0:
+                for einsum_op in einsum_ops:
+                    einsum_op_output: gs.Variable = einsum_op.outputs[0]
+                    if einsum_op_output.name in onnx_tensor_infos_for_validation:
+                        onnx_output_shape = list(onnx_tensor_infos_for_validation[einsum_op_output.name].shape)
+                        einsum_op_output.shape = onnx_output_shape
+                try:
+                    estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(graph))
+                    if input_onnx_file_path is not None:
+                        onnx.save(estimated_graph, input_onnx_file_path)
+                        if not not_use_onnxsim:
+                            try:
+                                append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
+                                    if overwrite_input_shape is not None else []
+                                append_param = append_param + ['--no-large-tensor', '10MB'] \
+                                    if no_large_tensor else append_param
+                                result = subprocess.check_output(
+                                    [
+                                        'onnxsim',
+                                        f'{input_onnx_file_path}',
+                                        f'{input_onnx_file_path}'
+                                    ] + append_param,
+                                    stderr=subprocess.PIPE
+                                ).decode('utf-8')
+                                graph = gs.import_onnx(onnx.load(input_onnx_file_path))
+                            except Exception as e:
+                                import traceback
+                                warn(traceback.format_exc(), prefix=False)
+                    else:
+                        graph = gs.import_onnx(estimated_graph)
+                except:
+                    pass
+
         # Nodes
         # https://github.com/onnx/onnx/blob/main/docs/Operators.md
         for graph_node in graph.nodes:
