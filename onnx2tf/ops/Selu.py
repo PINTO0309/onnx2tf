@@ -80,19 +80,9 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.clip_by_value(
-            input_tensor,
-            0,
-            tf.reduce_max(input_tensor)) * gamma + \
-                (
-                    tf.exp(
-                        tf.clip_by_value(
-                            input_tensor,
-                            tf.reduce_min(input_tensor),
-                            0
-                        )
-                    ) - 1
-                ) * (alpha * gamma)
+        tf.keras.layers.ELU(
+            alpha=alpha,
+        )(input_tensor) * gamma
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
