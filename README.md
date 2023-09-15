@@ -256,7 +256,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.16.24
+  ghcr.io/pinto0309/onnx2tf:1.16.25
 
   or
 
@@ -264,7 +264,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.16.24
+  docker.io/pinto0309/onnx2tf:1.16.25
 
   or
 
@@ -394,9 +394,9 @@ $ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stag
 
 # Suppress generation of Flex OP and replace with Pseudo-Function
 # [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU]
-# Below is a sample of replacing GELU / Erf with another set of operations.
-$ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
-$ onnx2tf -i gelu_11.onnx -rtpo Erf
+# Below is a sample of replacing Erf with another set of operations.
+$ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/Erf_11.onnx
+$ onnx2tf -i Erf_11.onnx -rtpo Erf
 
 # High-dimensional Transpose decomposition
 # If you do not like FlexTranspose being generated, try `-nodafc`.
