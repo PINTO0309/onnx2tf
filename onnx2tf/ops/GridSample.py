@@ -15,7 +15,6 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
     transpose_with_flexing_deterrence,
-    get_tf_model_inputs,
     onnx_tf_tensor_validation,
     dummy_tf_inference,
     acquisition_of_validation_data,
