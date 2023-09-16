@@ -577,8 +577,6 @@ The accuracy error rates after quantization for different activation functions a
 
 ![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
 
-- e.g. YOLOv8
-  - https://docs.openvino.ai/latest/notebooks/230-yolov8-optimization-with-output.html
 - e.g. YOLOX-Nano
   - https://github.com/motokimura/yolox-ti-lite_tflite
   - https://github.com/TexasInstruments/edgeai-yolox
