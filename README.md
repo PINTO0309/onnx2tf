@@ -2286,14 +2286,12 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |79|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
 |80|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
 |81|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|82|yolov8n.onnx|:heavy_check_mark:|
-|83|yolov8n-seg.onnx|:heavy_check_mark:|
-|84|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|85|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|86|yolox_s.onnx|:heavy_check_mark:|
-|87|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|88|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|89|zfnet512-12.onnx|:heavy_check_mark:|
+|82|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|83|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|84|yolox_s.onnx|:heavy_check_mark:|
+|85|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|86|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|87|zfnet512-12.onnx|:heavy_check_mark:|
 
 </div></details>
 
