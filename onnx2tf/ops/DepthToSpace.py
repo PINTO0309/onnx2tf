@@ -185,6 +185,10 @@ def make_node(
         if not disable_strict_mode:
             if onnx_tensor_infos is not None and validation_data is not None:
                 tensor_1_candidate_for_transpositions = list(itertools.permutations(range(tensor_rank)))
+                tensor_1_candidate_for_transpositions = [
+                    trans_perm for trans_perm in tensor_1_candidate_for_transpositions \
+                        if trans_perm[0] == 0
+                ]
                 # Search for the axis with the smallest error
                 for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                     try:
