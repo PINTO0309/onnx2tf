@@ -1,7 +1,9 @@
 import sys
 import copy
 import random
+random.seed(0)
 import numpy as np
+np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -20,9 +22,6 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
 )
 from typing import Any, Dict
-
-random.seed(0)
-np.random.seed(0)
 
 
 def custom_tf_nn_softmax(logits, axis, name):
@@ -101,15 +100,6 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
-    # Determination to skip error check
-    # Skip error check if onnx and tensorflow input geometry
-    # is an exact match and axis is exactly the same.
-    # Also, skip the process of forced replacement of axis
-    error_check_unnecessary_flag = False
-    if pre_convert_axis == axis \
-        and graph_node_input.shape == input_tensor.shape:
-        error_check_unnecessary_flag = True
-
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -123,11 +113,9 @@ def make_node(
                 and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name].keys() else False,
     }
 
-    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs[
-        'onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
-    custom_input_op_name_np_data_path: str = kwargs[
-        'custom_input_op_name_np_data_path']
+    custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
 
     # Get the output tensor of one previous OP of TensorFlow only once
@@ -234,12 +222,7 @@ def make_node(
 
     if not disable_strict_mode:
         if onnx_tensor_infos is not None and validation_data is not None:
-            check_axes = None
-            if not error_check_unnecessary_flag:
-                check_axes = reversed([idx for idx in range(tensor_rank)])
-            else:
-                check_axes = [axis]
-
+            check_axes = reversed([idx for idx in range(tensor_rank)])
             # Search for the axis with the smallest error
             for check_axis in check_axes:
                 # Build TF dummy model
