@@ -579,6 +579,24 @@ def convert(
         try:
             info('')
             info(Color.REVERSE(f'Model optimizing started'), '=' * 60)
+            # Initialization of useless output shapes
+            if input_onnx_file_path:
+                try:
+                    tmp_graph = gs.import_onnx(onnx.load(input_onnx_file_path))
+                    output_clear = False
+                    for graph_output in tmp_graph.outputs:
+                        if graph_output.shape is not None \
+                            and sum([1 if isinstance(s, int) and s < 1 else 0 for s in graph_output.shape]) > 0:
+                            graph_output.shape = None
+                            output_clear = True
+                    if output_clear:
+                        estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(tmp_graph, do_type_check=False))
+                        onnx.save(estimated_graph, f=input_onnx_file_path)
+                        del estimated_graph
+                except:
+                    if tmp_graph is not None:
+                        del tmp_graph
+            # Simplify
             for _ in range(3):
                 append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
                     if overwrite_input_shape is not None else []
@@ -927,7 +945,7 @@ def convert(
                         onnx_output_shape = list(onnx_tensor_infos_for_validation[einsum_op_output.name].shape)
                         einsum_op_output.shape = onnx_output_shape
                 try:
-                    estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(graph))
+                    estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(graph, do_type_check=False))
                     if input_onnx_file_path is not None:
                         onnx.save(estimated_graph, input_onnx_file_path)
                         if not not_use_onnxsim:
