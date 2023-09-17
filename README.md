@@ -220,7 +220,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - Linux / Windows
 - onnx==1.14.0
 - onnxruntime==1.15.1
-- onnx-simplifier==0.4.33
+- onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
 - tensorflow==2.13.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
