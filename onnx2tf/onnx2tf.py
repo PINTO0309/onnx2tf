@@ -924,7 +924,7 @@ def convert(
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
 
-        # Addressing Einsum's shape_inference failure for onnx.
+        # Addressing Einsum and OneHot shape_inference failure for onnx.
         # However, relief is provided only when the input tensor does not contain undefined dimensions.
         is_none_in_inputs = False
         for graph_input in graph.inputs:
@@ -937,13 +937,13 @@ def convert(
                 is_none_in_inputs = True
                 break
         if onnx_tensor_infos_for_validation is not None and not is_none_in_inputs:
-            einsum_ops = [graph_node for graph_node in graph.nodes if graph_node.op == 'Einsum']
-            if len(einsum_ops) > 0:
-                for einsum_op in einsum_ops:
-                    einsum_op_output: gs.Variable = einsum_op.outputs[0]
-                    if einsum_op_output.name in onnx_tensor_infos_for_validation:
-                        onnx_output_shape = list(onnx_tensor_infos_for_validation[einsum_op_output.name].shape)
-                        einsum_op_output.shape = onnx_output_shape
+            correction_ops = [graph_node for graph_node in graph.nodes if graph_node.op in ['Einsum', 'OneHot']]
+            if len(correction_ops) > 0:
+                for correction_op in correction_ops:
+                    correction_op_output: gs.Variable = correction_op.outputs[0]
+                    if correction_op_output.name in onnx_tensor_infos_for_validation:
+                        onnx_output_shape = list(onnx_tensor_infos_for_validation[correction_op_output.name].shape)
+                        correction_op_output.shape = onnx_output_shape
                 try:
                     estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(graph, do_type_check=False))
                     if input_onnx_file_path is not None:
