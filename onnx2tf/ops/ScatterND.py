@@ -13,7 +13,6 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
-    shape_unmatched_special_avoidance_workaround,
 )
 
 
@@ -100,27 +99,60 @@ def make_node(
         **kwargs,
     )
 
-    # Shape Unmatched Special Avoidance Workaround
-    # At least one True value for same_input_shape_as_onnx
-    # At least one True value in nhwc_flags
-    # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
-    input_tensor, updates_tensor = \
-        shape_unmatched_special_avoidance_workaround(
-            graph_node_input_1=graph_node_input_1,
-            graph_node_input_2=graph_node_input_3,
-            input_tensor_1=input_tensor,
-            input_tensor_2=updates_tensor,
-            tf_layers_dict=tf_layers_dict,
-            **kwargs,
-        )
-
     # When NHWC is fixed, return to NCHW format before processing.
-    nhwc = tf_layers_dict[graph_node_output.name]['nhwc']
-    if nhwc \
+    data_nhwc = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+        if isinstance(graph_node_input_1, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+    indices_nhwc = tf_layers_dict[graph_node_input_2.name]['nhwc'] \
+        if isinstance(graph_node_input_2, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
+    updates_nhwc = tf_layers_dict[graph_node_input_3.name]['nhwc'] \
+        if isinstance(graph_node_input_3, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input_3.name].keys() else False
+
+    pre_input_tensor_shape = input_tensor.shape
+
+    # NHWC -> NCHW
+    nchw = not (data_nhwc or indices_nhwc or updates_nhwc)
+    ## data
+    if data_nhwc \
         and len(input_tensor.shape) >= 3:
         perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
         input_tensor = tf.transpose(a=input_tensor, perm=perm)
+        nchw = True
+    elif not data_nhwc \
+        and len(input_tensor.shape) >= 3 \
+        and graph_node.inputs[0].shape is not None \
+        and input_tensor.shape != graph_node.inputs[0].shape:
+        perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
+        input_tensor = tf.transpose(a=input_tensor, perm=perm)
+        nchw = True
+    ## indices
+    if indices_nhwc \
+        and len(indices_tensor.shape) >= 4:
+        perm = [0, len(indices_tensor.shape)-2] + [i for i in range(1, len(indices_tensor.shape)-2)] + [len(indices_tensor.shape)-1]
+        indices_tensor = tf.transpose(a=indices_tensor, perm=perm)
+        nchw = True
+    elif not indices_nhwc \
+        and len(indices_tensor.shape) >= 4 \
+        and graph_node.inputs[1].shape is not None \
+        and indices_tensor.shape != graph_node.inputs[1].shape:
+        perm = [0, len(indices_tensor.shape)-2] + [i for i in range(1, len(indices_tensor.shape)-2)] + [len(indices_tensor.shape)-1]
+        indices_tensor = tf.transpose(a=indices_tensor, perm=perm)
+        nchw = True
+    ## updates
+    if updates_nhwc \
+        and len(updates_tensor.shape) >= 3:
+        perm = [0, len(updates_tensor.shape)-1] + [i for i in range(1, len(updates_tensor.shape)-1)]
         updates_tensor = tf.transpose(a=updates_tensor, perm=perm)
+        nchw = True
+    elif not updates_nhwc \
+        and len(updates_tensor.shape) >= 3 \
+        and graph_node.inputs[2].shape is not None \
+        and updates_tensor.shape != graph_node.inputs[2].shape:
+        perm = [0, len(updates_tensor.shape)-1] + [i for i in range(1, len(updates_tensor.shape)-1)]
+        updates_tensor = tf.transpose(a=updates_tensor, perm=perm)
+        nchw = True
 
     # Complex ScatterND -> Simple ScatterND
     simple_scatternd = False
@@ -164,8 +196,10 @@ def make_node(
             name=graph_node.name,
         )
 
-    if nhwc \
-        and len(input_tensor.shape) >= 3:
+    # NCHW -> NHWC
+    if nchw \
+        and len(input_tensor.shape) >= 3 \
+        and pre_input_tensor_shape != tf_layers_dict[graph_node_output.name]['tf_node'].shape:
         perm = [0] + [i for i in range(2, len(input_tensor.shape))] + [1]
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.transpose(

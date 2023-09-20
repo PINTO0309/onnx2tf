@@ -166,7 +166,7 @@ def make_node(
         **kwargs,
     )
 
-    # Preserving Graph Structure (Dict)
+    # NHWC judgement
     nhwc_judge = True
     for graph_node_input in graph_node.inputs:
         if isinstance(graph_node_input, gs.Variable) \
@@ -176,7 +176,7 @@ def make_node(
         elif isinstance(graph_node_input, gs.Constant) \
             and hasattr(graph_node_input, 'values') \
             and isinstance(graph_node_input.values, np.ndarray):
-                nhwc_judge = nhwc_judge or True
+                nhwc_judge = nhwc_judge or False
         else:
             nhwc_judge = nhwc_judge and False
 
@@ -297,6 +297,18 @@ def make_node(
                             name=graph_node.name,
                         )
                     axis = matched_axes[0]
+                elif not nhwc_judge:
+                    onnx_axis = int(graph_node.attrs.get('axis', 0))
+                    onnx_axis = output_tensor_rank - 1 if onnx_axis == -1 else onnx_axis
+                    if onnx_axis == output_tensor_rank - 1 \
+                        and onnx_axis in matched_axes:
+                        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                            tf.concat(
+                                values=values,
+                                axis=onnx_axis,
+                                name=graph_node.name,
+                            )
+                        axis = onnx_axis
 
     # Workaround for post-concat accuracy degradation issues
     # Process only in the case of a Concat of two tensors because the process is too redundant.
