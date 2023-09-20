@@ -110,6 +110,8 @@ def make_node(
         if isinstance(graph_node_input_3, gs.Variable) \
             and 'nhwc' in tf_layers_dict[graph_node_input_3.name].keys() else False
 
+    pre_input_tensor_shape = input_tensor.shape
+
     # NHWC -> NCHW
     nchw = not (data_nhwc or indices_nhwc or updates_nhwc)
     ## data
@@ -132,7 +134,7 @@ def make_node(
         indices_tensor = tf.transpose(a=indices_tensor, perm=perm)
         nchw = True
     elif not indices_nhwc \
-        and len(indices_tensor.shape) >= 3 \
+        and len(indices_tensor.shape) >= 4 \
         and graph_node.inputs[1].shape is not None \
         and indices_tensor.shape != graph_node.inputs[1].shape:
         perm = [0, len(indices_tensor.shape)-2] + [i for i in range(1, len(indices_tensor.shape)-2)] + [len(indices_tensor.shape)-1]
@@ -196,7 +198,8 @@ def make_node(
 
     # NCHW -> NHWC
     if nchw \
-        and len(input_tensor.shape) >= 3:
+        and len(input_tensor.shape) >= 3 \
+        and pre_input_tensor_shape != tf_layers_dict[graph_node_output.name]['tf_node'].shape:
         perm = [0] + [i for i in range(2, len(input_tensor.shape))] + [1]
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.transpose(
