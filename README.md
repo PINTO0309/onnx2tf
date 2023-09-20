@@ -322,8 +322,8 @@ $ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#14-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#15-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#15-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#16-conversion-to-coreml
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -922,7 +922,19 @@ Again, run the test code to check the inference results. The figure below shows 
 
   ![20230817175701](https://github.com/PINTO0309/onnx2tf/assets/33194443/cf1f7b8c-de8f-4f66-a9a7-02fa01506391)
 
-### 13. Inference with dynamic tensors in TFLite
+### 13. Problem of extremely large calculation error in `InstanceNormalization`
+Even if the conversion is successful, `InstanceNormalization` tends to have very large errors. This is an ONNX specification.
+
+- See.1: https://discuss.pytorch.org/t/understanding-instance-normalization-2d-with-running-mean-and-running-var/144139
+- See.2: https://github.com/pytorch/pytorch/issues/72057
+
+I verified this with a very simple sample model. There are more than 8 million elements, and the calculation error reached `1e-2`.
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/58ce1069-49b3-4bab-b74d-8082f47e720f)
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/61d1fd6e-1703-4c0b-8112-e66e3001fc13)
+
+### 14. Inference with dynamic tensors in TFLite
 For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441)
 
 
@@ -1066,7 +1078,7 @@ https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputo
           3.7874976e-01, 0.0000000e+00]], dtype=float32)}
   ```
 
-### 14. Conversion to TensorFlow.js
+### 15. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -1085,7 +1097,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 15. Conversion to CoreML
+### 16. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
