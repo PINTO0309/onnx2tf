@@ -1028,10 +1028,11 @@ def convert(
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        if get_log_level() <= LOG_LEVELS['debug']:
-            debug('')
-            model.summary(line_length=140)
-            debug('')
+        # if get_log_level() <= LOG_LEVELS['debug']:
+        #     debug('')
+        #     model.summary(line_length=140)
+        #     debug('')
+        debug('')
 
         # The process ends normally without saving the model.
         if disable_model_save:
