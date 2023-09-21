@@ -64,6 +64,8 @@ def make_node(
     onnx_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -268,7 +270,8 @@ def make_node(
         # Workaround when data for validation cannot be obtained.
         # Verify only the certainty of the output shape, not the degradation of accuracy.
         # However, verify only if there are no undefined dimensions.
-        if None not in input_tensor_1.shape \
+        if not disable_strict_mode \
+            and None not in input_tensor_1.shape \
             and len(input_tensor_1.shape) >= 2 \
             and None not in input_tensor_2.shape \
             and len(input_tensor_2.shape) >= 2 \
