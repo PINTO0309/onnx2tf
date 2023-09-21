@@ -261,6 +261,12 @@ def print_node_info(func):
                 )
             elif graph_node is not None:
                 debug('')
+                op_counta: int = kwargs.get('op_counta', 1)
+                total_op_count: int = kwargs.get('total_op_count', 0)
+                debug(
+                    Color.GREEN(f'INFO:') + ' '+
+                    Color.GREEN(f'{op_counta} / {total_op_count}')
+                )
                 debug(
                     Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': '+
                     f'{graph_node.op}' + Color.MAGENTA(' onnx_op_name') + f': {graph_node.name}')

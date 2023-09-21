@@ -759,11 +759,17 @@ def convert(
     if replace_to_pseudo_operators is None:
         replace_to_pseudo_operators = []
 
+    # debug counta
+    op_counta = 1
+    total_op_count = len(graph.inputs) + len(graph.nodes)
+
     # Define additional parameters
     additional_parameters = {
         'input_onnx_file_path': input_onnx_file_path if input_onnx_file_path is not None else None,
         'onnx_graph': onnx_graph,
         'opset': graph.opset,
+        'op_counta': op_counta,
+        'total_op_count': total_op_count,
         'batch_size': batch_size,
         'disable_group_convolution': disable_group_convolution,
         'enable_rnn_unroll': enable_rnn_unroll,
@@ -845,6 +851,8 @@ def convert(
                 keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                 **additional_parameters,
             )
+            op_counta += 1
+            additional_parameters['op_counta'] = op_counta
 
         # Get Inputs
         inputs = get_tf_model_inputs(
@@ -992,6 +1000,8 @@ def convert(
                 tf_layers_dict=tf_layers_dict,
                 **additional_parameters,
             )
+            op_counta += 1
+            additional_parameters['op_counta'] = op_counta
 
         del additional_parameters['onnx_tensor_infos_for_validation']
         del onnx_tensor_infos_for_validation
@@ -1018,10 +1028,11 @@ def convert(
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
-        if get_log_level() <= LOG_LEVELS['debug']:
-            debug('')
-            model.summary(line_length=140)
-            debug('')
+        # if get_log_level() <= LOG_LEVELS['debug']:
+        #     debug('')
+        #     model.summary(line_length=140)
+        #     debug('')
+        debug('')
 
         # The process ends normally without saving the model.
         if disable_model_save:
