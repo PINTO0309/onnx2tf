@@ -1042,6 +1042,32 @@ def convert(
         if output_h5:
             try:
                 info(Color.REVERSE(f'h5 output started'), '=' * 67)
+                # Structure (JSON)
+                try:
+                    open(f'{output_folder_path}/{output_file_name}_float32.json', 'w').write(model.to_json())
+                except:
+                    pass
+                # Weights (h5)
+                try:
+                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.h5', save_format='h5')
+                except:
+                    pass
+                # Weights (keras)
+                try:
+                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.keras', save_format='keras')
+                except:
+                    pass
+                # Weights (TF)
+                try:
+                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.tf', save_format='tf')
+                except:
+                    pass
+                # Monolithic (keras)
+                try:
+                    model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format='keras')
+                except:
+                    pass
+                # Monolithic (h5)
                 model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
                 info(Color.GREEN(f'h5 output complete!'))
             except ValueError as e:
@@ -1068,7 +1094,7 @@ def convert(
         if output_keras_v3:
             try:
                 info(Color.REVERSE(f'keras_v3 output started'), '=' * 61)
-                model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
+                model.save(f'{output_folder_path}/{output_file_name}_float32_v3.keras', save_format="keras_v3")
                 info(Color.GREEN(f'keras_v3 output complete!'))
             except ValueError as e:
                 msg_list = [s for s in e.args if isinstance(s, str)]
