@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -19,16 +19,17 @@ RUN pip install pip -U \
     && pip install onnx2tf \
     && pip install onnx2tf \
     && pip install simple_onnx_processing_tools \
-    && pip install tensorflow==2.13.0 \
+    && pip install tensorflow==2.14.0rc1 \
     && pip install protobuf==3.20.3 \
     && pip install h5py==3.7.0 \
     && pip install psutil==5.9.5 \
-    && pip install onnxruntime==1.15.1
+    && pip install onnxruntime==1.15.1 \
+    && pip install ml_dtypes==0.2.0
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
 # https://github.com/PINTO0309/onnx2tf/issues/196
-RUN wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+RUN wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
     && tar -zxvf flatc.tar.gz \
     && chmod +x flatc \
     && mv flatc /usr/bin/
