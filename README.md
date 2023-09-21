@@ -230,7 +230,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   ```bash
   # Custom flatc v23.5.26 binary for Ubuntu 20.04+
   # https://github.com/PINTO0309/onnx2tf/issues/196
-  https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
     && tar -zxvf flatc.tar.gz \
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
