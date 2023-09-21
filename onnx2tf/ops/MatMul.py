@@ -155,51 +155,52 @@ def make_node(
                 name=target_name,
             )
 
-    tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
-    tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
 
-    for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
-        for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
-            try:
-                # Build TF dummy model
-                input_1 = tf.keras.Input(
-                    shape=validation_data_1.shape[1:],
-                    batch_size=validation_data_1.shape[0] \
-                        if isinstance(validation_data_1.shape[0], int) else None,
-                    name='dummy_input_1',
-                    dtype=validation_data_1.dtype,
-                )
-                input_2 = tf.keras.Input(
-                    shape=validation_data_2.shape[1:],
-                    batch_size=validation_data_2.shape[0] \
-                        if isinstance(validation_data_2.shape[0], int) else None,
-                    name='dummy_input_2',
-                    dtype=validation_data_2.dtype,
-                )
-                dummy_matmul = define_matmul(
-                    target_input_tensor_1=input_1,
-                    target_perm_1=list(tensor_1_candidate_for_transposition),
-                    target_input_tensor_2=input_2,
-                    target_perm_2=list(tensor_2_candidate_for_transposition),
-                    taget_output_dtype=output_dtype,
-                    target_name=graph_node.name,
-                    **kwargs
-                )
-                # Verify that the output shape matches that of ONNX
-                # If the combination of each value of a dimension is not correct,
-                # invalidate the normal processing judgment.
-                onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
-                matmul_output_shapes = list(dummy_matmul.shape)
-                matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
-                if onnx_output_shape_prod != matmul_output_shape_prod:
-                    del input_1
-                    del input_2
-                    del dummy_matmul
-                    continue
+    if onnx_tensor_infos:
+        tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+        tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
 
-                # Perform simple accuracy verification
-                # Terminate when the error is less than 1e-3
-                if onnx_tensor_infos:
+        for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                try:
+                    # Build TF dummy model
+                    input_1 = tf.keras.Input(
+                        shape=validation_data_1.shape[1:],
+                        batch_size=validation_data_1.shape[0] \
+                            if isinstance(validation_data_1.shape[0], int) else None,
+                        name='dummy_input_1',
+                        dtype=validation_data_1.dtype,
+                    )
+                    input_2 = tf.keras.Input(
+                        shape=validation_data_2.shape[1:],
+                        batch_size=validation_data_2.shape[0] \
+                            if isinstance(validation_data_2.shape[0], int) else None,
+                        name='dummy_input_2',
+                        dtype=validation_data_2.dtype,
+                    )
+                    dummy_matmul = define_matmul(
+                        target_input_tensor_1=input_1,
+                        target_perm_1=list(tensor_1_candidate_for_transposition),
+                        target_input_tensor_2=input_2,
+                        target_perm_2=list(tensor_2_candidate_for_transposition),
+                        taget_output_dtype=output_dtype,
+                        target_name=graph_node.name,
+                        **kwargs
+                    )
+                    # Verify that the output shape matches that of ONNX
+                    # If the combination of each value of a dimension is not correct,
+                    # invalidate the normal processing judgment.
+                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                    matmul_output_shapes = list(dummy_matmul.shape)
+                    matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
+                    if onnx_output_shape_prod != matmul_output_shape_prod:
+                        del input_1
+                        del input_2
+                        del dummy_matmul
+                        continue
+
+                    # Perform simple accuracy verification
+                    # Terminate when the error is less than 1e-3
                     try:
                         # Search for the axis with the smallest error
                         val_model = tf.keras.Model(
@@ -258,11 +259,49 @@ def make_node(
                                 break
                     except Exception as ex1:
                         pass
-            except Exception as ex2:
-                pass
-        else:
-            continue
-        break
+                except Exception as ex2:
+                    pass
+            else:
+                continue
+            break
+    else:
+        # Workaround when data for validation cannot be obtained.
+        # Verify only the certainty of the output shape, not the degradation of accuracy.
+        # However, verify only if there are no undefined dimensions.
+        if None not in input_tensor_1.shape \
+            and len(input_tensor_1.shape) >= 2 \
+            and None not in input_tensor_2.shape \
+            and len(input_tensor_2.shape) >= 2 \
+            and graph_node.outputs[0].shape is not None \
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node.outputs[0].shape]) == 0:
+
+            input_tensor_1_shape_last_two = input_tensor_1.shape[-2:]
+            input_tensor_2_shape_last_two = input_tensor_2.shape[-2:]
+            tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1_shape_last_two))))
+            tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2_shape_last_two))))
+
+            min_abs_err_perm_1 = [i for i in range(len(input_tensor_1.shape))]
+            min_abs_err_perm_2 = [i for i in range(len(input_tensor_2.shape))]
+            test_output_shape = graph_node.outputs[0].shape[-2:]
+
+            for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+                for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                    try:
+                        test_tensor_1 = np.ones(input_tensor_1_shape_last_two).transpose(tensor_1_candidate_for_transposition)
+                        test_tensor_2 = np.ones(input_tensor_2_shape_last_two).transpose(tensor_2_candidate_for_transposition)
+                        test_result_tensor = np.dot(test_tensor_1, test_tensor_2)
+                        test_result_tensor_shape = list(test_result_tensor.shape)
+                        if test_result_tensor_shape == test_output_shape:
+                            addition_axis_1 = len(input_tensor_1.shape) - 2
+                            addition_axis_2 = len(input_tensor_2.shape) - 2
+                            min_abs_err_perm_1 = [i for i in range(addition_axis_1)] + [i + addition_axis_1 for i in tensor_1_candidate_for_transposition]
+                            min_abs_err_perm_2 = [i for i in range(addition_axis_2)] + [i + addition_axis_2 for i in tensor_2_candidate_for_transposition]
+                            break
+                    except Exception as ex1:
+                        pass
+                else:
+                    continue
+                break
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         define_matmul(
