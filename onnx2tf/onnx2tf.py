@@ -1044,30 +1044,51 @@ def convert(
                 info(Color.REVERSE(f'h5 output started'), '=' * 67)
                 # Structure (JSON)
                 try:
+                    info(Color.GREEN(f'json output start...'))
                     open(f'{output_folder_path}/{output_file_name}_float32.json', 'w').write(model.to_json())
-                except:
-                    pass
+                    info(Color.GREEN(f'json output finish'))
+                except Exception as e:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
                 # Weights (h5)
                 try:
+                    info(Color.GREEN(f'weights.h5 output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.h5', save_format='h5')
-                except:
-                    pass
+                    info(Color.GREEN(f'weights.h5 output finish'))
+                except Exception as e:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
                 # Weights (keras)
                 try:
+                    info(Color.GREEN(f'weights.keras output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.keras', save_format='keras')
-                except:
-                    pass
+                    info(Color.GREEN(f'weights.keras output finish'))
+                except Exception as e:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
                 # Weights (TF)
                 try:
+                    info(Color.GREEN(f'weights.tf output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.tf', save_format='tf')
-                except:
-                    pass
+                    info(Color.GREEN(f'weights.tf output finish'))
+                except Exception as e:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
                 # Monolithic (keras)
                 try:
+                    info(Color.GREEN(f'keras output start...'))
                     model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format='keras')
-                except:
-                    pass
+                    info(Color.GREEN(f'keras output finish'))
+                except Exception as e:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
                 # Monolithic (h5)
+                info(Color.GREEN(f'h5 output start...'))
                 model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
                 info(Color.GREEN(f'h5 output complete!'))
             except ValueError as e:
