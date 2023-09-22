@@ -290,9 +290,9 @@ def make_node(
             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                     try:
-                        test_tensor_1 = np.ones(input_tensor_1_shape_last_two).transpose(tensor_1_candidate_for_transposition)
-                        test_tensor_2 = np.ones(input_tensor_2_shape_last_two).transpose(tensor_2_candidate_for_transposition)
-                        test_result_tensor = np.dot(test_tensor_1, test_tensor_2)
+                        test_tensor_1 = np.ones(input_tensor_1_shape_last_two, dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
+                        test_tensor_2 = np.ones(input_tensor_2_shape_last_two, dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
+                        test_result_tensor = np.matmul(test_tensor_1, test_tensor_2)
                         test_result_tensor_shape = list(test_result_tensor.shape)
                         if test_result_tensor_shape == test_output_shape:
                             addition_axis_1 = len(input_tensor_1.shape) - 2
