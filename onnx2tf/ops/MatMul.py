@@ -95,14 +95,19 @@ def make_node(
 
     # Obtain ONNX inference results and
     # TensorFlow inference results up to the previous layer of TensorFlow
-    onnx_tensor_infos, validation_data_1, validation_data_2 = \
-        acquisition_of_validation_data(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-            graph_node_output=graph_node_output,
-            tf_layers_dict=tf_layers_dict,
-            **kwargs,
-        )
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos = None
+    validation_data_1 = None
+    validation_data_2 = None
+    if onnx_tensor_infos_for_validation is not None:
+        onnx_tensor_infos, validation_data_1, validation_data_2 = \
+            acquisition_of_validation_data(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+                graph_node_output=graph_node_output,
+                tf_layers_dict=tf_layers_dict,
+                **kwargs,
+            )
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
@@ -266,7 +271,19 @@ def make_node(
             else:
                 continue
             break
-    else:
+
+    try:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            define_matmul(
+                target_input_tensor_1=input_tensor_1,
+                target_perm_1=min_abs_err_perm_1,
+                target_input_tensor_2=input_tensor_2,
+                target_perm_2=min_abs_err_perm_2,
+                taget_output_dtype=output_dtype,
+                target_name=graph_node.name,
+                **kwargs
+            )
+    except:
         # Workaround when data for validation cannot be obtained.
         # Verify only the certainty of the output shape, not the degradation of accuracy.
         # However, verify only if there are no undefined dimensions.
@@ -305,17 +322,18 @@ def make_node(
                 else:
                     continue
                 break
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        define_matmul(
-            target_input_tensor_1=input_tensor_1,
-            target_perm_1=min_abs_err_perm_1,
-            target_input_tensor_2=input_tensor_2,
-            target_perm_2=min_abs_err_perm_2,
-            taget_output_dtype=output_dtype,
-            target_name=graph_node.name,
-            **kwargs
-        )
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                define_matmul(
+                    target_input_tensor_1=input_tensor_1,
+                    target_perm_1=min_abs_err_perm_1,
+                    target_input_tensor_2=input_tensor_2,
+                    target_perm_2=min_abs_err_perm_2,
+                    taget_output_dtype=output_dtype,
+                    target_name=graph_node.name,
+                    **kwargs
+                )
+        else:
+            raise
 
     # Response to the case where the first tensor is 1-dimensional
     # Response to the case where the second tensor is 1-dimensional
