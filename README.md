@@ -366,6 +366,7 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.28/double_gru.
 $ onnx2tf -i double_gru.onnx -kat states_in
 
 # Keras h5 format
+# .h5, .json, .keras, .weights.h5, .weights.keras, .data-00000-of-00001, .index
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
 
