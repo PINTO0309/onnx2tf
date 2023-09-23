@@ -15,7 +15,7 @@ import subprocess
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-from tensorflow.keras.layers import Lambda # type: ignore
+from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
 import onnx
 import onnx_graphsurgeon as gs
