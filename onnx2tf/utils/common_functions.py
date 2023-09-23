@@ -5634,15 +5634,15 @@ def obtaining_an_inverted_pattern_for_brute_force_validation(
 
 
 def correction_process_for_accuracy_errors(
-        *,
-        input_tensor_1: Any,
-        input_tensor_2: Any,
-        tf_func: Any,
-        np_func: Any,
-        graph_node_output_shape: List,
-        graph_node_output: gs.Variable,
-        tf_layers_dict: Dict,
-        **kwargs,
+    *,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+    tf_func: Any,
+    np_func: Any,
+    graph_node_output_shape: List,
+    graph_node_output: gs.Variable,
+    tf_layers_dict: Dict,
+    **kwargs,
 ) -> Tuple[Any, Any]:
     """Correction process for accuracy errors.
 
@@ -5674,6 +5674,14 @@ def correction_process_for_accuracy_errors(
     input_tensor_2: Any
         TensorFlow tensor after accuracy check and accuracy correction
     """
+    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos = None
+    validation_data_1 = None
+    validation_data_2 = None
+    if onnx_tensor_infos_for_validation is None:
+        return input_tensor_1, input_tensor_2
+    else:
+        del onnx_tensor_infos_for_validation
     if graph_node_output_shape is not None:
         onnx_output_shape = [dim if not isinstance(dim, str) else -1 for dim in graph_node_output_shape]
         onnx_output_same_shape_counts = collections.Counter(onnx_output_shape)
