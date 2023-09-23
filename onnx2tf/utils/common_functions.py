@@ -5634,15 +5634,15 @@ def obtaining_an_inverted_pattern_for_brute_force_validation(
 
 
 def correction_process_for_accuracy_errors(
-        *,
-        input_tensor_1: Any,
-        input_tensor_2: Any,
-        tf_func: Any,
-        np_func: Any,
-        graph_node_output_shape: List,
-        graph_node_output: gs.Variable,
-        tf_layers_dict: Dict,
-        **kwargs,
+    *,
+    input_tensor_1: Any,
+    input_tensor_2: Any,
+    tf_func: Any,
+    np_func: Any,
+    graph_node_output_shape: List,
+    graph_node_output: gs.Variable,
+    tf_layers_dict: Dict,
+    **kwargs,
 ) -> Tuple[Any, Any]:
     """Correction process for accuracy errors.
 
