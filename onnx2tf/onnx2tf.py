@@ -1225,7 +1225,7 @@ def convert(
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
         ]
-        converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+        converter.unfold_batchmatmul = enable_batchmatmul_unfold
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/{output_file_name}_float32.tflite', 'wb') as w:
             w.write(tflite_model)
@@ -1315,7 +1315,7 @@ def convert(
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
@@ -1418,7 +1418,7 @@ def convert(
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
@@ -1444,7 +1444,7 @@ def convert(
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 inf_type = None
                 if input_output_quant_dtype == 'int8':
@@ -1487,7 +1487,7 @@ def convert(
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
@@ -1518,7 +1518,7 @@ def convert(
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 converter.inference_input_type = tf.int16
                 converter.inference_output_type = tf.int16
