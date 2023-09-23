@@ -3,7 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-from tensorflow.keras.layers import Lambda # type: ignore
+from tensorflow.python.keras.layers import Lambda
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
