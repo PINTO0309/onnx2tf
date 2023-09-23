@@ -117,55 +117,57 @@ def make_node(
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
-
-    # Get the output tensor of one previous OP of TensorFlow only once
-    if not disable_strict_mode:
-        tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
-        val_model = None
-        if not isinstance(input_tensor, np.ndarray):
-            val_model = tf.keras.Model(
-                inputs=tf_model_inputs,
-                outputs=[
-                    input_tensor,
-                ],
-            )
-        else:
-            pass
-
-    # TF dummy inference
-    #   Get the output tensor of the previous layer of MatMul
-    #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
-    #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
-    tf_pre_tensor_infos = {}
-    if not disable_strict_mode:
-        try:
-            tf_pre_tensor_infos: Dict[Any] = \
-                dummy_tf_inference(
-                    model=val_model,
-                    inputs=tf_model_inputs,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                )
-        except:
-            pass
-
-    # Get np.ndarray for validation
+    onnx_tensor_infos = None
     validation_data = None
-    if not disable_strict_mode:
-        if len(tf_pre_tensor_infos) == 1:
-            if not isinstance(input_tensor, np.ndarray):
-                validation_data = list(tf_pre_tensor_infos.values())[0]
-            else:
-                validation_data = copy.deepcopy(input_tensor)
 
-        # Get ONNX inference results
-        onnx_tensor_infos = None
-        if onnx_tensor_infos_for_validation is not None:
-            onnx_tensor_infos = {
-                graph_node_output.name:
-                onnx_tensor_infos_for_validation[graph_node_output.name]
-            }
-            del onnx_tensor_infos_for_validation
+    if onnx_tensor_infos_for_validation is not None:
+        # Get the output tensor of one previous OP of TensorFlow only once
+        if not disable_strict_mode:
+            tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
+            val_model = None
+            if not isinstance(input_tensor, np.ndarray):
+                val_model = tf.keras.Model(
+                    inputs=tf_model_inputs,
+                    outputs=[
+                        input_tensor,
+                    ],
+                )
+            else:
+                pass
+
+        # TF dummy inference
+        #   Get the output tensor of the previous layer of MatMul
+        #   If input.1 and input.2 are both layers, tf_pre_tensor_infos is 2 cases
+        #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
+        tf_pre_tensor_infos = {}
+        if not disable_strict_mode:
+            try:
+                tf_pre_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=val_model,
+                        inputs=tf_model_inputs,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    )
+            except:
+                pass
+
+        # Get np.ndarray for validation
+        if not disable_strict_mode:
+            if len(tf_pre_tensor_infos) == 1:
+                if not isinstance(input_tensor, np.ndarray):
+                    validation_data = list(tf_pre_tensor_infos.values())[0]
+                else:
+                    validation_data = copy.deepcopy(input_tensor)
+
+            # Get ONNX inference results
+            onnx_tensor_infos = None
+            if onnx_tensor_infos_for_validation is not None:
+                onnx_tensor_infos = {
+                    graph_node_output.name:
+                    onnx_tensor_infos_for_validation[graph_node_output.name]
+                }
+                del onnx_tensor_infos_for_validation
 
     # Param replacement
     input_tensor = replace_parameter(
