@@ -488,7 +488,7 @@ def make_node(
     # initial_h [num_directions, batch_size, hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     initial_h = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
-        if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
+        if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.name != '' else graph_node_input_6
     if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.is_empty():
         initial_h = None
 
@@ -702,14 +702,14 @@ def make_node(
     forward_initial_state = None
     backward_initial_state = None
     if direction == 'forward':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])]
+        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
 
     elif direction == 'reverse':
-        backward_initial_state = [tf.convert_to_tensor(initial_h[0])]
+        backward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
 
     elif direction == 'bidirectional':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])]
-        backward_initial_state = [tf.convert_to_tensor(initial_h[1])]
+        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
+        backward_initial_state = [tf.convert_to_tensor(initial_h[1])] if initial_h is not None else None
 
     # LSTM layer
     if direction == 'forward':
