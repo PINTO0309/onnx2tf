@@ -498,13 +498,13 @@ def make_node(
     # initial_h [num_directions, batch_size, hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     initial_h = tf_layers_dict[graph_node_input_6.name]['tf_node'] \
-        if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.name != '' else graph_node_input_6
+        if isinstance(graph_node_input_6, gs.Variable) else graph_node_input_6
     if isinstance(graph_node_input_6, gs.Variable) and graph_node_input_6.is_empty():
         initial_h = None
     # initial_c [num_directions, batch_size, hidden_size]
     # num_directions: bidirectional=2, forward or reverse=1
     initial_c = tf_layers_dict[graph_node_input_7.name]['tf_node'] \
-        if isinstance(graph_node_input_7, gs.Variable) and graph_node_input_7.name != '' else graph_node_input_7
+        if isinstance(graph_node_input_7, gs.Variable) else graph_node_input_7
     if isinstance(graph_node_input_7, gs.Variable) and graph_node_input_7.is_empty():
         initial_c = None
     # P [num_directions, 3*hidden_size]
@@ -769,30 +769,21 @@ def make_node(
     forward_initial_state = None
     backward_initial_state = None
     if direction == 'forward':
-        if initial_h is not None:
-            forward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
-        else:
-            forward_initial_state = []
+        forward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
         if initial_c is not None:
             forward_initial_state = forward_initial_state + [tf.convert_to_tensor(initial_c[0])]
         elif initial_h is not None and initial_c is None:
             forward_initial_state = forward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[0]))]
 
     elif direction == 'reverse':
-        if initial_h is not None:
-            backward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
-        else:
-            backward_initial_state = []
+        backward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
         if initial_c is not None:
             backward_initial_state = backward_initial_state + [tf.convert_to_tensor(initial_c[0])]
         elif initial_h is not None and initial_c is None:
             backward_initial_state = backward_initial_state + [tf.zeros_like(tf.convert_to_tensor(initial_h[0]))]
 
     elif direction == 'bidirectional':
-        if initial_h is not None:
-            forward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
-        else:
-            forward_initial_state = []
+        forward_initial_state = [] + [tf.convert_to_tensor(initial_h[0])]
         if initial_c is not None:
             forward_initial_state = forward_initial_state + [tf.convert_to_tensor(initial_c[0])]
         elif initial_h is not None and initial_c is None:
