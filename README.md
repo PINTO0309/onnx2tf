@@ -238,6 +238,9 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Sample Usage
 ### 1. Install
+
+**Note: If you are using TensorFlow v2.13.0 or earlier, use a version older than onnx2tf v1.17.5. onnx2tf v1.17.6 or later will not work properly due to changes in TensorFlow's API.**
+
 - HostPC
   - When using GHCR, see `Authenticating to the Container registry`
 
