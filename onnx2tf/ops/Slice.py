@@ -410,9 +410,13 @@ def make_node(
                 name=graph_node.name,
             )
 
-        check_input_shape = list(input_tensor_shape)
-        check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
-        if None not in check_input_shape \
+        check_input_shape = list(input_tensor_shape) \
+            if input_tensor_shape != tf.TensorShape(None) else None
+        check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape) \
+            if tf_layers_dict[graph_node_output.name]['tf_node'].shape != tf.TensorShape(None) else None
+        if check_input_shape is not None \
+            and check_output_shape is not None \
+            and None not in check_input_shape \
             and None not in check_output_shape \
             and check_input_shape == check_output_shape:
             # Disable useless slice

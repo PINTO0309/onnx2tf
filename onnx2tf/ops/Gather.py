@@ -300,6 +300,9 @@ def make_node(
             and input_tensor.shape[axis] is not None:
             maximum_number_of_elements = input_tensor.shape[axis]
             indices_values = indices_values + maximum_number_of_elements
+        elif tf.keras.backend.is_keras_tensor(indices_values) \
+            and indices_values.shape == tf.TensorShape(None):
+            indices_values = tf.reshape(indices_values, [-1])
 
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.gather(
