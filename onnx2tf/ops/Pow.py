@@ -148,8 +148,6 @@ def make_node(
         if isinstance(output_dtype, np.dtype) else output_dtype
     if to_dtype is None:
         to_dtype = input_tensor_1.dtype
-    if to_dtype == tf.float16:
-        to_dtype = input_tensor_1.dtype
     if powed_tensor.dtype != to_dtype:
         powed_tensor = tf.cast(
             powed_tensor,
