@@ -937,7 +937,7 @@ I verified this with a very simple sample model. There are more than 8 million e
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/61d1fd6e-1703-4c0b-8112-e66e3001fc13)
 
 ### 14. Inference with dynamic tensors in TFLite
-For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441)
+For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441), or [Cannot use converted model with dynamic input shape #521](https://github.com/PINTO0309/onnx2tf/issues/521)
 
 
 First, download the sample ONNX file.
