@@ -4,6 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx_graphsurgeon as gs
+from typing import List
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
@@ -52,11 +53,16 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    nhwc = tf_layers_dict[graph_node_input.name]['nhwc'] \
+        if isinstance(graph_node_input, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': nhwc,
     }
 
     # Pre-process transpose
@@ -115,6 +121,91 @@ def make_node(
                 out_type=out_dtype,
                 name=graph_node.name,
             )
+
+    # Simple Resize
+    simple_resize = False
+    if nhwc:
+        consumer_count = 0
+        consumer_nodes: List[gs.Node] = []
+        while True:
+            try:
+                consumer_node = graph_node.o(consumer_count, 0)
+                consumer_nodes.append(consumer_node)
+                consumer_count += 1
+            except:
+                break
+        gather_count = 0
+        gather_nodes: List[gs.Node] = []
+        if consumer_count == 2:
+            for consumer_node in consumer_nodes:
+                if consumer_node.op == 'Gather':
+                    gather_nodes.append(consumer_node)
+                    gather_count += 1
+        if gather_count == 2:
+            consumer_count_total = 0
+            consumer_nodes: List[gs.Node] = []
+            for gather_node in gather_nodes:
+                consumer_count = 0
+                while True:
+                    try:
+                        consumer_node = gather_node.o(consumer_count, 0)
+                        consumer_nodes.append(consumer_node)
+                        consumer_count += 1
+                    except:
+                        break
+                consumer_count_total += consumer_count
+            unsqueeze_count = 0
+            unsqueeze_nodes: List[gs.Node] = []
+            if consumer_count_total == 2:
+                for consumer_node in consumer_nodes:
+                    if consumer_node.op == 'Unsqueeze':
+                        unsqueeze_nodes.append(consumer_node)
+                        unsqueeze_count += 1
+                if unsqueeze_count == 2:
+                    consumer_count_total = 0
+                    consumer_nodes: List[gs.Node] = []
+                    for unsqueeze_node in unsqueeze_nodes:
+                        consumer_count = 0
+                        while True:
+                            try:
+                                consumer_node = unsqueeze_node.o(consumer_count, 0)
+                                consumer_nodes.append(consumer_node)
+                                consumer_count += 1
+                            except:
+                                break
+                        consumer_count_total += consumer_count
+                    if consumer_count_total == 2:
+                        target_concat_node: gs.Node = None
+                        simple_resize_concat: bool = True
+                        for consumer_node in consumer_nodes:
+                            if target_concat_node is None \
+                                and consumer_node.op == 'Concat':
+                                target_concat_node = consumer_node
+                                simple_resize_concat = simple_resize_concat and True
+                            elif target_concat_node is not None \
+                                and consumer_node.op == 'Concat' \
+                                and consumer_node.name == target_concat_node.name:
+                                simple_resize_concat = simple_resize_concat and True
+                            else:
+                                simple_resize_concat = simple_resize_concat and False
+                        if simple_resize_concat:
+                            consumer_count = 0
+                            consumer_nodes: List[gs.Node] = []
+                            while True:
+                                try:
+                                    consumer_node: gs.Node = target_concat_node.o(consumer_count, 0)
+                                    if consumer_node.op == 'Resize':
+                                        consumer_nodes.append(consumer_node)
+                                        consumer_count += 1
+                                except:
+                                    break
+                            if consumer_count == 1:
+                                simple_resize = True
+
+    if simple_resize:
+        tf_layers_dict[graph_node_output.name]['simple_resize'] = True
+        tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_output.name]['tf_node']
+
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

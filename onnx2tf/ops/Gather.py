@@ -181,7 +181,7 @@ def make_node(
     consumer_nodes: List[gs.Node] = []
     while True:
         try:
-            consumer_node =  graph_node.o(consumer_count, 0)
+            consumer_node = graph_node.o(consumer_count, 0)
             consumer_nodes.append(consumer_node)
             consumer_count += 1
         except:
@@ -219,7 +219,16 @@ def make_node(
             simple_gather = False
 
     # Generation of TF OP
-    if unsqueeze_count == consumer_count \
+    tf_type = None
+    if isinstance(graph_node_input_1, gs.Variable) \
+        and 'simple_resize' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['simple_resize'] == True:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_layers_dict[graph_node_output.name]['simple_resize'] = True
+        tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input_1.name]['simple_resize_shape_op']
+        tf_type = tf.identity
+    elif unsqueeze_count == consumer_count \
         and before_cast_indices is not None:
         # Replace
         ind = before_cast_indices
@@ -249,6 +258,7 @@ def make_node(
                 end_mask=end_mask_,
             )
         tf_layers_dict[graph_node_output.name]['unnecessary_gather'] = True
+        tf_type = tf.strided_slice
     elif \
         (
             isinstance(simple_indices, np.ndarray) \
@@ -286,6 +296,7 @@ def make_node(
                 axis=axis,
                 name=graph_node.name,
             )
+        tf_type = tf.gather
     else:
         # No-replace
         indices_values = indices._inferred_value \
@@ -320,6 +331,7 @@ def make_node(
                 axis=axis,
                 name=graph_node.name,
             )
+        tf_type = tf.gather
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -333,7 +345,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.gather,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'params': input_tensor,
                     'indices': indices,

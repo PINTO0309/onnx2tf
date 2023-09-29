@@ -251,8 +251,10 @@ def make_node(
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes):
+        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
+        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
+            new_size = tf.cast(sizes, tf.int32)
     elif scales is not None:
         # only scales is defined
         if hasattr(graph_node_output, 'shape') \

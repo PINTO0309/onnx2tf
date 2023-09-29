@@ -165,7 +165,15 @@ def make_node(
     test pattern.9 : axes=[3,-1], [2,3,4,1,5,6,1,7]
     """
     tf_type = None
-    if \
+    if isinstance(graph_node_input_1, gs.Variable) \
+        and 'simple_resize' in tf_layers_dict[graph_node_input_1.name] \
+        and tf_layers_dict[graph_node_input_1.name]['simple_resize'] == True:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_layers_dict[graph_node_output.name]['simple_resize'] = True
+        tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input_1.name]['simple_resize_shape_op']
+        tf_type = tf.identity
+    elif \
         (
             isinstance(graph_node_input_1, gs.Variable) \
             and 'unnecessary_squeeze' in tf_layers_dict[graph_node_input_1.name] \
