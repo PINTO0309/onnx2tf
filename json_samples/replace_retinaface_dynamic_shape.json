@@ -1,4 +1,6 @@
 {
+  "model": "https://github.com/PINTO0309/onnx2tf/files/12758261/retinaface_onnx_dynamic.onnx.zip",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/521",
   "format_version": 1,
   "operations": [
     {
