@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/fpn/Gather",
+      "param_target": "inputs",
+      "param_name": "/fpn/Constant_output_0",
+      "values": 1
+    },
+    {
+      "op_name": "/fpn/Gather_1",
+      "param_target": "inputs",
+      "param_name": "/fpn/Constant_1_output_0",
+      "values": 2
+    },
+    {
+      "op_name": "/fpn/Gather_2",
+      "param_target": "inputs",
+      "param_name": "/fpn/Constant_output_0",
+      "values": 1
+    },
+    {
+      "op_name": "/fpn/Gather_3",
+      "param_target": "inputs",
+      "param_name": "/fpn/Constant_1_output_0",
+      "values": 2
+    }
+  ]
+}
