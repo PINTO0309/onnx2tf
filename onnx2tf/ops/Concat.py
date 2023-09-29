@@ -497,6 +497,7 @@ def make_node(
         value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
         param_target='outputs',
         param_name=graph_node.outputs[0].name,
+        graph_node=graph_node,
         **kwargs,
     )
 

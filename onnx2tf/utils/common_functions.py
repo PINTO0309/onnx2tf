@@ -150,6 +150,7 @@ def post_process_transpose(
     value_before_transpose: Any,
     param_target: str,
     param_name: str,
+    graph_node: gs.Node = None,
     **kwargs: Dict,
 ):
     """Add Transpose as a post-processing step for Reshape OP.
@@ -172,11 +173,31 @@ def post_process_transpose(
             and op_rep_param['param_name'] == param_name:
             transpose_perm = op_rep_param.get('post_process_transpose_perm', None)
             if transpose_perm is not None:
-                transposed_value = transpose_with_flexing_deterrence(
-                    input_tensor=value_before_transpose,
-                    perm=transpose_perm,
-                    **kwargs,
-                )
+                if graph_node is not None \
+                    and graph_node.op != "Concat":
+                    transposed_value = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=value_before_transpose,
+                            perm=transpose_perm,
+                            **kwargs,
+                        )
+                else:
+                    if value_before_transpose.shape is not None \
+                        and len(value_before_transpose.shape) == 1 \
+                        and value_before_transpose.shape[0] is not None:
+                        # Gather
+                        transposed_value = tf.gather(
+                            params=value_before_transpose,
+                            indices=tf.convert_to_tensor(transpose_perm)
+                        )
+                    else:
+                        # Normal
+                        transposed_value = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=value_before_transpose,
+                                perm=transpose_perm,
+                                **kwargs,
+                            )
             break
     return transposed_value
 

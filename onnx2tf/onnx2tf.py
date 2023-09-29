@@ -564,6 +564,7 @@ def convert(
                     operations['op_name'] = operations['op_name'].replace(':','_')
                     if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
+                        operations['param_name'] = re.sub('^/', 'wa/', operations['param_name'])
         except json.decoder.JSONDecodeError as ex:
             error(
                 f'The file specified in param_replacement_file is not in JSON format. \n' +
@@ -694,6 +695,12 @@ def convert(
                         o._name = o._name.replace(':','__')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node.name = re.sub('^/', 'wa/', node.name)
+                if hasattr(node, 'inputs'):
+                    for i in node.inputs:
+                        if hasattr(i, 'name'):
+                            i.name = re.sub('^/', 'wa/', i.name)
+                        elif hasattr(i, '_name'):
+                            i._name = re.sub('^/', 'wa/', i._name)
                 if hasattr(node, 'outputs'):
                     for o in node.outputs:
                         if hasattr(o, 'name'):
@@ -710,6 +717,12 @@ def convert(
                         o._name = o._name.replace(':','__')
             if output_signaturedefs or output_integer_quantized_tflite:
                 node._name = re.sub('^/', 'wa/', node._name)
+                if hasattr(node, 'inputs'):
+                    for i in node.inputs:
+                        if hasattr(i, 'name'):
+                            i.name = re.sub('^/', 'wa/', i.name)
+                        elif hasattr(i, '_name'):
+                            i._name = re.sub('^/', 'wa/', i._name)
                 if hasattr(node, 'outputs'):
                     for o in node.outputs:
                         if hasattr(o, 'name'):

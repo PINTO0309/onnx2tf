@@ -14,6 +14,14 @@
       "values": 2
     },
     {
+      "op_name": "/fpn/Concat_1",
+      "param_target": "outputs",
+      "param_name": "/fpn/Concat_1_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
+    },
+
+
+    {
       "op_name": "/fpn/Gather_2",
       "param_target": "inputs",
       "param_name": "/fpn/Constant_output_0",
@@ -24,6 +32,12 @@
       "param_target": "inputs",
       "param_name": "/fpn/Constant_1_output_0",
       "values": 2
+    },
+    {
+      "op_name": "/fpn/Concat_3",
+      "param_target": "outputs",
+      "param_name": "/fpn/Concat_3_output_0",
+      "post_process_transpose_perm": [0,2,3,1]
     }
   ]
 }
