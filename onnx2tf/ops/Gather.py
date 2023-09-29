@@ -158,7 +158,7 @@ def make_node(
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
-    if simple_indices:
+    if simple_indices is not None:
         simple_indices = replace_parameter(
             value_before_replacement=simple_indices,
             param_target='inputs',
