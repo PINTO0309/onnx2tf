@@ -31,19 +31,19 @@ class Col2ImLayer(tf.keras.layers.Layer):
     ):
         N, _, L = input_tensor.shape
         if output_shape is not None:
-            C = output_shape[1]
-            output_shape = [output_shape[0]] + [s for s in output_shape[2:]] + [output_shape[1]]
+            C = tf.convert_to_tensor(output_shape[1])
+            output_shape = tf.convert_to_tensor([output_shape[0]] + [s for s in output_shape[2:]] + [output_shape[1]])
         else:
-            C = input_tensor.shape[1] // (input_block_shape[0] * input_block_shape[1])
-            output_shape = [N] + input_image_shape + [C]
+            C = tf.convert_to_tensor(input_tensor.shape[1] // (input_block_shape[0] * input_block_shape[1]))
+            output_shape = tf.convert_to_tensor([N] + input_image_shape + [C])
         im = tf.TensorArray(input_tensor.dtype, size=N, dynamic_size=True)
 
         def loop_over_l(n, im_n, l):
-            row_idx = (l // ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[0]
-            col_idx = (l % ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[1]
+            row_idx = tf.convert_to_tensor((l // ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[0])
+            col_idx = tf.convert_to_tensor((l % ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[1])
 
             def loop_over_c(c, im_n):
-                patch_idx = c * input_block_shape[0] * input_block_shape[1]
+                patch_idx = tf.convert_to_tensor(c * input_block_shape[0] * input_block_shape[1])
                 patch = tf.reshape(input_tensor[n, patch_idx:patch_idx + input_block_shape[0] * input_block_shape[1], l], input_block_shape)
                 if dilations[0] > 1 or dilations[1] > 1:
                     dilated_patch = tf.zeros([(input_block_shape[0] - 1) * dilations[0] + 1, (input_block_shape[1] - 1) * dilations[1] + 1], dtype=patch.dtype)
