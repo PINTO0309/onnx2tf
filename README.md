@@ -223,7 +223,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.14.0rc1, Note: [#515](https://github.com/PINTO0309/onnx2tf/issues/515), Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
+- tensorflow==2.14.0, Note: [#515](https://github.com/PINTO0309/onnx2tf/issues/515), Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
 - psutil==5.9.5
 - ml_dtypes==0.2.0
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
