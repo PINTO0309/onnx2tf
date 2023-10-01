@@ -1,4 +1,5 @@
 import sys
+import copy
 import random
 random.seed(0)
 import numpy as np
@@ -21,6 +22,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
     acquisition_of_validation_data,
+    get_tf_model_inputs,
 )
 from typing import Any, Dict, List
 
@@ -336,6 +338,35 @@ def make_node(
         # Workaround for post-concat accuracy degradation issues
         # Process only in the case of a Concat of two tensors because the process is too redundant.
         # Input1: [1, 64, 64], Input2: [1, 256, 64], Output: [1, 320, 64]
+        def define_concat(
+            *,
+            target_input_tensors: List[Any],
+            target_perms: List[List],
+            target_name: str,
+            axis: int,
+            **kwargs: Dict,
+        ):
+            cat_tensors = [
+                transpose_with_flexing_deterrence(
+                    input_tensor=target_input_tensor \
+                        if not isinstance(target_input_tensor, np.ndarray) \
+                            else tf.convert_to_tensor(target_input_tensor),
+                    perm=target_perm,
+                    **kwargs,
+                ) for target_input_tensor, target_perm in zip(target_input_tensors, target_perms)
+            ]
+            return \
+                tf.concat(
+                    values=cat_tensors,
+                    axis=axis,
+                    name=target_name,
+                )
+
+        onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+        test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
+        custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
+        disable_strict_mode: bool = kwargs['disable_strict_mode']
+
         if len(values) == 2 \
             and len(values[0].shape) == len(values[1].shape) \
             and len(values[0].shape) >= 3 \
@@ -360,38 +391,6 @@ def make_node(
             min_abs_err_perm_1: int = [idx for idx in range(len(input_tensor_1.shape))]
             min_abs_err_perm_2: int = [idx for idx in range(len(input_tensor_2.shape))]
 
-            def define_concat(
-                *,
-                target_input_tensor_1: Any,
-                target_perm_1: List,
-                target_input_tensor_2: Any,
-                target_perm_2: List,
-                target_name: str,
-                axis: int,
-                **kwargs: Dict,
-            ):
-                return \
-                    tf.concat(
-                        [
-                            transpose_with_flexing_deterrence(
-                                input_tensor=target_input_tensor_1 \
-                                    if not isinstance(target_input_tensor_1, np.ndarray) \
-                                        else tf.convert_to_tensor(target_input_tensor_1),
-                                perm=target_perm_1,
-                                **kwargs,
-                            ),
-                            transpose_with_flexing_deterrence(
-                                input_tensor=target_input_tensor_2 \
-                                    if not isinstance(target_input_tensor_2, np.ndarray) \
-                                        else tf.convert_to_tensor(target_input_tensor_2),
-                                perm=target_perm_2,
-                                **kwargs,
-                            ),
-                        ],
-                        axis=axis,
-                        name=target_name,
-                    )
-
             tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
             tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
 
@@ -413,15 +412,15 @@ def make_node(
                             name='dummy_input_2',
                             dtype=validation_data_2.dtype,
                         )
-                        dummy_concat = define_concat(
-                            target_input_tensor_1=input_1,
-                            target_perm_1=list(tensor_1_candidate_for_transposition),
-                            target_input_tensor_2=input_2,
-                            target_perm_2=list(tensor_2_candidate_for_transposition),
-                            target_name=graph_node.name,
-                            axis=axis,
-                            **kwargs
-                        )
+                        dummy_concat = \
+                            define_concat(
+                                target_input_tensors=[input_1, input_2],
+                                target_perms=[list(tensor_1_candidate_for_transposition), list(tensor_2_candidate_for_transposition)],
+                                target_name=graph_node.name,
+                                axis=axis,
+                                **kwargs
+                            )
+
                         # Verify that the output shape matches that of ONNX
                         # If the combination of each value of a dimension is not correct,
                         # invalidate the normal processing judgment.
@@ -505,14 +504,140 @@ def make_node(
 
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 define_concat(
-                    target_input_tensor_1=input_tensor_1,
-                    target_perm_1=min_abs_err_perm_1,
-                    target_input_tensor_2=input_tensor_2,
-                    target_perm_2=min_abs_err_perm_2,
+                    target_input_tensors=[input_tensor_1, input_tensor_2],
+                    target_perms=[min_abs_err_perm_1, min_abs_err_perm_2],
                     target_name=graph_node.name,
                     axis=axis,
                     **kwargs
                 )
+
+        elif not nhwc_judge \
+            and not disable_strict_mode \
+            and onnx_tensor_infos_for_validation is not None \
+            and graph_node.outputs[0].name in onnx_tensor_infos_for_validation \
+            and hasattr(values[0], 'shape') \
+            and None not in values[0].shape:
+            # Error correction workaround for patterns that cannot be error corrected from input/output tensor geometry alone
+            # latest.opset17.onnx
+            shape_for_validation = values[0].shape
+            target_perm = [i for i in range(len(shape_for_validation))]
+            acc_proc_flag = True
+            for val in values:
+                if hasattr(val, 'shape') and not isinstance(val, np.ndarray):
+                    if list(val.shape) == shape_for_validation:
+                        pass
+                    else:
+                        acc_proc_flag = False
+                        break
+                else:
+                    acc_proc_flag = False
+                    break
+            if acc_proc_flag:
+                # Get the output tensor of one previous OP of TensorFlow only once
+                tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
+                val_model = tf.keras.Model(
+                    inputs=tf_model_inputs,
+                    outputs=values,
+                )
+
+                # TF dummy inference
+                tf_pre_tensor_infos = {}
+                try:
+                    tf_pre_tensor_infos: Dict[Any] = \
+                        dummy_tf_inference(
+                            model=val_model,
+                            inputs=tf_model_inputs,
+                            test_data_nhwc=test_data_nhwc,
+                            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        )
+                except:
+                    pass
+
+                # Get np.ndarray for validation
+                validation_datas = list(tf_pre_tensor_infos.values())
+
+                # Get ONNX inference results
+                onnx_tensor_infos = None
+                if onnx_tensor_infos_for_validation is not None:
+                    onnx_tensor_infos = {
+                        graph_node_output.name:
+                        onnx_tensor_infos_for_validation[graph_node_output.name]
+                    }
+                    del onnx_tensor_infos_for_validation
+
+                min_abs_err = sys.maxsize
+                min_abs_err_axis: int = axis
+
+                if onnx_tensor_infos is not None and validation_datas is not None:
+                    check_axes = reversed([idx for idx in range(len(shape_for_validation))])
+                    # Search for the axis with the smallest error
+                    # Build TF dummy model
+                    inputs = [
+                        tf.keras.Input(
+                            shape=validation_data.shape[1:],
+                            batch_size=validation_data.shape[0] \
+                                if isinstance(validation_data.shape[0], int) else None,
+                            name=f'dummy_input_{idx}',
+                            dtype=validation_data.dtype,
+                        ) for idx, validation_data in enumerate(validation_datas)
+                    ]
+                    for check_axis in check_axes:
+                        val_model = tf.keras.Model(
+                            inputs=inputs,
+                            outputs=[
+                                define_concat(
+                                    target_input_tensors=inputs,
+                                    target_perms=[target_perm for _ in inputs],
+                                    target_name=graph_node.name,
+                                    axis=check_axis,
+                                    **kwargs
+                                )
+                            ],
+                        )
+                        # TF dummy inference
+                        tf_tensor_infos: Dict[Any] = \
+                            dummy_tf_inference(
+                                model=val_model,
+                                inputs=inputs,
+                                verification_datas=validation_datas,
+                            )
+                        del val_model
+
+                        # Validation
+                        onnx_tf_output_pairs = {
+                            (oi[0], ti[0]): (oi[1], ti[1]) \
+                                for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                        }
+                        """
+                        check_results: Dict[str, List[np.ndarray, int, float|int]]
+                            {
+                                onnx_output_name: [
+                                    onnx_tensor,
+                                    matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                                    max_abs_err,
+                                ]
+                            }
+                        """
+                        check_results = onnx_tf_tensor_validation(
+                            output_pairs=onnx_tf_output_pairs,
+                            rtol=0.0,
+                            atol=0.0,
+                        )
+                        result_err = sum([val[2] for val in check_results.values()])
+                        if result_err < min_abs_err:
+                            min_abs_err = result_err
+                            min_abs_err_axis = check_axis
+                            if min_abs_err < 1e-3:
+                                break
+                    del inputs
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        define_concat(
+                            target_input_tensors=values,
+                            target_perms=[target_perm for _ in values],
+                            target_name=graph_node.name,
+                            axis=min_abs_err_axis,
+                            **kwargs
+                        )
         tf_type = tf.concat
 
     # Post-process transpose
