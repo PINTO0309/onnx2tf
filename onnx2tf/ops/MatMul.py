@@ -167,9 +167,34 @@ def make_node(
         tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
         tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
 
+        # Verify that the output shape matches that of ONNX
+        # If the combination of each value of a dimension is not correct,
+        # invalidate the normal processing judgment.
+        if graph_node.outputs[0].name is not None \
+            and graph_node.outputs[0].name != '' \
+            and graph_node.outputs[0].name in onnx_tensor_infos:
+            target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
+            target_onnx_output_shape = target_onnx_output.shape
+        else:
+            target_onnx_output_shape = onnx_output_shape
+
         for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
             for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                 try:
+                    # Calc dummy numpy matmul
+                    # Patterns that raise exceptions are not checked.
+                    # Deliberately raise an exception and do not capture it.
+                    # Workaround to speed up the conversion process.
+                    if None not in input_tensor_1.shape \
+                        and None not in input_tensor_2.shape \
+                        and None not in target_onnx_output_shape \
+                        and sum([1 if isinstance(s, str) else 0 for s in target_onnx_output_shape]) == 0:
+                        dummy_np_1 = np.ones(list(input_tensor_1.shape), dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
+                        dummy_np_2 = np.ones(list(input_tensor_2.shape), dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
+                        dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
+                        if np.prod(dummy_np_result.shape) != np.prod(target_onnx_output_shape):
+                            continue
+
                     # Build TF dummy model
                     input_1 = tf.keras.Input(
                         shape=validation_data_1.shape[1:],
@@ -194,16 +219,6 @@ def make_node(
                         target_name=graph_node.name,
                         **kwargs
                     )
-                    # Verify that the output shape matches that of ONNX
-                    # If the combination of each value of a dimension is not correct,
-                    # invalidate the normal processing judgment.
-                    if graph_node.outputs[0].name is not None \
-                        and graph_node.outputs[0].name != '' \
-                        and graph_node.outputs[0].name in onnx_tensor_infos:
-                        target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
-                        target_onnx_output_shape = target_onnx_output.shape
-                    else:
-                        target_onnx_output_shape = onnx_output_shape
                     onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in target_onnx_output_shape])
                     matmul_output_shapes = list(dummy_matmul.shape)
                     matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
