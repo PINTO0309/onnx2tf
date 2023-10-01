@@ -5700,6 +5700,46 @@ def correction_process_for_accuracy_errors(
     validation_data_1 = None
     validation_data_2 = None
     if onnx_tensor_infos_for_validation is None:
+        if np_func is not None \
+            and None not in input_tensor_1.shape \
+            and None not in input_tensor_2.shape:
+            try:
+                dummy_tensor = np_func(
+                    np.ones(input_tensor_1.shape, dtype=np.float32),
+                    np.ones(input_tensor_2.shape, dtype=np.float32),
+                )
+                if np.prod(list(dummy_tensor.shape)) == np.prod(graph_node_output_shape):
+                    return input_tensor_1, input_tensor_2
+            except:
+                pass
+            # No accuracy correction is performed, but only unmatching of output shapes is avoided.
+            tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
+            tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+            min_abs_err_perm_1 = [i for i in range(len(input_tensor_1.shape))]
+            pre_min_abs_err_perm_1 = min_abs_err_perm_1
+            min_abs_err_perm_2 = [i for i in range(len(input_tensor_2.shape))]
+            pre_min_abs_err_perm_2 = min_abs_err_perm_2
+            test_output_shape = graph_node_output_shape
+            for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
+                for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                    try:
+                        test_tensor_1 = np.ones(input_tensor_1.shape, dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
+                        test_tensor_2 = np.ones(input_tensor_2.shape, dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
+                        test_result_tensor = np_func(test_tensor_1, test_tensor_2)
+                        test_result_tensor_shape = list(test_result_tensor.shape)
+                        if test_result_tensor_shape == test_output_shape:
+                            min_abs_err_perm_1 = tensor_1_candidate_for_transposition
+                            min_abs_err_perm_2 = tensor_2_candidate_for_transposition
+                            break
+                    except Exception as ex1:
+                        pass
+                else:
+                    continue
+                break
+            if pre_min_abs_err_perm_1 != min_abs_err_perm_1:
+                input_tensor_1 = tf.transpose(a=input_tensor_1, perm=min_abs_err_perm_1)
+            if pre_min_abs_err_perm_2 != min_abs_err_perm_2:
+                input_tensor_2 = tf.transpose(a=input_tensor_2, perm=min_abs_err_perm_2)
         return input_tensor_1, input_tensor_2
     else:
         del onnx_tensor_infos_for_validation
