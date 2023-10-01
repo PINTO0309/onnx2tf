@@ -197,7 +197,14 @@ def make_node(
                     # Verify that the output shape matches that of ONNX
                     # If the combination of each value of a dimension is not correct,
                     # invalidate the normal processing judgment.
-                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                    if graph_node.outputs[0].name is not None \
+                        and graph_node.outputs[0].name != '' \
+                        and graph_node.outputs[0].name in onnx_tensor_infos:
+                        target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
+                        target_onnx_output_shape = target_onnx_output.shape
+                    else:
+                        target_onnx_output_shape = onnx_output_shape
+                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in target_onnx_output_shape])
                     matmul_output_shapes = list(dummy_matmul.shape)
                     matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
                     if onnx_output_shape_prod != matmul_output_shape_prod:
