@@ -248,15 +248,16 @@ def make_node(
                     ],
                 )
                 # TF dummy inference
-                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                    model=val_model,
-                    inputs=[
-                        input,
-                    ],
-                    verification_datas=[
-                        validation_data,
-                    ],
-                )
+                tf_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=val_model,
+                        inputs=[
+                            input,
+                        ],
+                        verification_datas=[
+                            validation_data,
+                        ],
+                    )
                 del input
                 del val_model
 
