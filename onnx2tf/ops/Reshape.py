@@ -260,11 +260,11 @@ def make_node(
     # Input: [1, 20, 20, 20], Output: [1, 800, 10]
     # https://github.com/PINTO0309/onnx2tf/issues/478
     # latest.opset17.onnx
+    # mobileformer.onnx
     graph_node_input_1_shape = graph_node_input_1.shape
     if graph_node_input_1_shape is not None \
         and len(graph_node_input_1_shape) >= 3 \
-        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_1_shape]) == 0 \
-        and len(set(graph_node_input_1_shape[1:])) == 1:
+        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_1_shape]) == 0:
 
         # Get the output tensor of one previous OP of TensorFlow only once
         if not disable_strict_mode:
@@ -336,10 +336,6 @@ def make_node(
         if not disable_strict_mode:
             if onnx_tensor_infos is not None and validation_data is not None:
                 tensor_1_candidate_for_transpositions = list(itertools.permutations(range(tensor_rank)))
-                tensor_1_candidate_for_transpositions = [
-                    trans_perm for trans_perm in tensor_1_candidate_for_transpositions \
-                        if trans_perm[0] == 0
-                ]
                 # Search for the axis with the smallest error
                 for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                     try:
