@@ -129,8 +129,8 @@ def make_node(
     # Shape Unmatch Error Mitigation Measures
     # Search for and transpose shapes that do not cause shape unmatch errors
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(len(input_tensor_1.shape))]
-    min_abs_err_perm_2: int = [idx for idx in range(len(input_tensor_2.shape))]
+    min_abs_err_perm_1: List[int] = [idx for idx in range(len(input_tensor_1.shape))]
+    min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2.shape))]
 
     def define_matmul(
         *,

@@ -331,7 +331,7 @@ def make_node(
 
         # Automatic correction of accuracy degradation
         min_abs_err = sys.maxsize
-        min_abs_err_perm_1: int = [idx for idx in range(tensor_rank)]
+        min_abs_err_perm_1: List[int] = [idx for idx in range(tensor_rank)]
 
         if not disable_strict_mode:
             if onnx_tensor_infos is not None and validation_data is not None:
