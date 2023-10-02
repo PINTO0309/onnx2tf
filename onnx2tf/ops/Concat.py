@@ -568,7 +568,7 @@ def make_node(
                 min_abs_err = sys.maxsize
                 min_abs_err_axis: int = axis
 
-                if onnx_tensor_infos is not None and validation_datas is not None:
+                if onnx_tensor_infos is not None and validation_datas is not None and validation_datas != []:
                     check_axes = reversed([idx for idx in range(len(shape_for_validation))])
                     # Search for the axis with the smallest error
                     # Build TF dummy model
