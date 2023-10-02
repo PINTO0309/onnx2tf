@@ -254,46 +254,12 @@ def make_node(
             name=graph_node.name,
         )
 
-    # Special support for ShuffleNet patterns
-    # 5D Reshape -> 5D Transpose -> 4D Reshape
-    # 1,2,72,16,16 -> 1,72,2,16,16 -> 1,144,16,16
-    # At this time, only the channel shuffling pattern of image processing is supported.
-    try:
-        two_previous_op: gs.Node = graph_node.i().i()
-        two_previous_op_type = two_previous_op.op
-        one_previous_op: gs.Node = graph_node.i()
-        one_previous_op_type = one_previous_op.op
-        if two_previous_op_type == 'Reshape' and one_previous_op_type == 'Transpose':
-            two_previous_op_output_shape = two_previous_op.outputs[0].shape
-            one_previous_op_output_shape = one_previous_op.outputs[0].shape
-            two_previous_op_output_rank = len(two_previous_op_output_shape)
-            one_previous_op_output_rank = len(one_previous_op_output_shape)
-            current_op_output_shape = graph_node.outputs[0].shape
-            current_op_output_rank = len(current_op_output_shape)
-            if two_previous_op_output_rank == 5 \
-                and one_previous_op_output_rank == 5 \
-                and current_op_output_rank == 4 \
-                and two_previous_op_output_shape[1] == one_previous_op_output_shape[2] \
-                and two_previous_op_output_shape[2] == one_previous_op_output_shape[1] \
-                and current_op_output_shape[1] == (one_previous_op_output_shape[1] * one_previous_op_output_shape[2]):
-                # ShuffleNet patterns - 4D only
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    transpose_with_flexing_deterrence(
-                        input_tensor=tf_layers_dict[graph_node_output.name]['tf_node'],
-                        perm=[0,2,3,1],
-                        **kwargs,
-                    )
-            else:
-                pass
-    except:
-        pass
-
-
     # Workaround to special patterns with wrong transposition when all axes except batch size have the same value.
     # Examine which combination of axis configurations reduces the error in output values the most,
     # and apply the transposition with the best performance.
     # Input: [1, 20, 20, 20], Output: [1, 800, 10]
     # https://github.com/PINTO0309/onnx2tf/issues/478
+    # latest.opset17.onnx
     graph_node_input_1_shape = graph_node_input_1.shape
     if graph_node_input_1_shape is not None \
         and len(graph_node_input_1_shape) >= 3 \
@@ -306,11 +272,11 @@ def make_node(
                 tf_layers_dict=tf_layers_dict,
             )
             val_model = None
-            if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(transposed_tensor, np.ndarray):
                 val_model = tf.keras.Model(
                     inputs=tf_model_inputs,
                     outputs=[
-                        input_tensor,
+                        transposed_tensor,
                     ],
                 )
             else:
@@ -338,10 +304,10 @@ def make_node(
         validation_data = None
         if not disable_strict_mode:
             if len(tf_pre_tensor_infos) == 1:
-                if not isinstance(input_tensor, np.ndarray):
+                if not isinstance(transposed_tensor, np.ndarray):
                     validation_data = list(tf_pre_tensor_infos.values())[0]
                 else:
-                    validation_data = copy.deepcopy(input_tensor)
+                    validation_data = copy.deepcopy(transposed_tensor)
 
             # Get ONNX inference results
             onnx_tensor_infos = None
@@ -377,14 +343,14 @@ def make_node(
                 # Search for the axis with the smallest error
                 for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                     try:
-                        target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
+                        target_validation_data = validation_data
                         # Build TF dummy model
                         input = tf.keras.Input(
-                            shape=target_validation_data.shape[1:],
-                            batch_size=target_validation_data.shape[0] \
-                                if isinstance(target_validation_data.shape[0], int) else None,
+                            shape=validation_data.shape[1:],
+                            batch_size=validation_data.shape[0] \
+                                if isinstance(validation_data.shape[0], int) else None,
                             name='dummy_input',
-                            dtype=target_validation_data.dtype,
+                            dtype=validation_data.dtype,
                         )
                         val_model = tf.keras.Model(
                             inputs=[
@@ -441,7 +407,7 @@ def make_node(
                         pass
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.reshape(
-                        tensor=tf.transpose(a=input_tensor, perm=min_abs_err_perm_1),
+                        tensor=tf.transpose(a=transposed_tensor, perm=min_abs_err_perm_1),
                         shape=final_shape,
                         name=graph_node.name,
                     )
