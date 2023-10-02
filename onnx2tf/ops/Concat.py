@@ -523,7 +523,7 @@ def make_node(
             target_perm = [i for i in range(len(shape_for_validation))]
             acc_proc_flag = True
             for val in values:
-                if hasattr(val, 'shape') and not isinstance(val, np.ndarray):
+                if hasattr(val, 'shape') and not isinstance(val, np.ndarray) and not hasattr(val, 'numpy'):
                     if list(val.shape) == shape_for_validation:
                         pass
                     else:
