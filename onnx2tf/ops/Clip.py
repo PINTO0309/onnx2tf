@@ -129,7 +129,7 @@ def make_node(
             tf.nn.relu6(features=features)
         tf_op_type = tf.nn.relu6
     elif (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
-        and (max_value is None or max_value.shape is None):
+        and (max_value is None or max_value.shape is None or (hasattr(max_value, '_inferred_value') and max_value._inferred_value is None)):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.nn.relu(features=features)
         tf_op_type = tf.nn.relu
@@ -146,7 +146,7 @@ def make_node(
                 )
             tf_op_type = tf.clip_by_value
         elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
-            and (max_value is None or max_value.shape is None):
+            and (max_value is None or max_value.shape is None or (hasattr(max_value, '_inferred_value') and max_value._inferred_value is None)):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.maximum(
                     x=features,
@@ -154,7 +154,7 @@ def make_node(
                         if isinstance(min_value, np.ndarray) else min_value,
                 )
             tf_op_type = tf.maximum
-        elif (min_value is None or min_value.shape is None) \
+        elif (min_value is None or min_value.shape is None or (hasattr(min_value, '_inferred_value') and min_value._inferred_value is None)) \
             and (max_value is not None and max_value.shape is not None):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.minimum(
