@@ -89,6 +89,7 @@ def make_node(
     dtype = graph_node_output_1.dtype
 
     axis = graph_node.attrs.get('axis', -1)
+    pre_convert_axis = axis
     axis = convert_axis(
         axis=axis,
         tensor_rank=input_tensor_rank,
@@ -128,7 +129,24 @@ def make_node(
     min_abs_err = sys.maxsize
     min_abs_err_axis: int = axis
 
-    if not disable_strict_mode:
+    # If all axes are of different sizes and the axis sizes specified in axis are the same
+    # in onnx and sensorflow, skip the accuracy check.
+    acc_check_pass_flg = False
+    if graph_node.inputs[0].shape is not None \
+        and input_tensor.shape is not None:
+        onnx_input_shapes = list(graph_node.inputs[0].shape)
+        tf_input_shapes = list(input_tensor.shape)
+        if onnx_input_shapes is not None \
+            and tf_input_shapes is not None \
+            and len(onnx_input_shapes) >= 1 \
+            and len(tf_input_shapes) >= 1 \
+            and len(onnx_input_shapes) == len(set(onnx_input_shapes)) \
+            and not isinstance(onnx_input_shapes[pre_convert_axis], str) \
+            and tf_input_shapes[axis] is not None \
+            and onnx_input_shapes[pre_convert_axis] == tf_input_shapes[axis]:
+            acc_check_pass_flg = True
+
+    if not disable_strict_mode and not acc_check_pass_flg:
         # Get the output tensor of one previous OP of TensorFlow only once
         tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
         val_model = None
