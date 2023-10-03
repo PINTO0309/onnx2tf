@@ -1677,7 +1677,8 @@ def convert(
                             tf_tensor_infos[v['tf_node'].name] = np.ndarray([0], dtype=np.int64)
                 onnx_tf_output_pairs = {
                     (k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
-                        for k, v in tf_layers_dict.items() if k not in input_names and not hasattr(v['tf_node'], 'numpy')
+                        for k, v in tf_layers_dict.items() \
+                            if k not in input_names and not hasattr(v['tf_node'], 'numpy') and k in onnx_tensor_infos
                 }
 
                 check_results = onnx_tf_tensor_validation(
