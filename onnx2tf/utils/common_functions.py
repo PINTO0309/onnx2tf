@@ -2696,6 +2696,10 @@ def transpose_with_flexing_deterrence(
 
     tensor_after_transposition = input_tensor
 
+    # If no transposition is necessary, skip all processing.
+    if (perm is not None and perm == list(range(len(perm)))):
+        return tensor_after_transposition
+
     if disable_suppression_flextranspose:
         # Normal Transpose
         tensor_after_transposition = tf.transpose(
@@ -2750,10 +2754,16 @@ def transpose_with_flexing_deterrence(
                         dim if not isinstance(dim, str) else -1 for dim in output_shape
                     ],
                 )
-        elif input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0 \
-            or number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
-                and number_of_dimensions_after_flextranspose_compression >= 2 \
-                and x_shape_none_dims_count == 0:
+        elif \
+                (
+                    input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0
+                ) \
+            or \
+                (
+                    number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
+                        and number_of_dimensions_after_flextranspose_compression >= 2 \
+                        and x_shape_none_dims_count == 0
+                ):
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 7 or more dimensions into FlexTransposes.

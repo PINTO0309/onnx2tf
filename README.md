@@ -255,7 +255,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.18.12
+  ghcr.io/pinto0309/onnx2tf:1.18.13
 
   or
 
@@ -263,7 +263,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.18.12
+  docker.io/pinto0309/onnx2tf:1.18.13
 
   or
 
@@ -401,16 +401,16 @@ $ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/Erf_11
 $ onnx2tf -i Erf_11.onnx -rtpo Erf
 
 # High-dimensional Transpose decomposition
-# If you do not like FlexTranspose being generated, try `-nodafc`.
+# If you do not like FlexTranspose being generated, try `-nodaftc`.
 # Suppresses the generation of FlexTranspose by decomposing Transpose
 # to the specified number of dimensions.
 # In TensorFlow v2.12.0 and later, up to 6 dimensions are converted to normal Transpose;
 # in v2.11.0 and earlier, up to 5 dimensions are converted to normal Transpose.
-# Note that specifying `2` for the `-nodafc` option causes all Transpose OPs to disappear
+# Note that specifying `2` for the `-nodaftc` option causes all Transpose OPs to disappear
 # from the model structure.
 # Below is an example of decomposing a Transpose of 5 or more dimensions into a Transpose
 # of 4 dimensions.
-$ onnx2tf -i xxxx.onnx -nodafc 4
+$ onnx2tf -i xxxx.onnx -nodaftc 4
 
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json

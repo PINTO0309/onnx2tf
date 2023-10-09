@@ -108,13 +108,16 @@ def make_node(
     ]
 
     # NHWC -> NCHW
+    transposed_tensor_output_shape = \
+        list(tf.transpose(a=input_tensor, perm=list(perm)).shape) \
+            if tf.transpose(a=input_tensor, perm=list(perm)).shape is not None else [None]
     try:
         if graph_node.i().op not in ['LSTM', 'RNN', 'GRU']:
             transposed_tensor = \
                 transpose_with_flexing_deterrence(
                     input_tensor=input_tensor,
                     perm=list(perm) if perm is not None else None,
-                    output_shape=output_shape,
+                    output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
                     name=graph_node.name,
                     **kwargs,
                 )
@@ -125,7 +128,7 @@ def make_node(
             transpose_with_flexing_deterrence(
                 input_tensor=input_tensor,
                 perm=list(perm) if perm is not None else None,
-                output_shape=output_shape,
+                output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
                 name=graph_node.name,
                 **kwargs,
             )
@@ -403,9 +406,16 @@ def make_node(
                                 break
                     except Exception as ex:
                         pass
+                transposed_tensor_shape = list(tf.transpose(a=transposed_tensor, perm=min_abs_err_perm_1).shape)
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.reshape(
-                        tensor=tf.transpose(a=transposed_tensor, perm=min_abs_err_perm_1),
+                        tensor=transpose_with_flexing_deterrence(
+                            input_tensor=transposed_tensor,
+                            perm=min_abs_err_perm_1,
+                            output_shape=transposed_tensor_shape \
+                                if None not in transposed_tensor_shape and transposed_tensor_shape != [] else None,
+                            **kwargs,
+                        ),
                         shape=final_shape,
                         name=graph_node.name,
                     )
