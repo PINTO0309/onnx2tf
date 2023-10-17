@@ -73,9 +73,8 @@ def make_node(
             k = 0 - tensor_shape[-2]
     else:
         k = tf.constant(0, dtype=tf.int64)
-    k_dtype = NUMPY_DTYPES_TO_TF_DTYPES[k.dtype] \
-        if isinstance(k.dtype, np.dtype) else k.dtype
-    keep_triangle = tf.constant(-1, dtype=k_dtype)
+    k = tf.convert_to_tensor(k, dtype=tf.int64)
+    keep_triangle = tf.constant(-1, dtype=k.dtype)
 
     upper = bool(graph_node.attrs.get('upper', 1))
 
