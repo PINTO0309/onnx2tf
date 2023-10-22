@@ -3836,9 +3836,8 @@ def dummy_onnx_inference(
             f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB. (results: {total_output_size_gb} GB)'
         )
 
-    outputs = None
-    if not disable_strict_mode:
-        outputs = onnx_session.run(None, input_datas)
+    outputs = onnx_session.run(None, input_datas)
+
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)
         os.remove(tmp_onnx_external_weights_path)
