@@ -3836,7 +3836,9 @@ def dummy_onnx_inference(
             f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB. (results: {total_output_size_gb} GB)'
         )
 
-    outputs = onnx_session.run(None, input_datas)
+    outputs = None
+    if not disable_strict_mode:
+        outputs = onnx_session.run(None, input_datas)
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)
         os.remove(tmp_onnx_external_weights_path)
@@ -5913,3 +5915,39 @@ def shape_is_equal_ignore_order(
     shape_list_1 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_1]
     shape_list_2 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_2]
     return sorted(shape_list_1) == sorted(shape_list_2)
+
+
+class KLayer(tf.keras.layers.Layer):
+    """Keras wrapper class for tf.xxx
+    """
+    def __init__(self):
+        super(KLayer, self).__init__()
+
+    def call(self, tf_fn, x, **kwargs):
+        """Running tf.xxx via a Keras class.
+
+        Parameters
+        ----------
+        tf_fn:
+            tf.xxx function
+
+        x:
+            input layer or input data
+
+        kwargs:
+            Various parameters to initialize tf.xxx in Dict format
+
+        e.g.\n
+        output = \\\n
+            KLayer()(\n
+                tf_fn=tf.reshape,\n
+                x=input_tensor,\n
+                shape=new_shape,\n
+                name=graph_node.name,\n
+            )\n
+
+        Returns
+        -------
+        Result of executing various tf.xxx functions
+        """
+        return tf_fn(x, **kwargs)
