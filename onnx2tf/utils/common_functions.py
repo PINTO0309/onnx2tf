@@ -1,24 +1,27 @@
+import copy
+import io
+import json
 import math
 import os
-import io
-import sys
-import copy
-import json
-import psutil
 import random
+import sys
+
+import psutil
 import requests
+
 random.seed(0)
 import itertools
 import collections
-import traceback
 import subprocess
 import numpy as np
+
 np.random.seed(0)
 import tensorflow as tf
 from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
 import onnx
 import onnx_graphsurgeon as gs
+
 try:
     import onnxruntime as ort
 except Exception as ex:
@@ -32,9 +35,8 @@ from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
 )
 
-
 INF_INDEX_VALUE: int = 4294967296
-ONNX_INF_INDEX_VALUE = sys.maxsize # 9223372036854775807
+ONNX_INF_INDEX_VALUE = sys.maxsize  # 9223372036854775807
 
 
 def get_replacement_parameter(func):
@@ -46,19 +48,20 @@ def get_replacement_parameter(func):
         if replacement_parameters is not None:
             kwargs['op_rep_params'] = [
                 replacement_parameter \
-                    for replacement_parameter in replacement_parameters \
-                        if replacement_parameter['op_name'] == op_name
+                for replacement_parameter in replacement_parameters \
+                if replacement_parameter['op_name'] == op_name
             ]
         func(*args, **kwargs)
+
     return get_replacement_parameter_wrapper_func
 
 
 def replace_parameter(
-    *,
-    value_before_replacement: Any,
-    param_target: str,
-    param_name: str,
-    **kwargs: Dict,
+        *,
+        value_before_replacement: Any,
+        param_target: str,
+        param_name: str,
+        **kwargs: Dict,
 ):
     """Replace attributes, INPUT constants, and INPUT initializers with the specified values.
 
@@ -77,8 +80,8 @@ def replace_parameter(
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == param_target \
-            and op_rep_param['param_name'] == param_name \
-            and 'values' in op_rep_param:
+                and op_rep_param['param_name'] == param_name \
+                and 'values' in op_rep_param:
             replace_value = op_rep_param.get('values', value_before_replacement)
             if isinstance(value_before_replacement, np.ndarray):
                 replace_value = np.asarray(
@@ -90,10 +93,10 @@ def replace_parameter(
             elif isinstance(value_before_replacement, bool):
                 replace_value = \
                     bool(replace_value) if isinstance(replace_value, int) and replace_value in [0, 1] else \
-                    bool(int(replace_value)) if isinstance(replace_value, str) and replace_value in ["0", "1"] else \
-                    False if isinstance(replace_value, str) and replace_value.lower() == "false" else \
-                    True if isinstance(replace_value, str) and replace_value.lower() == "True" else \
-                    replace_value
+                        bool(int(replace_value)) if isinstance(replace_value, str) and replace_value in ["0", "1"] else \
+                            False if isinstance(replace_value, str) and replace_value.lower() == "false" else \
+                                True if isinstance(replace_value, str) and replace_value.lower() == "True" else \
+                                    replace_value
             elif isinstance(value_before_replacement, int):
                 replace_value = int(replace_value)
             elif isinstance(value_before_replacement, float):
@@ -110,11 +113,11 @@ def replace_parameter(
 
 
 def pre_process_transpose(
-    *,
-    value_before_transpose: Any,
-    param_target: str,
-    param_name: str,
-    **kwargs: Dict,
+        *,
+        value_before_transpose: Any,
+        param_target: str,
+        param_name: str,
+        **kwargs: Dict,
 ):
     """Add Transpose as a post-processing step for Reshape OP.
 
@@ -133,7 +136,7 @@ def pre_process_transpose(
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == param_target \
-            and op_rep_param['param_name'] == param_name:
+                and op_rep_param['param_name'] == param_name:
             transpose_perm = op_rep_param.get('pre_process_transpose_perm', None)
             if transpose_perm is not None:
                 transposed_value = transpose_with_flexing_deterrence(
@@ -146,12 +149,12 @@ def pre_process_transpose(
 
 
 def post_process_transpose(
-    *,
-    value_before_transpose: Any,
-    param_target: str,
-    param_name: str,
-    graph_node: gs.Node = None,
-    **kwargs: Dict,
+        *,
+        value_before_transpose: Any,
+        param_target: str,
+        param_name: str,
+        graph_node: gs.Node = None,
+        **kwargs: Dict,
 ):
     """Add Transpose as a post-processing step for Reshape OP.
 
@@ -170,11 +173,11 @@ def post_process_transpose(
     op_rep_params = kwargs.get('op_rep_params', [])
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == param_target \
-            and op_rep_param['param_name'] == param_name:
+                and op_rep_param['param_name'] == param_name:
             transpose_perm = op_rep_param.get('post_process_transpose_perm', None)
             if transpose_perm is not None:
                 if graph_node is not None \
-                    and graph_node.op != "Concat":
+                        and graph_node.op != "Concat":
                     transposed_value = \
                         transpose_with_flexing_deterrence(
                             input_tensor=value_before_transpose,
@@ -183,8 +186,8 @@ def post_process_transpose(
                         )
                 else:
                     if value_before_transpose.shape is not None \
-                        and len(value_before_transpose.shape) == 1 \
-                        and value_before_transpose.shape[0] is not None:
+                            and len(value_before_transpose.shape) == 1 \
+                            and value_before_transpose.shape[0] is not None:
                         # Gather
                         transposed_value = tf.gather(
                             params=value_before_transpose,
@@ -222,7 +225,7 @@ def make_tf_node_info(**kwargs):
         tf_op_type = node_info.get('tf_op_type', None)
         tf_node_info['tf_op_type'] = \
             tf_op_type.__name__ if hasattr(tf_op_type, '__name__') else \
-            tf_op_type if isinstance(tf_op_type, str) else ''
+                tf_op_type if isinstance(tf_op_type, str) else ''
         tf_attrs: dict = node_info.get('tf_attrs', None)
         if tf_attrs is not None:
             tf_node_info['tf_attrs'] = {
@@ -241,10 +244,10 @@ def make_tf_node_info(**kwargs):
                     'dtype': input_val.dtype if hasattr(input_val, 'dtype') else None,
                     'val': input_val \
                         if isinstance(input_val, list) \
-                            or isinstance(input_val, str) \
-                            or isinstance(input_val, bool) \
-                            or isinstance(input_val, int) \
-                            or isinstance(input_val, float) else None,
+                           or isinstance(input_val, str) \
+                           or isinstance(input_val, bool) \
+                           or isinstance(input_val, int) \
+                           or isinstance(input_val, float) else None,
                 } for input_key, input_val in tf_inputs.items()
             }
         tf_outputs: dict = node_info.get('tf_outputs', None)
@@ -256,10 +259,10 @@ def make_tf_node_info(**kwargs):
                     'dtype': output_val.dtype if hasattr(output_val, 'dtype') else None,
                     'val': output_val \
                         if isinstance(output_val, list) \
-                            or isinstance(output_val, str) \
-                            or isinstance(output_val, bool) \
-                            or isinstance(output_val, int) \
-                            or isinstance(output_val, float) else None,
+                           or isinstance(output_val, str) \
+                           or isinstance(output_val, bool) \
+                           or isinstance(output_val, int) \
+                           or isinstance(output_val, float) else None,
                 } for output_key, output_val in tf_outputs.items()
             }
     return tf_node_info
@@ -275,9 +278,9 @@ def print_node_info(func):
         if get_log_level() <= LOG_LEVELS['debug']:
             if graph_input is not None:
                 debug(
-                    Color.GREEN(f'INFO:') + ' '+
-                    Color.GREEN(f'input_op_name') + f': {graph_input.name} '+
-                    Color.GREEN(f'shape') + f': {graph_input.shape} '+
+                    Color.GREEN(f'INFO:') + ' ' +
+                    Color.GREEN(f'input_op_name') + f': {graph_input.name} ' +
+                    Color.GREEN(f'shape') + f': {graph_input.shape} ' +
                     Color.GREEN(f'dtype') + f': {graph_input.dtype}'
                 )
             elif graph_node is not None:
@@ -285,24 +288,24 @@ def print_node_info(func):
                 op_counta: int = kwargs.get('op_counta', 1)
                 total_op_count: int = kwargs.get('total_op_count', 0)
                 debug(
-                    Color.GREEN(f'INFO:') + ' '+
+                    Color.GREEN(f'INFO:') + ' ' +
                     Color.GREEN(f'{op_counta} / {total_op_count}')
                 )
                 debug(
-                    Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': '+
+                    Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': ' +
                     f'{graph_node.op}' + Color.MAGENTA(' onnx_op_name') + f': {graph_node.name}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     debug(
-                        Color.GREEN(f'INFO:') + ' '+
-                        Color.CYAN(f' input_name.{idx+1}') + f': {graph_node_input.name} '+
-                        Color.CYAN(f'shape') + f': {graph_node_input.shape} '+
+                        Color.GREEN(f'INFO:') + ' ' +
+                        Color.CYAN(f' input_name.{idx + 1}') + f': {graph_node_input.name} ' +
+                        Color.CYAN(f'shape') + f': {graph_node_input.shape} ' +
                         Color.CYAN(f'dtype') + f': {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
                     debug(
-                        Color.GREEN(f'INFO:') + ' '+
-                        Color.CYAN(f' output_name.{idx+1}') + f': {graph_node_output.name} '+
-                        Color.CYAN(f'shape') + f': {graph_node_output.shape} '+
+                        Color.GREEN(f'INFO:') + ' ' +
+                        Color.CYAN(f' output_name.{idx + 1}') + f': {graph_node_output.name} ' +
+                        Color.CYAN(f'shape') + f': {graph_node_output.shape} ' +
                         Color.CYAN(f'dtype') + f': {graph_node_output.dtype}'
                     )
         try:
@@ -326,11 +329,11 @@ def print_node_info(func):
                                     for input_idx, (input_key, input_values) in enumerate(tf_inputs.items()):
                                         input_info_text = \
                                             Color.GREEN(f'INFO:') + ' ' + \
-                                            Color.BLUE(f' input.{input_idx+1}.{input_key}') + ': '
+                                            Color.BLUE(f' input.{input_idx + 1}.{input_key}') + ': '
                                         for input_attr_name, input_attr_value in input_values.items():
                                             input_info_text += \
                                                 Color.BLUE(f'{input_attr_name}') + f': {input_attr_value} ' \
-                                                if input_attr_value  is not None else ''
+                                                    if input_attr_value is not None else ''
                                         debug(input_info_text)
 
                                 tf_outputs = tf_node_info.get('tf_outputs', None)
@@ -338,11 +341,11 @@ def print_node_info(func):
                                     for output_idx, (output_key, output_values) in enumerate(tf_outputs.items()):
                                         output_info_text = \
                                             Color.GREEN(f'INFO:') + ' ' + \
-                                            Color.BLUE(f' output.{output_idx+1}.{output_key}') + ': '
+                                            Color.BLUE(f' output.{output_idx + 1}.{output_key}') + ': '
                                         for output_attr_name, output_attr_value in output_values.items():
                                             output_info_text += \
                                                 Color.BLUE(f'{output_attr_name}') + f': {output_attr_value} ' \
-                                                if output_attr_value  is not None else ''
+                                                    if output_attr_value is not None else ''
                                         debug(output_info_text)
             return result
         except:
@@ -373,6 +376,7 @@ def print_node_info(func):
                 f'try the -onwdt option.'
             )
             sys.exit(1)
+
     return print_wrapper_func
 
 
@@ -400,31 +404,31 @@ def inverted_operation_enable_disable(func):
                 shape if not isinstance(shape, str) else None for shape in onnx_node_output_shape
             ] if onnx_node_output_shape is not None else None
             if onnx_node_output_shape is not None \
-                and len(onnx_node_output_shape) > 0 \
-                and onnx_node_output_shape.count(None) != len(onnx_node_output_shape) \
-                and batch_size is not None:
+                    and len(onnx_node_output_shape) > 0 \
+                    and onnx_node_output_shape.count(None) != len(onnx_node_output_shape) \
+                    and batch_size is not None:
                 onnx_node_output_shape[0] = batch_size
             if onnx_node_output_shape is not None:
                 onnx_node_output_shape = [
                     None if s is not None and not isinstance(s, str) and s < 1 else s \
-                        for s in onnx_node_output_shape
+                    for s in onnx_node_output_shape
                 ]
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
 
             trans_judge = (onnx_node_output_shape != tf_node_output_shape)
             # Avoiding patterns of misjudgment when the second and subsequent dimensions are all the same value
             if tf_node_output_shape != tf.TensorShape(None) \
-                and len(tf_node_output_shape) >= 3:
+                    and len(tf_node_output_shape) >= 3:
                 base_shape = tf_node_output_shape[1]
-                if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
-                    and (onnx_node_output_shape == tf_node_output_shape) \
-                    and graph_node.op != 'MatMul':
+                if len(tf_node_output_shape) - 1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
+                        and (onnx_node_output_shape == tf_node_output_shape) \
+                        and graph_node.op != 'MatMul':
                     trans_judge = True
             output_shape_trans = output_shape_trans or trans_judge
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
 
-
         return result
+
     return inverted_operation_enable_disable_wrapper_func
 
 
@@ -433,28 +437,29 @@ def auto_cast(func):
     def auto_cast_wrapper_func(*args, **kwargs):
         const_or_var = func(*args, **kwargs)
         if isinstance(const_or_var, np.ndarray) \
-            and const_or_var.dtype == np.float16:
+                and const_or_var.dtype == np.float16:
             const_or_var = const_or_var.astype(np.float32)
         elif isinstance(const_or_var, tf.Tensor) \
-            and const_or_var.dtype == tf.float16:
+                and const_or_var.dtype == tf.float16:
             const_or_var = tf.cast(const_or_var, dtype=tf.float32)
         elif not isinstance(const_or_var, np.ndarray) \
-            and not isinstance(const_or_var, gs.Variable) \
-            and not isinstance(const_or_var, gs.Constant) \
-            and tf.keras.backend.is_keras_tensor(const_or_var) \
-            and const_or_var.dtype == tf.float16:
+                and not isinstance(const_or_var, gs.Variable) \
+                and not isinstance(const_or_var, gs.Constant) \
+                and tf.keras.backend.is_keras_tensor(const_or_var) \
+                and const_or_var.dtype == tf.float16:
             const_or_var = tf.cast(const_or_var, dtype=tf.float32)
         else:
             pass
         return const_or_var
+
     return auto_cast_wrapper_func
 
 
 @auto_cast
 def get_constant_or_variable(
-    const_or_var: Any,
-    before_op_output_shape_trans: bool,
-    is_bias: Optional[bool] = False,
+        const_or_var: Any,
+        before_op_output_shape_trans: bool,
+        is_bias: Optional[bool] = False,
 ) -> Any:
     """Get a Numpy constant or gs.Variable from graph_surgeon node.
 
@@ -489,8 +494,8 @@ def get_constant_or_variable(
 
 @auto_cast
 def get_weights_constant_or_variable(
-    const_or_var: Any,
-    kernel_size: int,
+        const_or_var: Any,
+        kernel_size: int,
 ) -> Any:
     """For obtaining transposed weights.
 
@@ -530,9 +535,9 @@ def get_weights_constant_or_variable(
         values = values.transpose(convertion_table)
         return tf.convert_to_tensor(values)
     elif hasattr(const_or_var, 'inputs') \
-        and hasattr(const_or_var.inputs[0], 'attrs') \
-        and 'value' in const_or_var.inputs[0].attrs \
-        and hasattr(const_or_var.inputs[0].attrs['value'], 'values'):
+            and hasattr(const_or_var.inputs[0], 'attrs') \
+            and 'value' in const_or_var.inputs[0].attrs \
+            and hasattr(const_or_var.inputs[0].attrs['value'], 'values'):
         values = const_or_var.inputs[0].attrs['value'].values
         """
         e.g.
@@ -573,7 +578,7 @@ def get_weights_constant_or_variable(
         values = tf.cast(tf.transpose(values, perm=convertion_table), tf.float32)
         return tf.convert_to_tensor(values)
     elif isinstance(const_or_var.i(), gs.Constant) \
-        and hasattr(const_or_var.i(), 'values'):
+            and hasattr(const_or_var.i(), 'values'):
         values = const_or_var.i().values
         """
         e.g.
@@ -610,10 +615,10 @@ def check_cuda_enabled() -> bool:
 
 
 def convert_axis(
-    *,
-    axis: int,
-    tensor_rank: int,
-    before_op_output_shape_trans: bool,
+        *,
+        axis: int,
+        tensor_rank: int,
+        before_op_output_shape_trans: bool,
 ) -> int:
     """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC.
 
@@ -652,10 +657,10 @@ def convert_axis(
 
 
 def convert_reverse_axis(
-    *,
-    axis: int,
-    tensor_rank: int,
-    before_op_output_shape_trans: bool,
+        *,
+        axis: int,
+        tensor_rank: int,
+        before_op_output_shape_trans: bool,
 ) -> int:
     """Convert axis from NWC to NCW or NHWC to NCHW or NDHWC to NCDHW.
 
@@ -694,8 +699,8 @@ def convert_reverse_axis(
 
 
 def broadcast_validity_check(
-    shape1: Union[np.ndarray, List],
-    shape2: Union[np.ndarray, List],
+        shape1: Union[np.ndarray, List],
+        shape2: Union[np.ndarray, List],
 ):
     """Check the validity of dimension shape for same length of tensors.
 
@@ -730,9 +735,9 @@ def broadcast_validity_check(
 
 
 def pre_explicit_broadcast(
-    *,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
+        *,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
 ) -> Tuple[Any, Any]:
     """Shrink a tensor whose input_tensor_1 and input_tensor_2
     have the same rank and all but one dimension is 1.
@@ -777,12 +782,12 @@ def pre_explicit_broadcast(
     #   input_tensor_1: [1,2,3,4]
     #   input_tensor_2: [1,1,1,1]
     if input_tensor_1.shape is not None \
-        and input_tensor_1.shape != tf.TensorShape(None) \
-        and input_tensor_2.shape is not None \
-        and input_tensor_2.shape != tf.TensorShape(None) \
-        and None not in input_tensor_1.shape \
-        and None not in input_tensor_2.shape \
-        and len(input_tensor_1.shape) == len(input_tensor_2.shape):
+            and input_tensor_1.shape != tf.TensorShape(None) \
+            and input_tensor_2.shape is not None \
+            and input_tensor_2.shape != tf.TensorShape(None) \
+            and None not in input_tensor_1.shape \
+            and None not in input_tensor_2.shape \
+            and len(input_tensor_1.shape) == len(input_tensor_2.shape):
 
         # Broadcasting of the operation Checks whether the operation functions normally,
         # and if so, terminates the process without doing anything.
@@ -801,7 +806,7 @@ def pre_explicit_broadcast(
         squeezed_input_tensor_2_shape_rank = len(squeezed_input_tensor_2_shape)
         input_tensor_1_shape = input_tensor_1.shape
         if squeezed_input_tensor_2_shape_rank == 1 \
-            and squeezed_input_tensor_2_shape[0] in input_tensor_1_shape:
+                and squeezed_input_tensor_2_shape[0] in input_tensor_1_shape:
             input_tensor_2 = tf.squeeze(input_tensor_2)
             reversed_input_tensor_1_shape = []
             if isinstance(input_tensor_1_shape, list):
@@ -824,7 +829,7 @@ def pre_explicit_broadcast(
             squeezed_input_tensor_1_shape_rank = len(squeezed_input_tensor_1_shape)
             input_tensor_2_shape = input_tensor_2.shape
             if squeezed_input_tensor_1_shape_rank == 1 \
-                and squeezed_input_tensor_1_shape[0] in input_tensor_2_shape:
+                    and squeezed_input_tensor_1_shape[0] in input_tensor_2_shape:
                 input_tensor_1 = tf.squeeze(input_tensor_1)
                 reversed_input_tensor_2_shape = []
                 if isinstance(input_tensor_2_shape, list):
@@ -842,13 +847,14 @@ def pre_explicit_broadcast(
                         axis=-1,
                     )
     elif input_tensor_1.shape is not None \
-        and input_tensor_1.shape != tf.TensorShape(None) \
-        and input_tensor_2.shape is not None \
-        and input_tensor_2.shape != tf.TensorShape(None) \
-        and None not in input_tensor_1.shape \
-        and None not in input_tensor_2.shape \
-        and len(input_tensor_1.shape) > len(input_tensor_2.shape) \
-        and sum([1 if not isinstance(dim, str) and dim == 1 else 0 for dim in input_tensor_2.shape]) == len(input_tensor_2.shape):
+            and input_tensor_1.shape != tf.TensorShape(None) \
+            and input_tensor_2.shape is not None \
+            and input_tensor_2.shape != tf.TensorShape(None) \
+            and None not in input_tensor_1.shape \
+            and None not in input_tensor_2.shape \
+            and len(input_tensor_1.shape) > len(input_tensor_2.shape) \
+            and sum([1 if not isinstance(dim, str) and dim == 1 else 0 for dim in input_tensor_2.shape]) == len(
+        input_tensor_2.shape):
         expand_count = len(input_tensor_1.shape) - len(input_tensor_2.shape)
         for _ in range(expand_count):
             input_tensor_2 = tf.expand_dims(
@@ -860,11 +866,11 @@ def pre_explicit_broadcast(
 
 
 def explicit_broadcast(
-    *,
-    const_or_var_1: Any,
-    const_or_var_2: Any,
-    graph_node: Optional[gs.Node] = None,
-    tf_layers_dict: dict = None,
+        *,
+        const_or_var_1: Any,
+        const_or_var_2: Any,
+        graph_node: Optional[gs.Node] = None,
+        tf_layers_dict: dict = None,
 ) -> Tuple[Any, Any]:
     """Of the two tensors in the argument, the one with the lower dimensionality
     is broadcast to match the one with the higher dimensionality.
@@ -907,10 +913,10 @@ def explicit_broadcast(
 
     # If all dimensions are undefined dimensions, return without doing anything
     if graph_node_input_shape1 is not None \
-        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape1]) == len(graph_node_input_shape1):
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape1]) == len(graph_node_input_shape1):
         return const_or_var_1, const_or_var_2
     if graph_node_input_shape2 is not None \
-        and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape2]) == len(graph_node_input_shape2):
+            and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_shape2]) == len(graph_node_input_shape2):
         return const_or_var_1, const_or_var_2
 
     # If the input shape of ONNX is None, return without doing anything.
@@ -943,12 +949,12 @@ def explicit_broadcast(
     #   mean: [1,1024,1]
     #   var: [1,1024,1]
     if len(const_or_var_1.shape) > len(const_or_var_2.shape) \
-        and None not in const_or_var_1.shape \
-        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
-        and None not in const_or_var_2.shape \
-        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
-        and len(const_or_var_2.shape) == 1 \
-        and np.prod(shape_for_judging_skip_processing_1) == np.prod(shape_for_judging_skip_processing_2):
+            and None not in const_or_var_1.shape \
+            and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
+            and None not in const_or_var_2.shape \
+            and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
+            and len(const_or_var_2.shape) == 1 \
+            and np.prod(shape_for_judging_skip_processing_1) == np.prod(shape_for_judging_skip_processing_2):
 
         var2_rehsape_possible = False
         try:
@@ -961,12 +967,12 @@ def explicit_broadcast(
             return const_or_var_1, const_or_var_2
     # https://github.com/PINTO0309/onnx2tf/issues/394
     elif len(const_or_var_1.shape) > len(const_or_var_2.shape) \
-        and None not in const_or_var_1.shape \
-        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
-        and None not in const_or_var_2.shape \
-        and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
-        and len(const_or_var_2.shape) == 1 \
-        and graph_node.op == 'BatchNormalization':
+            and None not in const_or_var_1.shape \
+            and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_1.shape]) == len(const_or_var_1.shape) \
+            and None not in const_or_var_2.shape \
+            and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
+            and len(const_or_var_2.shape) == 1 \
+            and graph_node.op == 'BatchNormalization':
 
         const_or_var_2_shape_dim = const_or_var_2.shape[0]
         for idx, shape_for_judging_skip_processing_1_dim in enumerate(shape_for_judging_skip_processing_1[::-1]):
@@ -987,8 +993,8 @@ def explicit_broadcast(
         #   const_or_var_1: [1,1,5000]
         #   const_or_var_2: [5000]
         if len(const_or_var_1.shape) >= 1 \
-            and len(const_or_var_2.shape) == 1 \
-            and const_or_var_1.shape[-1] == const_or_var_2.shape[-1]:
+                and len(const_or_var_2.shape) == 1 \
+                and const_or_var_1.shape[-1] == const_or_var_2.shape[-1]:
             return const_or_var_1, const_or_var_2
 
     """
@@ -1017,7 +1023,7 @@ def explicit_broadcast(
                 axis=0,
             )
         elif not isinstance(const_or_var_2, np.ndarray) \
-            and tf.keras.backend.is_keras_tensor(const_or_var_2):
+                and tf.keras.backend.is_keras_tensor(const_or_var_2):
             const_or_var_2 = tf.expand_dims(
                 input=const_or_var_2,
                 axis=0,
@@ -1042,20 +1048,20 @@ def explicit_broadcast(
             broadcast_validity_check(graph_node_input_shape1, graph_node_input_shape2):
         pass
     else:
-        transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]
+        transpose_perm = [0] + [i + 2 for i in range(len(const_or_var_1.shape) - 2)] + [1]
 
         if isinstance(const_or_var_2, np.ndarray):
             const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
 
         elif isinstance(const_or_var_2, tf.Tensor) \
-            or (
+                or (
                 not isinstance(const_or_var_2, np.ndarray) \
                 and tf.keras.backend.is_keras_tensor(const_or_var_2)
-            ):
+        ):
             if graph_node_input_name2 is not None \
-                and tf_layers_dict is not None \
-                and graph_node_input_name2 in tf_layers_dict \
-                and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
+                    and tf_layers_dict is not None \
+                    and graph_node_input_name2 in tf_layers_dict \
+                    and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
                 const_or_var_2: np.ndarray = tf.transpose(
                     a=const_or_var_2,
                     perm=transpose_perm
@@ -1072,9 +1078,9 @@ def explicit_broadcast(
 
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/tf_helper.py
 def tf_shape(
-    *,
-    input_tensor: tf.Tensor,
-    dtype: tf.dtypes=tf.int64,
+        *,
+        input_tensor: tf.Tensor,
+        dtype: tf.dtypes = tf.int64,
 ) -> Any:
     """Helper function returning the shape of a Tensor.
 
@@ -1102,11 +1108,11 @@ def tf_shape(
 
 
 def upsampling2d_bilinear(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     return tf.compat.v1.image.resize_bilinear(
         images=input_tensor,
@@ -1116,12 +1122,13 @@ def upsampling2d_bilinear(
         name=name,
     )
 
+
 def upsampling2d_bicubic(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     return tf.compat.v1.image.resize_bicubic(
         images=input_tensor,
@@ -1131,12 +1138,13 @@ def upsampling2d_bicubic(
         name=name,
     )
 
+
 def upsampling2d_nearest(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     return tf.compat.v1.image.resize_nearest_neighbor(
         images=input_tensor,
@@ -1148,11 +1156,11 @@ def upsampling2d_nearest(
 
 
 def upsampling3d_bilinear(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     d = new_size[0]
     h = new_size[1]
@@ -1183,17 +1191,17 @@ def upsampling3d_bilinear(
                 half_pixel_centers=half_pixel_centers,
                 name=name,
             )
-            )
+        )
     stack_img_dh = tf.stack(resized_list, axis=3)
     return stack_img_dh
 
 
 def upsampling3d_bicubic(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     d = new_size[0]
     h = new_size[1]
@@ -1225,17 +1233,17 @@ def upsampling3d_bicubic(
                 half_pixel_centers=half_pixel_centers,
                 name=name,
             )
-            )
+        )
     stack_img_dh = tf.stack(resized_list, axis=3)
     return stack_img_dh
 
 
 def upsampling3d_nearest(
-    input_tensor,
-    new_size,
-    align_corners,
-    half_pixel_centers,
-    name,
+        input_tensor,
+        new_size,
+        align_corners,
+        half_pixel_centers,
+        name,
 ):
     d = new_size[0]
     h = new_size[1]
@@ -1273,8 +1281,8 @@ def upsampling3d_nearest(
 
 
 def _nnapi_scalar(
-    value,
-    dtype: tf.dtypes,
+        value,
+        dtype: tf.dtypes,
 ) -> Any:
     """Scalar to constant of 1D array.
 
@@ -1295,15 +1303,15 @@ def _nnapi_scalar(
 
 
 def alternative_argmax(
-    *,
-    input_tensor,
-    axis: int = -1,
-    output_type: tf.dtypes = tf.dtypes.float32,
-    name: str = None,
-    keepdims: bool = False,
-    epsilon: float = None,
-    replace_argmax_to_reducemax_and_indicies_is_int64: bool = False,
-    replace_argmax_to_reducemax_and_indicies_is_float32: bool = False,
+        *,
+        input_tensor,
+        axis: int = -1,
+        output_type: tf.dtypes = tf.dtypes.float32,
+        name: str = None,
+        keepdims: bool = False,
+        epsilon: float = None,
+        replace_argmax_to_reducemax_and_indicies_is_int64: bool = False,
+        replace_argmax_to_reducemax_and_indicies_is_float32: bool = False,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1379,9 +1387,9 @@ def alternative_argmax(
             zero_if_max,
         )
     else:
-        error_msg = f''+\
-            Color.RED(f'ERROR:') + ' ' +\
-            f'Please specify epsilon for unknown input data type. '
+        error_msg = f'' + \
+                    Color.RED(f'ERROR:') + ' ' + \
+                    f'Please specify epsilon for unknown input data type. '
         print(error_msg)
         assert False, error_msg
 
@@ -1443,15 +1451,15 @@ def alternative_argmax(
 
 
 def alternative_fused_argmax(
-    *,
-    input_tensor,
-    original_shape,
-    axis: int = -1,
-    output_type: tf.dtypes = tf.dtypes.float32,
-    name: str = None,
-    keepdims: bool = True,
-    replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
-    replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
+        *,
+        input_tensor,
+        original_shape,
+        axis: int = -1,
+        output_type: tf.dtypes = tf.dtypes.float32,
+        name: str = None,
+        keepdims: bool = True,
+        replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
+        replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1584,8 +1592,8 @@ def alternative_fused_argmax(
 
 # https://zenn.dev/pinto0309/articles/8f6df1d2304395
 def alternative_asin(
-    *,
-    input_tensor,
+        *,
+        input_tensor,
 ) -> Any:
     """Replace Asin with a pseudo_Asin.
 
@@ -1636,8 +1644,8 @@ def alternative_asin(
 
 # https://zenn.dev/pinto0309/articles/8f6df1d2304395
 def alternative_acos(
-    *,
-    input_tensor,
+        *,
+        input_tensor,
 ) -> Any:
     """Replace Acos with a pseudo_Acos.
 
@@ -1692,9 +1700,9 @@ def alternative_acos(
 
 # https://developer.download.nvidia.com/cg/atan2.html
 def alternative_atan2(
-    *,
-    input_tensor_y,
-    input_tensor_x,
+        *,
+        input_tensor_y,
+        input_tensor_x,
 ) -> Any:
     """Replace Atan2 with a pseudo_Atan2.
 
@@ -1722,8 +1730,8 @@ def alternative_atan2(
 
 # https://developer.download.nvidia.com/cg/atan.html
 def alternative_atan(
-    *,
-    input_tensor,
+        *,
+        input_tensor,
 ) -> Any:
     """Replace Atan with a pseudo_Atan.
 
@@ -1765,15 +1773,16 @@ pad_tf_ops = pad_ops(
     lambda tensor: tf.cast(tensor, tf.int64)
 )
 
+
 def _calc_pads_same_pooling(
-    *,
-    in_spatial_shape,
-    kernel_shape,
-    strides,
-    dilations,
-    padding,
-    padding_ops=pad_numpy_ops,
-    pads_order=1
+        *,
+        in_spatial_shape,
+        kernel_shape,
+        strides,
+        dilations,
+        padding,
+        padding_ops=pad_numpy_ops,
+        pads_order=1
 ) -> List[int]:
     """Calculates the SAME paddings that need to be added to the input.
 
@@ -1839,9 +1848,9 @@ def _calc_pads_same_pooling(
 
 
 def calc_pads_explicit_pooling(
-    *,
-    padding,
-    spatial_size,
+        *,
+        padding,
+        spatial_size,
 ):
     """
     Calculate explicit padding
@@ -1855,13 +1864,13 @@ def calc_pads_explicit_pooling(
 
 
 def calc_pads_ceil_mode_pooling(
-    *,
-    in_spatial_shape,
-    spatial_size,
-    kernel_shape,
-    dilations,
-    strides,
-    is_known_shape,
+        *,
+        in_spatial_shape,
+        spatial_size,
+        kernel_shape,
+        dilations,
+        strides,
+        is_known_shape,
 ):
     """
     Calculate padding in ceil_mode
@@ -1873,7 +1882,7 @@ def calc_pads_ceil_mode_pooling(
         out_size = (dim_size - filter_size) / strides[i]
         if is_known_shape:
             pad_size = (
-                np.ceil(out_size) - np.floor(out_size)
+                    np.ceil(out_size) - np.floor(out_size)
             ).astype(np.int64)
         else:
             pad_size = tf.cast(
@@ -1886,13 +1895,13 @@ def calc_pads_ceil_mode_pooling(
 
 
 def calc_pads_same_pooling(
-    *,
-    kernel_shape,
-    strides,
-    dilations,
-    padding,
-    in_spatial_shape,
-    is_known_shape,
+        *,
+        kernel_shape,
+        strides,
+        dilations,
+        padding,
+        in_spatial_shape,
+        is_known_shape,
 ):
     """
     Calculate SAME_* paddings.
@@ -1911,15 +1920,15 @@ def calc_pads_same_pooling(
 
 
 def calc_pads_pooling(
-    *,
-    kernel_shape,
-    strides,
-    dilations,
-    padding,
-    is_known_shape,
-    spatial_size,
-    in_spatial_shape,
-    ceil_mode,
+        *,
+        kernel_shape,
+        strides,
+        dilations,
+        padding,
+        is_known_shape,
+        spatial_size,
+        in_spatial_shape,
+        ceil_mode,
 ):
     if is_known_shape:
         pads = np.zeros([spatial_size * 2], np.int64)
@@ -1961,30 +1970,30 @@ def calc_pads_pooling(
 
 
 def pad_input(
-    *,
-    input_tensor,
-    is_known_shape,
-    kernel_shape,
-    ceil_mode,
-    spatial_size,
-    strides,
-    dilations,
-    padding,
-    padding_constant,
+        *,
+        input_tensor,
+        is_known_shape,
+        kernel_shape,
+        ceil_mode,
+        spatial_size,
+        strides,
+        dilations,
+        padding,
+        padding_constant,
 ):
     """
     Pad the input according to the parameters
     """
     # check if we need to do any padding at all
     if not ceil_mode \
-        and ((type(padding) is list and padding == [0] * spatial_size * 2) or padding == "VALID"):
+            and ((type(padding) is list and padding == [0] * spatial_size * 2) or padding == "VALID"):
         return input_tensor
 
     # in_spatial_shape = self.input_shape[2:]
     input_shape = tf_shape(
         input_tensor=input_tensor,
     )
-    in_spatial_shape = input_shape[1:len(kernel_shape)+1]
+    in_spatial_shape = input_shape[1:len(kernel_shape) + 1]
     pads = calc_pads_pooling(
         kernel_shape=kernel_shape,
         strides=strides,
@@ -2016,9 +2025,9 @@ def pad_input(
 
 
 def get_padding_as_op(
-    *,
-    x,
-    pads,
+        *,
+        x,
+        pads,
 ):
     num_dim = int(len(pads) / 2)
     tf_pads = np.transpose(np.array(pads).reshape([2, num_dim]))
@@ -2031,9 +2040,9 @@ def get_padding_as_op(
 
 
 def tf_product(
-    *,
-    a,
-    b,
+        *,
+        a,
+        b,
 ):
     """
             Calculates the cartesian product of two column vectors a and b
@@ -2059,28 +2068,28 @@ def tf_product(
 
 
 def _calc_input_ind(
-    *,
-    output_ind,
-    kernel,
-    dilation,
-    stride
+        *,
+        output_ind,
+        kernel,
+        dilation,
+        stride
 ):
     return \
-        (output_ind // kernel) * \
-        (stride - kernel * dilation) + \
-        output_ind * dilation
+            (output_ind // kernel) * \
+            (stride - kernel * dilation) + \
+            output_ind * dilation
 
 
 def remove_dilations(
-    *,
-    input_tensor,
-    kernel_shape,
-    spatial_size,
-    strides,
-    dilations,
+        *,
+        input_tensor,
+        kernel_shape,
+        spatial_size,
+        strides,
+        dilations,
 ):
     input_shape = tf_shape(input_tensor=input_tensor)
-    in_spatial_shape = input_shape[1:len(kernel_shape)+1]
+    in_spatial_shape = input_shape[1:len(kernel_shape) + 1]
     channels_count = input_shape[-1]
 
     # initilize the output_shape with zeros
@@ -2092,8 +2101,8 @@ def remove_dilations(
     for dim in range(spatial_size - 1, -1, -1):
         filter_size = (kernel_shape[dim] - 1) * dilations[dim] + 1
         output_size = (
-            ((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1
-        ) * kernel_shape[dim]
+                              ((in_spatial_shape[dim] - filter_size) // strides[dim]) + 1
+                      ) * kernel_shape[dim]
         output_shape[dim + 1] = output_size
 
         # initialize the output dimension index with the range of the
@@ -2156,10 +2165,10 @@ def remove_dilations(
 
 
 def process_neg_idx(
-    *,
-    data,
-    indices,
-    batch_dims=0,
+        *,
+        data,
+        indices,
+        batch_dims=0,
 ):
     """ Convert all the negative indices to positive
     GatherND and ScatterND/TensorScatterNDUpdate in Tensorflow
@@ -2179,9 +2188,9 @@ def process_neg_idx(
         )
     else:
         if not isinstance(indices_shape[-1], int) \
-            and not isinstance(indices_shape[-1], np.ndarray) \
-            and not isinstance(indices_shape[-1], tf.Tensor) \
-            and tf.keras.backend.is_keras_tensor(indices_shape[-1]):
+                and not isinstance(indices_shape[-1], np.ndarray) \
+                and not isinstance(indices_shape[-1], tf.Tensor) \
+                and tf.keras.backend.is_keras_tensor(indices_shape[-1]):
             if data_shape != tf.TensorShape([None]):
                 max_i = tf.cast(
                     tf.strided_slice(
@@ -2203,10 +2212,10 @@ def process_neg_idx(
 
 
 def process_neg_idx_along_axis(
-    *,
-    data,
-    axis,
-    indices,
+        *,
+        data,
+        axis,
+        indices,
 ):
     """ Convert all the negative indices to positive
     ScatterND/TensorScatterNDUpdate in Tensorflow doesn't support
@@ -2219,8 +2228,8 @@ def process_neg_idx_along_axis(
 
 
 def is_integer_num(
-    *,
-    x: Any,
+        *,
+        x: Any,
 ) -> bool:
     """Determines whether an integer or not.
 
@@ -2239,21 +2248,21 @@ def is_integer_num(
     elif isinstance(x, float):
         return x.is_integer()
     elif isinstance(x, np.ndarray) \
-        and x.dtype in [np.int8, np.int16, np.int32, np.int64]:
+            and x.dtype in [np.int8, np.int16, np.int32, np.int64]:
         return True
     elif isinstance(x, np.ndarray) \
-        and x.squeeze().ndim == 0 and int(x) == x:
+            and x.squeeze().ndim == 0 and int(x) == x:
         return True
     return False
 
 
 def disable_unnecessary_transpose(
-    *,
-    graph_node_input_1: Any,
-    graph_node_input_2: Any,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    **kwargs: Dict,
+        *,
+        graph_node_input_1: Any,
+        graph_node_input_2: Any,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        **kwargs: Dict,
 ) -> Tuple[Any, Any, Any, Any]:
     """Remove unnecessary Transpose to NHWC.
 
@@ -2286,7 +2295,7 @@ def disable_unnecessary_transpose(
         Input shape-corrected TensorFlow input node Y
     """
     if isinstance(graph_node_input_1, gs.Variable) \
-        and isinstance(graph_node_input_2, gs.Variable):
+            and isinstance(graph_node_input_2, gs.Variable):
 
         # Skip special processing if the operation does not result
         # in an error even if special processing is not performed
@@ -2303,9 +2312,9 @@ def disable_unnecessary_transpose(
 
         if ((node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose') \
             or (not node_x_op_type == 'Transpose' and node_y_op_type == 'Transpose')) \
-            and graph_node_input_1.shape is not None \
-            and graph_node_input_2.shape is not None \
-            and (len(graph_node_input_1.shape) == len(graph_node_input_2.shape)):
+                and graph_node_input_1.shape is not None \
+                and graph_node_input_2.shape is not None \
+                and (len(graph_node_input_1.shape) == len(graph_node_input_2.shape)):
 
             if (node_x_op_type == 'Transpose' and not node_y_op_type == 'Transpose'):
                 input_tensor_1, input_tensor_2 = input_tensor_2, input_tensor_1
@@ -2350,13 +2359,13 @@ def disable_unnecessary_transpose(
 
 
 def shape_unmatched_special_avoidance_workaround(
-    *,
-    graph_node_input_1: Any,
-    graph_node_input_2: Any,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    tf_layers_dict: Dict,
-    **kwargs: Dict,
+        *,
+        graph_node_input_1: Any,
+        graph_node_input_2: Any,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        tf_layers_dict: Dict,
+        **kwargs: Dict,
 ) -> Tuple[Any, Any]:
     """Force correction of the shape mismatch between input X and input Y to NHWC format
     only if the output of the immediately preceding OP is definitively NHWC.
@@ -2398,7 +2407,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_1_shape = []
         same_input_shape_as_onnx_1 = True if len(graph_node_input_1_shape) > 0 \
-            and graph_node_input_1_shape == input_tensor_1.shape else False
+                                             and graph_node_input_1_shape == input_tensor_1.shape else False
     else:
         nhwc_flag_1 = False
         if graph_node_input_1.shape is not None:
@@ -2408,7 +2417,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_1_shape = []
         same_input_shape_as_onnx_1 = True if len(graph_node_input_1_shape) > 0 \
-            and graph_node_input_1_shape == input_tensor_1.shape else False
+                                             and graph_node_input_1_shape == input_tensor_1.shape else False
     nhwc_flag_2 = False
     same_input_shape_as_onnx_2 = False
     if isinstance(graph_node_input_2, gs.Variable):
@@ -2421,7 +2430,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_2_shape = []
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
-            and graph_node_input_2_shape == input_tensor_2.shape else False
+                                             and graph_node_input_2_shape == input_tensor_2.shape else False
     else:
         nhwc_flag_2 = False
         if graph_node_input_2.shape is not None:
@@ -2431,7 +2440,7 @@ def shape_unmatched_special_avoidance_workaround(
         else:
             graph_node_input_2_shape = []
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
-            and graph_node_input_2_shape == input_tensor_2.shape else False
+                                             and graph_node_input_2_shape == input_tensor_2.shape else False
 
     same_input_shape_as_onnxs = [same_input_shape_as_onnx_1, same_input_shape_as_onnx_2]
     nhwc_flags = [nhwc_flag_1, nhwc_flag_2]
@@ -2443,21 +2452,21 @@ def shape_unmatched_special_avoidance_workaround(
                     values[idx] = \
                         transpose_with_flexing_deterrence(
                             input_tensor=values[idx],
-                            perm=[0,2,1],
+                            perm=[0, 2, 1],
                             **kwargs,
                         )
                 elif len(values[idx].shape) == 4:
                     values[idx] = \
                         transpose_with_flexing_deterrence(
                             input_tensor=values[idx],
-                            perm=[0,2,3,1],
+                            perm=[0, 2, 3, 1],
                             **kwargs,
                         )
                 elif len(values[idx].shape) == 5:
                     values[idx] = \
                         transpose_with_flexing_deterrence(
                             input_tensor=values[idx],
-                            perm=[0,2,3,4,1],
+                            perm=[0, 2, 3, 4, 1],
                             **kwargs,
                         )
 
@@ -2473,15 +2482,17 @@ def shape_unmatched_special_avoidance_workaround(
             input_tensor_2_shape = input_tensor_2.shape
 
             if len(input_tensor_1_shape) == len(input_tensor_2_shape) \
-                and None not in input_tensor_1_shape \
-                and None not in input_tensor_2_shape:
+                    and None not in input_tensor_1_shape \
+                    and None not in input_tensor_2_shape:
 
                 input_tensor_1_shape_wo_one = [dim for dim in input_tensor_1.shape if dim != 1]
                 input_tensor_2_shape_wo_one = [dim for dim in input_tensor_2.shape if dim != 1]
 
-                if  len(input_tensor_1_shape_wo_one) == len(set(input_tensor_1_shape_wo_one)) \
-                    and len(input_tensor_2_shape_wo_one) == len(set(input_tensor_2_shape_wo_one)) \
-                    and sum(1 if s1 == s2 else 0 for s1, s2 in zip(input_tensor_1_shape, input_tensor_2_shape)) < len(input_tensor_1_shape) - 1:
+                if len(input_tensor_1_shape_wo_one) == len(set(input_tensor_1_shape_wo_one)) \
+                        and len(input_tensor_2_shape_wo_one) == len(set(input_tensor_2_shape_wo_one)) \
+                        and sum(
+                    1 if s1 == s2 else 0 for s1, s2 in zip(input_tensor_1_shape, input_tensor_2_shape)) < len(
+                    input_tensor_1_shape) - 1:
 
                     false_indices = nhwc_flags.index(False)
                     no_transpose_target_tensor = values[1 - false_indices]
@@ -2509,13 +2520,13 @@ def shape_unmatched_special_avoidance_workaround(
 
 
 def calc_output_shape_conv_transpose(
-    *,
-    input_shape: List[Any],
-    kernel: List[int],
-    pad_mode: str,
-    output_padding: List[int],
-    stride: List[int],
-    dilation: List[int],
+        *,
+        input_shape: List[Any],
+        kernel: List[int],
+        pad_mode: str,
+        output_padding: List[int],
+        stride: List[int],
+        dilation: List[int],
 ) -> List[int]:
     """Calculation of ConvTranspose output geometry.
 
@@ -2544,7 +2555,7 @@ def calc_output_shape_conv_transpose(
     output_shape: List[int]
         Accurately calculated ConvTranspose output shape
     """
-    assert len(input_shape) == len(kernel) == len(output_padding) == len(stride) == len(dilation),\
+    assert len(input_shape) == len(kernel) == len(output_padding) == len(stride) == len(dilation), \
         "All parameters should have same length"
 
     output_shape = []
@@ -2565,10 +2576,10 @@ def calc_output_shape_conv_transpose(
 
 
 def replace_max_values_negative_values(
-    *,
-    input_tensor_shape: np.asarray,
-    index_list: np.asarray,
-    axes: np.asarray,
+        *,
+        input_tensor_shape: np.asarray,
+        index_list: np.asarray,
+        axes: np.asarray,
 ) -> List[int]:
     """Replacement of maximum index value and negative index value for ONNX.
     For Slice OP.
@@ -2608,11 +2619,11 @@ def replace_max_values_negative_values(
         """
         maxvalue_index_list = [
             ONNX_INF_INDEX_VALUE - i \
-                for i in range(data_shape_length)
+            for i in range(data_shape_length)
         ]
         maxvalue_substitution_index_list = [
             i - ONNX_INF_INDEX_VALUE + data_shape_length \
-                for i in maxvalue_index_list
+            for i in maxvalue_index_list
         ]
         """
         maxvalue_index_dict
@@ -2623,7 +2634,7 @@ def replace_max_values_negative_values(
             9223372036854775803: 0
         """
         maxvalue_index_dict = {
-            i: j for i,j in zip(maxvalue_index_list, maxvalue_substitution_index_list)
+            i: j for i, j in zip(maxvalue_index_list, maxvalue_substitution_index_list)
         }
         # Negative Value
         negativevalue_substitution_index_list = [
@@ -2638,30 +2649,30 @@ def replace_max_values_negative_values(
             -5: 0
         """
         negativevalue_index_dict = {
-            i: i+data_shape_length for i in negativevalue_substitution_index_list
+            i: i + data_shape_length for i in negativevalue_substitution_index_list
         }
 
         # replace max values
         index_list[axis] = index_list[axis] \
             if index_list[axis] not in maxvalue_index_dict.keys() \
-                else maxvalue_index_dict[index_list[axis]]
+            else maxvalue_index_dict[index_list[axis]]
 
         # replace negative values
         index_list[axis] = index_list[axis] \
             if index_list[axis] not in negativevalue_index_dict.keys() \
-                else negativevalue_index_dict[index_list[axis]]
+            else negativevalue_index_dict[index_list[axis]]
     return index_list
 
 
 # https://github.com/tensorflow/tensorflow/releases/tag/v2.12.0
 # Transpose v5->v6, 5D->6D
 def transpose_with_flexing_deterrence(
-    *,
-    input_tensor: Any,
-    perm: List[int],
-    output_shape: List[int] = None,
-    name: str = None,
-    **kwargs: Dict,
+        *,
+        input_tensor: Any,
+        perm: List[int],
+        output_shape: List[int] = None,
+        name: str = None,
+        **kwargs: Dict,
 ) -> Any:
     """Transpose tensors of 7 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -2715,7 +2726,7 @@ def transpose_with_flexing_deterrence(
         input_tensor_rank = len(input_tensor_shape)
         x_shape_one_dims = [
             idx for idx in range(len(input_tensor_shape)) \
-                if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx]==1
+            if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx] == 1
         ]
         x_shape_none_dims_count = len(
             [dim for dim in input_tensor_shape if not isinstance(dim, int) or dim < 1]
@@ -2726,9 +2737,9 @@ def transpose_with_flexing_deterrence(
         squeezed_original_shapes = squeezed_original_x.shape
 
         if input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) \
-            and len(squeezed_original_shapes) <= COMPRESSION_DEFAULT_VALUE \
-            and x_shape_none_dims_count < 2 \
-            and output_shape is not None:
+                and len(squeezed_original_shapes) <= COMPRESSION_DEFAULT_VALUE \
+                and x_shape_none_dims_count < 2 \
+                and output_shape is not None:
             # Special Transpose.1
             #   Suppresses as much as possible the conversion of transposes
             #   of 7 or more dimensions into FlexTransposes.
@@ -2740,7 +2751,7 @@ def transpose_with_flexing_deterrence(
             sorted_remove_one_target_perm = sorted(remove_one_target_perm)
             replaced_remove_one_target_perm = [
                 sorted_remove_one_target_perm.index(idx) \
-                    for idx in remove_one_target_perm
+                for idx in remove_one_target_perm
             ]
             transposed_no_one_data = \
                 tf.transpose(
@@ -2756,14 +2767,14 @@ def transpose_with_flexing_deterrence(
                 )
         elif \
                 (
-                    input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0
+                        input_tensor_rank >= (COMPRESSION_DEFAULT_VALUE + 1) and x_shape_none_dims_count == 0
                 ) \
-            or \
-                (
-                    number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
-                        and number_of_dimensions_after_flextranspose_compression >= 2 \
-                        and x_shape_none_dims_count == 0
-                ):
+                        or \
+                        (
+                                number_of_dimensions_after_flextranspose_compression < COMPRESSION_DEFAULT_VALUE \
+                                and number_of_dimensions_after_flextranspose_compression >= 2 \
+                                and x_shape_none_dims_count == 0
+                        ):
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 7 or more dimensions into FlexTransposes.
@@ -2830,7 +2841,7 @@ def transpose_with_flexing_deterrence(
             sorted_removed_split_perm = sorted(removed_split_perm)
             removed_splited_transpose_perm = [
                 sorted_removed_split_perm.index(idx) \
-                    for idx in removed_split_perm
+                for idx in removed_split_perm
             ]
             target_transpose_perm = perm
             target_sorted_minimum_idxs = [
@@ -2839,9 +2850,9 @@ def transpose_with_flexing_deterrence(
 
             # 2. Split the tensor in the extracted dimension
             def split_squeeze_tensor(
-                *,
-                input_tensors: List[Any],
-                axis: int,
+                    *,
+                    input_tensors: List[Any],
+                    axis: int,
             ):
                 result_tensor_list = []
                 for input_tensor in input_tensors:
@@ -2867,14 +2878,14 @@ def transpose_with_flexing_deterrence(
                     axis=axis,
                 )
                 axeses_idx += 1
-                if axeses_idx > len(axeses)-1:
+                if axeses_idx > len(axeses) - 1:
                     break
                 new_axeses = []
                 for axes in axeses:
                     if axes <= axis:
                         new_axeses.append(axes)
                     else:
-                        new_axeses.append(axes-1)
+                        new_axeses.append(axes - 1)
                 axeses = new_axeses
 
             # 3. Transpose a divided tensor (splited_squeezed_tensors)
@@ -3032,19 +3043,19 @@ def transpose_with_flexing_deterrence(
 
 
 def stridedslice_with_flexing_deterrence(
-    *,
-    input_tensor: Any,
-    begin: List[int],
-    end: List[int],
-    strides: List[int],
-    begin_mask: List[int],
-    end_mask: List[int],
-    ignore_axes: List[int],
-    compression_defult_value: int,
-    onnx_slice_dims_count: int,
-    output_shape: List[int] = None,
-    name: str = None,
-    **kwargs: Dict,
+        *,
+        input_tensor: Any,
+        begin: List[int],
+        end: List[int],
+        strides: List[int],
+        begin_mask: List[int],
+        end_mask: List[int],
+        ignore_axes: List[int],
+        compression_defult_value: int,
+        onnx_slice_dims_count: int,
+        output_shape: List[int] = None,
+        name: str = None,
+        **kwargs: Dict,
 ) -> Any:
     """StridedSlice tensors of 6 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -3121,12 +3132,12 @@ def stridedslice_with_flexing_deterrence(
         # ignored (==1) are selected for compression
         remove_one_taget_axes = [
             axis for axis in range(input_tensor_rank) \
-                if axis not in ignore_axes
+            if axis not in ignore_axes
         ]
         # Extract dimensions of size 1
         x_shape_one_dims = [
             idx for idx in (remove_one_taget_axes) \
-                if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx]==1
+            if isinstance(input_tensor_shape[idx], int) and input_tensor_shape[idx] == 1
         ]
         # Get the number of undefined dimensions
         x_shape_none_dims_count = len(
@@ -3139,9 +3150,9 @@ def stridedslice_with_flexing_deterrence(
         squeezed_original_shapes = squeezed_original_x.shape
 
         if input_tensor_rank >= (compression_defult_value + 1) \
-            and len(squeezed_original_shapes) <= compression_defult_value \
-            and x_shape_none_dims_count == 0 \
-            and output_shape is not None:
+                and len(squeezed_original_shapes) <= compression_defult_value \
+                and x_shape_none_dims_count == 0 \
+                and output_shape is not None:
             # Special StridedSlice.1
             #   Suppresses as much as possible the conversion of StridedSlice
             #   of 6 or more dimensions into FlexStridedSlice.
@@ -3167,14 +3178,14 @@ def stridedslice_with_flexing_deterrence(
             idx = 0
             for axis in range(input_tensor_rank):
                 if axis not in x_shape_one_dims:
-                    begin_mask_ += 2**idx*begin_mask_bit[axis]
-                    idx +=1
+                    begin_mask_ += 2 ** idx * begin_mask_bit[axis]
+                    idx += 1
             end_mask_bit = list(reversed([int(i) for i in list(bin(end_mask)[2:].zfill(len(begin_)))]))
             idx = 0
             for axis in range(input_tensor_rank):
                 if axis not in x_shape_one_dims:
-                    end_mask_ += 2**idx*end_mask_bit[axis]
-                    idx +=1
+                    end_mask_ += 2 ** idx * end_mask_bit[axis]
+                    idx += 1
             if len(begin_) > 0:
                 # Special StridedSlice
                 stridedslice_no_one_data = \
@@ -3190,7 +3201,7 @@ def stridedslice_with_flexing_deterrence(
                 tensor_after_stridedslice = \
                     tf.reshape(
                         tensor=stridedslice_no_one_data,
-                        shape=\
+                        shape= \
                             tf.convert_to_tensor(
                                 [
                                     dim if not isinstance(dim, str) and dim is not None else -1 for dim in output_shape
@@ -3210,18 +3221,18 @@ def stridedslice_with_flexing_deterrence(
                 )
 
         elif onnx_slice_dims_count == 1 \
-            and \
+                and \
                 (
-                    (
-                        input_tensor_rank >= (compression_defult_value + 1) \
-                            and x_shape_none_dims_count == 0
-                    ) \
-                or \
-                    (
-                        number_of_dimensions_after_flexstridedslice_compression < compression_defult_value \
-                            and number_of_dimensions_after_flexstridedslice_compression >= 1 \
-                            and x_shape_none_dims_count == 0
-                    )
+                        (
+                                input_tensor_rank >= (compression_defult_value + 1) \
+                                and x_shape_none_dims_count == 0
+                        ) \
+                        or \
+                        (
+                                number_of_dimensions_after_flexstridedslice_compression < compression_defult_value \
+                                and number_of_dimensions_after_flexstridedslice_compression >= 1 \
+                                and x_shape_none_dims_count == 0
+                        )
                 ):
             # Special StridedSlice.2
             #   Suppresses as much as possible the conversion of StridedSlice
@@ -3298,7 +3309,7 @@ def stridedslice_with_flexing_deterrence(
             # Extract dimensions other than the dimension to be Slice
             taget_axes = [
                 axis for axis in range(input_tensor_rank) \
-                    if axis not in ignore_axes
+                if axis not in ignore_axes
             ]
             ignore_axis = ignore_axes[0]
             if len(taget_axes) < num_of_dim_requiring_compression:
@@ -3332,14 +3343,14 @@ def stridedslice_with_flexing_deterrence(
                 [   2, 8, 8, 3, 4, 5, 4, 5]
                 """
                 sorted_minimum_idxs_correction = [
-                    idx+1 if idx+1 > ignore_axis else idx for idx in sorted_minimum_idxs
+                    idx + 1 if idx + 1 > ignore_axis else idx for idx in sorted_minimum_idxs
                 ]
 
                 # 2. Split the tensor in the extracted dimension
                 def split_squeeze_tensor(
-                    *,
-                    input_tensors: List[Any],
-                    axis: int,
+                        *,
+                        input_tensors: List[Any],
+                        axis: int,
                 ):
                     result_tensor_list = []
                     for input_tensor in input_tensors:
@@ -3365,14 +3376,14 @@ def stridedslice_with_flexing_deterrence(
                         axis=axis,
                     )
                     axeses_idx += 1
-                    if axeses_idx > len(axeses)-1:
+                    if axeses_idx > len(axeses) - 1:
                         break
                     new_axeses = []
                     for axes in axeses:
                         if axes <= axis:
                             new_axeses.append(axes)
                         else:
-                            new_axeses.append(axes-1)
+                            new_axeses.append(axes - 1)
                     axeses = new_axeses
 
                 # 3. Slice a divided tensor (splited_squeezed_tensors)
@@ -3400,7 +3411,7 @@ def stridedslice_with_flexing_deterrence(
                 # Adjust begin, end, strides, begin_mask, end_mask
                 pickup_idx = np.asarray(
                     [idx for idx in range(input_tensor_rank) \
-                        if idx not in sorted_minimum_idxs_correction]
+                     if idx not in sorted_minimum_idxs_correction]
                 )
                 begin_ = None
                 if hasattr(begin, 'numpy'):
@@ -3421,8 +3432,10 @@ def stridedslice_with_flexing_deterrence(
                     strides_ = np.asarray([strides])
                 else:
                     strides_ = np.asarray(strides)
-                begin_mask_bit = np.asarray(list(reversed([int(val) for val in list(bin(begin_mask)[2:].zfill(len(begin_)))])))
-                end_mask_bit = np.asarray(list(reversed([int(val) for val in list(bin(end_mask)[2:].zfill(len(begin_)))])))
+                begin_mask_bit = np.asarray(
+                    list(reversed([int(val) for val in list(bin(begin_mask)[2:].zfill(len(begin_)))])))
+                end_mask_bit = np.asarray(
+                    list(reversed([int(val) for val in list(bin(end_mask)[2:].zfill(len(begin_)))])))
 
                 begin_ = begin_[pickup_idx]
                 end_ = end_[pickup_idx]
@@ -3430,11 +3443,11 @@ def stridedslice_with_flexing_deterrence(
                 begin_mask_bit = begin_mask_bit[pickup_idx]
                 begin_mask_ = 0
                 for idx, mask_bit in enumerate(begin_mask_bit):
-                    begin_mask_ += 2**idx*mask_bit
+                    begin_mask_ += 2 ** idx * mask_bit
                 end_mask_bit = end_mask_bit[pickup_idx]
                 end_mask_ = 0
                 for idx, mask_bit in enumerate(end_mask_bit):
-                    end_mask_ += 2**idx*mask_bit
+                    end_mask_ += 2 ** idx * mask_bit
 
                 """
                 shrink_sliced_tensors:
@@ -3598,14 +3611,14 @@ def stridedslice_with_flexing_deterrence(
 
 
 def dummy_onnx_inference(
-    *,
-    onnx_graph: onnx.ModelProto,
-    output_names: List[str],
-    test_data_nhwc: Optional[np.ndarray] = None,
-    custom_input_op_name_np_data_path: Optional[str] = None,
-    tf_layers_dict: Optional[Dict] = None,
-    use_cuda: bool = False,
-    disable_strict_mode: bool = False,
+        *,
+        onnx_graph: onnx.ModelProto,
+        output_names: List[str],
+        test_data_nhwc: Optional[np.ndarray] = None,
+        custom_input_op_name_np_data_path: Optional[str] = None,
+        tf_layers_dict: Optional[Dict] = None,
+        use_cuda: bool = False,
+        disable_strict_mode: bool = False,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3645,15 +3658,15 @@ def dummy_onnx_inference(
     # reduce all axes except batch axis
     for i, node in enumerate(gs_graph.nodes):
         if gs_graph.opset <= 17 \
-            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
-            and 'axes' not in node.attrs:
+                and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+                and 'axes' not in node.attrs:
             gs_graph.nodes[i].attrs['axes'] = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
             ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
 
         elif gs_graph.opset > 17 \
-            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
-            and len(gs_graph.nodes[i].inputs) == 1:
+                and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+                and len(gs_graph.nodes[i].inputs) == 1:
             const_axes = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
             ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
@@ -3665,15 +3678,15 @@ def dummy_onnx_inference(
             )
 
         elif gs_graph.opset <= 12 \
-            and gs_graph.nodes[i].op in ['ReduceSum'] \
-            and 'axes' not in node.attrs:
+                and gs_graph.nodes[i].op in ['ReduceSum'] \
+                and 'axes' not in node.attrs:
             gs_graph.nodes[i].attrs['axes'] = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
             ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
 
         elif gs_graph.opset > 12 \
-            and gs_graph.nodes[i].op in ['ReduceSum'] \
-            and len(gs_graph.nodes[i].inputs) == 1:
+                and gs_graph.nodes[i].op in ['ReduceSum'] \
+                and len(gs_graph.nodes[i].inputs) == 1:
             const_axes = [
                 i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
             ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
@@ -3694,12 +3707,12 @@ def dummy_onnx_inference(
 
     new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False)
     tmp_onnx_path = ''
-    tmp_onnx_external_weights_path =''
+    tmp_onnx_external_weights_path = ''
     try:
         serialized_graph = onnx._serialize(new_onnx_graph)
     except ValueError as ve:
         tmp_onnx_path = 'tmp.onnx'
-        tmp_onnx_external_weights_path ='tmp_external.weights'
+        tmp_onnx_external_weights_path = 'tmp_external.weights'
         onnx.save(
             proto=new_onnx_graph,
             f=tmp_onnx_path,
@@ -3716,7 +3729,7 @@ def dummy_onnx_inference(
                 onnx_session = ort.InferenceSession(
                     path_or_bytes=serialized_graph,
                     sess_options=sess_options,
-                    providers=['CUDAExecutionProvider','CPUExecutionProvider'],
+                    providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
                 )
             except Exception as ex:
                 onnx_session = ort.InferenceSession(
@@ -3744,9 +3757,9 @@ def dummy_onnx_inference(
         new_input_size = []
         for idx, dim in enumerate(input_size):
             if idx == 0 and input_sizes[0][0] is not None \
-                and not isinstance(input_sizes[0][0], str) \
-                and len(input_sizes[0]) == len(input_size) \
-                and (dim is None or isinstance(dim, str)):
+                    and not isinstance(input_sizes[0][0], str) \
+                    and len(input_sizes[0]) == len(input_size) \
+                    and (dim is None or isinstance(dim, str)):
                 # Batch size assignment for input OPs
                 new_input_size.append(input_sizes[0][0])
             elif dim is None or isinstance(dim, str):
@@ -3793,9 +3806,9 @@ def dummy_onnx_inference(
                     tf.transpose(
                         a=tf.image.resize(
                             images=test_data_nhwc,
-                            size=[input_size[2],input_size[3]],
+                            size=[input_size[2], input_size[3]],
                         ),
-                        perm=[0,3,1,2],
+                        perm=[0, 3, 1, 2],
                     ).numpy().astype(input_dtype)
 
     dtype_sizes = {
@@ -3826,8 +3839,8 @@ def dummy_onnx_inference(
             total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
 
     # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 80% of available RAM
-    mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 //1024
-    total_output_size_gb = (total_output_size // 1024 // 1024 //1024)
+    mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 // 1024
+    total_output_size_gb = (total_output_size // 1024 // 1024 // 1024)
     if (not disable_strict_mode and total_output_size_gb > mem_available):
         if tmp_onnx_path:
             os.remove(tmp_onnx_path)
@@ -3844,12 +3857,12 @@ def dummy_onnx_inference(
 
 
 def dummy_tf_inference(
-    *,
-    model: tf.keras.Model,
-    inputs: List[tf.keras.Input],
-    test_data_nhwc: Optional[np.ndarray] = None,
-    verification_datas: Optional[List[np.ndarray]] = None,
-    custom_input_op_name_np_data_path: Optional[str] = None,
+        *,
+        model: tf.keras.Model,
+        inputs: List[tf.keras.Input],
+        test_data_nhwc: Optional[np.ndarray] = None,
+        verification_datas: Optional[List[np.ndarray]] = None,
+        custom_input_op_name_np_data_path: Optional[str] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -3883,8 +3896,8 @@ def dummy_tf_inference(
         new_input_size = []
         for idx, dim in enumerate(input_size):
             if idx == 0 and input_sizes[0][0] is not None \
-                and len(input_sizes[0]) == len(input_size) \
-                and dim is None:
+                    and len(input_sizes[0]) == len(input_size) \
+                    and dim is None:
                 # Batch size assignment for input OPs
                 new_input_size.append(input_sizes[0][0])
             elif dim is None:
@@ -3914,9 +3927,9 @@ def dummy_tf_inference(
 
             if list(custom_input_data.shape) != input_size:
                 error_msg = f'' + \
-                    Color.RED(f'ERROR:') + ' ' + \
-                    f"The format of custom input data is different from Tensorflow's format. " + \
-                    f"Therefore, you cannot use custom input. "
+                            Color.RED(f'ERROR:') + ' ' + \
+                            f"The format of custom input data is different from Tensorflow's format. " + \
+                            f"Therefore, you cannot use custom input. "
 
                 raise ValueError(error_msg)
 
@@ -3934,11 +3947,11 @@ def dummy_tf_inference(
                     input_datas[input_name] = \
                         tf.image.resize(
                             images=test_data_nhwc,
-                            size=[input_size[1],input_size[2]],
+                            size=[input_size[1], input_size[2]],
                         ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
         else:
             for input_name, input_size, input_dtype, verification_data \
-                in zip(input_names, input_sizes, input_dtypes, verification_datas):
+                    in zip(input_names, input_sizes, input_dtypes, verification_datas):
 
                 if verification_data is not None:
                     verification_data = verification_data.numpy() \
@@ -3973,10 +3986,10 @@ def dummy_tf_inference(
 
 
 def onnx_tf_tensor_validation(
-    *,
-    output_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
-    rtol: float=1e-05,
-    atol: float=1e-05,
+        *,
+        output_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
+        rtol: float = 1e-05,
+        atol: float = 1e-05,
 ) -> Dict[str, List]:
     """Check if the ONNX tensor and the TF tensor are approximate.
 
@@ -4010,7 +4023,7 @@ def onnx_tf_tensor_validation(
     """
     check_results = {
         k: [v[0], False, 0.0] \
-            for k, v in output_pairs.items()
+        for k, v in output_pairs.items()
     }
 
     for names_pair, (onnx_tensor, tf_tensor) in output_pairs.items():
@@ -4093,9 +4106,9 @@ def onnx_tf_tensor_validation(
 
 
 def weights_export(
-    *,
-    extract_target_tflite_file_path: str,
-    output_weights_file_path: str,
+        *,
+        extract_target_tflite_file_path: str,
+        output_weights_file_path: str,
 ):
     """Extract only the weights from the generated TFLite file and save it to a file in hdf5 format.
     Note that the INT16 format is not supported.
@@ -4127,7 +4140,7 @@ def weights_export(
         for tensor_detail in tensor_details:
             tensor_index = tensor_detail['index']
             if tensor_index not in input_indexes \
-                and tensor_index not in output_indexes:
+                    and tensor_index not in output_indexes:
                 try:
                     d = f.create_dataset(
                         name=tensor_detail['name'],
@@ -4144,14 +4157,24 @@ def download_test_image_data() -> np.ndarray:
     Returns
     ----------
     test_image_data: np.ndarray
+
+    Note: S3 intermittent download issues, replaced with a zipped GitHub asset file
     """
-    DATA_COUNT = 20
-    FILE_NAME = f'calibration_image_sample_data_{DATA_COUNT}x128x128x3_float32.npy'
+    # DATA_COUNT = 20
+    # FILE_NAME = f'calibration_image_sample_data_{DATA_COUNT}x128x128x3_float32.npy'
+    FILE_NAME = 'calibration_image_sample_data_20x128x128x3_float32.npy.zip'
     LOCAL_FILE_PATH = os.path.join(os.getcwd(), FILE_NAME)
 
     if not os.path.isfile(LOCAL_FILE_PATH):
-        URL = f'https://s3.us-central-1.wasabisys.com/onnx2tf-en/datas/{FILE_NAME}'
-        test_sample_images_npy = requests.get(URL).content
+        import zipfile
+        # URL = f'https://s3.us-central-1.wasabisys.com/onnx2tf-en/datas/{FILE_NAME}'
+        URL = 'https://github.com/ultralytics/assets/releases/download/v0.0.0/{FILE_NAME}'
+        file = requests.get(URL).content
+
+        with zipfile.ZipFile(file, 'r') as f:
+            f.extractall('./')
+
+        test_sample_images_npy = FILE_NAME.rsplit('.', 1)[0]
     else:
         with open(LOCAL_FILE_PATH, 'rb') as test_sample_images_npy_file:
             test_sample_images_npy = test_sample_images_npy_file.read()
@@ -4162,10 +4185,10 @@ def download_test_image_data() -> np.ndarray:
 
 
 def broadcast_for_gpu_delegate(
-    *,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    **kwargs: Dict,
+        *,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        **kwargs: Dict,
 ):
     """Tensor broadcast when optimizing to GPU Delegate.
     'MUL requires one tensor that not less than second in all dimensions.'
@@ -4193,13 +4216,13 @@ def broadcast_for_gpu_delegate(
         if xshapes_rank > 0 and yshapes_rank > 0:
 
             def x_tile(
-                *,
-                input_tensor_1,
-                input_tensor_2,
-                xshapes,
-                xshapes_rank,
-                yshapes_rank,
-                yshape_list,
+                    *,
+                    input_tensor_1,
+                    input_tensor_2,
+                    xshapes,
+                    xshapes_rank,
+                    yshapes_rank,
+                    yshape_list,
             ):
                 tile_counts = np.asarray([1] * xshapes_rank, dtype=np.int64)
                 tile_counts_part_list = list(tile_counts)
@@ -4213,13 +4236,13 @@ def broadcast_for_gpu_delegate(
                 return tiled_x, input_tensor_2
 
             def y_tile(
-                *,
-                input_tensor_1,
-                input_tensor_2,
-                yshapes,
-                yshapes_rank,
-                xshapes_rank,
-                xshape_list,
+                    *,
+                    input_tensor_1,
+                    input_tensor_2,
+                    yshapes,
+                    yshapes_rank,
+                    xshapes_rank,
+                    xshape_list,
             ):
                 tile_counts = np.asarray([1] * yshapes_rank, dtype=np.int64)
                 tile_counts_part_list = list(tile_counts)
@@ -4244,7 +4267,7 @@ def broadcast_for_gpu_delegate(
                 return tiled_x, input_tensor_2
 
             elif xshapes_rank < yshapes_rank:
-                input_tensor_1, tiled_y =  y_tile(
+                input_tensor_1, tiled_y = y_tile(
                     input_tensor_1=input_tensor_1,
                     input_tensor_2=input_tensor_2,
                     yshapes=yshapes,
@@ -4280,7 +4303,7 @@ def broadcast_for_gpu_delegate(
                     )
                     return tiled_x, input_tensor_2
                 elif x_mn2_large_mn1_index == xshapes_rank - 1 and y_mn2_large_mn1_index != yshapes_rank - 1:
-                    input_tensor_1, tiled_y =  y_tile(
+                    input_tensor_1, tiled_y = y_tile(
                         input_tensor_1=input_tensor_1,
                         input_tensor_2=input_tensor_2,
                         yshapes=yshapes,
@@ -4432,8 +4455,8 @@ def calc_extra_padding_with_ceil(
 
 
 def get_tf_model_inputs(
-    *,
-    tf_layers_dict: dict,
+        *,
+        tf_layers_dict: dict,
 ) -> List[Any]:
     """Get a list of input OPs for a TensorFlow model.
 
@@ -4449,16 +4472,16 @@ def get_tf_model_inputs(
     """
     tf_model_inputs = [
         layer_info['op'] \
-            for layer_info in tf_layers_dict.values() \
-                if layer_info['optype'] == 'Input'
+        for layer_info in tf_layers_dict.values() \
+        if layer_info['optype'] == 'Input'
     ]
     return tf_model_inputs
 
 
 def get_tf_model_outputs(
-    *,
-    tf_layers_dict: dict,
-    output_names: List[str],
+        *,
+        tf_layers_dict: dict,
+        output_names: List[str],
 ) -> List[Any]:
     """Get a list of output OPs for a TensorFlow model.
 
@@ -4484,11 +4507,11 @@ def get_tf_model_outputs(
 
 
 def rewrite_tflite_inout_opname(
-    *,
-    output_folder_path: str,
-    tflite_file_name: str,
-    onnx_input_names: List[str],
-    onnx_output_names: List[str],
+        *,
+        output_folder_path: str,
+        tflite_file_name: str,
+        onnx_input_names: List[str],
+        onnx_output_names: List[str],
 ):
     """Rewrite the input/output OP name of tflite to the input/output OP name of ONNX.
     Pre-installation of flatc is required.
@@ -4643,8 +4666,8 @@ def rewrite_tflite_inout_opname(
 
 
 def make_tf_partial_model_inputs(
-    *,
-    input_tensors: List[Any],
+        *,
+        input_tensors: List[Any],
 ) -> List[tf.keras.Input]:
     """Generate input OPs for TensorFlow subgraph generation.
 
@@ -4664,7 +4687,7 @@ def make_tf_partial_model_inputs(
     tf_partial_model_input_dtypes = []
     for input_tensor in input_tensors:
         if input_tensor.shape is None \
-            or input_tensor.shape == tf.TensorShape(None):
+                or input_tensor.shape == tf.TensorShape(None):
             return None
         else:
             tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
@@ -4703,15 +4726,15 @@ def make_tf_partial_model_inputs(
 
 
 def merge_two_consecutive_identical_ops_into_one(
-    graph_node_input_1: Any,
-    graph_node_input_2: Any,
-    graph_node_output: gs.Variable,
-    before_op_output_shape_trans: bool,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    graph_node: gs.Node,
-    tf_layers_dict: Dict,
-    tf_func: str,
+        graph_node_input_1: Any,
+        graph_node_input_2: Any,
+        graph_node_output: gs.Variable,
+        before_op_output_shape_trans: bool,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        graph_node: gs.Node,
+        tf_layers_dict: Dict,
+        tf_func: str,
 ) -> Tuple[dict, Any]:
     """Merges two consecutive add/subtract operations into one.
 
@@ -4769,39 +4792,39 @@ def merge_two_consecutive_identical_ops_into_one(
     tf_type = None
     if tf_func == 'Mul':
         if (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_mul' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_mul']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_mul' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_mul']
-            ) \
-            or (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                and tf_layers_dict[graph_node_input_2.name]['merge_mul']
+        ) \
+                or (
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_div' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_div']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_div' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_div']
-            ):
+                and tf_layers_dict[graph_node_input_2.name]['merge_div']
+        ):
             if not isinstance(input_tensor_1, np.ndarray) \
-                and not hasattr(input_tensor_1, 'numpy'):
+                    and not hasattr(input_tensor_1, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_1)
             elif not isinstance(input_tensor_2, np.ndarray) \
-                and not hasattr(input_tensor_2, 'numpy'):
+                    and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
             tf_type = tf.math.multiply
         else:
             if isinstance(input_tensor_1, np.ndarray) \
-                or hasattr(input_tensor_1, 'numpy') \
-                or isinstance(input_tensor_2, np.ndarray) \
-                or hasattr(input_tensor_2, 'numpy'):
+                    or hasattr(input_tensor_1, 'numpy') \
+                    or isinstance(input_tensor_2, np.ndarray) \
+                    or hasattr(input_tensor_2, 'numpy'):
                 try:
                     workaround_exec_flg = False
                     try:
@@ -4824,14 +4847,16 @@ def merge_two_consecutive_identical_ops_into_one(
                             )
                         if next_graph_node_o_op == 'Mul':
                             # 1. `Mul` -> `Mul` to `Single-Mul` : `10 * 5 * 8 -> 10 * 40`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = input_tensor_1 * next_graph_node_input_1
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = input_tensor_2 * next_graph_node_input_1
                                 tf_layers_dict[graph_node_output.name]['merge_mul'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = input_tensor_1 * next_graph_node_input_2
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -4843,14 +4868,16 @@ def merge_two_consecutive_identical_ops_into_one(
 
                         elif next_graph_node_o_op == 'Div':
                             # 2. `Mul` -> `Div` to `Single-Mul` : `10 * 5 / 8 -> 10 * 0.625`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = input_tensor_1 / next_graph_node_input_1
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = input_tensor_2 / next_graph_node_input_1
                                 tf_layers_dict[graph_node_output.name]['merge_mul'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = input_tensor_1 / next_graph_node_input_2
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -4868,10 +4895,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.multiply(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
 
@@ -4880,10 +4907,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.multiply(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
                     tf_type = tf.math.multiply
@@ -4892,49 +4919,49 @@ def merge_two_consecutive_identical_ops_into_one(
                     tf.math.multiply(
                         x=input_tensor_1 \
                             if not isinstance(input_tensor_1, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_1),
+                            else tf.convert_to_tensor(input_tensor_1),
                         y=input_tensor_2 \
                             if not isinstance(input_tensor_2, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_2),
+                            else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
                 tf_type = tf.math.multiply
 
     elif tf_func == 'Div':
         if (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_div' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_div']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_div' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_div']
-            ) \
-            or (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                and tf_layers_dict[graph_node_input_2.name]['merge_div']
+        ) \
+                or (
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_mul' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_mul']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_mul' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_mul']
-            ):
+                and tf_layers_dict[graph_node_input_2.name]['merge_mul']
+        ):
             if not isinstance(input_tensor_1, np.ndarray) \
-                and not hasattr(input_tensor_1, 'numpy'):
+                    and not hasattr(input_tensor_1, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_1)
             elif not isinstance(input_tensor_2, np.ndarray) \
-                and not hasattr(input_tensor_2, 'numpy'):
+                    and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
             tf_type = tf.multiply
         else:
             if isinstance(input_tensor_1, np.ndarray) \
-                or hasattr(input_tensor_1, 'numpy') \
-                or isinstance(input_tensor_2, np.ndarray) \
-                or hasattr(input_tensor_2, 'numpy'):
+                    or hasattr(input_tensor_1, 'numpy') \
+                    or isinstance(input_tensor_2, np.ndarray) \
+                    or hasattr(input_tensor_2, 'numpy'):
                 try:
                     workaround_exec_flg = False
                     try:
@@ -4957,41 +4984,47 @@ def merge_two_consecutive_identical_ops_into_one(
                             )
                         if next_graph_node_o_op == 'Mul':
                             # 3. `Div` -> `Mul` to `Single-Mul` : `10 / 5 * 8 -> 10 * 1.6`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_1 / next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (
+                                                    input_tensor_1 / next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 / next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (
+                                                    input_tensor_2 / next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_1 / next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (
+                                                    input_tensor_1 / next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 / next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (
+                                                    input_tensor_2 / next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.identity
@@ -5000,51 +5033,57 @@ def merge_two_consecutive_identical_ops_into_one(
                                     tf.math.multiply(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.identity
 
                         elif next_graph_node_o_op == 'Div':
                             # 4. `Div` -> `Div` to `Single-Nul` : `10 / 5 / 8 -> 10 * 0.025`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_1 * next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (
+                                                    input_tensor_1 * next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 * next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (
+                                                    input_tensor_2 * next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_1 * next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (
+                                                    input_tensor_1 * next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 * next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (
+                                                    input_tensor_2 * next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.identity
@@ -5053,10 +5092,10 @@ def merge_two_consecutive_identical_ops_into_one(
                                     tf.math.divide(
                                         x=input_tensor_1 \
                                             if not isinstance(input_tensor_1, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_1),
+                                            else tf.convert_to_tensor(input_tensor_1),
                                         y=input_tensor_2 \
                                             if not isinstance(input_tensor_2, np.ndarray) \
-                                                else tf.convert_to_tensor(input_tensor_2),
+                                            else tf.convert_to_tensor(input_tensor_2),
                                         name=graph_node.name,
                                     )
                                 tf_type = tf.math.divide
@@ -5065,10 +5104,10 @@ def merge_two_consecutive_identical_ops_into_one(
                                 tf.math.divide(
                                     x=input_tensor_1 \
                                         if not isinstance(input_tensor_1, np.ndarray) \
-                                            else tf.convert_to_tensor(input_tensor_1),
+                                        else tf.convert_to_tensor(input_tensor_1),
                                     y=input_tensor_2 \
                                         if not isinstance(input_tensor_2, np.ndarray) \
-                                            else tf.convert_to_tensor(input_tensor_2),
+                                        else tf.convert_to_tensor(input_tensor_2),
                                     name=graph_node.name,
                                 )
                             tf_type = tf.math.divide
@@ -5077,10 +5116,10 @@ def merge_two_consecutive_identical_ops_into_one(
                             tf.math.divide(
                                 x=input_tensor_1 \
                                     if not isinstance(input_tensor_1, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_1),
+                                    else tf.convert_to_tensor(input_tensor_1),
                                 y=input_tensor_2 \
                                     if not isinstance(input_tensor_2, np.ndarray) \
-                                        else tf.convert_to_tensor(input_tensor_2),
+                                    else tf.convert_to_tensor(input_tensor_2),
                                 name=graph_node.name,
                             )
                         tf_type = tf.math.divide
@@ -5090,10 +5129,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.divide(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
                     tf_type = tf.math.divide
@@ -5102,49 +5141,49 @@ def merge_two_consecutive_identical_ops_into_one(
                     tf.math.divide(
                         x=input_tensor_1 \
                             if not isinstance(input_tensor_1, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_1),
+                            else tf.convert_to_tensor(input_tensor_1),
                         y=input_tensor_2 \
                             if not isinstance(input_tensor_2, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_2),
+                            else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
                 tf_type = tf.math.divide
 
     elif tf_func == 'Sub':
         if (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_sub' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_sub']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_sub' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_sub']
-            ) \
-            or (
+                and tf_layers_dict[graph_node_input_2.name]['merge_sub']
+        ) \
+                or (
                 not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_add' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_add']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_add' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_add']
-            ):
+                and tf_layers_dict[graph_node_input_2.name]['merge_add']
+        ):
             if not isinstance(input_tensor_1, np.ndarray) \
-                and not hasattr(input_tensor_1, 'numpy'):
+                    and not hasattr(input_tensor_1, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_1)
             elif not isinstance(input_tensor_2, np.ndarray) \
-                and not hasattr(input_tensor_2, 'numpy'):
+                    and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
             tf_type = tf.math.subtract
         else:
             if isinstance(input_tensor_1, np.ndarray) \
-                or hasattr(input_tensor_1, 'numpy') \
-                or isinstance(input_tensor_2, np.ndarray) \
-                or hasattr(input_tensor_2, 'numpy'):
+                    or hasattr(input_tensor_1, 'numpy') \
+                    or isinstance(input_tensor_2, np.ndarray) \
+                    or hasattr(input_tensor_2, 'numpy'):
                 try:
                     workaround_exec_flg = False
                     try:
@@ -5167,14 +5206,16 @@ def merge_two_consecutive_identical_ops_into_one(
                             )
                         if next_graph_node_o_op == 'Sub':
                             # 5. `Sub` -> `Sub` to `Single-Sub` : `10 - 5 - 8 -> 10 - 13`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 + next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 + next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_sub'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 + next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -5186,14 +5227,16 @@ def merge_two_consecutive_identical_ops_into_one(
 
                         elif next_graph_node_o_op == 'Add':
                             # 6. `Sub` -> `Add` to `Single-Sub` : `10 - 5 + 8 -> 10 + 3`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 - next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 - next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_sub'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 - next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -5211,10 +5254,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.subtract(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
 
@@ -5223,10 +5266,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.subtract(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
                     tf_type = tf.math.subtract
@@ -5235,49 +5278,49 @@ def merge_two_consecutive_identical_ops_into_one(
                     tf.math.subtract(
                         x=input_tensor_1 \
                             if not isinstance(input_tensor_1, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_1),
+                            else tf.convert_to_tensor(input_tensor_1),
                         y=input_tensor_2 \
                             if not isinstance(input_tensor_2, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_2),
+                            else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
                 tf_type = tf.math.subtract
 
     elif tf_func == 'Add':
         if (
-            not isinstance(graph_node_input_1, np.ndarray) \
+                not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_add' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_add']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_add' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_add']
-            ) \
-            or (
+                and tf_layers_dict[graph_node_input_2.name]['merge_add']
+        ) \
+                or (
                 not isinstance(graph_node_input_1, np.ndarray) \
                 and 'merge_sub' in tf_layers_dict[graph_node_input_1.name] \
                 and tf_layers_dict[graph_node_input_1.name]['merge_sub']
-            ) \
-            or (
+        ) \
+                or (
                 not isinstance(graph_node_input_2, np.ndarray) \
                 and 'merge_sub' in tf_layers_dict[graph_node_input_2.name] \
-                    and tf_layers_dict[graph_node_input_2.name]['merge_sub']
-            ):
+                and tf_layers_dict[graph_node_input_2.name]['merge_sub']
+        ):
             if not isinstance(input_tensor_1, np.ndarray) \
-                and not hasattr(input_tensor_1, 'numpy'):
+                    and not hasattr(input_tensor_1, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_1)
             elif not isinstance(input_tensor_2, np.ndarray) \
-                and not hasattr(input_tensor_2, 'numpy'):
+                    and not hasattr(input_tensor_2, 'numpy'):
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                     tf.identity(input=input_tensor_2)
             tf_type = tf.math.add
         else:
             if isinstance(input_tensor_1, np.ndarray) \
-                or hasattr(input_tensor_1, 'numpy') \
-                or isinstance(input_tensor_2, np.ndarray) \
-                or hasattr(input_tensor_2, 'numpy'):
+                    or hasattr(input_tensor_1, 'numpy') \
+                    or isinstance(input_tensor_2, np.ndarray) \
+                    or hasattr(input_tensor_2, 'numpy'):
                 try:
                     workaround_exec_flg = False
                     try:
@@ -5300,14 +5343,16 @@ def merge_two_consecutive_identical_ops_into_one(
                             )
                         if next_graph_node_o_op == 'Add':
                             # 7. `Add` -> `Add` to `Single-Add`  : `10 + 5 + 8 -> 10 + 13`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 + next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 + next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_add'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 + next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -5319,14 +5364,16 @@ def merge_two_consecutive_identical_ops_into_one(
 
                         elif next_graph_node_o_op == 'Sub':
                             # 8. `Add` -> `Sub` to `Single-Add`  : `10 + 5 - 8 -> 10 - 3`
-                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
+                            if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1,
+                                                                                          'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 - next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = (input_tensor_2 - next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_add'] = True
                                 tf_type = tf.identity
-                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
+                            elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2,
+                                                                                            'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = (input_tensor_1 - next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
@@ -5344,10 +5391,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.add(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
 
@@ -5356,10 +5403,10 @@ def merge_two_consecutive_identical_ops_into_one(
                         tf.math.add(
                             x=input_tensor_1 \
                                 if not isinstance(input_tensor_1, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_1),
+                                else tf.convert_to_tensor(input_tensor_1),
                             y=input_tensor_2 \
                                 if not isinstance(input_tensor_2, np.ndarray) \
-                                    else tf.convert_to_tensor(input_tensor_2),
+                                else tf.convert_to_tensor(input_tensor_2),
                             name=graph_node.name,
                         )
                     tf_type = tf.math.add
@@ -5368,10 +5415,10 @@ def merge_two_consecutive_identical_ops_into_one(
                     tf.math.add(
                         x=input_tensor_1 \
                             if not isinstance(input_tensor_1, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_1),
+                            else tf.convert_to_tensor(input_tensor_1),
                         y=input_tensor_2 \
                             if not isinstance(input_tensor_2, np.ndarray) \
-                                else tf.convert_to_tensor(input_tensor_2),
+                            else tf.convert_to_tensor(input_tensor_2),
                         name=graph_node.name,
                     )
                 tf_type = tf.math.add
@@ -5380,9 +5427,9 @@ def merge_two_consecutive_identical_ops_into_one(
 
 
 def deterring_shape_corruption_due_to_broadcast(
-    graph_node_output_shape: List,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
+        graph_node_output_shape: List,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
 ):
     """Deterring shape corruption due to broadcast.
     Transformer conversion stability improvement. (3D and below only)
@@ -5408,18 +5455,18 @@ def deterring_shape_corruption_due_to_broadcast(
     """
     # If the shape contains a string or None, skip all processing
     if graph_node_output_shape is None \
-        or None in graph_node_output_shape \
-        or sum([1 for dim in graph_node_output_shape if isinstance(dim, str)]) > 0:
+            or None in graph_node_output_shape \
+            or sum([1 for dim in graph_node_output_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     input_tensor_1_shape = input_tensor_1.shape
     if input_tensor_1_shape is None \
-        or None in input_tensor_1_shape \
-        or sum([1 for dim in input_tensor_1_shape if isinstance(dim, str)]) > 0:
+            or None in input_tensor_1_shape \
+            or sum([1 for dim in input_tensor_1_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     input_tensor_2_shape = input_tensor_2.shape
     if input_tensor_2_shape is None \
-        or None in input_tensor_2_shape \
-        or sum([1 for dim in input_tensor_2_shape if isinstance(dim, str)]) > 0:
+            or None in input_tensor_2_shape \
+            or sum([1 for dim in input_tensor_2_shape if isinstance(dim, str)]) > 0:
         return input_tensor_1, input_tensor_2
     if len(input_tensor_1_shape) > 3 or len(input_tensor_2_shape) > 3:
         return input_tensor_1, input_tensor_2
@@ -5444,7 +5491,7 @@ def deterring_shape_corruption_due_to_broadcast(
                 try:
                     dummy_tensor = \
                         tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition) * \
-                            tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition)
+                        tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition)
                     input_tensor_1 = tf.transpose(a=input_tensor_1, perm=tensor_1_candidate_for_transposition)
                     input_tensor_2 = tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition)
                     break
@@ -5476,10 +5523,10 @@ def deterring_shape_corruption_due_to_broadcast(
             try:
                 dummy_tensor = \
                     tf.transpose(a=input_tensor_1, perm=input_tensor_1_shape_perm) \
-                        * tf.transpose(a=input_tensor_2, perm=input_tensor_2_shape_perm)
+                    * tf.transpose(a=input_tensor_2, perm=input_tensor_2_shape_perm)
                 dummy_tensor_elements = np.prod(dummy_tensor.shape)
                 if onnx_output_elements == dummy_tensor_elements \
-                    and graph_node_output_shape == list(dummy_tensor.shape):
+                        and graph_node_output_shape == list(dummy_tensor.shape):
                     input_tensor_1_final_perm = input_tensor_1_shape_perm
                     input_tensor_2_final_perm = input_tensor_2_shape_perm
                     break
@@ -5490,7 +5537,7 @@ def deterring_shape_corruption_due_to_broadcast(
         break
     # Transposition to error-free geometry
     if input_tensor_1_final_perm is not None \
-        and input_tensor_2_final_perm is not None:
+            and input_tensor_2_final_perm is not None:
         input_tensor_1 = tf.transpose(
             a=input_tensor_1,
             perm=input_tensor_1_final_perm,
@@ -5503,14 +5550,13 @@ def deterring_shape_corruption_due_to_broadcast(
     return input_tensor_1, input_tensor_2
 
 
-
 def acquisition_of_validation_data(
-    *,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    graph_node_output: gs.Variable,
-    tf_layers_dict: Dict,
-    **kwargs: Dict,
+        *,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        graph_node_output: gs.Variable,
+        tf_layers_dict: Dict,
+        **kwargs: Dict,
 ) -> Tuple[Dict, np.ndarray, np.ndarray]:
     """Acquisition of Validation Data.
 
@@ -5546,9 +5592,9 @@ def acquisition_of_validation_data(
     )
     val_model = None
     if not isinstance(input_tensor_1, np.ndarray) \
-        and not hasattr(input_tensor_1, 'numpy') \
-        and not isinstance(input_tensor_2, np.ndarray) \
-        and not hasattr(input_tensor_2, 'numpy'):
+            and not hasattr(input_tensor_1, 'numpy') \
+            and not isinstance(input_tensor_2, np.ndarray) \
+            and not hasattr(input_tensor_2, 'numpy'):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
             outputs=[
@@ -5557,8 +5603,8 @@ def acquisition_of_validation_data(
             ],
         )
     elif not isinstance(input_tensor_1, np.ndarray) \
-        and not hasattr(input_tensor_1, 'numpy') \
-        and isinstance(input_tensor_2, np.ndarray):
+            and not hasattr(input_tensor_1, 'numpy') \
+            and isinstance(input_tensor_2, np.ndarray):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
             outputs=[
@@ -5566,8 +5612,8 @@ def acquisition_of_validation_data(
             ],
         )
     elif isinstance(input_tensor_1, np.ndarray) \
-        and not isinstance(input_tensor_2, np.ndarray) \
-        and not hasattr(input_tensor_2, 'numpy'):
+            and not isinstance(input_tensor_2, np.ndarray) \
+            and not hasattr(input_tensor_2, 'numpy'):
         val_model = tf.keras.Model(
             inputs=tf_model_inputs,
             outputs=[
@@ -5621,8 +5667,8 @@ def acquisition_of_validation_data(
 
 
 def obtaining_an_inverted_pattern_for_brute_force_validation(
-    *,
-    tensor_shape: List[int],
+        *,
+        tensor_shape: List[int],
 ) -> List[List[int]]:
     """Obtaining reversal patterns for brute force verification.
 
@@ -5665,15 +5711,15 @@ def obtaining_an_inverted_pattern_for_brute_force_validation(
 
 
 def correction_process_for_accuracy_errors(
-    *,
-    input_tensor_1: Any,
-    input_tensor_2: Any,
-    tf_func: Any,
-    np_func: Any,
-    graph_node_output_shape: List,
-    graph_node_output: gs.Variable,
-    tf_layers_dict: Dict,
-    **kwargs,
+        *,
+        input_tensor_1: Any,
+        input_tensor_2: Any,
+        tf_func: Any,
+        np_func: Any,
+        graph_node_output_shape: List,
+        graph_node_output: gs.Variable,
+        tf_layers_dict: Dict,
+        **kwargs,
 ) -> Tuple[Any, Any]:
     """Correction process for accuracy errors.
 
@@ -5711,8 +5757,8 @@ def correction_process_for_accuracy_errors(
     validation_data_2 = None
     if onnx_tensor_infos_for_validation is None:
         if np_func is not None \
-            and None not in input_tensor_1.shape \
-            and None not in input_tensor_2.shape:
+                and None not in input_tensor_1.shape \
+                and None not in input_tensor_2.shape:
             try:
                 dummy_tensor = np_func(
                     np.ones(input_tensor_1.shape, dtype=np.float32),
@@ -5733,8 +5779,10 @@ def correction_process_for_accuracy_errors(
             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                     try:
-                        test_tensor_1 = np.ones(input_tensor_1.shape, dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
-                        test_tensor_2 = np.ones(input_tensor_2.shape, dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
+                        test_tensor_1 = np.ones(input_tensor_1.shape, dtype=np.float32).transpose(
+                            tensor_1_candidate_for_transposition)
+                        test_tensor_2 = np.ones(input_tensor_2.shape, dtype=np.float32).transpose(
+                            tensor_2_candidate_for_transposition)
                         test_result_tensor = np_func(test_tensor_1, test_tensor_2)
                         test_result_tensor_shape = list(test_result_tensor.shape)
                         if test_result_tensor_shape == test_output_shape:
@@ -5788,9 +5836,11 @@ def correction_process_for_accuracy_errors(
                             min_abs_err_perm_1: int = [idx for idx in range(len(validation_data_1.shape))]
                             min_abs_err_perm_2: int = [idx for idx in range(len(validation_data_2.shape))]
                             tensor_1_candidate_for_transpositions = \
-                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_1.shape)
+                                obtaining_an_inverted_pattern_for_brute_force_validation(
+                                    tensor_shape=validation_data_1.shape)
                             tensor_2_candidate_for_transpositions = \
-                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_2.shape)
+                                obtaining_an_inverted_pattern_for_brute_force_validation(
+                                    tensor_shape=validation_data_2.shape)
                             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                                     try:
@@ -5798,14 +5848,16 @@ def correction_process_for_accuracy_errors(
                                             {
                                                 'dummy_result': \
                                                     np_func(
-                                                        validation_data_1.transpose(tensor_1_candidate_for_transposition), \
-                                                        validation_data_2.transpose(tensor_2_candidate_for_transposition)
+                                                        validation_data_1.transpose(
+                                                            tensor_1_candidate_for_transposition), \
+                                                        validation_data_2.transpose(
+                                                            tensor_2_candidate_for_transposition)
                                                     )
                                             }
                                         # Validation
                                         onnx_tf_output_pairs = {
                                             (oi[0], ti[0]): (oi[1], ti[1]) \
-                                                for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                                            for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
                                         }
                                         del tf_tensor_infos
                                         """
@@ -5838,13 +5890,15 @@ def correction_process_for_accuracy_errors(
                             if len(min_abs_err_perm_1) > 1:
                                 input_tensor_1 = tf.transpose(
                                     a=input_tensor_1 \
-                                        if not isinstance(input_tensor_1, np.ndarray) else tf.convert_to_tensor(input_tensor_1),
+                                        if not isinstance(input_tensor_1, np.ndarray) else tf.convert_to_tensor(
+                                        input_tensor_1),
                                     perm=min_abs_err_perm_1,
                                 )
                             if len(min_abs_err_perm_2) > 1:
                                 input_tensor_2 = tf.transpose(
                                     a=input_tensor_2 \
-                                        if not isinstance(input_tensor_2, np.ndarray) else tf.convert_to_tensor(input_tensor_2),
+                                        if not isinstance(input_tensor_2, np.ndarray) else tf.convert_to_tensor(
+                                        input_tensor_2),
                                     perm=min_abs_err_perm_2,
                                 )
                         del onnx_tensor_infos
@@ -5854,10 +5908,10 @@ def correction_process_for_accuracy_errors(
 
 
 def nhwc_determination_of_output_value_of_binary_input_op(
-    *,
-    graph_node_input_1: Any,
-    graph_node_input_2: Any,
-    tf_layers_dict: Dict,
+        *,
+        graph_node_input_1: Any,
+        graph_node_input_2: Any,
+        tf_layers_dict: Dict,
 ):
     """NHWC determination of output value of binary input OP.
 
@@ -5881,19 +5935,19 @@ def nhwc_determination_of_output_value_of_binary_input_op(
     is_output_nhwc_1 = \
         tf_layers_dict[graph_node_input_1.name]['nhwc'] \
             if isinstance(graph_node_input_1, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+               and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
 
     is_output_nhwc_2 = \
         tf_layers_dict[graph_node_input_2.name]['nhwc'] \
             if isinstance(graph_node_input_2, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
+               and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
 
     return is_output_nhwc_1 or is_output_nhwc_2
 
 
 def shape_is_equal_ignore_order(
-    shape_list_1: List[int],
-    shape_list_2: List[int],
+        shape_list_1: List[int],
+        shape_list_2: List[int],
 ) -> bool:
     """Verify that all axis size combinations match.
 
