@@ -80,6 +80,7 @@ def convert(
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     disable_group_convolution: Optional[bool] = False,
+    enable_accumulation_type_float16: Optional[bool] = False,
     enable_batchmatmul_unfold: Optional[bool] = False,
     enable_rnn_unroll: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
@@ -288,6 +289,10 @@ def convert(
     disable_group_convolution: Optional[bool]
         Disable GroupConvolution and replace it with SeparableConvolution\n
         for output to saved_model format.
+
+    enable_accumulation_type_float16: Optional[bool]
+        Hint for XNNPack fp16 inference on float16 tflite model.
+        https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
     enable_batchmatmul_unfold: Optional[bool]
         BatchMatMul is separated batch by batch to generate a primitive MatMul.
@@ -1262,6 +1267,10 @@ def convert(
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
         ]
+
+        if enable_accumulation_type_float16:
+            converter.target_spec._experimental_supported_accumulation_type = tf.dtypes.float16
+
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/{output_file_name}_float16.tflite', 'wb') as w:
             w.write(tflite_model)
@@ -2012,6 +2021,13 @@ def main():
             'for output to saved_model format.'
     )
     parser.add_argument(
+        '-eatfp16',
+        '--enable_accumulation_type_float16',
+        action='store_true',
+        help=\
+            'Hint for XNNPack fp16 inference on float16 tflite model.'
+    )
+    parser.add_argument(
         '-ebu',
         '--enable_batchmatmul_unfold',
         action='store_true',
@@ -2326,6 +2342,7 @@ def main():
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         disable_group_convolution=args.disable_group_convolution,
+        enable_accumulation_type_float16=args.enable_accumulation_type_float16,
         enable_batchmatmul_unfold=args.enable_batchmatmul_unfold,
         enable_rnn_unroll=args.enable_rnn_unroll,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,

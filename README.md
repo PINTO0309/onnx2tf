@@ -1376,6 +1376,9 @@ optional arguments:
     Disable GroupConvolution and replace it with SeparableConvolution for
     output to saved_model format.
 
+  -eatfp16, --enable_accumulation_type_float16 ENABLE_ACCUMULATION_TYPE_FLOAT16
+    Hint for XNNPack fp16 inference on float16 tflite model.
+
   -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
@@ -1838,6 +1841,10 @@ convert(
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for
       output to saved_model format.
+
+    enable_accumulation_type_float16: Optional[bool]
+      Hint for XNNPack fp16 inference on float16 tflite model.
+      https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
     enable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
