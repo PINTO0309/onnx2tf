@@ -1155,6 +1155,7 @@ usage: onnx2tf
 [-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-dgc]
+[-eatfp16]
 [-ebu]
 [-eru]
 [-dsft]
