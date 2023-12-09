@@ -1378,7 +1378,9 @@ optional arguments:
     output to saved_model format.
 
   -eatfp16, --enable_accumulation_type_float16 ENABLE_ACCUMULATION_TYPE_FLOAT16
-    Hint for XNNPack fp16 inference on float16 tflite model.
+    Hint for XNNPACK fp16 inference on float16 tflite model.
+    XNNPACK float16 inference on certain ARM64 cores is 2x faster.
+    See: https://github.com/PINTO0309/onnx2tf/pull/553
 
   -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
