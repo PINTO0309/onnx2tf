@@ -3103,15 +3103,16 @@ def stridedslice_with_flexing_deterrence(
 
     if disable_suppression_flexstridedslice:
         # Normal StridedSlice
-        tensor_after_stridedslice = tf.strided_slice(
-            input_=input_tensor,
-            begin=begin,
-            end=end,
-            strides=strides,
-            begin_mask=begin_mask,
-            end_mask=end_mask,
-            name=name,
-        )
+        tensor_after_stridedslice = \
+            tf.strided_slice(
+                input_=input_tensor,
+                begin=begin,
+                end=end,
+                strides=strides,
+                begin_mask=begin_mask,
+                end_mask=end_mask,
+                name=name,
+            )
     else:
         # Special StridedSlice
         # Get dimension with 1 element
@@ -3199,15 +3200,16 @@ def stridedslice_with_flexing_deterrence(
                     )
             else:
                 # Normal StridedSlice
-                tensor_after_stridedslice = tf.strided_slice(
-                    input_=input_tensor,
-                    begin=begin,
-                    end=end,
-                    strides=strides,
-                    begin_mask=begin_mask,
-                    end_mask=end_mask,
-                    name=name,
-                )
+                tensor_after_stridedslice = \
+                    tf.strided_slice(
+                        input_=input_tensor,
+                        begin=begin,
+                        end=end,
+                        strides=strides,
+                        begin_mask=begin_mask,
+                        end_mask=end_mask,
+                        name=name,
+                    )
 
         elif onnx_slice_dims_count == 1 \
             and \
@@ -3584,15 +3586,16 @@ def stridedslice_with_flexing_deterrence(
 
         else:
             # Normal StridedSlice
-            tensor_after_stridedslice = tf.strided_slice(
-                input_=input_tensor,
-                begin=begin,
-                end=end,
-                strides=strides,
-                begin_mask=begin_mask,
-                end_mask=end_mask,
-                name=name,
-            )
+            tensor_after_stridedslice = \
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin,
+                    end=end,
+                    strides=strides,
+                    begin_mask=begin_mask,
+                    end_mask=end_mask,
+                    name=name,
+                )
 
     return tensor_after_stridedslice
 

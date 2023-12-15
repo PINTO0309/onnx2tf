@@ -255,7 +255,7 @@ def make_node(
         tf.strided_slice(t, [1, 0, 0], [2, 1, 3], [1, 1, 1]) -> [[[3, 3, 3]]]
         tf.strided_slice(t, [1, 0, 0], [2, 2, 3], [1, 1, 1]) -> [[[3, 3, 3], [4, 4, 4]]]
     """
-
+    COMPRESSION_DEFAULT_VALUE = 5
     op_rep_params = kwargs.get('op_rep_params', [])
     begin_ = None
     for op_rep_param in op_rep_params:
@@ -409,6 +409,59 @@ def make_node(
                 end_mask=end_mask_,
                 name=graph_node.name,
             )
+        try:
+            if input_tensor_shape != tf.TensorShape(None) \
+                and None not in input_tensor_shape \
+                and len(input_tensor_shape) > kwargs['number_of_dimensions_after_flexstridedslice_compression']:
+
+                onnx_slice_dims_count = 0
+
+                if isinstance(starts, np.ndarray):
+                    onnx_slice_dims_count = len(starts)
+                elif hasattr(starts, 'numpy'):
+                    onnx_slice_dims_count = len(starts.numpy())
+                elif isinstance(starts, int):
+                    onnx_slice_dims_count = 1
+                elif tf.keras.backend.is_keras_tensor(starts):
+                    onnx_slice_dims_count = len(starts.shape)
+                else:
+                    onnx_slice_dims_count = len(starts)
+
+                ignore_axes = axes
+                if axes is None:
+                    ignore_axes = [idx for idx in range(input_tensor_rank)]
+
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    stridedslice_with_flexing_deterrence(
+                        input_tensor=input_tensor,
+                        begin=begin_,
+                        end=end_,
+                        strides=strides_,
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
+                        ignore_axes=ignore_axes,
+                        compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                        onnx_slice_dims_count=onnx_slice_dims_count,
+                        output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
+                        name=graph_node.name,
+                        **kwargs,
+                    )
+            else:
+                pass
+        except Exception as ex:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    strides=strides_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                    name=graph_node.name,
+                )
+            print('')
+            print(f'{Color.YELLOW("WARNING")} Dimensional compression of `Slice` fails. node.name: {graph_node.name}')
+            print('')
 
         check_input_shape = list(input_tensor_shape) \
             if input_tensor_shape != tf.TensorShape(None) else None
@@ -428,7 +481,6 @@ def make_node(
 
         elif input_tensor.shape != tf.TensorShape(None):
             # FlexStridedSlice generation suppression process
-            COMPRESSION_DEFAULT_VALUE = 5
             onnx_slice_dims_count = 0
             if isinstance(starts, np.ndarray):
                 onnx_slice_dims_count = len(starts)
