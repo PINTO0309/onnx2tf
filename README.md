@@ -75,6 +75,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |GatherElements|:heavy_check_mark:|
   |GatherND|:heavy_check_mark:|
   |Gather|:heavy_check_mark:|
+  |Gelu|:heavy_check_mark:|
   |Gemm|:heavy_check_mark:|
   |GlobalAveragePool|:heavy_check_mark:|
   |GlobalLpPool|:heavy_check_mark:|
@@ -255,7 +256,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.19.1
+  ghcr.io/pinto0309/onnx2tf:1.19.2
 
   or
 
@@ -263,7 +264,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.19.1
+  docker.io/pinto0309/onnx2tf:1.19.2
 
   or
 
