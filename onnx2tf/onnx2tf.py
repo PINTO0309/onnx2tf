@@ -291,7 +291,9 @@ def convert(
         for output to saved_model format.
 
     enable_accumulation_type_float16: Optional[bool]
-        Hint for XNNPack fp16 inference on float16 tflite model.
+        Hint for XNNPack fp16 inference on float16 tflite model.\n
+        XNNPACK float16 inference on certain ARM64 cores is 2x faster.\n
+        Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.\n
         https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
     enable_batchmatmul_unfold: Optional[bool]
@@ -2025,7 +2027,9 @@ def main():
         '--enable_accumulation_type_float16',
         action='store_true',
         help=\
-            'Hint for XNNPack fp16 inference on float16 tflite model.'
+            'Hint for XNNPack fp16 inference on float16 tflite model. \n' +
+            'XNNPACK float16 inference on certain ARM64 cores is 2x faster. \n' +
+            'Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.'
     )
     parser.add_argument(
         '-ebu',

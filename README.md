@@ -232,9 +232,9 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   # Custom flatc v23.5.26 binary for Ubuntu 20.04+
   # https://github.com/PINTO0309/onnx2tf/issues/196
   wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
-    && tar -zxvf flatc.tar.gz \
-    && sudo chmod +x flatc \
-    && sudo mv flatc /usr/bin/
+  && tar -zxvf flatc.tar.gz \
+  && sudo chmod +x flatc \
+  && sudo mv flatc /usr/bin/
   ```
 
 ## Sample Usage
@@ -248,12 +248,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
     https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
   ```bash
   # PAT authentication is required to pull from GHCR.
-  $ docker login ghcr.io
+  docker login ghcr.io
+
   Username (xxxx): {Enter}
   Password: {Personal Access Token}
   Login Succeeded
 
-  $ docker run --rm -it \
+  docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
   ghcr.io/pinto0309/onnx2tf:1.19.2
@@ -261,14 +262,14 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   or
 
   # Authentication is not required for pulls from Docker Hub.
-  $ docker run --rm -it \
+  docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
   docker.io/pinto0309/onnx2tf:1.19.2
 
   or
 
-  $ pip install -U onnx==1.14.1 \
+  pip install -U onnx==1.14.1 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.16.3 \
@@ -281,7 +282,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
-  $ pip install -e .
+  pip install -e .
   ```
 
 or
@@ -318,16 +319,16 @@ Only patterns that are considered to be used particularly frequently are describ
 # but the accompanying saved_model will not have a signature.
 # "ValueError: Only support at least one signature key."
 # If you are having trouble with this error, please use the `-osd` option.
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx
 
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
 # https://github.com/PINTO0309/onnx2tf#15-conversion-to-tensorflowjs
 # https://github.com/PINTO0309/onnx2tf#16-conversion-to-coreml
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -osd
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -osd
 
 # In the interest of efficiency for my development and debugging of onnx2tf,
 # the default configuration shows a large amount of debug level logs.
@@ -336,8 +337,8 @@ $ onnx2tf -i resnet18-v1-7.onnx -osd
 # you can change the amount of information in the log by specifying the
 # `--verbosity` or `-v` option as follows.
 # Possible values are "debug", "info", "warn", and "error".
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -v info
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -v info
 
 # Override undefined batch size or other dimensions with static values.
 # If the model has undefined dimensions, rewriting them to a static size will significantly
@@ -350,10 +351,10 @@ $ onnx2tf -i resnet18-v1-7.onnx -v info
 # the zero dimensionality, to be overwritten to a static shape, but requires
 # the input OP name to be specified.
 # e.g. -ois data1:1,3,224,224 data2:1,255 data3:1,224,6
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -b 1
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -b 1
 or
-$ onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
+onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
 
 # Suppress automatic transposition of input OPs from NCW, NCHW, NCDHW to NWC, NHWC, NDHWC.
 # onnx2tf is a specification that automatically transposes the input OP to [N,H,W,C] format
@@ -364,42 +365,42 @@ $ onnx2tf -i resnet18-v1-7.onnx -ois data:1,3,224,224
 # input OP.
 # If you do not want input OPs to be automatically transposed, you can disable automatic
 # transposition of input OPs by specifying the `-kat` option.
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.28/double_gru.onnx
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.28/double_gru.onnx
 # INPUT OPs: "spec": float32[1,3,257,1], "states_in": float32[2,1,32]
 # The following command suppresses the automatic transposition of "states_in" and converts it.
-$ onnx2tf -i double_gru.onnx -kat states_in
+onnx2tf -i double_gru.onnx -kat states_in
 
 # Keras h5 format
 # .h5, .json, .keras, .weights.h5, .weights.keras, .data-00000-of-00001, .index
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -oh5
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -oh5
 
 # Keras keras_v3 format (TensorFlow v2.12.0 or later only)
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -okv3
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -okv3
 
 # TensorFlow v1 (.pb) format
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-$ onnx2tf -i resnet18-v1-7.onnx -otfv1pb
+wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+onnx2tf -i resnet18-v1-7.onnx -otfv1pb
 
 # INT8 Quantization, Full INT8 Quantization
 # INT8 Quantization with INT16 activation, Full INT8 Quantization with INT16 activation
 # Dynamic Range Quantization
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferplus-8.onnx
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferplus-8.onnx
 # INT8 Quantization (per-channel)
-$ onnx2tf -i emotion-ferplus-8.onnx -oiqt
+onnx2tf -i emotion-ferplus-8.onnx -oiqt
 # INT8 Quantization (per-tensor)
-$ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
+onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
 # Split the model at the middle position for debugging
 # Specify the output name of the OP
-$ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
+onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
 
 # Suppress generation of Flex OP and replace with Pseudo-Function
 # [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU]
 # Below is a sample of replacing Erf with another set of operations.
-$ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/Erf_11.onnx
-$ onnx2tf -i Erf_11.onnx -rtpo Erf
+wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/Erf_11.onnx
+onnx2tf -i Erf_11.onnx -rtpo Erf
 
 # High-dimensional Transpose decomposition
 # If you do not like FlexTranspose being generated, try `-nodaftc`.
@@ -411,13 +412,30 @@ $ onnx2tf -i Erf_11.onnx -rtpo Erf
 # from the model structure.
 # Below is an example of decomposing a Transpose of 5 or more dimensions into a Transpose
 # of 4 dimensions.
-$ onnx2tf -i xxxx.onnx -nodaftc 4
+onnx2tf -i xxxx.onnx -nodaftc 4
+
+# High-dimensional Slice(StridedSlice) decomposition
+# If your special circumstances do not allow you to deploy a `StridedSlice` with more than
+# 5 dimensions to a device, you can use the `-nodafsc` option to decompose the `StridedSlice`
+# into a process with 4 or fewer dimensions.
+# Below is an example of decomposing a `StridedSlice` of 5 or more dimensions into a
+# `StridedSlice` of 4 dimensions.
+onnx2tf -i xxxx.onnx -nodafsc 4
+
+# Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set
+# Double the inference speed with Float16 precision tflite models on devices with
+# high-performance CPUs such as Snapdragon.
+# (Pixel 3a, Pixel 5a, Pixel 7, Galaxy M12 and Galaxy S22, ...)
+# XNNPACK float16 inference on certain ARM64 cores is 2x faster.
+# Unfortunately, Float16 inference cannot be accelerated when using the RaspberryPi4's
+# ARM64 CPU.
+onnx2tf -i xxxx.onnx -eatfp16
 
 # Parameter replacement (Resize,Transpose,Softmax)
-$ rm replace.json
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
-$ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
+rm replace.json
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/human_segmentation_pphumanseg_2021oct.onnx
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.27/replace.json
+onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 
 ### 3. Accuracy check
@@ -432,15 +450,15 @@ Also, you can use the `-cind` option to specify custom input for `-cotof`, inste
 The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
 
 ```
-$ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
+onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 
 or
 
-$ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
+onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 
 or
 
-$ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.npy"
+onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.npy"
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
@@ -533,25 +551,25 @@ https://github.com/PINTO0309/tflite-input-output-rewriter
 
 ```bash
 # Install custom flatc
-$ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
-    && tar -zxvf flatc.tar.gz \
-    && sudo chmod +x flatc \
-    && sudo mv flatc /usr/bin/ \
-    && rm flatc.tar.gz
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+&& tar -zxvf flatc.tar.gz \
+&& sudo chmod +x flatc \
+&& sudo mv flatc /usr/bin/ \
+&& rm flatc.tar.gz
 
 # Path check
-$ which flatc
+which flatc
 /usr/bin/flatc
 
 # Install tfliteiorewriter
-$ pip install -U tfliteiorewriter
+pip install -U tfliteiorewriter
 ```
 - Before
 
   ![01](https://github.com/PINTO0309/onnx2tf/assets/33194443/967ea56f-f771-4ccd-bdad-e4db41710396)
 
   ```bash
-  $ tfliteiorewriter \
+  tfliteiorewriter \
   -i xxxx.tflite \
   -r serving_default_input_1:0 aaa \
   -r StatefulPartitionedCall:0 bbb
@@ -1129,7 +1147,7 @@ See: https://github.com/apple/coremltools
 ## CLI Parameter
 ```
 
-$ onnx2tf -h
+onnx2tf -h
 
 usage: onnx2tf
 [-h]
@@ -1381,6 +1399,7 @@ optional arguments:
   -eatfp16, --enable_accumulation_type_float16 ENABLE_ACCUMULATION_TYPE_FLOAT16
     Hint for XNNPACK fp16 inference on float16 tflite model.
     XNNPACK float16 inference on certain ARM64 cores is 2x faster.
+    Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.
     See: https://github.com/PINTO0309/onnx2tf/pull/553
 
   -ebu, --enable_batchmatmul_unfold
@@ -1848,6 +1867,8 @@ convert(
 
     enable_accumulation_type_float16: Optional[bool]
       Hint for XNNPack fp16 inference on float16 tflite model.
+      XNNPACK float16 inference on certain ARM64 cores is 2x faster.
+      Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.
       https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
     enable_batchmatmul_unfold: Optional[bool]
