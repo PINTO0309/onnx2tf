@@ -12,7 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install onnx==1.14.1 \
+    && pip install onnx==1.15.0 \
     && pip install onnxsim==0.4.33 \
     && pip install nvidia-pyindex \
     && pip install onnx_graphsurgeon \
