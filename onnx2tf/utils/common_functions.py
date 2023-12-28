@@ -18,6 +18,7 @@ import tensorflow as tf
 from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
 import onnx
+from onnx.serialization import ProtoSerializer
 import onnx_graphsurgeon as gs
 try:
     import onnxruntime as ort
@@ -3699,7 +3700,8 @@ def dummy_onnx_inference(
     tmp_onnx_path = ''
     tmp_onnx_external_weights_path =''
     try:
-        serialized_graph = onnx._serialize(new_onnx_graph)
+        serializer: ProtoSerializer = onnx._get_serializer(fmt='protobuf')
+        serialized_graph = serializer.serialize_proto(proto=new_onnx_graph)
     except ValueError as ve:
         tmp_onnx_path = 'tmp.onnx'
         tmp_onnx_external_weights_path ='tmp_external.weights'

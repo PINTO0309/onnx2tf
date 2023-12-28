@@ -96,7 +96,7 @@ jobs:
         pip install pip -U
         pip install cmake==3.26.4
         pip install psutil==5.9.5
-        pip install onnx==1.14.1
+        pip install onnx==1.15.0
         pip install tensorflow==2.15.0
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
