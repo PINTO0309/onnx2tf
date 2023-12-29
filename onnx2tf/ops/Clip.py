@@ -84,6 +84,10 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
+    relu_relu6_merge_op_names: dict = kwargs['relu_relu6_merge_op_names']
+    relu6_op_names = [op_name for op_names in relu_relu6_merge_op_names.values() for op_name in op_names]
+    enable_relu_relu6_merge = graph_node.name in relu6_op_names
+
     # Generation of TF OP
     features = None
     if isinstance(graph_node_input, gs.Variable):
@@ -121,48 +125,57 @@ def make_node(
         max_value = np.asarray([max_value])
 
     tf_op_type = None
-    features_dtype = NUMPY_DTYPES_TO_TF_DTYPES[features.dtype] \
-        if isinstance(features.dtype, np.dtype) else features.dtype
-    if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
-        and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.nn.relu6(features=features)
-        tf_op_type = tf.nn.relu6
-    elif (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
-        and (max_value is None or max_value.shape is None or (hasattr(max_value, '_inferred_value') and max_value._inferred_value is None)):
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.nn.relu(features=features)
-        tf_op_type = tf.nn.relu
-    else:
-        if (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
-            and (isinstance(max_value, np.ndarray) and max_value.shape is not None):
+
+    if not enable_relu_relu6_merge:
+        features_dtype = NUMPY_DTYPES_TO_TF_DTYPES[features.dtype] \
+            if isinstance(features.dtype, np.dtype) else features.dtype
+        if (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
+            and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.clip_by_value(
-                    t=features,
-                    clip_value_min=tf.convert_to_tensor(min_value, dtype=features_dtype) \
-                        if isinstance(min_value, np.ndarray) else min_value,
-                    clip_value_max=tf.convert_to_tensor(max_value, dtype=features_dtype) \
-                        if isinstance(max_value, np.ndarray) else max_value,
-                )
-            tf_op_type = tf.clip_by_value
-        elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
+                tf.nn.relu6(features=features)
+            tf_op_type = tf.nn.relu6
+        elif (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
             and (max_value is None or max_value.shape is None or (hasattr(max_value, '_inferred_value') and max_value._inferred_value is None)):
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.maximum(
-                    x=features,
-                    y=tf.convert_to_tensor(min_value, dtype=features_dtype) \
-                        if isinstance(min_value, np.ndarray) else min_value,
-                )
-            tf_op_type = tf.maximum
-        elif (min_value is None or min_value.shape is None or (hasattr(min_value, '_inferred_value') and min_value._inferred_value is None)) \
-            and (max_value is not None and max_value.shape is not None):
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.minimum(
-                    x=features,
-                    y=tf.convert_to_tensor(max_value, dtype=features_dtype) \
-                        if isinstance(max_value, np.ndarray) else max_value,
-                )
-            tf_op_type = tf.minimum
+                tf.nn.relu(features=features)
+            tf_op_type = tf.nn.relu
+        else:
+            if (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
+                and (isinstance(max_value, np.ndarray) and max_value.shape is not None):
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.clip_by_value(
+                        t=features,
+                        clip_value_min=tf.convert_to_tensor(min_value, dtype=features_dtype) \
+                            if isinstance(min_value, np.ndarray) else min_value,
+                        clip_value_max=tf.convert_to_tensor(max_value, dtype=features_dtype) \
+                            if isinstance(max_value, np.ndarray) else max_value,
+                    )
+                tf_op_type = tf.clip_by_value
+            elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
+                and (max_value is None or max_value.shape is None or (hasattr(max_value, '_inferred_value') and max_value._inferred_value is None)):
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.maximum(
+                        x=features,
+                        y=tf.convert_to_tensor(min_value, dtype=features_dtype) \
+                            if isinstance(min_value, np.ndarray) else min_value,
+                    )
+                tf_op_type = tf.maximum
+            elif (min_value is None or min_value.shape is None or (hasattr(min_value, '_inferred_value') and min_value._inferred_value is None)) \
+                and (max_value is not None and max_value.shape is not None):
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.minimum(
+                        x=features,
+                        y=tf.convert_to_tensor(max_value, dtype=features_dtype) \
+                            if isinstance(max_value, np.ndarray) else max_value,
+                    )
+                tf_op_type = tf.minimum
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(
+                input=features,
+                name=graph_node.name,
+            )
+        tf_op_type = tf.identity
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape

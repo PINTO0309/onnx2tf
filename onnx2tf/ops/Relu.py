@@ -75,12 +75,62 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
+    # Relu + Relu6 -> Relu6, opset >= 11
+    enable_relu_relu6_merge = False
+    try:
+        opset = int(kwargs['opset'])
+        if opset >= 11:
+            relu6_node: gs.Node = None
+            if graph_node.o().op == 'Clip' \
+                and len(graph_node.o().inputs) == 3 \
+                and isinstance(graph_node.o().inputs[1], gs.Constant) \
+                and isinstance(graph_node.o().inputs[2], gs.Constant) \
+                and hasattr(graph_node.o().inputs[1], 'values') \
+                and hasattr(graph_node.o().inputs[2], 'values') \
+                and graph_node.o().inputs[1].values == 0 \
+                and graph_node.o().inputs[2].values == 6:
+
+                relu6_node = graph_node.o()
+                if 'relu_relu6_merge_op_names' not in kwargs:
+                    kwargs['relu_relu6_merge_op_names'] = {}
+                kwargs['relu_relu6_merge_op_names'][graph_node.name] = [
+                    relu6_node.name,
+                ]
+                relu6_node = graph_node.o()
+                enable_relu_relu6_merge = True
+
+        elif opset <= 10:
+            min_value = graph_node.attrs.get('min', None)
+            max_value = graph_node.attrs.get('max', None)
+            if graph_node.o().op == 'Clip' \
+                and min_value is not None \
+                and max_value is not None \
+                and min_value == 0.0 \
+                and max_value == 6.0:
+
+                relu6_node = graph_node.o()
+                if 'relu_relu6_merge_op_names' not in kwargs:
+                    kwargs['relu_relu6_merge_op_names'] = {}
+                kwargs['relu_relu6_merge_op_names'][graph_node.name] = [
+                    relu6_node.name,
+                ]
+                enable_relu_relu6_merge = True
+    except:
+        pass
+
     # Generation of TF OP
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.nn.relu(
-            features=input_tensor,
-            name=graph_node.name,
-        )
+    if not enable_relu_relu6_merge:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.nn.relu(
+                features=input_tensor,
+                name=graph_node.name,
+            )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.nn.relu6(
+                features=input_tensor,
+                name=graph_node.name,
+            )
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
