@@ -265,14 +265,25 @@ def make_node(
             else:
                 h_w_scale = scales[1:input_tensor_rank-1]
                 h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
-                new_size = tf.cast(
-                    h_w_scale * tf.cast(
-                        h_w_shape,
-                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
-                    ),
-                    tf.int32,
-                )
+                try:
+                    new_size = tf.cast(
+                        h_w_scale * tf.cast(
+                            h_w_shape,
+                            NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                                if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                        ),
+                        tf.int32,
+                    )
+                except:
+                    # Workaround when h_w_shape contains undefined dimensions
+                    new_size = tf.cast(
+                        h_w_scale * tf.cast(
+                            tf.shape(input_tensor)[1:input_tensor_rank-1],
+                            NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                                if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                        ),
+                        tf.int32,
+                    )
         else:
             h_w_scale = scales[1:input_tensor_rank-1]
             h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
