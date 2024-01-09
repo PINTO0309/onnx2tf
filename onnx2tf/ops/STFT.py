@@ -38,7 +38,7 @@ def custom_stft(signal, frame_length, frame_step, window, graph_node_name):
     extended_bin = spec[..., None]
     spec = tf.concat([tf.math.real(extended_bin), tf.math.imag(extended_bin)], axis=-1)
     spec = tf.cast(spec, dtype=signal.dtype)
-    
+
     return spec
 
 
@@ -65,7 +65,7 @@ def make_node(
     # ONNX parameter read section
     before_op_output_shape_trans_1 = \
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
-    
+
 
     graph_node_input_1 = get_constant_or_variable(
         graph_node.inputs[0],
@@ -94,7 +94,7 @@ def make_node(
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
     onesided = bool(graph_node.attrs.get('onesided', 1))
 
-    
+
     # Preserving Graph Structure (Dict)
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
