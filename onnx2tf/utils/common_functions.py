@@ -4642,8 +4642,9 @@ def rewrite_tflite_inout_opname(
             'to match ONNX input and output names, ' +
             'convert them after installing "flatc". ' +
             'Also, do not use symbols such as slashes in input/output OP names. ' +
-            'debian/ubuntu: apt install -y flatbuffers-compiler ' +
-            'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
+            'To install flatc, run the following command:\n' +
+            'wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz' +
+            ' && tar -zxvf flatc.tar.gz && sudo chmod +x flatc && sudo mv flatc /usr/bin/'
         )
 
 
