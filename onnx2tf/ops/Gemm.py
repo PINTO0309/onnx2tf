@@ -202,7 +202,7 @@ def make_node(
                 result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) + tf.convert_to_tensor(beta)
 
         else:
-            result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) - (tf.convert_to_tensor(beta) * z) * tf.convert_to_tensor(-1)
+            result = tf.convert_to_tensor(alpha) * tf.matmul(x, y) - (tf.convert_to_tensor(beta) * z) * tf.convert_to_tensor(-1.0, dtype=z.dtype)
 
         if result.dtype != input_tensor_x_dtype:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
