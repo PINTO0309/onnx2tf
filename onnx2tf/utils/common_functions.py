@@ -2699,12 +2699,12 @@ def transpose_with_flexing_deterrence(
 
     # If no transposition is necessary, skip all processing.
     if perm is not None \
-        and (isinstance(perm, list) or isinstance(perm, np.ndarray)) \
+        and (isinstance(perm, list) or isinstance(perm, Tuple) or isinstance(perm, np.ndarray)) \
         and list(perm) == list(range(len(perm))):
         return tensor_after_transposition
 
     elif perm is not None \
-        and not (isinstance(perm, list) or isinstance(perm, np.ndarray)) \
+        and not (isinstance(perm, list) or isinstance(perm, Tuple) or isinstance(perm, np.ndarray)) \
         and tf.keras.backend.is_keras_tensor(perm) \
         and hasattr(perm, '_inferred_value') \
         and isinstance(perm._inferred_value, list) \
