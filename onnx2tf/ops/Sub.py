@@ -147,20 +147,45 @@ def make_node(
             **kwargs,
         )
 
-    input_tensor_1, input_tensor_2 = \
-        pre_explicit_broadcast(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-        )
+    try:
+        is_scalar_1 = False
+        is_scalar_2 = False
+        is_scalar_1_rank = tf.rank(input_tensor_1) == 0
+        if hasattr(is_scalar_1_rank, 'numpy'):
+            is_scalar_1 = is_scalar_1_rank.numpy()
+        is_scalar_2_rank = tf.rank(input_tensor_2) == 0
+        if hasattr(is_scalar_2_rank, 'numpy'):
+            is_scalar_2 = is_scalar_2_rank.numpy()
+        if (is_scalar_1 or is_scalar_2) and graph_node.i().op == 'Gemm':
+            pass
+        else:
+            input_tensor_1, input_tensor_2 = \
+                pre_explicit_broadcast(
+                    input_tensor_1=input_tensor_1,
+                    input_tensor_2=input_tensor_2,
+                )
 
-    input_tensor_1, input_tensor_2 = \
-        explicit_broadcast(
-            const_or_var_1=input_tensor_1,
-            const_or_var_2=input_tensor_2,
-            graph_node=graph_node,
-            tf_layers_dict= tf_layers_dict,
-        )
+            input_tensor_1, input_tensor_2 = \
+                explicit_broadcast(
+                    const_or_var_1=input_tensor_1,
+                    const_or_var_2=input_tensor_2,
+                    graph_node=graph_node,
+                    tf_layers_dict= tf_layers_dict,
+                )
+    except Exception as ex:
+        input_tensor_1, input_tensor_2 = \
+            pre_explicit_broadcast(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+            )
 
+        input_tensor_1, input_tensor_2 = \
+            explicit_broadcast(
+                const_or_var_1=input_tensor_1,
+                const_or_var_2=input_tensor_2,
+                graph_node=graph_node,
+                tf_layers_dict= tf_layers_dict,
+            )
     # Deterring shape corruption due to broadcast
     input_tensor_1, input_tensor_2 = \
         deterring_shape_corruption_due_to_broadcast(
