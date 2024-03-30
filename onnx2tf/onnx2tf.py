@@ -1368,7 +1368,7 @@ def convert(
             # Used only when there is only one input OP, a 4D tensor image,
             # and --quant_calib_input_op_name_np_data_path is not specified.
             # Otherwise, calibrate using the data specified in --quant_calib_input_op_name_np_data_path.
-            calib_data_dict = {}
+            calib_data_dict: Dict[str, List[np.ndarray, np.ndarray, np.ndarray]] = {}
             model_input_name_list = [
                 model_input.name for model_input in model.inputs
             ]
@@ -1431,8 +1431,8 @@ def convert(
                     yield_data_dict = {}
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
-                        normalized_calib_data = (calib_data[idx] - mean) / std
-                        yield_data_dict[model_input_name] = normalized_calib_data.astype('float32')
+                        normalized_calib_data: np.ndarray = (calib_data[idx] - mean) / std
+                        yield_data_dict[model_input_name] = normalized_calib_data.astype(np.float32)
                     yield yield_data_dict
 
             # INT8 Quantization
