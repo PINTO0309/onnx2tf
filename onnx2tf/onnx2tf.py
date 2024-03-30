@@ -1432,7 +1432,7 @@ def convert(
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
                         normalized_calib_data = (calib_data[idx] - mean) / std
-                        yield_data_dict[model_input_name] = normalized_calib_data
+                        yield_data_dict[model_input_name] = normalized_calib_data.astype('float32')
                     yield yield_data_dict
 
             # INT8 Quantization
