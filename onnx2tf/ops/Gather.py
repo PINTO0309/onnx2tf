@@ -228,6 +228,7 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['simple_resize'] = True
         tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input_1.name]['simple_resize_shape_op']
         tf_type = tf.identity
+
     elif unsqueeze_count > 0 \
         and unsqueeze_count == consumer_count \
         and before_cast_indices is not None:
@@ -260,6 +261,7 @@ def make_node(
             )
         tf_layers_dict[graph_node_output.name]['unnecessary_gather'] = True
         tf_type = tf.strided_slice
+
     elif \
         (
             isinstance(simple_indices, np.ndarray) \
@@ -298,6 +300,7 @@ def make_node(
                 name=graph_node.name,
             )
         tf_type = tf.gather
+
     else:
         # No-replace
         indices_values = indices._inferred_value \
