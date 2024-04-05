@@ -228,7 +228,8 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['simple_resize'] = True
         tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input_1.name]['simple_resize_shape_op']
         tf_type = tf.identity
-    elif unsqueeze_count == consumer_count \
+    elif unsqueeze_count > 0 \
+        and unsqueeze_count == consumer_count \
         and before_cast_indices is not None:
         # Replace
         ind = before_cast_indices
