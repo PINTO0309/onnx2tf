@@ -228,7 +228,8 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['simple_resize'] = True
         tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input_1.name]['simple_resize_shape_op']
         tf_type = tf.identity
-    elif unsqueeze_count == consumer_count \
+    elif unsqueeze_count > 0 \
+        and unsqueeze_count == consumer_count \
         and before_cast_indices is not None:
         # Replace
         ind = before_cast_indices
@@ -247,34 +248,16 @@ def make_node(
             ]
         )
         end_mask_ = begin_mask_
-        reshaped_shape = list(input_tensor.shape)[:axis] + list(input_tensor.shape)[axis+1:]
-        
-        if reshaped_shape == shape:
-            # the original layer changed output shape, so we change it too
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.reshape(
-                    tensor=tf.strided_slice(
-                    input_=input_tensor \
-                        if not isinstance(input_tensor, np.ndarray) \
-                            else tf.convert_to_tensor(input_tensor),
-                    begin=begin_,
-                    end=end_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                    ),
-                    shape=reshaped_shape
-                )
-        else:
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.strided_slice(
-                    input_=input_tensor \
-                        if not isinstance(input_tensor, np.ndarray) \
-                            else tf.convert_to_tensor(input_tensor),
-                    begin=begin_,
-                    end=end_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
-                )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.strided_slice(
+                input_=input_tensor \
+                    if not isinstance(input_tensor, np.ndarray) \
+                        else tf.convert_to_tensor(input_tensor),
+                begin=begin_,
+                end=end_,
+                begin_mask=begin_mask_,
+                end_mask=end_mask_,
+            )
         tf_layers_dict[graph_node_output.name]['unnecessary_gather'] = True
         tf_type = tf.strided_slice
     elif \
