@@ -269,7 +269,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
-  pip install -U onnx==1.15.0 \
+  pip install -U onnx==2.15.0.post1 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.16.3 \
@@ -297,7 +297,7 @@ or
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
   !pip install -U pip \
-    && pip install tensorflow==2.15.0 \
+    && pip install tensorflow==2.15.0.post1 \
     && pip install -U onnx==1.15.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
