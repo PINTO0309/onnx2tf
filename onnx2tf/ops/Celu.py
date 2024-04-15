@@ -77,24 +77,20 @@ def make_node(
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Generation of TF OP
+    input_tensor_dtype = input_tensor.dtype
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.cast(
-            input_tensor < 0.0,
-            tf.float32,
-        ) * alpha * (tf.exp(input_tensor / alpha) - 1.0) + \
-        tf.cast(
-            input_tensor >= 0.0,
-            tf.float32,
-        ) * input_tensor
+        tf.math.maximum(tf.cast(0.0, dtype=input_tensor_dtype), input_tensor) \
+            + tf.math.minimum(tf.cast(0.0, dtype=input_tensor_dtype), alpha * (tf.math.exp(input_tensor / alpha) - 1))
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
-    tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
-        value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
-        param_target='outputs',
-        param_name=graph_node.outputs[0].name,
-        **kwargs,
-    )
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        post_process_transpose(
+            value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+            param_target='outputs',
+            param_name=graph_node.outputs[0].name,
+            **kwargs,
+        )
     after_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
     if 'nhwc' in tf_layers_dict[graph_node_output.name].keys() \
         and tf_layers_dict[graph_node_output.name]['nhwc'] == True \

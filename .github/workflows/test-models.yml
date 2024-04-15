@@ -103,7 +103,7 @@ jobs:
         pip install protobuf==3.20.3
         pip install onnxsim==0.4.33
         pip install sng4onnx
-        pip install onnxruntime==1.16.3
+        pip install onnxruntime==1.17.1
         pip install ml_dtypes==0.2.0
         pip install -e .
     - name: Download models

@@ -220,7 +220,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ## Environment
 - Linux / Windows
 - onnx==1.15.0
-- onnxruntime==1.16.3
+- onnxruntime==1.17.1
 - onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
@@ -257,7 +257,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.19.13
+  ghcr.io/pinto0309/onnx2tf:1.19.14
 
   or
 
@@ -265,14 +265,14 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.19.13
+  docker.io/pinto0309/onnx2tf:1.19.14
 
   or
 
   pip install -U onnx==1.15.0 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
-  && pip install -U onnxruntime==1.16.3 \
+  && pip install -U onnxruntime==1.17.1 \
   && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U tensorflow==2.15.0 \
@@ -303,7 +303,7 @@ or
     && pip install -U onnx==1.15.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U onnxruntime==1.16.3 \
+    && pip install -U onnxruntime==1.17.1 \
     && pip install -U onnxsim==0.4.33 \
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
