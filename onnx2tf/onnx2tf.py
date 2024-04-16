@@ -29,7 +29,6 @@ tf.config.experimental.enable_op_determinism()
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
 tf.get_logger().setLevel(logging.FATAL)
-tf.experimental.numpy.experimental_enable_numpy_behavior()
 from absl import logging as absl_logging
 absl_logging.set_verbosity(absl_logging.ERROR)
 
@@ -1433,7 +1432,7 @@ def convert(
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
                         normalized_calib_data: np.ndarray = (calib_data[idx] - mean) / std
-                        yield_data_dict[model_input_name] = normalized_calib_data.astype(np.float32)
+                        yield_data_dict[model_input_name] = tf.cast(tf.convert_to_tensor(normalized_calib_data), tf.float32)
                     yield yield_data_dict
 
             # INT8 Quantization
