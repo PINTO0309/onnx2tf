@@ -53,7 +53,7 @@ def make_node(
     if len(graph_node.inputs) >= 2:
         graph_node_input_2 = get_constant_or_variable(
             graph_node.inputs[1],
-            before_op_output_shape_trans,
+            before_op_output_shape_trans if isinstance(graph_node_input_2, gs.Variable) else False,
         )
     # graph_node_output: gs.Variable = graph_node.outputs[0]
     graph_node_outputs: List[gs.Variable] = [
