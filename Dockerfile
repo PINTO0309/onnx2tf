@@ -24,7 +24,8 @@ RUN pip install pip -U \
     && pip install h5py==3.11.0 \
     && pip install psutil==5.9.5 \
     && pip install onnxruntime==1.17.1 \
-    && pip install ml_dtypes==0.3.2
+    && pip install ml_dtypes==0.3.2 \
+    && pip install tf-keras~=2.16
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters

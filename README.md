@@ -280,7 +280,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnx2tf \
   && pip install -U h5py==3.11.0 \
   && pip install -U psutil==5.9.5 \
-  && pip install -U ml_dtypes==0.3.2
+  && pip install -U ml_dtypes==0.3.2 \
+  && pip install -U tf-keras~=2.16
 
   or
 
@@ -310,7 +311,8 @@ or
     && pip install -U protobuf==3.20.3 \
     && pip install -U h5py==3.11.0 \
     && pip install -U psutil==5.9.5 \
-    && pip install -U ml_dtypes==0.3.2
+    && pip install -U ml_dtypes==0.3.2 \
+    && pip install -U tf-keras~=2.16
   ```
 
 ### 2. Run test
