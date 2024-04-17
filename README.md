@@ -224,9 +224,9 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.15.0, Note: [#515](https://github.com/PINTO0309/onnx2tf/issues/515), Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
+- tensorflow==2.16.1, Note: [#515](https://github.com/PINTO0309/onnx2tf/issues/515), Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
 - psutil==5.9.5
-- ml_dtypes==0.2.0
+- ml_dtypes==0.3.2
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
   # Custom flatc v23.5.26 binary for Ubuntu 20.04+
@@ -257,7 +257,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.19.16
+  ghcr.io/pinto0309/onnx2tf:1.20.0
 
   or
 
@@ -265,7 +265,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.19.16
+  docker.io/pinto0309/onnx2tf:1.20.0
 
   or
 
@@ -275,12 +275,12 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnxruntime==1.17.1 \
   && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
-  && pip install -U tensorflow==2.15.0 \
+  && pip install -U tensorflow==2.16.1 \
   && pip install -U protobuf==3.20.3 \
   && pip install -U onnx2tf \
-  && pip install -U h5py==3.7.0 \
+  && pip install -U h5py==3.11.0 \
   && pip install -U psutil==5.9.5 \
-  && pip install -U ml_dtypes==0.2.0
+  && pip install -U ml_dtypes==0.3.2
 
   or
 
@@ -299,7 +299,7 @@ or
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
   !pip install -U pip \
-    && pip install tensorflow==2.15.0.post1 \
+    && pip install tensorflow==2.16.1 \
     && pip install -U onnx==1.15.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
@@ -308,9 +308,9 @@ or
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
     && pip install -U protobuf==3.20.3 \
-    && pip install -U h5py==3.7.0 \
+    && pip install -U h5py==3.11.0 \
     && pip install -U psutil==5.9.5 \
-    && pip install -U ml_dtypes==0.2.0
+    && pip install -U ml_dtypes==0.3.2
   ```
 
 ### 2. Run test
