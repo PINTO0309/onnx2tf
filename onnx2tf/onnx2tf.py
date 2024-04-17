@@ -22,6 +22,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["TF_USE_LEGACY_KERAS"]="1"
 import tensorflow as tf
 tf.random.set_seed(0)
 tf.keras.utils.set_random_seed(0)
