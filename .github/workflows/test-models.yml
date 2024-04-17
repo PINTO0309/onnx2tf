@@ -97,14 +97,15 @@ jobs:
         pip install cmake==3.26.4
         pip install psutil==5.9.5
         pip install onnx==1.15.0
-        pip install tensorflow==2.15.0
+        pip install tensorflow==2.16.1
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
         pip install protobuf==3.20.3
         pip install onnxsim==0.4.33
         pip install sng4onnx
         pip install onnxruntime==1.17.1
-        pip install ml_dtypes==0.2.0
+        pip install ml_dtypes==0.3.2
+        pip install tf-keras~=2.16
         pip install -e .
     - name: Download models
       run: |
