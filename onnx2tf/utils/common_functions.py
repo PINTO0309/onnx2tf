@@ -3654,6 +3654,8 @@ def dummy_onnx_inference(
         Results of inference using dummy tensor
     """
     # Separate onnx at specified output_names position
+    domain: str = onnx_graph.domain
+    ir_version: int = onnx_graph.ir_version
     gs_graph = gs.import_onnx(onnx_graph)
 
     # reduce all axes except batch axis
@@ -3706,7 +3708,7 @@ def dummy_onnx_inference(
                 if node_output.dtype is not None:
                     gs_graph.outputs.append(node_output)
 
-    new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False)
+    new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False, **{'domain': domain, 'ir_version': ir_version})
     tmp_onnx_path = ''
     tmp_onnx_external_weights_path =''
     try:
