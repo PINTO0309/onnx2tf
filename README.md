@@ -329,8 +329,8 @@ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#15-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#16-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#16-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#17-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -1105,7 +1105,29 @@ https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputo
           3.7874976e-01, 0.0000000e+00]], dtype=float32)}
   ```
 
-### 15. Conversion to TensorFlow.js
+### 15. Significant optimization of the entire model through `Einsum` and `OneHot` optimizations
+`Einsum` and `OneHot` are not optimized to the maximum by the standard behavior of onnx-optimizer. Therefore, pre-optimizing the `Einsum` OP and `OneHot` OP using my original method can significantly improve the success rate of model conversion, and the input ONNX model itself can be significantly optimized compared to when onnxsim alone is optimized. See: https://github.com/PINTO0309/onnx2tf/issues/569
+
+https://github.com/PINTO0309/spo4onnx
+
+For example
+```
+python export.py \
+--img_size 512 512 \
+--lightglue_path weights/sjy_fused_static.onnx \
+--end2end
+
+pip install -U spo4onnx onnx2tf
+
+cd weights
+spo4onnx -if sjy_fused_static.onnx -of sjy_fused_static_spo.onnx
+
+onnx2tf -i sjy_fused_static_spo.onnx
+```
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35adb529-58cc-4f10-96b3-f6ecf4f31db1)
+
+### 16. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -1124,7 +1146,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 16. Conversion to CoreML
+### 17. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
