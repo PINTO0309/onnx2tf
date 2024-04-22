@@ -1108,7 +1108,13 @@ https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputo
 ### 15. Significant optimization of the entire model through `Einsum` and `OneHot` optimizations
 `Einsum` and `OneHot` are not optimized to the maximum by the standard behavior of onnx-optimizer. Therefore, pre-optimizing the `Einsum` OP and `OneHot` OP using my original method can significantly improve the success rate of model conversion, and the input ONNX model itself can be significantly optimized compared to when onnxsim alone is optimized. See: https://github.com/PINTO0309/onnx2tf/issues/569
 
-https://github.com/PINTO0309/spo4onnx
+- I have made a few unique customizations to the cited model structure.
+
+  https://github.com/PINTO0309/LightGlue-ONNX
+
+- spo4onnx
+
+  https://github.com/PINTO0309/spo4onnx
 
 For example
 ```
