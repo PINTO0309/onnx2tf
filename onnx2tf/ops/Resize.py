@@ -257,7 +257,7 @@ def make_node(
         elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
             new_size = tf.cast(sizes, tf.int32)
         elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 4:
-            new_size = tf.cast(sizes[2:], tf.int32)
+            new_size = tf.cast(sizes[1:3], tf.int32)
 
     elif scales is not None:
         # only scales is defined
