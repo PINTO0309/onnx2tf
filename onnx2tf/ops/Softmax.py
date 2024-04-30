@@ -121,7 +121,7 @@ def make_node(
     validation_data = None
 
     # If all axes are of different sizes and the axis sizes specified in axis are the same
-    # in onnx and sensorflow, skip the accuracy check.
+    # in onnx and Tensorflow, skip the accuracy check.
     acc_check_pass_flg = False
     if graph_node.inputs[0].shape is not None \
         and input_tensor.shape is not None:

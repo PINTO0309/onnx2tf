@@ -1,7 +1,10 @@
+import sys
+import copy
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
+import itertools
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -14,8 +17,13 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
+    dummy_tf_inference,
+    get_tf_model_inputs,
+    onnx_tf_tensor_validation,
+    define_reduceXXX,
 )
 from onnx2tf.utils.logging import *
+from typing import Any, Dict, List, Tuple
 
 
 @print_node_info
@@ -53,7 +61,7 @@ def make_node(
             before_op_output_shape_trans,
         )
     graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
+    onnx_output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
@@ -95,9 +103,168 @@ def make_node(
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
-        'shape': shape,
+        'shape': onnx_output_shape,
         'dtype': dtype,
     }
+
+    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
+    custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
+    disable_strict_mode: bool = kwargs['disable_strict_mode']
+    onnx_tensor_infos = None
+    validation_data = None
+
+    if onnx_tensor_infos_for_validation is not None:
+        # Get the output tensor of one previous OP of TensorFlow only once
+        if not disable_strict_mode:
+            tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
+            val_model = None
+            if not isinstance(input_tensor, np.ndarray):
+                val_model = tf.keras.Model(
+                    inputs=tf_model_inputs,
+                    outputs=[
+                        input_tensor,
+                    ],
+                )
+            else:
+                pass
+
+        # TF dummy inference
+        tf_pre_tensor_infos = {}
+        if not disable_strict_mode:
+            try:
+                tf_pre_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=val_model,
+                        inputs=tf_model_inputs,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    )
+            except:
+                pass
+
+        # Get np.ndarray for validation
+        if not disable_strict_mode:
+            if len(tf_pre_tensor_infos) == 1:
+                if not isinstance(input_tensor, np.ndarray):
+                    validation_data = list(tf_pre_tensor_infos.values())[0]
+                else:
+                    validation_data = copy.deepcopy(input_tensor)
+
+            # Get ONNX inference results
+            onnx_tensor_infos = None
+            if onnx_tensor_infos_for_validation is not None:
+                onnx_tensor_infos = {
+                    graph_node_output.name:
+                    onnx_tensor_infos_for_validation[graph_node_output.name]
+                }
+                del onnx_tensor_infos_for_validation
+
+    if not disable_strict_mode:
+        if onnx_tensor_infos is not None and validation_data is not None:
+            # Shape Unmatch Error Mitigation Measures
+            # Search for and transpose shapes that do not cause shape unmatch errors
+            min_abs_err = sys.maxsize
+            min_abs_err_axes: List[int] = None
+            if isinstance(axes, list):
+                min_abs_err_axes = copy.deepcopy(axes)
+            elif isinstance(axes, int):
+                min_abs_err_axes = [axes]
+            elif isinstance(axes, np.ndarray):
+                min_abs_err_axes = list(axes)
+            else:
+                min_abs_err_axes = axes
+
+            check_axes_tuples: List[Tuple] = list(itertools.combinations(list(range(tensor_rank)), len(axes)))
+            if tuple(axes) in check_axes_tuples:
+                check_axes_tuples.remove(tuple(axes))
+                check_axes_tuples.insert(0, tuple(axes))
+            check_axes = [list(check_axes_tuple) for check_axes_tuple in check_axes_tuples]
+
+            # Verify that the output shape matches that of ONNX
+            # If the combination of each value of a dimension is not correct,
+            # invalidate the normal processing judgment.
+            if graph_node.outputs[0].name is not None \
+                and graph_node.outputs[0].name != '' \
+                and graph_node.outputs[0].name in onnx_tensor_infos:
+                target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
+                target_onnx_output_shape = target_onnx_output.shape
+            else:
+                target_onnx_output_shape = onnx_output_shape
+
+            # Search for the axis with the smallest error
+            for check_axis in check_axes:
+                # Build TF dummy model
+                input = tf.keras.Input(
+                    shape=validation_data.shape[1:],
+                    batch_size=validation_data.shape[0] \
+                        if isinstance(validation_data.shape[0], int) else None,
+                    name='dummy_input',
+                    dtype=validation_data.dtype,
+                )
+                val_model = tf.keras.Model(
+                    inputs=[
+                        input,
+                    ],
+                    outputs=[
+                        define_reduceXXX(
+                            tf_func='ReduceL2',
+                            target_input_tensor=input,
+                            target_axes=check_axis,
+                            target_keepdims=keepdims,
+                        )
+                    ],
+                )
+
+                onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in target_onnx_output_shape])
+                val_model_output_shapes = list(val_model.output.shape)
+                val_model_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in val_model_output_shapes])
+                if onnx_output_shape_prod != val_model_output_shape_prod:
+                    del input
+                    del val_model
+                    continue
+
+                # TF dummy inference
+                tf_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=val_model,
+                        inputs=[
+                            input,
+                        ],
+                        verification_datas=[
+                            validation_data,
+                        ],
+                    )
+                del input
+                del val_model
+
+                # Validation
+                onnx_tf_output_pairs = {
+                    (oi[0], ti[0]): (oi[1], ti[1]) \
+                        for oi, ti in zip(onnx_tensor_infos.items(), tf_tensor_infos.items())
+                }
+                """
+                check_results: Dict[str, List[np.ndarray, int, float|int]]
+                    {
+                        onnx_output_name: [
+                            onnx_tensor,
+                            matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                            max_abs_err,
+                        ]
+                    }
+                """
+                check_results = onnx_tf_tensor_validation(
+                    output_pairs=onnx_tf_output_pairs,
+                    rtol=0.0,
+                    atol=0.0,
+                )
+                result_err = sum([val[2] for val in check_results.values()])
+                if result_err < min_abs_err:
+                    min_abs_err = result_err
+                    min_abs_err_axes = check_axis
+                    if min_abs_err < 1e-3:
+                        break
+            axes = min_abs_err_axes
 
     # Param replacement
     axes = replace_parameter(
