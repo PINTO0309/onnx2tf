@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -126,7 +127,7 @@ def make_node(
         )
         val_model = None
         if not isinstance(input_tensor, np.ndarray):
-            val_model = tf.keras.Model(
+            val_model = tf_keras.Model(
                 inputs=tf_model_inputs,
                 outputs=[
                     input_tensor,
@@ -198,7 +199,7 @@ def make_node(
                 try:
                     target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
                     # Build TF dummy model
-                    input = tf.keras.Input(
+                    input = tf_keras.Input(
                         shape=target_validation_data.shape[1:],
                         batch_size=target_validation_data.shape[0] \
                             if isinstance(target_validation_data.shape[0], int) else None,
@@ -206,7 +207,7 @@ def make_node(
                         dtype=target_validation_data.dtype,
                     )
                     mean, variance = tf.nn.moments(input, axes=axes, keepdims=True)
-                    val_model = tf.keras.Model(
+                    val_model = tf_keras.Model(
                         inputs=[
                             input,
                         ],
@@ -261,28 +262,28 @@ def make_node(
 
     if activation == 0:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.keras.layers.GroupNormalization(
+            tf_keras.layers.GroupNormalization(
                 groups=groups,
                 axis=-1,
                 epsilon=epsilon,
                 center=True if B is not None else False, # beta/bias
                 scale=True if scale is not None else False, # gamma/scale
-                beta_initializer=tf.keras.initializers.constant(B) if B is not None else 'zeros',
-                gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
+                beta_initializer=tf_keras.initializers.constant(B) if B is not None else 'zeros',
+                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
             )(input_tensor)
     else:
         group_norm = \
-            tf.keras.layers.GroupNormalization(
+            tf_keras.layers.GroupNormalization(
                 groups=groups,
                 axis=-1,
                 epsilon=epsilon,
                 center=True if B is not None else False, # beta/bias
                 scale=True if scale is not None else False, # gamma/scale
-                beta_initializer=tf.keras.initializers.constant(B) if B is not None else 'zeros',
-                gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
+                beta_initializer=tf_keras.initializers.constant(B) if B is not None else 'zeros',
+                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
             )(input_tensor)
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.keras.activations.swish(group_norm)
+            tf_keras.activations.swish(group_norm)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -296,7 +297,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.keras.layers.GroupNormalization,
+                'tf_op_type': tf_keras.layers.GroupNormalization,
                 'tf_inputs': {
                     'x': input_tensor,
                     'groups': groups,

@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     replace_parameter,
@@ -23,7 +24,7 @@ from tensorflow.python.ops import gen_image_ops
 from tensorflow.python.util import dispatch
 
 
-class NMSLayer(tf.keras.layers.Layer):
+class NMSLayer(tf_keras.layers.Layer):
     def __init__(self):
         super(NMSLayer, self).__init__()
 

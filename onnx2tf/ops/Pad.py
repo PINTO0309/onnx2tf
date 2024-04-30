@@ -5,6 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -166,7 +167,7 @@ def make_node(
             paddings = tf.convert_to_tensor(paddings) \
                 if isinstance(paddings, np.ndarray) else paddings
 
-    elif tf.keras.backend.is_keras_tensor(paddings):
+    elif tf_keras.backend.is_keras_tensor(paddings):
         paddings = \
             tf.transpose(
                 a=tf.reshape(

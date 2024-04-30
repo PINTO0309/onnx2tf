@@ -25,7 +25,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ["TF_USE_LEGACY_KERAS"] = '1'
 import tensorflow as tf
 tf.random.set_seed(0)
-tf.keras.utils.set_random_seed(0)
+import tf_keras
+tf_keras.utils.set_random_seed(0)
 tf.config.experimental.enable_op_determinism()
 tf.get_logger().setLevel('INFO')
 tf.autograph.set_verbosity(0)
@@ -107,7 +108,7 @@ def convert(
     disable_model_save: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
     verbosity: Optional[str] = 'debug',
-) -> tf.keras.Model:
+) -> tf_keras.Model:
     """Convert ONNX to TensorFlow models.
 
     Parameters
@@ -447,7 +448,7 @@ def convert(
 
     Returns
     ----------
-    model: tf.keras.Model
+    model: tf_keras.Model
         Model
     """
 
@@ -1056,7 +1057,7 @@ def convert(
                 if output_signaturedefs or output_integer_quantized_tflite:
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
-        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        model = tf_keras.Model(inputs=inputs, outputs=outputs)
         # if get_log_level() <= LOG_LEVELS['debug']:
         #     debug('')
         #     model.summary(line_length=140)
@@ -1633,7 +1634,7 @@ def convert(
                         if opname in ops_output_names \
                             and hasattr(layer_info['tf_node'], 'numpy')
             ]
-            model = tf.keras.Model(inputs=inputs, outputs=outputs)
+            model = tf_keras.Model(inputs=inputs, outputs=outputs)
 
             # Exclude output OPs not subject to validation
             ops_output_names = [

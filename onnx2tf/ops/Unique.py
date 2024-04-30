@@ -3,9 +3,9 @@ from typing import List
 
 random.seed(0)
 import numpy as np
-
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -18,7 +18,7 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.logging import Color
 
 
-class tfUnique(tf.keras.layers.Layer):
+class tfUnique(tf_keras.layers.Layer):
 
     def __init__(self):
         super(tfUnique, self).__init__()

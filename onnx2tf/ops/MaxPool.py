@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -345,7 +346,7 @@ def make_node(
                 kernel_shape.insert(0, 1)
             elif kernel_shape is not None and kernel_shape.shape is not None and hasattr(kernel_shape, 'numpy'):
                 kernel_shape = np.insert(arr=kernel_shape.numpy(), obj=1, values=1)
-            elif kernel_shape is not None and kernel_shape.shape is not None and tf.keras.backend.is_keras_tensor(kernel_shape):
+            elif kernel_shape is not None and kernel_shape.shape is not None and tf_keras.backend.is_keras_tensor(kernel_shape):
                 kernel_shape = tf.concat([kernel_shape[:1], [1], kernel_shape[1:]], axis=0)
 
         # MaxPoolWithArgmax

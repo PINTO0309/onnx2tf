@@ -3,7 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-# import tensorflow_text as text
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -17,7 +17,7 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.logging import *
 
 
-class StringNormalizer(tf.keras.layers.Layer):
+class StringNormalizer(tf_keras.layers.Layer):
     def __init__(
         self,
         case_change_action=None,

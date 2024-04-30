@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from typing import List
 from onnx2tf.utils.logging import *
@@ -113,7 +114,7 @@ def make_node(
         # 3D
         if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep and not absolutely_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
-                tf.keras.Input(
+                tf_keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
                         shape[1] if isinstance(shape[1], int) else None,
@@ -130,7 +131,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,2,1]
         else:
-            ncw = tf.keras.Input(
+            ncw = tf_keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
@@ -161,7 +162,7 @@ def make_node(
         # 4D
         if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep and not absolutely_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
-                tf.keras.Input(
+                tf_keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
                         shape[3] if isinstance(shape[3], int) else None,
@@ -180,7 +181,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,3,1,2]
         else:
-            nchw = tf.keras.Input(
+            nchw = tf_keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
@@ -213,7 +214,7 @@ def make_node(
         # 5D
         if not ncw_nchw_ncdhw_keep and not nwc_nhwc_ndhwc_keep and not absolutely_keep:
             tf_layers_dict[graph_input_name]['tf_node'] = \
-                tf.keras.Input(
+                tf_keras.Input(
                     shape=[
                         shape[2] if isinstance(shape[2], int) else None,
                         shape[3] if isinstance(shape[3], int) else None,
@@ -234,7 +235,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,4,1,2,3]
         else:
-            ncdhw = tf.keras.Input(
+            ncdhw = tf_keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
@@ -288,7 +289,7 @@ def make_node(
             assert not nwc_nhwc_ndhwc_keep, error_msg
 
         tf_layers_dict[graph_input_name]['tf_node'] = \
-            tf.keras.Input(
+            tf_keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in shape[1:]
                 ],
@@ -324,7 +325,7 @@ def make_node(
             assert not nwc_nhwc_ndhwc_keep, error_msg
 
         tf_layers_dict[graph_input_name]['tf_node'] = \
-            tf.keras.Input(
+            tf_keras.Input(
                 shape=shape if graph_input.shape != tf.TensorShape(None) else [None],
                 name=graph_input_name,
                 dtype=dtype,

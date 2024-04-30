@@ -5,6 +5,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -160,7 +161,7 @@ def make_node(
         for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
             try:
                 # Build TF dummy model
-                input_1 = tf.keras.Input(
+                input_1 = tf_keras.Input(
                     shape=validation_data_1.shape[1:],
                     batch_size=validation_data_1.shape[0] \
                         if isinstance(validation_data_1.shape[0], int) else None,
@@ -193,7 +194,7 @@ def make_node(
                 if onnx_tensor_infos:
                     try:
                         # Search for the axis with the smallest error
-                        val_model = tf.keras.Model(
+                        val_model = tf_keras.Model(
                             inputs=[
                                 input_1,
                             ],
