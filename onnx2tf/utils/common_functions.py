@@ -5931,3 +5931,90 @@ def shape_is_equal_ignore_order(
     shape_list_1 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_1]
     shape_list_2 = [-1 if isinstance(s, str) or s is None else s for s in shape_list_2]
     return sorted(shape_list_1) == sorted(shape_list_2)
+
+# ReduceL1
+# ReduceL2
+# ReduceLogSum
+# ReduceLogSumExp
+# ReduceMax
+# ReduceMean
+# ReduceMin
+# ReduceProd
+# ReduceSum
+# ReduceSumSquare
+def define_reduceXXX(
+    *,
+    tf_func: str,
+    target_input_tensor: Any,
+    target_axes: List[int],
+    target_keepdims: bool,
+):
+    reduced_tensor = None
+    axes = target_axes if len(target_axes) > 1 else target_axes[0] if target_axes is not None else None
+
+    if tf_func == 'ReduceL1':
+        reduced_tensor = tf.norm(
+            tensor=target_input_tensor,
+            ord=1,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceL2':
+        reduced_tensor = tf.norm(
+            tensor=target_input_tensor,
+            ord=2,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceLogSum':
+        reduced_tensor = \
+            tf.math.log(
+                x=tf.reduce_sum(
+                    input_tensor=target_input_tensor,
+                    axis=axes,
+                    keepdims=target_keepdims,
+                )
+            )
+    elif tf_func == 'ReduceLogSumExp':
+        reduced_tensor = tf.math.reduce_logsumexp(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceMax':
+        reduced_tensor = tf.math.reduce_max(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceMean':
+        reduced_tensor = tf.math.reduce_mean(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceMin':
+        reduced_tensor = tf.math.reduce_min(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceProd':
+        reduced_tensor = tf.math.reduce_prod(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceSum':
+        reduced_tensor = tf.reduce_sum(
+            input_tensor=target_input_tensor,
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    elif tf_func == 'ReduceSumSquare':
+        reduced_tensor = tf.reduce_sum(
+            input_tensor=tf.square(x=target_input_tensor),
+            axis=axes,
+            keepdims=target_keepdims,
+        )
+    return reduced_tensor
