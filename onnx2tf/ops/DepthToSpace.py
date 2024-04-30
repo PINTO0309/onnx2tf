@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -136,7 +137,7 @@ def make_node(
             )
             val_model = None
             if not isinstance(input_tensor, np.ndarray):
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=[
                         input_tensor,
@@ -194,7 +195,7 @@ def make_node(
                     try:
                         target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
                         # Build TF dummy model
-                        input = tf.keras.Input(
+                        input = tf_keras.Input(
                             shape=target_validation_data.shape[1:],
                             batch_size=target_validation_data.shape[0] \
                                 if isinstance(target_validation_data.shape[0], int) else None,
@@ -203,7 +204,7 @@ def make_node(
                         )
                         val_model = None
                         if mode == "DCR":
-                            val_model = tf.keras.Model(
+                            val_model = tf_keras.Model(
                                 inputs=[
                                     input,
                                 ],
@@ -229,7 +230,7 @@ def make_node(
                                 perm=[0,1,4,2,5,3],
                                 **kwargs,
                             )
-                            val_model = tf.keras.Model(
+                            val_model = tf_keras.Model(
                                 inputs=[
                                     input,
                                 ],

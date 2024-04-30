@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -151,7 +152,7 @@ def make_node(
             )
     else:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.keras.layers.Flatten()(input_tensor)
+            tf_keras.layers.Flatten()(input_tensor)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

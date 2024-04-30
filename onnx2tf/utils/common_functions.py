@@ -15,6 +15,7 @@ import subprocess
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
 import onnx
@@ -101,7 +102,7 @@ def replace_parameter(
                 replace_value = float(replace_value)
             elif isinstance(value_before_replacement, str):
                 replace_value = str(replace_value)
-            elif tf.keras.backend.is_keras_tensor(value_before_replacement):
+            elif tf_keras.backend.is_keras_tensor(value_before_replacement):
                 replace_value = np.asarray(
                     replace_value,
                     dtype=TF_DTYPES_TO_NUMPY_DTYPES[value_before_replacement.dtype],
@@ -442,7 +443,7 @@ def auto_cast(func):
         elif not isinstance(const_or_var, np.ndarray) \
             and not isinstance(const_or_var, gs.Variable) \
             and not isinstance(const_or_var, gs.Constant) \
-            and tf.keras.backend.is_keras_tensor(const_or_var) \
+            and tf_keras.backend.is_keras_tensor(const_or_var) \
             and const_or_var.dtype == tf.float16:
             const_or_var = tf.cast(const_or_var, dtype=tf.float32)
         else:
@@ -1018,7 +1019,7 @@ def explicit_broadcast(
                 axis=0,
             )
         elif not isinstance(const_or_var_2, np.ndarray) \
-            and tf.keras.backend.is_keras_tensor(const_or_var_2):
+            and tf_keras.backend.is_keras_tensor(const_or_var_2):
             const_or_var_2 = tf.expand_dims(
                 input=const_or_var_2,
                 axis=0,
@@ -1051,7 +1052,7 @@ def explicit_broadcast(
         elif isinstance(const_or_var_2, tf.Tensor) \
             or (
                 not isinstance(const_or_var_2, np.ndarray) \
-                and tf.keras.backend.is_keras_tensor(const_or_var_2)
+                and tf_keras.backend.is_keras_tensor(const_or_var_2)
             ):
             if graph_node_input_name2 is not None \
                 and tf_layers_dict is not None \
@@ -2182,7 +2183,7 @@ def process_neg_idx(
         if not isinstance(indices_shape[-1], int) \
             and not isinstance(indices_shape[-1], np.ndarray) \
             and not isinstance(indices_shape[-1], tf.Tensor) \
-            and tf.keras.backend.is_keras_tensor(indices_shape[-1]):
+            and tf_keras.backend.is_keras_tensor(indices_shape[-1]):
             if data_shape != tf.TensorShape([None]):
                 max_i = tf.cast(
                     tf.strided_slice(
@@ -2705,7 +2706,7 @@ def transpose_with_flexing_deterrence(
 
     elif perm is not None \
         and not (isinstance(perm, list) or isinstance(perm, Tuple) or isinstance(perm, np.ndarray)) \
-        and tf.keras.backend.is_keras_tensor(perm) \
+        and tf_keras.backend.is_keras_tensor(perm) \
         and hasattr(perm, '_inferred_value') \
         and isinstance(perm._inferred_value, list) \
         and perm._inferred_value == list(range(len(perm._inferred_value))):
@@ -3862,8 +3863,8 @@ def dummy_onnx_inference(
 
 def dummy_tf_inference(
     *,
-    model: tf.keras.Model,
-    inputs: List[tf.keras.Input],
+    model: tf_keras.Model,
+    inputs: List[tf_keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
     verification_datas: Optional[List[np.ndarray]] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
@@ -3872,11 +3873,11 @@ def dummy_tf_inference(
 
     Parameters
     ----------
-    model: tf.keras.Model
+    model: tf_keras.Model
         Keras model
 
-    inputs: List[tf.keras.Input]
-        List of tf.keras.Input
+    inputs: List[tf_keras.Input]
+        List of tf_keras.Input
 
     test_data_nhwc: Optional[np.ndarray]
         Test Image Data
@@ -4663,7 +4664,7 @@ def rewrite_tflite_inout_opname(
 def make_tf_partial_model_inputs(
     *,
     input_tensors: List[Any],
-) -> List[tf.keras.Input]:
+) -> List[tf_keras.Input]:
     """Generate input OPs for TensorFlow subgraph generation.
 
     Parameters
@@ -4673,8 +4674,8 @@ def make_tf_partial_model_inputs(
 
     Returns
     -------
-    inputs: List[tf.keras.Input]
-        List of tf.keras.Input
+    inputs: List[tf_keras.Input]
+        List of tf_keras.Input
     """
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
@@ -4696,20 +4697,20 @@ def make_tf_partial_model_inputs(
                     if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
             )
 
-    inputs: List[tf.keras.Input] = []
+    inputs: List[tf_keras.Input] = []
     input = None
     for idx, input_shape in enumerate(tf_partial_model_input_shapes):
         if isinstance(input_shape, list) and len(input_shape) == 0:
             tf_partial_model_input_shapes[idx] = [1]
     for input_shape, input_dtype in zip(tf_partial_model_input_shapes, tf_partial_model_input_dtypes):
         if len(input_shape) == 1:
-            input = tf.keras.Input(
+            input = tf_keras.Input(
                 shape=input_shape[0] if isinstance(input_shape[0], int) else None,
                 batch_size=1,
                 dtype=input_dtype,
             )
         elif len(input_shape) >= 2:
-            input = tf.keras.Input(
+            input = tf_keras.Input(
                 shape=[
                     inp if isinstance(inp, int) else None for inp in input_shape[1:]
                 ],
@@ -5567,7 +5568,7 @@ def acquisition_of_validation_data(
         and not hasattr(input_tensor_1, 'numpy') \
         and not isinstance(input_tensor_2, np.ndarray) \
         and not hasattr(input_tensor_2, 'numpy'):
-        val_model = tf.keras.Model(
+        val_model = tf_keras.Model(
             inputs=tf_model_inputs,
             outputs=[
                 input_tensor_1,
@@ -5577,7 +5578,7 @@ def acquisition_of_validation_data(
     elif not isinstance(input_tensor_1, np.ndarray) \
         and not hasattr(input_tensor_1, 'numpy') \
         and isinstance(input_tensor_2, np.ndarray):
-        val_model = tf.keras.Model(
+        val_model = tf_keras.Model(
             inputs=tf_model_inputs,
             outputs=[
                 input_tensor_1
@@ -5586,7 +5587,7 @@ def acquisition_of_validation_data(
     elif isinstance(input_tensor_1, np.ndarray) \
         and not isinstance(input_tensor_2, np.ndarray) \
         and not hasattr(input_tensor_2, 'numpy'):
-        val_model = tf.keras.Model(
+        val_model = tf_keras.Model(
             inputs=tf_model_inputs,
             outputs=[
                 input_tensor_2

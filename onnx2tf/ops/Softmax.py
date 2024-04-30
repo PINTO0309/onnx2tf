@@ -5,6 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     replace_parameter,
@@ -143,7 +144,7 @@ def make_node(
             tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
             val_model = None
             if not isinstance(input_tensor, np.ndarray):
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=[
                         input_tensor,
@@ -245,14 +246,14 @@ def make_node(
             # Search for the axis with the smallest error
             for check_axis in check_axes:
                 # Build TF dummy model
-                input = tf.keras.Input(
+                input = tf_keras.Input(
                     shape=validation_data.shape[1:],
                     batch_size=validation_data.shape[0] \
                         if isinstance(validation_data.shape[0], int) else None,
                     name='dummy_input',
                     dtype=validation_data.dtype,
                 )
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=[
                         input,
                     ],

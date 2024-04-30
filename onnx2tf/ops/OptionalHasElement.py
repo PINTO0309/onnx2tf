@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -71,7 +72,7 @@ def make_node(
     else:
         converted_tenosr = tf.convert_to_tensor(input_tensor)
         spec = None
-        if tf.keras.backend.is_keras_tensor(converted_tenosr):
+        if tf_keras.backend.is_keras_tensor(converted_tenosr):
             spec = converted_tenosr.type_spec
         else:
             spec = tf.TensorSpec.from_tensor(converted_tenosr)

@@ -2111,7 +2111,7 @@ convert(
 
     Returns
     ----------
-    model: tf.keras.Model
+    model: tf_keras.Model
       Model
 ```
 
@@ -2386,7 +2386,7 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 
   https://user-images.githubusercontent.com/33194443/197319770-e7ef7174-66cd-4bc2-84be-59e1a251151d.mp4
 
-- [x] All OPs are decomposed into primitive operations as much as possible. This is beneficial for lateral deployment of models to frameworks other than TFLite. Therefore, OPs belonging to `tf.keras.layers` are almost never used, and the tool consists only of `tf.xxx`. (except for a very few OPs)
+- [x] All OPs are decomposed into primitive operations as much as possible. This is beneficial for lateral deployment of models to frameworks other than TFLite. Therefore, OPs belonging to `tf_keras.layers` are almost never used, and the tool consists only of `tf.xxx`. (except for a very few OPs)
 - [x] As I do not want to add more dependent packages, I do not use `tensorflow_addons (tfa)`, but replace it with the standard OP of tensorflow.
 - [x] Not only does it handle conversions of 4-dimensional inputs, such as `NCHW` to `NHWC`, but also the number of input dimensions in 3, 5, or even more dimensions. For example, `NCDHW` to `NDHWC`, etc. However, since 1-D, 2-D, 3-D and 6-D input may produce patterns that are mechanically difficult to convert, it should be possible to give parameters to externally modify the tool's behavior. See [Parameter replacement](#parameter-replacement)
 - [x] If there are undefined dimensions in the input OP, the model structure is not fully optimized and conversion errors are very likely to occur.

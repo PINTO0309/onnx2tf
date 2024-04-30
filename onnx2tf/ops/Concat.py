@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -398,14 +399,14 @@ def make_node(
                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                     try:
                         # Build TF dummy model
-                        input_1 = tf.keras.Input(
+                        input_1 = tf_keras.Input(
                             shape=validation_data_1.shape[1:],
                             batch_size=validation_data_1.shape[0] \
                                 if isinstance(validation_data_1.shape[0], int) else None,
                             name='dummy_input_1',
                             dtype=validation_data_1.dtype,
                         )
-                        input_2 = tf.keras.Input(
+                        input_2 = tf_keras.Input(
                             shape=validation_data_2.shape[1:],
                             batch_size=validation_data_2.shape[0] \
                                 if isinstance(validation_data_2.shape[0], int) else None,
@@ -438,7 +439,7 @@ def make_node(
                         if onnx_tensor_infos:
                             try:
                                 # Search for the axis with the smallest error
-                                val_model = tf.keras.Model(
+                                val_model = tf_keras.Model(
                                     inputs=[
                                         input_1,
                                         input_2,
@@ -535,7 +536,7 @@ def make_node(
             if acc_proc_flag:
                 # Get the output tensor of one previous OP of TensorFlow only once
                 tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=values,
                 )
@@ -573,7 +574,7 @@ def make_node(
                     # Search for the axis with the smallest error
                     # Build TF dummy model
                     inputs = [
-                        tf.keras.Input(
+                        tf_keras.Input(
                             shape=validation_data.shape[1:],
                             batch_size=validation_data.shape[0] \
                                 if isinstance(validation_data.shape[0], int) else None,
@@ -582,7 +583,7 @@ def make_node(
                         ) for idx, validation_data in enumerate(validation_datas)
                     ]
                     for check_axis in check_axes:
-                        val_model = tf.keras.Model(
+                        val_model = tf_keras.Model(
                             inputs=inputs,
                             outputs=[
                                 define_concat(

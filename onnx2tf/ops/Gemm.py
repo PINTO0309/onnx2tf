@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     replace_parameter,
@@ -96,7 +97,7 @@ def make_node(
 
     input_tensor_x_dtype = NUMPY_DTYPES_TO_TF_DTYPES[x.dtype] \
         if isinstance(x.dtype, np.dtype) else x.dtype
-    x = tf.keras.layers.Flatten()(x)
+    x = tf_keras.layers.Flatten()(x)
 
     # The Flatten API changes data type from tf.float64 to tf.float32
     # so we need the following line to get the original type back

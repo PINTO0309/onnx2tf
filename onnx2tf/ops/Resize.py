@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 from tensorflow.python.keras.layers import Lambda
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -192,14 +193,14 @@ def make_node(
             sizes = np.insert(arr=sizes, obj=1, values=1)
         elif sizes is not None and sizes.shape is not None and hasattr(sizes, 'numpy'):
             sizes = np.insert(arr=sizes.numpy(), obj=1, values=1)
-        elif sizes is not None and sizes.shape is not None and tf.keras.backend.is_keras_tensor(sizes):
+        elif sizes is not None and sizes.shape is not None and tf_keras.backend.is_keras_tensor(sizes):
             sizes = tf.concat([sizes[:1], [1], sizes[1:]], axis=0)
 
         if isinstance(scales, np.ndarray):
             scales = np.insert(arr=scales, obj=1, values=1)
         elif scales is not None and scales.shape is not None and hasattr(scales, 'numpy'):
             scales = np.insert(arr=scales.numpy(), obj=1, values=1)
-        elif scales is not None and scales.shape is not None and tf.keras.backend.is_keras_tensor(scales):
+        elif scales is not None and scales.shape is not None and tf_keras.backend.is_keras_tensor(scales):
             scales = tf.concat([scales[:1], [1], scales[1:]], axis=0)
 
     # Generation of TF OP
@@ -252,11 +253,11 @@ def make_node(
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
             new_size = tf.cast(sizes, tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 4:
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 4:
             new_size = tf.cast(sizes[1:3], tf.int32)
 
     elif scales is not None:

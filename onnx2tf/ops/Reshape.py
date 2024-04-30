@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -182,7 +183,7 @@ def make_node(
         and transposed_reshape_shape != replaced_shape:
         shape_replaced_flg = True
     elif (not isinstance(transposed_reshape_shape, list) and not isinstance(transposed_reshape_shape, np.ndarray)) \
-        and tf.keras.backend.is_keras_tensor(transposed_reshape_shape) \
+        and tf_keras.backend.is_keras_tensor(transposed_reshape_shape) \
         and (isinstance(replaced_shape, list) or isinstance(replaced_shape, np.ndarray)):
         shape_replaced_flg = True
     if shape_replaced_flg:
@@ -276,7 +277,7 @@ def make_node(
             )
             val_model = None
             if not isinstance(transposed_tensor, np.ndarray):
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=[
                         transposed_tensor,
@@ -344,14 +345,14 @@ def make_node(
                     try:
                         target_validation_data = validation_data
                         # Build TF dummy model
-                        input = tf.keras.Input(
+                        input = tf_keras.Input(
                             shape=validation_data.shape[1:],
                             batch_size=validation_data.shape[0] \
                                 if isinstance(validation_data.shape[0], int) else None,
                             name='dummy_input',
                             dtype=validation_data.dtype,
                         )
-                        val_model = tf.keras.Model(
+                        val_model = tf_keras.Model(
                             inputs=[
                                 input,
                             ],

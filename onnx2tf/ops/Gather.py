@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from typing import List
 from onnx2tf.utils.common_functions import (
@@ -322,7 +323,7 @@ def make_node(
             and input_tensor.shape[axis] is not None:
             maximum_number_of_elements = input_tensor.shape[axis]
             indices_values = indices_values + maximum_number_of_elements
-        elif tf.keras.backend.is_keras_tensor(indices_values) \
+        elif tf_keras.backend.is_keras_tensor(indices_values) \
             and indices_values.shape == tf.TensorShape(None):
             indices_values = tf.reshape(indices_values, [-1])
 

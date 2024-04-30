@@ -5,6 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -117,11 +118,11 @@ def make_node(
 
     # Generation of TF OP
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
-        tf.keras.layers.LayerNormalization(
+        tf_keras.layers.LayerNormalization(
             axis=[axis],
             epsilon=epsilon,
-            gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
-            beta_initializer=tf.keras.initializers.constant(bias) if bias is not None else 'zeros',
+            gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
+            beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
         )(input_tensor)
 
     # Detect conversion errors in axis and identify the axis
@@ -151,7 +152,7 @@ def make_node(
         tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
         val_model = None
         if not isinstance(input_tensor, np.ndarray):
-            val_model = tf.keras.Model(
+            val_model = tf_keras.Model(
                 inputs=tf_model_inputs,
                 outputs=[
                     input_tensor,
@@ -198,23 +199,23 @@ def make_node(
             for check_axis in check_axes:
                 try:
                     # Build TF dummy model
-                    input = tf.keras.Input(
+                    input = tf_keras.Input(
                         shape=validation_data.shape[1:],
                         batch_size=validation_data.shape[0] \
                             if isinstance(validation_data.shape[0], int) else None,
                         name='dummy_input',
                         dtype=validation_data.dtype,
                     )
-                    val_model = tf.keras.Model(
+                    val_model = tf_keras.Model(
                         inputs=[
                             input,
                         ],
                         outputs=[
-                            tf.keras.layers.LayerNormalization(
+                            tf_keras.layers.LayerNormalization(
                                 axis=[check_axis],
                                 epsilon=epsilon,
-                                gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
-                                beta_initializer=tf.keras.initializers.constant(bias) if bias is not None else 'zeros',
+                                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
+                                beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
                             )(input)
                         ],
                     )
@@ -262,11 +263,11 @@ def make_node(
                     pass
 
             tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
-                tf.keras.layers.LayerNormalization(
+                tf_keras.layers.LayerNormalization(
                     axis=[min_abs_err_axis],
                     epsilon=epsilon,
-                    gamma_initializer=tf.keras.initializers.constant(scale) if scale is not None else 'ones',
-                    beta_initializer=tf.keras.initializers.constant(bias) if bias is not None else 'zeros',
+                    gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
+                    beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
                 )(input_tensor)
 
     # Post-process transpose

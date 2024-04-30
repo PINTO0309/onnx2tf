@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -15,7 +16,7 @@ from onnx2tf.utils.common_functions import (
 )
 
 
-class Col2ImLayer(tf.keras.layers.Layer):
+class Col2ImLayer(tf_keras.layers.Layer):
     def __init__(self):
         super(Col2ImLayer, self).__init__()
 

@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -282,14 +283,14 @@ def make_node(
         ##### begin
         if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
             begin_ = [dim for dim in starts.numpy()]
-        elif not isinstance(starts, np.ndarray) and tf.keras.backend.is_keras_tensor(starts):
+        elif not isinstance(starts, np.ndarray) and tf_keras.backend.is_keras_tensor(starts):
             begin_ = starts
         else:
             begin_ = [dim for dim in starts]
         ##### end
         if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
             end_ = [dim for dim in ends.numpy()]
-        elif not isinstance(ends, np.ndarray) and tf.keras.backend.is_keras_tensor(ends):
+        elif not isinstance(ends, np.ndarray) and tf_keras.backend.is_keras_tensor(ends):
             end_ = ends
         else:
             end_ = [dim for dim in ends]
@@ -298,7 +299,7 @@ def make_node(
         if steps is not None:
             if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
                 strides_ = [dim for dim in steps.numpy()]
-            elif not isinstance(steps, np.ndarray) and tf.keras.backend.is_keras_tensor(steps):
+            elif not isinstance(steps, np.ndarray) and tf_keras.backend.is_keras_tensor(steps):
                 strides_ = steps
             else:
                 strides_ = [dim for dim in steps]
@@ -422,7 +423,7 @@ def make_node(
                     onnx_slice_dims_count = len(starts.numpy())
                 elif isinstance(starts, int):
                     onnx_slice_dims_count = 1
-                elif tf.keras.backend.is_keras_tensor(starts):
+                elif tf_keras.backend.is_keras_tensor(starts):
                     onnx_slice_dims_count = len(starts.shape)
                 else:
                     onnx_slice_dims_count = len(starts)
@@ -488,7 +489,7 @@ def make_node(
                 onnx_slice_dims_count = len(starts.numpy())
             elif isinstance(starts, int):
                 onnx_slice_dims_count = 1
-            elif tf.keras.backend.is_keras_tensor(starts):
+            elif tf_keras.backend.is_keras_tensor(starts):
                 onnx_slice_dims_count = len(starts.shape)
             else:
                 onnx_slice_dims_count = len(starts)
