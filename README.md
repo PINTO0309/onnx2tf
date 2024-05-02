@@ -18,7 +18,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 
 - For future model versatility, it would be a good idea to consider moving to `torch.onnx.dynamo_export` at an early stage.
 - Considering the compatibility of Pythonic code with TensorFlow/Keras/TFLite and the beauty of the conversion workflow, [nobuco](https://github.com/AlexanderLutsenko/nobuco) is the most optimal choice going forward.
-- The role of `onnx2tf` will end within the next one to two years.
+- The role of `onnx2tf` will end within the next one to two years. I don't intend to stop the maintenance of onnx2tf itself anytime soon, but I will continue to maintain it little by little as long as there is demand for it from everyone. I don't intend to stop the maintenance of `onnx2tf` itself anytime soon, but I will continue to maintain it little by little as long as there is demand for it from everyone.
 
 ## Model Conversion Status
 https://github.com/PINTO0309/onnx2tf/wiki/model_status
