@@ -7,6 +7,17 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
 
 [![Downloads](https://static.pepy.tech/personalized-badge/onnx2tf?period=total&units=none&left_color=grey&right_color=brightgreen&left_text=Downloads)](https://pepy.tech/project/onnx2tf) ![GitHub](https://img.shields.io/github/license/PINTO0309/onnx2tf?color=2BAF2B) [![Python](https://img.shields.io/badge/Python-3.10-2BAF2B)](https://img.shields.io/badge/Python-3.8-2BAF2B) [![PyPI](https://img.shields.io/pypi/v/onnx2tf?color=2BAF2B)](https://pypi.org/project/onnx2tf/) [![CodeQL](https://github.com/PINTO0309/onnx2tf/workflows/CodeQL/badge.svg)](https://github.com/PINTO0309/onnx2tf/actions?query=workflow%3ACodeQL) ![Model Convert Test Status](https://github.com/PINTO0309/onnx2tf/workflows/Model%20Convert%20Test/badge.svg) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7230085.svg)](https://doi.org/10.5281/zenodo.7230085)
 
+## Note
+- The torch.script-based `torch.onnx.export` has already been moved to maintenance mode, and we recommend moving to the FX graph-based `torch.onnx.dynamo_export` starting with PyTorch v2.2.0.
+- The maintainers of ONNX and PyTorch have assured us that they will not add new OPs after `opset=18` to the existing `torch.onnx.export`.
+- https://pytorch.org/docs/stable/onnx_dynamo.html#torch.onnx.dynamo_export
+- This can be converted directly into an ONNX graph using Pythonic code using onnxscript.
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/c17d4682-8a68-4a8f-9d74-18ca9dbc17dc)
+
+- For future model versatility, it would be a good idea to consider moving to `torch.onnx.dynamo_export` at an early stage.
+- Considering the compatibility of Pythonic code with TensorFlow/Keras/TFLite and the beauty of the conversion workflow, [nobuco](https://github.com/AlexanderLutsenko/nobuco) is the most optimal choice going forward.
+
 ## Model Conversion Status
 https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
