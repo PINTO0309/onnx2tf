@@ -138,7 +138,9 @@ def make_node(
             and onnx_input_shapes[pre_convert_axis] == tf_input_shapes[axis]:
             acc_check_pass_flg = True
 
-    if onnx_tensor_infos_for_validation is not None and not acc_check_pass_flg:
+    if onnx_tensor_infos_for_validation is not None \
+        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None \
+        and not acc_check_pass_flg:
         # Get the output tensor of one previous OP of TensorFlow only once
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
@@ -180,7 +182,8 @@ def make_node(
 
             # Get ONNX inference results
             onnx_tensor_infos = None
-            if onnx_tensor_infos_for_validation is not None:
+            if onnx_tensor_infos_for_validation is not None \
+                and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                 onnx_tensor_infos = {
                     graph_node_output.name:
                     onnx_tensor_infos_for_validation[graph_node_output.name]
