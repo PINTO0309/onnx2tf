@@ -162,7 +162,8 @@ def make_node(
     tf_pads = calc_tf_pooling_pads(
         input_shape=input_tensor_shape,
         kernel=dilated_kernel_shape,
-        strides=strides
+        strides=strides,
+        input_tensor=input_tensor,
     )
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'

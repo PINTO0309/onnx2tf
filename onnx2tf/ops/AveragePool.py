@@ -163,7 +163,8 @@ def make_node(
     tf_pads = calc_tf_pooling_pads(
         input_shape=input_tensor_shape,
         kernel=kernel_shape,
-        strides=strides
+        strides=strides,
+        input_tensor=input_tensor
     )
 
     func = math.ceil if ceil_mode else math.floor
