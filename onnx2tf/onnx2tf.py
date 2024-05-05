@@ -820,6 +820,7 @@ def convert(
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
         'output_integer_quantized_tflite': output_integer_quantized_tflite,
         'gelu_replace_op_names': {},
+        'space_to_depth_replace_op_names': {},
         'relu_relu6_merge_op_names': {},
         'mul_div_replace_op_names': {},
         'use_cuda': use_cuda,
