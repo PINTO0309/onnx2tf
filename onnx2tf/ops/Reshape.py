@@ -264,7 +264,8 @@ def make_node(
         block_size = 1
         spase_to_depth_final_shape = []
         if not tf_layers_dict[graph_node_output.name].get('unnecessary_reshape', False):
-            if len(final_shape) == 6:
+            if (isinstance(final_shape, np.ndarray) or isinstance(final_shape, list)) \
+                and len(final_shape) == 6:
                 channel_size = final_shape[1] if isinstance(final_shape[1], int) else None
                 block_size = final_shape[3] if isinstance(final_shape[3], int) else None
 
