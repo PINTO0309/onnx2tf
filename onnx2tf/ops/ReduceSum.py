@@ -162,7 +162,7 @@ def make_node(
                 del onnx_tensor_infos_for_validation
 
     if not disable_strict_mode:
-        if onnx_tensor_infos is not None and validation_data is not None:
+        if onnx_tensor_infos is not None and validation_data is not None and axes is not None:
             # Shape Unmatch Error Mitigation Measures
             # Search for and transpose shapes that do not cause shape unmatch errors
             min_abs_err = sys.maxsize
