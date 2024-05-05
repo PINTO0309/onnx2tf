@@ -100,7 +100,8 @@ def make_node(
     onnx_tensor_infos = None
     validation_data_1 = None
     validation_data_2 = None
-    if onnx_tensor_infos_for_validation is not None:
+    if onnx_tensor_infos_for_validation is not None \
+        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         onnx_tensor_infos, validation_data_1, validation_data_2 = \
             acquisition_of_validation_data(
                 input_tensor_1=input_tensor_1,

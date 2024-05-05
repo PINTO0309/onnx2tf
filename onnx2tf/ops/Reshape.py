@@ -385,7 +385,8 @@ def make_node(
 
                     # Get ONNX inference results
                     onnx_tensor_infos = None
-                    if onnx_tensor_infos_for_validation is not None:
+                    if onnx_tensor_infos_for_validation is not None \
+                        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                         onnx_tensor_infos = {
                             graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
                         }

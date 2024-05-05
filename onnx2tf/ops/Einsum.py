@@ -65,6 +65,7 @@ def make_node(
     equation = graph_node.attrs['equation']
     onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     if onnx_tensor_infos_for_validation is not None \
+        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None \
         and graph_node_output.name in onnx_tensor_infos_for_validation:
         onnx_output_shape = list(onnx_tensor_infos_for_validation[graph_node_output.name].shape)
         graph_node_output.shape = onnx_output_shape
