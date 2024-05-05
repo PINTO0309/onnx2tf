@@ -4336,7 +4336,7 @@ def broadcast_for_gpu_delegate(
     return input_tensor_1, input_tensor_2
 
 
-def calc_tf_pooling_pads(input_shape, kernel, strides):
+def calc_tf_pooling_pads(input_shape, kernel, strides, input_tensor):
     """Calculate how much padding is needed for tensorflow mode 'SAME'.
 
     Parameters
@@ -4347,6 +4347,8 @@ def calc_tf_pooling_pads(input_shape, kernel, strides):
         kernel shape from onnx
     strides: List
         strides from onnx
+    input_tensor: tf.Tensor
+        input_tensor
 
     Returns
     -------
@@ -4357,24 +4359,46 @@ def calc_tf_pooling_pads(input_shape, kernel, strides):
     same_pads = []
     same_pads_end = []
 
-    # calculate how much padding is needed except batch and channel dimension
-    for i, k, s in zip(input_shape[1:-1], kernel, strides):
-        same_output_shape = math.floor((i - 1) / s) + 1
-        axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
+    undefined_dim_count = sum([1 if i is None else 0 for i in input_shape[1:-1]])
 
-        padded_valid_output_shape = math.floor((i + axis_pads - k) / s) + 1
-        error_msg = Color.RED(f'ERROR:') + ' ' + \
-                    f'Wrong padding calculation.'
-        assert same_output_shape == padded_valid_output_shape, error_msg
+    if undefined_dim_count == 0:
+        # calculate how much padding is needed except batch and channel dimension
+        for i, k, s in zip(input_shape[1:-1], kernel, strides):
+            same_output_shape = math.floor((i - 1) / s) + 1
+            axis_pads = np.max((same_output_shape - 1) * s + k - i, 0)
 
-        same_pads.append(axis_pads // 2)
-        # pads to end more for odd number padding
-        if axis_pads % 2:
-            same_pads_end.append(axis_pads // 2 + 1)
-        else:
-            same_pads_end.append(axis_pads // 2)
+            padded_valid_output_shape = math.floor((i + axis_pads - k) / s) + 1
+            error_msg = Color.RED(f'ERROR:') + ' ' + f'Wrong padding calculation.'
+            assert same_output_shape == padded_valid_output_shape, error_msg
 
-    same_pads.extend(same_pads_end)
+            same_pads.append(axis_pads // 2)
+            # pads to end more for odd number padding
+            if axis_pads % 2:
+                same_pads_end.append(axis_pads // 2 + 1)
+            else:
+                same_pads_end.append(axis_pads // 2)
+
+        same_pads.extend(same_pads_end)
+
+    else:
+        # calculate how much padding is needed except batch and channel dimension
+        input_shape_tensor = tf.shape(input_tensor)[1:-1]
+        for i, k, s in zip(input_shape_tensor, kernel, strides):
+            same_output_shape = tf.cast(tf.math.floor((i - 1) / s) + 1, dtype=tf.int32)
+            axis_pads = tf.cast(tf.math.maximum((same_output_shape - 1) * s + k - i, 0), dtype=tf.int32)
+            padded_valid_output_shape = tf.cast(tf.math.floor((i + axis_pads - k) / s) + 1, dtype=tf.int32)
+
+            same_pads.append(axis_pads // 2)
+
+            # pads to end more for odd number padding
+            mod_padding = tf.math.mod(axis_pads, 2)
+            same_pads.append(
+                tf.cond(
+                    pred=mod_padding > 0,
+                    true_fn=lambda: same_pads_end.append(tf.math.floordiv(axis_pads, 2) + 1),
+                    false_fn=lambda: same_pads_end.append(tf.math.floordiv(axis_pads, 2)),
+                )
+            )
 
     return same_pads
 
