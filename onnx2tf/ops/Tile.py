@@ -159,9 +159,13 @@ def make_node(
 
     if isinstance(input_tensor_2, int):
         tensor_2_candidate_for_transpositions = list(itertools.permutations(range(input_tensor_2)))
-    elif isinstance(input_tensor_2, np.ndarray):
-        tensor_2_candidate_for_transpositions = list(itertools.permutations(input_tensor_2))
-    elif tf_keras.backend.is_keras_tensor(input_tensor_2):
+    elif isinstance(input_tensor_2, np.ndarray) and hasattr(input_tensor_2, '__len__'):
+        tiles_tensor_length = len(input_tensor_2)
+        if tiles_tensor_length > 1:
+            tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2))))
+        else:
+            tensor_2_candidate_for_transpositions = list(itertools.permutations(input_tensor_2))
+    elif tf_keras.backend.is_keras_tensor(input_tensor_2) and hasattr(input_tensor_2.shape, '__len__'):
         tiles_tensor_length = len(input_tensor_2.shape)
         if tiles_tensor_length > 1:
             tensor_2_candidate_for_transpositions = list(itertools.permutations(range(tiles_tensor_length)))
