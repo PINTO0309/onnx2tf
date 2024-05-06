@@ -80,10 +80,12 @@ def make_node(
 
     # If Reshape's shape contains zeros, get the deformed shape from the output shape
     if isinstance(reshape_shape, list) and reshape_shape.count(0) > 0:
-        new_shape = [-1 if isinstance(s, str) else int(s) for s in output_shape]
+        before_tensor_shapes = tf.shape(tf_layers_dict[graph_node_input_1.name]['tf_node'])
+        new_shape = [before_tensor_shapes[idx] if isinstance(s, str) else int(s) for idx, s in enumerate(output_shape)]
         reshape_shape = new_shape
     elif isinstance(reshape_shape, np.ndarray) and np.count_nonzero(reshape_shape == 0) > 0:
-        new_shape = [-1 if isinstance(s, str) else int(s) for s in output_shape]
+        before_tensor_shapes = tf.shape(tf_layers_dict[graph_node_input_1.name]['tf_node'])
+        new_shape = [before_tensor_shapes[idx] if isinstance(s, str) else int(s) for idx, s in enumerate(output_shape)]
         reshape_shape = new_shape
 
     onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
