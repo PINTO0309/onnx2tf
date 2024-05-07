@@ -91,10 +91,10 @@ def convert(
     disable_suppression_flexstridedslice: Optional[bool] = False,
     number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
     optimization_for_gpu_delegate: Optional[bool] = False,
-    replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
-    replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
-    replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
-    replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool] = False,
+    replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool] = False,
+    replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool] = False,
+    replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool] = False,
+    replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool] = False,
     fused_argmax_scale_ratio: Optional[float] = 0.5,
     replace_to_pseudo_operators: List[str] = None,
     param_replacement_file: Optional[str] = '',
@@ -330,42 +330,42 @@ def convert(
         Replace operations that do not support gpu delegate with those\n
         that do as much as possible.
 
-    replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+    replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indices are int64.\n
+        Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
+        replace_argmax_to_reducemax_and_indices_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are float32.\n
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+    replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indices are float32.\n
+        Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
+        replace_argmax_to_reducemax_and_indices_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are int64.\n
+    replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indices are int64.\n
         It improves inference speed at the cost of a small sacrifice in accuracy.\n
         See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
         Currently, only 4D tensors are supported.\n
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+        Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
+        replace_argmax_to_reducemax_and_indices_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool]
-        Replace ArgMax with a ReduceMax. The returned indicies are float32.\n
+    replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool]
+        Replace ArgMax with a ReduceMax. The returned indices are float32.\n
         It improves inference speed at the cost of a small sacrifice in accuracy.\n
         See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
         Currently, only 4D tensors are supported.\n
-        Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n
-        replace_argmax_to_reducemax_and_indicies_is_float32 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n
-        replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.\n
+        Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
+        replace_argmax_to_reducemax_and_indices_is_float32 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_int64 and \n
+        replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
     fused_argmax_scale_ratio: Optional[float]
@@ -512,22 +512,22 @@ def convert(
                 )
                 sys.exit(1)
 
-    # replace_argmax_to_reducemax_and_indicies_is_int64
-    # replace_argmax_to_reducemax_and_indicies_is_float32
-    # replace_argmax_to_fused_argmax_and_indicies_is_int64
-    # replace_argmax_to_fused_argmax_and_indicies_is_float32
+    # replace_argmax_to_reducemax_and_indices_is_int64
+    # replace_argmax_to_reducemax_and_indices_is_float32
+    # replace_argmax_to_fused_argmax_and_indices_is_int64
+    # replace_argmax_to_fused_argmax_and_indices_is_float32
     ra_option_list = [
-        replace_argmax_to_reducemax_and_indicies_is_int64,
-        replace_argmax_to_reducemax_and_indicies_is_float32,
-        replace_argmax_to_fused_argmax_and_indicies_is_int64,
-        replace_argmax_to_fused_argmax_and_indicies_is_float32,
+        replace_argmax_to_reducemax_and_indices_is_int64,
+        replace_argmax_to_reducemax_and_indices_is_float32,
+        replace_argmax_to_fused_argmax_and_indices_is_int64,
+        replace_argmax_to_fused_argmax_and_indices_is_float32,
     ]
     if ra_option_list.count(True) > 1:
         error(
-            f'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and ' +
-            f'replace_argmax_to_reducemax_and_indicies_is_float32 and ' +
-            f'replace_argmax_to_fused_argmax_and_indicies_is_int64 and ' +
-            f'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+            f'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and ' +
+            f'replace_argmax_to_reducemax_and_indices_is_float32 and ' +
+            f'replace_argmax_to_fused_argmax_and_indices_is_int64 and ' +
+            f'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
         )
         sys.exit(1)
 
@@ -821,10 +821,10 @@ def convert(
         'disable_strict_mode': disable_strict_mode,
         'number_of_dimensions_after_flexstridedslice_compression': number_of_dimensions_after_flexstridedslice_compression,
         'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
-        'replace_argmax_to_reducemax_and_indicies_is_int64': replace_argmax_to_reducemax_and_indicies_is_int64,
-        'replace_argmax_to_reducemax_and_indicies_is_float32': replace_argmax_to_reducemax_and_indicies_is_float32,
-        'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
-        'replace_argmax_to_fused_argmax_and_indicies_is_float32': replace_argmax_to_fused_argmax_and_indicies_is_float32,
+        'replace_argmax_to_reducemax_and_indices_is_int64': replace_argmax_to_reducemax_and_indices_is_int64,
+        'replace_argmax_to_reducemax_and_indices_is_float32': replace_argmax_to_reducemax_and_indices_is_float32,
+        'replace_argmax_to_fused_argmax_and_indices_is_int64': replace_argmax_to_fused_argmax_and_indices_is_int64,
+        'replace_argmax_to_fused_argmax_and_indices_is_float32': replace_argmax_to_fused_argmax_and_indices_is_float32,
         'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
         'replace_to_pseudo_operators': replace_to_pseudo_operators,
         'replacement_parameters': replacement_parameters,
@@ -2127,53 +2127,53 @@ def main():
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
         '-rari64',
-        '--replace_argmax_to_reducemax_and_indicies_is_int64',
+        '--replace_argmax_to_reducemax_and_indices_is_int64',
         action='store_true',
         help=\
-            'Replace ArgMax with a ReduceMax. The returned indicies are int64. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+            'Replace ArgMax with a ReduceMax. The returned indices are int64. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
     )
     rar_group.add_argument(
         '-rarf32',
-        '--replace_argmax_to_reducemax_and_indicies_is_float32',
+        '--replace_argmax_to_reducemax_and_indices_is_float32',
         action='store_true',
         help=\
-            'Replace ArgMax with a ReduceMax. The returned indicies are float32. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+            'Replace ArgMax with a ReduceMax. The returned indices are float32. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
     )
     rar_group.add_argument(
         '-rafi64',
-        '--replace_argmax_to_fused_argmax_and_indicies_is_int64',
+        '--replace_argmax_to_fused_argmax_and_indices_is_int64',
         action='store_true',
         help=\
-            'Replace ArgMax with a Fused_ArgMax. The returned indicies are int64. \n' +
+            'Replace ArgMax with a Fused_ArgMax. The returned indices are int64. \n' +
             'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
             'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
             'Currently, only 4D tensors are supported. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
     )
     rar_group.add_argument(
         '-raff32',
-        '--replace_argmax_to_fused_argmax_and_indicies_is_float32',
+        '--replace_argmax_to_fused_argmax_and_indices_is_float32',
         action='store_true',
         help=\
-            'Replace ArgMax with a Fused_ArgMax. The returned indicies are float32. \n' +
+            'Replace ArgMax with a Fused_ArgMax. The returned indices are float32. \n' +
             'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
             'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
             'Currently, only 4D tensors are supported. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indicies_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indicies_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indicies_is_float32 can be specified.'
+            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
     )
     parser.add_argument(
         '-fasr',
@@ -2382,10 +2382,10 @@ def main():
         disable_suppression_flexstridedslice=args.disable_suppression_flexstridedslice,
         number_of_dimensions_after_flexstridedslice_compression=args.number_of_dimensions_after_flexstridedslice_compression,
         optimization_for_gpu_delegate=args.optimization_for_gpu_delegate,
-        replace_argmax_to_reducemax_and_indicies_is_int64=args.replace_argmax_to_reducemax_and_indicies_is_int64,
-        replace_argmax_to_reducemax_and_indicies_is_float32=args.replace_argmax_to_reducemax_and_indicies_is_float32,
-        replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
-        replace_argmax_to_fused_argmax_and_indicies_is_float32=args.replace_argmax_to_fused_argmax_and_indicies_is_float32,
+        replace_argmax_to_reducemax_and_indices_is_int64=args.replace_argmax_to_reducemax_and_indices_is_int64,
+        replace_argmax_to_reducemax_and_indices_is_float32=args.replace_argmax_to_reducemax_and_indices_is_float32,
+        replace_argmax_to_fused_argmax_and_indices_is_int64=args.replace_argmax_to_fused_argmax_and_indices_is_int64,
+        replace_argmax_to_fused_argmax_and_indices_is_float32=args.replace_argmax_to_fused_argmax_and_indices_is_float32,
         fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,
         replace_to_pseudo_operators=args.replace_to_pseudo_operators,
         param_replacement_file=args.param_replacement_file,

@@ -1304,8 +1304,8 @@ def alternative_argmax(
     name: str = None,
     keepdims: bool = False,
     epsilon: float = None,
-    replace_argmax_to_reducemax_and_indicies_is_int64: bool = False,
-    replace_argmax_to_reducemax_and_indicies_is_float32: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_int64: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_float32: bool = False,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1335,12 +1335,12 @@ def alternative_argmax(
         Very small numbers added to avoid division by zero
         Default: None
 
-    replace_argmax_to_reducemax_and_indicies_is_int64: bool
+    replace_argmax_to_reducemax_and_indices_is_int64: bool
         True: Convert final output to int64
         False: Do not convert final output to int64
         Default: False
 
-    replace_argmax_to_reducemax_and_indicies_is_float32: bool
+    replace_argmax_to_reducemax_and_indices_is_float32: bool
         True: Convert final output to float32
         False: Do not convert final output to float32
         Default: False
@@ -1418,7 +1418,7 @@ def alternative_argmax(
         keepdims=keepdims,
     )
 
-    if replace_argmax_to_reducemax_and_indicies_is_int64:
+    if replace_argmax_to_reducemax_and_indices_is_int64:
         return tf.cast(
             tf.math.subtract(
                 _nnapi_scalar(reduction_size, output_type),
@@ -1427,7 +1427,7 @@ def alternative_argmax(
             ),
             dtype=tf.dtypes.int64,
         )
-    elif replace_argmax_to_reducemax_and_indicies_is_float32:
+    elif replace_argmax_to_reducemax_and_indices_is_float32:
         return tf.cast(
             tf.math.subtract(
                 _nnapi_scalar(reduction_size, output_type),
@@ -1452,8 +1452,8 @@ def alternative_fused_argmax(
     output_type: tf.dtypes = tf.dtypes.float32,
     name: str = None,
     keepdims: bool = True,
-    replace_argmax_to_fused_argmax_and_indicies_is_int64: bool = False,
-    replace_argmax_to_fused_argmax_and_indicies_is_float32: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_int64: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
 ) -> Any:
     """Replace ArgMax with a ReduceMax.
 
@@ -1482,12 +1482,12 @@ def alternative_fused_argmax(
         False: Number of array dimensions not maintained after ArgMax
         Default: True
 
-    replace_argmax_to_fused_argmax_and_indicies_is_int64: bool
+    replace_argmax_to_fused_argmax_and_indices_is_int64: bool
         True: Convert final output to int64
         False: Do not convert final output to int64
         Default: False
 
-    replace_argmax_to_fused_argmax_and_indicies_is_float32: bool
+    replace_argmax_to_fused_argmax_and_indices_is_float32: bool
         True: Convert final output to float32
         False: Do not convert final output to float32
         Default: False
@@ -1569,13 +1569,13 @@ def alternative_fused_argmax(
                     axis=axis,
                     name=f'{name}_squeeze',
                 )
-        if replace_argmax_to_fused_argmax_and_indicies_is_int64:
+        if replace_argmax_to_fused_argmax_and_indices_is_int64:
             final_tensor = tf.cast(
                 x=final_tensor,
                 dtype=tf.int64,
                 name=f'{name}_cast',
             )
-        elif replace_argmax_to_fused_argmax_and_indicies_is_float32:
+        elif replace_argmax_to_fused_argmax_and_indices_is_float32:
             final_tensor = tf.cast(
                 x=final_tensor,
                 dtype=tf.float32,
