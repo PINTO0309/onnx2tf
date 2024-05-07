@@ -270,7 +270,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.20.9
+  ghcr.io/pinto0309/onnx2tf:1.20.10
 
   or
 
@@ -278,7 +278,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.20.9
+  docker.io/pinto0309/onnx2tf:1.20.10
 
   or
 
@@ -288,6 +288,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnxruntime==1.17.1 \
   && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
+  && pip install -U sne4onnx>=1.0.13 \
+  && pip install -U sng4onnx>=1.0.4 \
   && pip install -U tensorflow==2.16.1 \
   && pip install -U protobuf==3.20.3 \
   && pip install -U onnx2tf \

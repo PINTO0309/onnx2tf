@@ -595,6 +595,10 @@ def convert(
                     tmp_onnx_graph = onnx.load(input_onnx_file_path)
                     domain: str = tmp_onnx_graph.domain
                     ir_version: int = tmp_onnx_graph.ir_version
+                    meta_data = {'domain': domain, 'ir_version': ir_version}
+                    metadata_props = None
+                    if hasattr(tmp_onnx_graph, 'metadata_props'):
+                        metadata_props = tmp_onnx_graph.metadata_props
                     tmp_graph = gs.import_onnx(tmp_onnx_graph)
                     output_clear = False
                     for graph_output in tmp_graph.outputs:
@@ -603,7 +607,10 @@ def convert(
                             graph_output.shape = None
                             output_clear = True
                     if output_clear:
-                        estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(tmp_graph, do_type_check=False, **{'domain': domain, 'ir_version': ir_version}))
+                        exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
+                        if metadata_props is not None:
+                            exported_onnx_graph.metadata_props.extend(metadata_props)
+                        estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
                         onnx.save(estimated_graph, f=input_onnx_file_path)
                         del estimated_graph
                 except:
@@ -669,6 +676,10 @@ def convert(
 
     domain: str = onnx_graph.domain
     ir_version: int = onnx_graph.ir_version
+    meta_data = {'domain': domain, 'ir_version': ir_version}
+    metadata_props = None
+    if hasattr(onnx_graph, 'metadata_props'):
+        metadata_props = onnx_graph.metadata_props
     graph = gs.import_onnx(onnx_graph)
 
     # List Output
@@ -758,7 +769,9 @@ def convert(
             new_output_names.append(output_name)
         output_names = new_output_names
     try:
-        onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **{'domain': domain, 'ir_version': ir_version})
+        onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
+        if metadata_props is not None:
+            onnx_graph.metadata_props.extend(metadata_props)
     except Exception as ex:
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
@@ -984,7 +997,10 @@ def convert(
                         onnx_output_shape = list(onnx_tensor_infos_for_validation[correction_op_output.name].shape)
                         correction_op_output.shape = onnx_output_shape
                 try:
-                    estimated_graph = onnx.shape_inference.infer_shapes(gs.export_onnx(graph, do_type_check=False, **{'domain': domain, 'ir_version': ir_version}))
+                    exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
+                    if metadata_props is not None:
+                        exported_onnx_graph.metadata_props.extend(metadata_props)
+                    estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
                     if input_onnx_file_path is not None:
                         onnx.save(estimated_graph, input_onnx_file_path)
                         if not not_use_onnxsim:
