@@ -135,10 +135,10 @@ def make_node(
     if kernel_type == 'triangle':
         kernel_type = 'bilinear'
 
-    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
-    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    replace_argmax_to_fused_argmax_and_indices_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_int64']
+    replace_argmax_to_fused_argmax_and_indices_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_float32']
     fused_argmax_scale_ratio = \
         kwargs['fused_argmax_scale_ratio']
 
@@ -212,8 +212,8 @@ def make_node(
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-(input_tensor_rank-1):-1]
 
-    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+    if (replace_argmax_to_fused_argmax_and_indices_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indices_is_float32) \
         and graph_node.o().op == 'ArgMax' \
         and input_tensor_rank == 4:
         new_size = tf.cast(

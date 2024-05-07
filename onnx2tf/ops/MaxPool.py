@@ -257,7 +257,7 @@ def make_node(
 
     # Generation of TF OP
     tf_op_type = None
-    argmax_indicies = None
+    argmax_indices = None
 
     if not with_argmax:
         # tf.nn.dilation2d
@@ -351,7 +351,7 @@ def make_node(
                 kernel_shape = tf.concat([kernel_shape[:1], [1], kernel_shape[1:]], axis=0)
 
         # MaxPoolWithArgmax
-        pooled_tensor, argmax_indicies = \
+        pooled_tensor, argmax_indices = \
             tf.nn.max_pool_with_argmax(
                 input=padded_tensor,
                 ksize=kernel_shape,
@@ -367,11 +367,11 @@ def make_node(
         if poolwithargmax_one_d:
             # Reshape 4D N,H,W,C -> N,W,C
             pooled_tensor = tf.squeeze(input=pooled_tensor, axis=1)
-            argmax_indicies = tf.squeeze(input=argmax_indicies, axis=1)
+            argmax_indices = tf.squeeze(input=argmax_indices, axis=1)
 
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = pooled_tensor
     if with_argmax:
-        tf_layers_dict[graph_node_output_2.name]['tf_node'] = argmax_indicies
+        tf_layers_dict[graph_node_output_2.name]['tf_node'] = argmax_indices
 
     # Post-process transpose
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = post_process_transpose(
@@ -389,7 +389,7 @@ def make_node(
         )
 
     # Generation of Debug Info
-    tf_outputs = {f"output{idx}": value for idx, value in enumerate([pooled_tensor, argmax_indicies])}
+    tf_outputs = {f"output{idx}": value for idx, value in enumerate([pooled_tensor, argmax_indices])}
     tf_layers_dict[graph_node_output_1.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
