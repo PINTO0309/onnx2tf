@@ -288,7 +288,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnxruntime==1.17.1 \
   && pip install -U onnxsim==0.4.33 \
   && pip install -U simple_onnx_processing_tools \
-  && pip install -U sng4onnx==1.0.4 \
+  && pip install -U sne4onnx>=1.0.13 \
+  && pip install -U sng4onnx>=1.0.4 \
   && pip install -U tensorflow==2.16.1 \
   && pip install -U protobuf==3.20.3 \
   && pip install -U onnx2tf \
@@ -321,7 +322,6 @@ or
     && pip install -U onnxruntime==1.17.1 \
     && pip install -U onnxsim==0.4.33 \
     && pip install -U simple_onnx_processing_tools \
-    && pip install -U sng4onnx==1.0.4 \
     && pip install -U onnx2tf \
     && pip install -U protobuf==3.20.3 \
     && pip install -U h5py==3.11.0 \
