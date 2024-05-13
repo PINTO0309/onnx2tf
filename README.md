@@ -344,8 +344,8 @@ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#16-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#17-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#17-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#18-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -1148,7 +1148,68 @@ onnx2tf -i sjy_fused_static_spo.onnx
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35adb529-58cc-4f10-96b3-f6ecf4f31db1)
 
-### 16. Conversion to TensorFlow.js
+### 16. Add constant outputs to the model that are not connected to the model body
+Sometimes you want to always output constants that are not connected to the model body.　See: [https://github.com/PINTO0309/onnx2tf/issues/627](https://github.com/PINTO0309/onnx2tf/issues/627). For example, in the case of ONNX as shown in the figure below. For example, you may want to keep scaling parameters and other parameters as fixed values inside the model and always include the same value in the output.
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/38080d00-8048-4a2e-8df4-90378487cebc)
+
+In such cases, the process of optimizing the ONNX file in `onnxsim` must be bypassed and not executed. You can bypass the execution of `onnxsim` by specifying `-nuo` or `--not_use_onnxsim` as a conversion option. Running `onnxsim` will remove constants from the model definition that are not connected to the body of the model in the process of optimizing the model structure.
+
+```bash
+wget https://github.com/PINTO0309/onnx2tf/files/15292126/toy_with_constant.onnx.zip
+unzip toy_with_constant.onnx.zip
+onnx2tf -i toy_with_constant.onnx -nuo -cotof
+```
+
+The relationship between the ONNX before conversion and the TFLite file after conversion is shown in the figure below.
+
+|ONNX|TFLite|
+|:-:|:-:|
+|![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/ab2260bd-aa41-4522-ad4b-83567d094edf)|![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/7efc5d4d-ec6f-4b16-8d28-b1389a469df7)|
+
+![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/f8d336f0-e99e-4125-b8f1-bed3960aef7e)
+
+Use the generated TFLite file to inference and ensure that it always contains fixed value output.
+
+```python
+import tensorflow as tf
+import numpy as np
+from pprint import pprint
+
+interpreter = tf.lite.Interpreter(model_path="saved_model/toy_with_constant_float32.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+interpreter.set_tensor(
+    tensor_index=input_details[0]['index'],
+    value=np.ones(tuple(input_details[0]['shape']), dtype=np.float32)
+)
+interpreter.invoke()
+
+variable_output = interpreter.get_tensor(output_details[0]['index'])
+constant_output = interpreter.get_tensor(output_details[1]['index'])
+
+print("=================")
+print("Variable Output:")
+pprint(variable_output)
+print("=================")
+print("Constant Output:")
+pprint(constant_output)
+```
+```
+=================
+Variable Output:
+array([[-0.02787317, -0.05505124,  0.05421712,  0.03526559, -0.14131774,
+         0.0019211 ,  0.08399964,  0.00433664, -0.00984338, -0.03370604]],
+      dtype=float32)
+=================
+Constant Output:
+array([1., 2., 3., 4., 5.], dtype=float32)
+```
+
+### 17. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -1167,7 +1228,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 17. Conversion to CoreML
+### 18. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
