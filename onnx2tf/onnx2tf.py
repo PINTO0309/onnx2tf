@@ -1074,11 +1074,23 @@ def convert(
                 if output_signaturedefs or output_integer_quantized_tflite:
                     output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
+        # Support for constant output
+        # Bring constant layers unconnected to the model into the model.
+        # It is assumed that the "-nuo" option is specified because
+        # running onnxsim will remove constants from the ONNX file.
+        # https://github.com/PINTO0309/onnx2tf/issues/627
+        if isinstance(inputs, List) \
+            and len(inputs) > 0 \
+            and isinstance(outputs, List):
+            x = inputs[0]
+
+            for oidx, output_layer in enumerate(outputs):
+                if isinstance(output_layer, tf.Tensor) \
+                    and hasattr(output_layer, 'numpy'):
+                    y = output_layer.numpy()
+                    outputs[oidx] = tf_keras.layers.Lambda(lambda x: tf.constant(y))(x)
+
         model = tf_keras.Model(inputs=inputs, outputs=outputs)
-        # if get_log_level() <= LOG_LEVELS['debug']:
-        #     debug('')
-        #     model.summary(line_length=140)
-        #     debug('')
         debug('')
 
         # The process ends normally without saving the model.
