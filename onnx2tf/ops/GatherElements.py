@@ -340,25 +340,22 @@ def make_node(
                         pass
 
                 transposed_tensor_shape = list(tf.transpose(a=indices_tensor, perm=min_abs_err_perm_2).shape)
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    define_gather_elements(
-                        axis=axis,
-                        target_tensor=input_tensor,
-                        target_indices=transpose_with_flexing_deterrence(
-                            input_tensor=indices_tensor,
-                            perm=min_abs_err_perm_2,
-                            output_shape=transposed_tensor_shape \
-                                if None not in transposed_tensor_shape and transposed_tensor_shape != [] else None,
-                            **kwargs,
-                        ),
+                indices_tensor = \
+                    transpose_with_flexing_deterrence(
+                        input_tensor=indices_tensor,
+                        perm=min_abs_err_perm_2,
+                        output_shape=transposed_tensor_shape \
+                            if None not in transposed_tensor_shape and transposed_tensor_shape != [] else None,
+                        **kwargs,
                     )
-    else:
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            define_gather_elements(
-                axis=axis,
-                target_tensor=input_tensor,
-                target_indices=indices_tensor,
-            )
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        define_gather_elements(
+            axis=axis,
+            target_tensor=input_tensor,
+            target_indices=indices_tensor,
+        )
+
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
