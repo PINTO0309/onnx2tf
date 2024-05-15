@@ -1149,7 +1149,7 @@ onnx2tf -i sjy_fused_static_spo.onnx
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35adb529-58cc-4f10-96b3-f6ecf4f31db1)
 
 ### 16. Add constant outputs to the model that are not connected to the model body
-Sometimes you want to always output constants that are not connected to the model body.　See: [https://github.com/PINTO0309/onnx2tf/issues/627](https://github.com/PINTO0309/onnx2tf/issues/627). For example, in the case of ONNX as shown in the figure below. For example, you may want to keep scaling parameters and other parameters as fixed values inside the model and always include the same value in the output.
+Sometimes you want to always output constants that are not connected to the model body. See: [https://github.com/PINTO0309/onnx2tf/issues/627](https://github.com/PINTO0309/onnx2tf/issues/627). For example, in the case of ONNX as shown in the figure below. You may want to keep scaling parameters and other parameters as fixed values inside the model and always include the same value in the output.
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/38080d00-8048-4a2e-8df4-90378487cebc)
 
