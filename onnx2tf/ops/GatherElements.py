@@ -118,7 +118,6 @@ def make_node(
         indices=indices_tensor,
     )
 
-
     def define_gather_elements(axis: int, target_tensor, target_indices):
         if axis == 0:
             axis_perm = tf.range(tf.rank(target_tensor))
@@ -164,12 +163,6 @@ def make_node(
                 **kwargs,
             )
         return transposed
-
-
-
-
-
-
 
     # Workaround to special patterns with wrong transposition when all axes except batch size have the same value.
     # Examine which combination of axis configurations reduces the error in output values the most,
@@ -366,8 +359,6 @@ def make_node(
                 target_tensor=input_tensor,
                 target_indices=indices_tensor,
             )
-
-
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
