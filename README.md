@@ -1270,6 +1270,7 @@ usage: onnx2tf
 [-otfv1pb]
 [-ow]
 [-coion]
+[-odrqt]
 [-oiqt]
 [-qt {per-channel,per-tensor}]
 [-cind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
