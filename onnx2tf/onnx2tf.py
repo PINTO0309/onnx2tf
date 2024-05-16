@@ -67,6 +67,7 @@ def convert(
     output_tfv1_pb: Optional[bool] = False,
     output_weights: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
+    output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
@@ -153,6 +154,9 @@ def convert(
         Also, this option generates a huge JSON file as a temporary file for processing.\n
         Therefore, it is strongly discouraged to use it on large models of hundreds\n
         of megabytes or more.
+
+    output_dynamic_range_quantized_tflite: Optional[bool]
+        Output of dynamic range quantized tflite.
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
@@ -1345,32 +1349,12 @@ def convert(
                     'TFLite ModelAnalyzer failed.'
                 )
 
-        # Quantized TFLite
-        MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-        STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
-        if output_integer_quantized_tflite:
-            # Get signatures/input keys
-            loaded_saved_model = tf.saved_model.load(
-                output_folder_path
-            ).signatures[SIGNATURE_KEY]
-            input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
-            input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
-            input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
-            info(Color.BLUE(f'Input signature information for quantization'))
-            info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
-            for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
-                info(
-                    Color.BLUE(f'input_name.{idx}') + f': {input_key} '+
-                    Color.BLUE(f'shape') + f': {input_shape} '+
-                    Color.BLUE(f'dtype') + f': {input_dtype}'
-                )
-
-            # INT8 Converter
-            converter = tf.lite.TFLiteConverter.from_saved_model(
-                output_folder_path,
-            )
-            # Dynamic Range Quantization
+        # Dynamic Range Quantization
+        if output_dynamic_range_quantized_tflite or output_integer_quantized_tflite:
             try:
+                converter = tf.lite.TFLiteConverter.from_concrete_functions(
+                    [concrete_func]
+                )
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
                 converter.target_spec.supported_types = []
                 converter.target_spec.supported_ops = [
@@ -1401,6 +1385,31 @@ def convert(
                 warn(
                     'Dynamic Range Quantization tflite output failed.'
                 )
+
+        # Quantized TFLite
+        MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
+        STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
+        if output_integer_quantized_tflite:
+            # Get signatures/input keys
+            loaded_saved_model = tf.saved_model.load(
+                output_folder_path
+            ).signatures[SIGNATURE_KEY]
+            input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
+            input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
+            input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
+            info(Color.BLUE(f'Input signature information for quantization'))
+            info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
+            for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
+                info(
+                    Color.BLUE(f'input_name.{idx}') + f': {input_key} '+
+                    Color.BLUE(f'shape') + f': {input_shape} '+
+                    Color.BLUE(f'dtype') + f': {input_dtype}'
+                )
+
+            # INT8 Converter
+            converter = tf.lite.TFLiteConverter.from_saved_model(
+                output_folder_path,
+            )
 
             # Download sample calibration data - MS-COCO x20 images
             # Used only when there is only one input OP, a 4D tensor image,
@@ -1840,6 +1849,13 @@ def main():
             'Also, this option generates a huge JSON file as a temporary file for processing. \n' +
             'Therefore, it is strongly discouraged to use it on large models of hundreds \n'
             'of megabytes or more.'
+    )
+    parser.add_argument(
+        '-odrqt',
+        '--output_dynamic_range_quantized_tflite',
+        action='store_true',
+        help=\
+            'Output of dynamic range quantized tflite.'
     )
     parser.add_argument(
         '-oiqt',
@@ -2370,6 +2386,7 @@ def main():
         output_tfv1_pb=args.output_tfv1_pb,
         output_weights=args.output_weights,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
+        output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
         custom_input_op_name_np_data_path=custom_params,
