@@ -6,8 +6,9 @@ import copy
 import json
 import psutil
 import random
-import requests
 random.seed(0)
+import requests
+import flatbuffers
 import itertools
 import collections
 import traceback
@@ -4582,108 +4583,97 @@ def rewrite_tflite_inout_opname(
                 stderr=subprocess.PIPE
             ).decode('utf-8')
 
-        # tflite -> JSON
+        # Generate Python API from schema
         result = subprocess.check_output(
             [
                 'flatc', '-t',
-                '--strict-json',
-                '--defaults-json',
-                '-o', f'{output_folder_path}',
-                f'{output_folder_path}/schema.fbs',
-                '--',
-                f'{output_folder_path}/{tflite_file_name}'
+                '--python',
+                '--gen-object-api',
+                '--gen-onefile',
+                'schema.fbs',
             ],
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            cwd=output_folder_path
         ).decode('utf-8')
+        schema_tflite = {}
+        with open(f'{output_folder_path}/schema_generated.py') as f:
+            exec(f.read(), schema_tflite)
 
-        # Rewrite input OP name and output OP name
-        json_file_name = f'{os.path.splitext(os.path.basename(tflite_file_name))[0]}.json'
-        json_file_path = f'{output_folder_path}/{json_file_name}'
-        flat_json = None
+        tflite_file_path = f'{output_folder_path}/{tflite_file_name}'
+        with open(tflite_file_path, 'rb') as tflite_file:
+            model_bytes = tflite_file.read()
+        flat_model = schema_tflite['ModelT'].InitFromObj(
+            schema_tflite['Model'].GetRootAs(model_bytes))
 
-        with open(json_file_path, 'r') as f:
-            flat_json = json.load(f)
-            flat_subgraphs = flat_json['subgraphs'][0]
-            flat_tensors: List[Dict] = flat_subgraphs['tensors']
-            flat_input_nums: List[int] = flat_subgraphs['inputs']
-            flat_output_nums: List[int] = flat_subgraphs['outputs']
-            flat_input_infos = [flat_tensors[idx] for idx in flat_input_nums]
-            flat_output_infos = [flat_tensors[idx] for idx in flat_output_nums]
-            # INPUT
-            for idx, flat_input_info in enumerate(flat_input_infos):
-                flat_input_info['name'] = onnx_input_names[idx]
-            # OUTPUT
-            for idx, flat_output_info in enumerate(flat_output_infos):
-                flat_output_info['name'] = onnx_output_names[idx]
+        flat_subgraphs = flat_model.subgraphs[0]
+        flat_tensors = flat_subgraphs.tensors
+        flat_input_nums: List[int] = flat_subgraphs.inputs
+        flat_output_nums: List[int] = flat_subgraphs.outputs
+        flat_input_infos = [flat_tensors[idx] for idx in flat_input_nums]
+        flat_output_infos = [flat_tensors[idx] for idx in flat_output_nums]
+        # INPUT
+        for idx, flat_input_info in enumerate(flat_input_infos):
+            flat_input_info.name = onnx_input_names[idx]
+        # OUTPUT
+        for idx, flat_output_info in enumerate(flat_output_infos):
+            flat_output_info.name = onnx_output_names[idx]
 
-            # make signature_defs
-            """
-            "signature_defs": [
-                {
-                    "inputs": [
-                        {
-                            "name": "input",
-                            "tensor_index": 0
-                        }
-                    ],
-                    "outputs": [
-                        {
-                            "name": "boxes",
-                            "tensor_index": 208
-                        },
-                        {
-                            "name": "scores",
-                            "tensor_index": 190
-                        }
-                    ],
-                    "signature_key": "serving_default",
-                    "subgraph_index": 0
-                }
-            ]
-            """
-            signature_defs = {}
-            # signature_defs_inputs
-            signature_defs_inputs = []
-            for idx, flat_input_info in enumerate(flat_input_infos):
-                signature_defs_inputs.append(
+        # make signature_defs
+        """
+        "signature_defs": [
+            {
+                "inputs": [
                     {
-                        'name': onnx_input_names[idx],
-                        'tensor_index': flat_input_info['buffer'] - 1,
+                        "name": "input",
+                        "tensor_index": 0
                     }
-                )
-            signature_defs['inputs'] = signature_defs_inputs
-            # signature_defs_outputs
-            signature_defs_outputs = []
-            for idx, flat_output_info in enumerate(flat_output_infos):
-                signature_defs_outputs.append(
-                    {
-                        'name': onnx_output_names[idx],
-                        'tensor_index': flat_output_info['buffer'] - 1,
-                    }
-                )
-            signature_defs['outputs'] = signature_defs_outputs
-            # signature_defs_inputs
-            signature_defs['signature_key'] = 'serving_default'
-            # subgraph_index
-            signature_defs['subgraph_index'] = 0
-            # update json
-            flat_json['signature_defs'] = [signature_defs]
-
-        if flat_json is not None:
-            with open(json_file_path, 'w') as f:
-                json.dump(flat_json, f)
-            # JSON -> tflite
-            result = subprocess.check_output(
-                [
-                    'flatc',
-                    '-o', f'{output_folder_path}',
-                    '-b', f'{output_folder_path}/schema.fbs',
-                    f'{json_file_path}'
                 ],
-                stderr=subprocess.PIPE
-            ).decode('utf-8')
-            # Delete JSON
-            os.remove(f'{json_file_path}')
+                "outputs": [
+                    {
+                        "name": "boxes",
+                        "tensor_index": 208
+                    },
+                    {
+                        "name": "scores",
+                        "tensor_index": 190
+                    }
+                ],
+                "signature_key": "serving_default",
+                "subgraph_index": 0
+            }
+        ]
+        """
+        signature_defs = schema_tflite['SignatureDefT']()
+        # signature_defs_inputs
+        signature_defs_inputs = []
+        for idx, flat_input_info in enumerate(flat_input_infos):
+            tm = schema_tflite["TensorMapT"]()
+            tm.name = onnx_input_names[idx]
+            tm.tensorIndex = flat_input_info.buffer - 1
+            signature_defs_inputs.append(tm)
+        signature_defs.inputs = signature_defs_inputs
+        # signature_defs_outputs
+        signature_defs_outputs = []
+        for idx, flat_output_info in enumerate(flat_output_infos):
+            tm = schema_tflite["TensorMapT"]()
+            tm.name = onnx_output_names[idx]
+            tm.tensorIndex = flat_output_info.buffer - 1
+            signature_defs_outputs.append(tm)
+        signature_defs.outputs = signature_defs_outputs
+        # signature_defs_inputs
+        signature_defs.signatureKey = 'serving_default'
+        # subgraph_index
+        signature_defs.subgraphIndex = 0
+        # update model
+        flat_model.signatureDefs = [signature_defs]
+
+        if flat_model is not None:
+            builder = flatbuffers.Builder()
+            model_offset = flat_model.Pack(builder)
+            builder.Finish(model_offset, file_identifier=b'TFL3')
+            model_bytes = bytes(builder.Output())
+            with open(tflite_file_path, 'wb') as f:
+                f.write(model_bytes)
 
     except Exception as ex:
         warn(
