@@ -1350,6 +1350,9 @@ optional arguments:
     Therefore, it is strongly discouraged to use it on large models of hundreds
     of megabytes or more.
 
+  -odrqt, --output_dynamic_range_quantized_tflite
+    Output of dynamic range quantized tflite.
+
   -oiqt, --output_integer_quantized_tflite
     Output of integer quantized tflite.
 
