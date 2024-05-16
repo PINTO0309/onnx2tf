@@ -106,6 +106,7 @@ jobs:
         pip install onnxruntime==1.17.1
         pip install ml_dtypes==0.3.2
         pip install tf-keras~=2.16
+        pip install flatbuffers>=23.5.26
         pip install -e .
     - name: Download models
       run: |

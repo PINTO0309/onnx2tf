@@ -241,6 +241,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - psutil==5.9.5
 - ml_dtypes==0.3.2
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
+- flatbuffers>=23.5.26
   ```bash
   # Custom flatc v23.5.26 binary for Ubuntu 20.04+
   # https://github.com/PINTO0309/onnx2tf/issues/196
@@ -270,7 +271,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.21.2
+  ghcr.io/pinto0309/onnx2tf:1.21.3
 
   or
 
@@ -278,7 +279,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.21.2
+  docker.io/pinto0309/onnx2tf:1.21.3
 
   or
 
@@ -296,7 +297,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U h5py==3.11.0 \
   && pip install -U psutil==5.9.5 \
   && pip install -U ml_dtypes==0.3.2 \
-  && pip install -U tf-keras~=2.16
+  && pip install -U tf-keras~=2.16 \
+  && pip install flatbuffers>=23.5.26
 
   or
 
@@ -327,7 +329,8 @@ or
     && pip install -U h5py==3.11.0 \
     && pip install -U psutil==5.9.5 \
     && pip install -U ml_dtypes==0.3.2 \
-    && pip install -U tf-keras~=2.16
+    && pip install -U tf-keras~=2.16 \
+    && pip install flatbuffers>=23.5.26
   ```
 
 ### 2. Run test
