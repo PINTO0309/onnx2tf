@@ -66,7 +66,7 @@ jobs:
         id: meta_gh
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}  
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
       - name: Build and push by digest to GCR
         id: build_gh
         uses: docker/build-push-action@v5
@@ -111,7 +111,7 @@ jobs:
           mkdir -p /tmp/digests/dh
           digest="${{ steps.build_dh.outputs.digest }}"
           touch "/tmp/digests/dh/${digest#sha256:}"
-          
+
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
@@ -119,7 +119,7 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-  
+
   merge:
     runs-on: ubuntu-latest
     needs:
@@ -131,7 +131,7 @@ jobs:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
-              
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -151,10 +151,10 @@ jobs:
         working-directory: /tmp/digests/gh
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-          $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)          
+          $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
       - name: Inspect image on GCR
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta_gh.outputs.version }}          
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta_gh.outputs.version }}
 
       # For Docker Hub
       - name: Log in to the Docker Hub
@@ -172,7 +172,7 @@ jobs:
         working-directory: /tmp/digests/dh
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-          $(printf '${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)          
+          $(printf '${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
       - name: Inspect image on Docker Hub
         run: |
           docker buildx imagetools inspect ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta_dh.outputs.version }}
