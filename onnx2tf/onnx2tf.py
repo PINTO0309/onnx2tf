@@ -1287,6 +1287,34 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
+
+        converter_int8 = tf.lite.TFLiteConverter.from_concrete_functions(
+            [concrete_func]
+        )
+        converter_int8.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter_int8.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS,
+            tf.lite.OpsSet.SELECT_TF_OPS,
+        ]
+
+        tflite_model = converter_int8.convert()
+        with open(f'{output_folder_path}/{output_file_name}_int8.tflite', 'wb') as w:
+            w.write(tflite_model)
+        if copy_onnx_input_output_names_to_tflite:
+            rewrite_tflite_inout_opname(
+                output_folder_path=output_folder_path,
+                tflite_file_name=f'{output_file_name}_int8.tflite',
+                onnx_input_names=onnx_graph_input_names,
+                onnx_output_names=onnx_graph_output_names,
+            )
+        if output_weights:
+            weights_export(
+                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_int8.tflite',
+                output_weights_file_path=f'{output_folder_path}/{output_file_name}_int8_weights.h5',
+            )
+        info(Color.GREEN(f'Int8 tflite output complete!'))
+
+
         converter = tf.lite.TFLiteConverter.from_concrete_functions(
             [concrete_func]
         )
