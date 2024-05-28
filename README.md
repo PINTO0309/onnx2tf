@@ -17,6 +17,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
   ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/c17d4682-8a68-4a8f-9d74-18ca9dbc17dc)
 
 - For future model versatility, it would be a good idea to consider moving to `torch.onnx.dynamo_export` at an early stage.
+- [AI Edge Torch](https://github.com/google-ai-edge/ai-edge-torch) AI Edge Torch is a python library that supports converting PyTorch models into a .tflite format, which can then be run with TensorFlow Lite and MediaPipe. This enables applications for Android, iOS and IOT that can run models completely on-device. AI Edge Torch offers broad CPU coverage, with initial GPU and NPU support. AI Edge Torch seeks to closely integrate with PyTorch, building on top of torch.export() and providing good coverage of Core ATen operators.
 - Considering the compatibility of Pythonic code with TensorFlow/Keras/TFLite and the beauty of the conversion workflow, [nobuco](https://github.com/AlexanderLutsenko/nobuco) is the most optimal choice going forward.
 - The role of `onnx2tf` will end within the next one to two years. I don't intend to stop the maintenance of `onnx2tf` itself anytime soon, but I will continue to maintain it little by little as long as there is demand for it from everyone. The end of `onnx2tf` will be when `TensorRT` and other runtimes support porting from FX Graph based models.
 
@@ -2541,6 +2542,7 @@ The above differences often cannot be dealt with by simply converting the model 
 13. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
 14. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
 15. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
+16. [ai-edge-torch](https://github.com/google-ai-edge/ai-edge-torch)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
