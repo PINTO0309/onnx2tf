@@ -5,9 +5,9 @@
   "format_version": 1,
   "operations": [
     {
-      "op_name": "/gru/Squeeze",
+      "op_name": "Squeeze_3",
       "param_target": "inputs",
-      "param_name": "onnx::Concat_101",
+      "param_name": "69",
       "values": [1]
     }
   ]
