@@ -1219,9 +1219,9 @@ def convert(
             # concrete_func
             info(Color.REVERSE(f'saved_model output started'), '=' * 58)
             if not output_signaturedefs and not output_integer_quantized_tflite:
-                tf.saved_model.save(concrete_func, output_folder_path)
+                tf.saved_model.save(concrete_func, output_folder_path, save_format='h5')
             else:
-                tf.saved_model.save(model, output_folder_path)
+                tf.saved_model.save(model, output_folder_path, save_format='h5')
             info(Color.GREEN(f'saved_model output complete!'))
         except TypeError as e:
             # Switch to .pb
