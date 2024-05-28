@@ -34,6 +34,11 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
   edge_model = ai_edge_torch.convert(resnet18.eval(), sample_inputs)
   edge_model.export("resnet18.tflite")
   ```
+
+- Google for Developers Blog MAY 14, 2024 - AI Edge Torch: High Performance Inference of PyTorch Models on Mobile Devices
+
+  https://developers.googleblog.com/en/ai-edge-torch-high-performance-inference-of-pytorch-models-on-mobile-devices/
+  
 - Considering the compatibility of Pythonic code with TensorFlow/Keras/TFLite and the beauty of the conversion workflow, [nobuco](https://github.com/AlexanderLutsenko/nobuco) is the most optimal choice going forward.
 - The role of `onnx2tf` will end within the next one to two years. I don't intend to stop the maintenance of `onnx2tf` itself anytime soon, but I will continue to maintain it little by little as long as there is demand for it from everyone. The end of `onnx2tf` will be when `TensorRT` and other runtimes support porting from FX Graph based models.
 
