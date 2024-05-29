@@ -255,6 +255,9 @@ def make_node(
                 # Extract the number of filters and kernel size from the weight tensor
                 num_filters = weight_split_.shape[-2]
                 kernel_size = weight_split_.shape[0:2]
+
+                use_bias = input_bias is not None
+
                 activation_mapping = {
                     'Relu': 'elu',
                     'Sigmoid': 'sigmoid',
@@ -264,11 +267,11 @@ def make_node(
                 }
 
                 activation_function = activation_mapping.get(optype, None)
-                use_bias = input_bias is not None
-                if optype == 'Concat':
-                    # act=tf_keras.layers.ReLU(max_value=None, negative_slope=0.99, threshold=0.0)
-                    act=tf_keras.layers.LeakyReLU(alpha=0.99)
-                    conv_layer = conv_layer(
+                # act = tf_keras.layers.ReLU(max_value=None, negative_slope=0.99999, threshold=0.0)
+                act = tf_keras.layers.LeakyReLU(alpha=0.99999, name=graph_node.name)
+                # act = tf.keras.layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(value=1.00), shared_axes=[1, 2], name=graph_node.name) if spatial_size == 2 else tf.keras.layers.PReLU(shared_axes=[1, 2, 3], name=graph_node.name)
+
+                conv_layer = conv_layer(
                         filters=num_filters,
                         kernel_size=kernel_shape,
                         strides=strides, 
@@ -278,30 +281,25 @@ def make_node(
                         data_format='channels_last',
                         use_bias=use_bias,
                     )
-                    
-                else:
-                    conv_layer = conv_layer(
-                        filters=num_filters,
-                        kernel_size=kernel_shape,
-                        strides=strides, 
-                        padding=pad_mode, 
-                        dilation_rate=dilations,
-                        activation=activation_function,
-                        data_format='channels_last',
-                        use_bias=use_bias,
-                    )
                 
                 conv_rs = conv_layer(input_tensor_split)
-                dummy_biases = np.zeros(num_filters)
+                dummy_biases = np.ones(num_filters)
                 if input_bias is not None:
                     dummy_biases = input_bias
 
                 if use_bias:
-                    conv_layer.set_weights([input_weights, dummy_biases])
+                    if isinstance(act, tf.keras.layers.PReLU):
+                        conv_layer.set_weights([input_weights, dummy_biases, np.ones((1, 1, num_filters))])
+                    else:
+                        conv_layer.set_weights([input_weights, dummy_biases])
                 else:
-                    conv_layer.set_weights([input_weights])
+                    if isinstance(act, tf.keras.layers.PReLU):
+                        conv_layer.set_weights([input_weights, np.ones((1, 1, num_filters))])
+                    else:
+                        conv_layer.set_weights([input_weights])
 
             except Exception as ex1:
+                raise ex1
                 # Shape Unmatch Error Mitigation Measures
                 # Search for and transpose shapes that do not cause shape unmatch errors
                 tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_split.shape))))
