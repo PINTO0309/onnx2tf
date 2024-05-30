@@ -137,7 +137,7 @@ def make_node(
         final_tensor = alternative_argmax(
             input_tensor=reversed_tensor,
             axis=axis,
-            output_type=tf.float32,
+            output_type=tf.int64 if replace_argmax_to_reducemax_and_indices_is_int64 else tf.float32,
             keepdims=keepdims,
             replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
             replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
@@ -195,7 +195,7 @@ def make_node(
                 'tf_inputs': {
                     'input': input_tensor,
                     'axis': axis,
-                    'output_type': dtype,
+                    'output_type': tf.float32 if replace_argmax_to_reducemax_and_indices_is_float32 else dtype,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
