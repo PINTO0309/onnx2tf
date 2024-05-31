@@ -242,6 +242,7 @@ def make_node(
         if pads_axes_opposite_same \
             and input_tensor_rank >=2 \
             and graph_node.inputs[0].shape is not None \
+            and output_tensor_shape is not None \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:

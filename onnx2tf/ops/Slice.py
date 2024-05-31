@@ -279,66 +279,45 @@ def make_node(
                 sys.exit(1)
 
     # Generation of TF OP
-    if begin_ is None:
-        ##### begin
-        if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
-            begin_ = [dim for dim in starts.numpy()]
-        elif not isinstance(starts, np.ndarray) and tf_keras.backend.is_keras_tensor(starts):
-            begin_ = starts
-        else:
-            begin_ = [dim for dim in starts]
-        ##### end
-        if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
-            end_ = [dim for dim in ends.numpy()]
-        elif not isinstance(ends, np.ndarray) and tf_keras.backend.is_keras_tensor(ends):
-            end_ = ends
-        else:
-            end_ = [dim for dim in ends]
-        ##### strides
-        strides_ = None
-        if steps is not None:
-            if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
-                strides_ = [dim for dim in steps.numpy()]
-            elif not isinstance(steps, np.ndarray) and tf_keras.backend.is_keras_tensor(steps):
-                strides_ = steps
-            else:
-                strides_ = [dim for dim in steps]
+    tf_type = None
+    if isinstance(graph_node_input, gs.Variable) \
+        and 'simple_resize2' in tf_layers_dict[graph_node_input.name] \
+        and tf_layers_dict[graph_node_input.name]['simple_resize2'] == True:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.identity(input=input_tensor)
+        tf_layers_dict[graph_node_output.name]['simple_resize2'] = True
+        tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_input.name]['simple_resize_shape_op']
+        tf_type = tf.identity
 
-        # Adjust the number of dimensions of the input data according to the number of axes [List]
-        ##### Replace max values
-        if isinstance(begin_, list):
-            if axes is not None:
-                unsqueeze_mask = [1] * input_tensor_rank
-                for axis in axes:
-                    unsqueeze_mask[axis] = 0
+    else:
+        if begin_ is None:
+            ##### begin
+            if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
+                begin_ = [dim for dim in starts.numpy()]
+            elif not isinstance(starts, np.ndarray) and tf_keras.backend.is_keras_tensor(starts):
+                begin_ = starts
             else:
-                unsqueeze_mask = [0] * input_tensor_rank
-            for axis, maskbit in enumerate(unsqueeze_mask):
-                if maskbit == 1:
-                    begin_.insert(axis, 0)
-            begin_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=begin_,
-                axes=axes,
-            )
-        ##### Replace negative values
-        if isinstance(end_, list):
-            if axes is not None:
-                unsqueeze_mask = [1] * input_tensor_rank
-                for axis in axes:
-                    unsqueeze_mask[axis] = 0
+                begin_ = [dim for dim in starts]
+            ##### end
+            if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
+                end_ = [dim for dim in ends.numpy()]
+            elif not isinstance(ends, np.ndarray) and tf_keras.backend.is_keras_tensor(ends):
+                end_ = ends
             else:
-                unsqueeze_mask = [0] * input_tensor_rank
-            for axis, maskbit in enumerate(unsqueeze_mask):
-                if maskbit == 1:
-                    end_.insert(axis, 0)
-            end_ = replace_max_values_negative_values(
-                input_tensor_shape=input_tensor_shape,
-                index_list=end_,
-                axes=axes,
-            )
-        if strides_ is not None:
-            if isinstance(strides_, list):
+                end_ = [dim for dim in ends]
+            ##### strides
+            strides_ = None
+            if steps is not None:
+                if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
+                    strides_ = [dim for dim in steps.numpy()]
+                elif not isinstance(steps, np.ndarray) and tf_keras.backend.is_keras_tensor(steps):
+                    strides_ = steps
+                else:
+                    strides_ = [dim for dim in steps]
+
+            # Adjust the number of dimensions of the input data according to the number of axes [List]
+            ##### Replace max values
+            if isinstance(begin_, list):
                 if axes is not None:
                     unsqueeze_mask = [1] * input_tensor_rank
                     for axis in axes:
@@ -347,76 +326,174 @@ def make_node(
                     unsqueeze_mask = [0] * input_tensor_rank
                 for axis, maskbit in enumerate(unsqueeze_mask):
                     if maskbit == 1:
-                        strides_.insert(axis, 1)
+                        begin_.insert(axis, 0)
+                begin_ = replace_max_values_negative_values(
+                    input_tensor_shape=input_tensor_shape,
+                    index_list=begin_,
+                    axes=axes,
+                )
+            ##### Replace negative values
+            if isinstance(end_, list):
+                if axes is not None:
+                    unsqueeze_mask = [1] * input_tensor_rank
+                    for axis in axes:
+                        unsqueeze_mask[axis] = 0
+                else:
+                    unsqueeze_mask = [0] * input_tensor_rank
+                for axis, maskbit in enumerate(unsqueeze_mask):
+                    if maskbit == 1:
+                        end_.insert(axis, 0)
+                end_ = replace_max_values_negative_values(
+                    input_tensor_shape=input_tensor_shape,
+                    index_list=end_,
+                    axes=axes,
+                )
+            if strides_ is not None:
+                if isinstance(strides_, list):
+                    if axes is not None:
+                        unsqueeze_mask = [1] * input_tensor_rank
+                        for axis in axes:
+                            unsqueeze_mask[axis] = 0
+                    else:
+                        unsqueeze_mask = [0] * input_tensor_rank
+                    for axis, maskbit in enumerate(unsqueeze_mask):
+                        if maskbit == 1:
+                            strides_.insert(axis, 1)
 
-        # Adjust the number of dimensions of the input data according to the number of axes [Tensor]
-        if not isinstance(begin_, list) and input_tensor_rank > begin_.shape[0]:
-            begin_zeros = tf.zeros(shape=input_tensor_rank, dtype=tf.int64)
-            begin_ = tf.tensor_scatter_nd_update(
-                tensor=begin_zeros,
-                indices=[[axis] for axis in axes],
-                updates=begin_,
+            # Adjust the number of dimensions of the input data according to the number of axes [Tensor]
+            if not isinstance(begin_, list) and input_tensor_rank > begin_.shape[0]:
+                begin_zeros = tf.zeros(shape=input_tensor_rank, dtype=tf.int64)
+                begin_ = tf.tensor_scatter_nd_update(
+                    tensor=begin_zeros,
+                    indices=[[axis] for axis in axes],
+                    updates=begin_,
+                )
+            begin_ = tf.cast(x=begin_, dtype=tf.int64)
+            if not isinstance(end_, list) and input_tensor_rank > end_.shape[0]:
+                end_zeros = tf.zeros(input_tensor_rank, dtype=tf.int64)
+                end_ = tf.tensor_scatter_nd_update(
+                    tensor=end_zeros,
+                    indices=[[axis] for axis in axes],
+                    updates=end_,
+                )
+            end_ = tf.cast(x=end_, dtype=tf.int64)
+            if strides_ is not None and not isinstance(strides_, list) and input_tensor_rank > strides_.shape[0]:
+                strides_ones = tf.ones(input_tensor_rank, dtype=tf.int64)
+                strides_ = tf.tensor_scatter_nd_update(
+                    tensor=strides_ones,
+                    indices=[[axis] for axis in axes],
+                    updates=strides_,
+                )
+                strides_ = tf.cast(x=strides_, dtype=tf.int64)
+
+            ##### begin_mask
+            begin_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
+            cliped_values = tf.cast(1-tf.clip_by_value(t=begin_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+            begin_mask_ = tf.cast(
+                tf.math.reduce_sum(
+                    input_tensor=tf.math.multiply(x=cliped_values, y=begin_bit_mask),
+                ),
+                dtype=tf.int32,
             )
-        begin_ = tf.cast(x=begin_, dtype=tf.int64)
-        if not isinstance(end_, list) and input_tensor_rank > end_.shape[0]:
-            end_zeros = tf.zeros(input_tensor_rank, dtype=tf.int64)
-            end_ = tf.tensor_scatter_nd_update(
-                tensor=end_zeros,
-                indices=[[axis] for axis in axes],
-                updates=end_,
+            if hasattr(begin_mask_, '_inferred_value') and begin_mask_._inferred_value == [None]:
+                begin_mask_ = 0
+
+            ##### end_mask
+            end_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
+            cliped_values = tf.cast(1-tf.clip_by_value(t=end_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+            end_mask_ = tf.cast(
+                tf.math.reduce_sum(
+                    input_tensor=tf.math.multiply(x=cliped_values, y=end_bit_mask),
+                ),
+                dtype=tf.int32,
             )
-        end_ = tf.cast(x=end_, dtype=tf.int64)
-        if strides_ is not None and not isinstance(strides_, list) and input_tensor_rank > strides_.shape[0]:
-            strides_ones = tf.ones(input_tensor_rank, dtype=tf.int64)
-            strides_ = tf.tensor_scatter_nd_update(
-                tensor=strides_ones,
-                indices=[[axis] for axis in axes],
-                updates=strides_,
-            )
-            strides_ = tf.cast(x=strides_, dtype=tf.int64)
+            if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
+                end_mask_ = 0
 
-        ##### begin_mask
-        begin_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
-        cliped_values = tf.cast(1-tf.clip_by_value(t=begin_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
-        begin_mask_ = tf.cast(
-            tf.math.reduce_sum(
-                input_tensor=tf.math.multiply(x=cliped_values, y=begin_bit_mask),
-            ),
-            dtype=tf.int32,
-        )
-        if hasattr(begin_mask_, '_inferred_value') and begin_mask_._inferred_value == [None]:
-            begin_mask_ = 0
+            # strided_slice
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    strides=strides_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                    name=graph_node.name,
+                )
+            try:
+                if input_tensor_shape != tf.TensorShape(None) \
+                    and None not in input_tensor_shape \
+                    and len(input_tensor_shape) > kwargs['number_of_dimensions_after_flexstridedslice_compression']:
 
-        ##### end_mask
-        end_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
-        cliped_values = tf.cast(1-tf.clip_by_value(t=end_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
-        end_mask_ = tf.cast(
-            tf.math.reduce_sum(
-                input_tensor=tf.math.multiply(x=cliped_values, y=end_bit_mask),
-            ),
-            dtype=tf.int32,
-        )
-        if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
-            end_mask_ = 0
+                    onnx_slice_dims_count = 0
 
-        # strided_slice
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.strided_slice(
-                input_=input_tensor,
-                begin=begin_,
-                end=end_,
-                strides=strides_,
-                begin_mask=begin_mask_,
-                end_mask=end_mask_,
-                name=graph_node.name,
-            )
-        try:
-            if input_tensor_shape != tf.TensorShape(None) \
-                and None not in input_tensor_shape \
-                and len(input_tensor_shape) > kwargs['number_of_dimensions_after_flexstridedslice_compression']:
+                    if isinstance(starts, np.ndarray):
+                        onnx_slice_dims_count = len(starts)
+                    elif hasattr(starts, 'numpy'):
+                        onnx_slice_dims_count = len(starts.numpy())
+                    elif isinstance(starts, int):
+                        onnx_slice_dims_count = 1
+                    elif tf_keras.backend.is_keras_tensor(starts):
+                        onnx_slice_dims_count = len(starts.shape)
+                    else:
+                        onnx_slice_dims_count = len(starts)
 
+                    ignore_axes = axes
+                    if axes is None:
+                        ignore_axes = [idx for idx in range(input_tensor_rank)]
+
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        stridedslice_with_flexing_deterrence(
+                            input_tensor=input_tensor,
+                            begin=begin_,
+                            end=end_,
+                            strides=strides_,
+                            begin_mask=begin_mask_,
+                            end_mask=end_mask_,
+                            ignore_axes=ignore_axes,
+                            compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                            onnx_slice_dims_count=onnx_slice_dims_count,
+                            output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
+                            name=graph_node.name,
+                            **kwargs,
+                        )
+                else:
+                    pass
+            except Exception as ex:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.strided_slice(
+                        input_=input_tensor,
+                        begin=begin_,
+                        end=end_,
+                        strides=strides_,
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
+                        name=graph_node.name,
+                    )
+                print('')
+                print(f'{Color.YELLOW("WARNING")} Dimensional compression of `Slice` fails. node.name: {graph_node.name}')
+                print('')
+
+            check_input_shape = list(input_tensor_shape) \
+                if input_tensor_shape != tf.TensorShape(None) else None
+            check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape) \
+                if tf_layers_dict[graph_node_output.name]['tf_node'].shape != tf.TensorShape(None) else None
+            if check_input_shape is not None \
+                and check_output_shape is not None \
+                and None not in check_input_shape \
+                and None not in check_output_shape \
+                and check_input_shape == check_output_shape:
+                # Disable useless slice
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.identity(
+                        input=input_tensor,
+                        name=graph_node.name,
+                    )
+
+            elif input_tensor.shape != tf.TensorShape(None):
+                # FlexStridedSlice generation suppression process
                 onnx_slice_dims_count = 0
-
                 if isinstance(starts, np.ndarray):
                     onnx_slice_dims_count = len(starts)
                 elif hasattr(starts, 'numpy'):
@@ -428,28 +505,27 @@ def make_node(
                 else:
                     onnx_slice_dims_count = len(starts)
 
-                ignore_axes = axes
-                if axes is None:
-                    ignore_axes = [idx for idx in range(input_tensor_rank)]
-
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    stridedslice_with_flexing_deterrence(
-                        input_tensor=input_tensor,
-                        begin=begin_,
-                        end=end_,
-                        strides=strides_,
-                        begin_mask=begin_mask_,
-                        end_mask=end_mask_,
-                        ignore_axes=ignore_axes,
-                        compression_defult_value=COMPRESSION_DEFAULT_VALUE,
-                        onnx_slice_dims_count=onnx_slice_dims_count,
-                        output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
-                        name=graph_node.name,
-                        **kwargs,
-                    )
-            else:
-                pass
-        except Exception as ex:
+                if onnx_slice_dims_count > COMPRESSION_DEFAULT_VALUE:
+                    ignore_axes = axes
+                    if axes is None:
+                        ignore_axes = [idx for idx in range(input_tensor_rank)]
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        stridedslice_with_flexing_deterrence(
+                            input_tensor=input_tensor,
+                            begin=begin_,
+                            end=end_,
+                            strides=strides_,
+                            begin_mask=begin_mask_,
+                            end_mask=end_mask_,
+                            ignore_axes=ignore_axes,
+                            compression_defult_value=COMPRESSION_DEFAULT_VALUE,
+                            onnx_slice_dims_count=onnx_slice_dims_count,
+                            output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
+                            name=graph_node.name,
+                            **kwargs,
+                        )
+        else:
+            # OP replacement
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.strided_slice(
                     input_=input_tensor,
@@ -458,76 +534,12 @@ def make_node(
                     strides=strides_,
                     begin_mask=begin_mask_,
                     end_mask=end_mask_,
+                    ellipsis_mask=ellipsis_mask_,
+                    new_axis_mask=new_axis_mask_,
+                    shrink_axis_mask=shrink_axis_mask_,
                     name=graph_node.name,
                 )
-            print('')
-            print(f'{Color.YELLOW("WARNING")} Dimensional compression of `Slice` fails. node.name: {graph_node.name}')
-            print('')
-
-        check_input_shape = list(input_tensor_shape) \
-            if input_tensor_shape != tf.TensorShape(None) else None
-        check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape) \
-            if tf_layers_dict[graph_node_output.name]['tf_node'].shape != tf.TensorShape(None) else None
-        if check_input_shape is not None \
-            and check_output_shape is not None \
-            and None not in check_input_shape \
-            and None not in check_output_shape \
-            and check_input_shape == check_output_shape:
-            # Disable useless slice
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.identity(
-                    input=input_tensor,
-                    name=graph_node.name,
-                )
-
-        elif input_tensor.shape != tf.TensorShape(None):
-            # FlexStridedSlice generation suppression process
-            onnx_slice_dims_count = 0
-            if isinstance(starts, np.ndarray):
-                onnx_slice_dims_count = len(starts)
-            elif hasattr(starts, 'numpy'):
-                onnx_slice_dims_count = len(starts.numpy())
-            elif isinstance(starts, int):
-                onnx_slice_dims_count = 1
-            elif tf_keras.backend.is_keras_tensor(starts):
-                onnx_slice_dims_count = len(starts.shape)
-            else:
-                onnx_slice_dims_count = len(starts)
-
-            if onnx_slice_dims_count > COMPRESSION_DEFAULT_VALUE:
-                ignore_axes = axes
-                if axes is None:
-                    ignore_axes = [idx for idx in range(input_tensor_rank)]
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    stridedslice_with_flexing_deterrence(
-                        input_tensor=input_tensor,
-                        begin=begin_,
-                        end=end_,
-                        strides=strides_,
-                        begin_mask=begin_mask_,
-                        end_mask=end_mask_,
-                        ignore_axes=ignore_axes,
-                        compression_defult_value=COMPRESSION_DEFAULT_VALUE,
-                        onnx_slice_dims_count=onnx_slice_dims_count,
-                        output_shape=tf_layers_dict[graph_node_output.name]['tf_node'].shape,
-                        name=graph_node.name,
-                        **kwargs,
-                    )
-    else:
-        # OP replacement
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.strided_slice(
-                input_=input_tensor,
-                begin=begin_,
-                end=end_,
-                strides=strides_,
-                begin_mask=begin_mask_,
-                end_mask=end_mask_,
-                ellipsis_mask=ellipsis_mask_,
-                new_axis_mask=new_axis_mask_,
-                shrink_axis_mask=shrink_axis_mask_,
-                name=graph_node.name,
-            )
+        tf_type = tf.strided_slice
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -541,7 +553,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.strided_slice,
+                'tf_op_type': tf_type,
                 'tf_inputs': {
                     'input_': input_tensor,
                     'begin': starts,

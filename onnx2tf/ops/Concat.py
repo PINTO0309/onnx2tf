@@ -203,6 +203,7 @@ def make_node(
     # Pre-process transpose
     new_values = []
     simple_resize: bool = False
+    simple_resize2: bool = False
     for graph_node_input, value in zip(graph_node.inputs, values):
         value = pre_process_transpose(
             value_before_transpose=value,
@@ -219,6 +220,12 @@ def make_node(
             and 'simple_resize' in tf_layers_dict[graph_node_input.name] \
             and tf_layers_dict[graph_node_input.name]['simple_resize'] == True:
             simple_resize = simple_resize or True
+
+        if isinstance(graph_node_input, gs.Variable) \
+            and 'simple_resize2' in tf_layers_dict[graph_node_input.name] \
+            and tf_layers_dict[graph_node_input.name]['simple_resize2'] == True:
+            simple_resize2 = simple_resize2 or True
+
     values = new_values
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
@@ -244,6 +251,20 @@ def make_node(
                 size=tf.convert_to_tensor([int(tf_layers_dict[target_input.name]['simple_resize_shape_op'].shape[0] - 2)], dtype=tf.int32),
             )
         tf_type = tf.slice
+
+    elif simple_resize2 and len(values) == 2:
+        target_input: np.ndarray = None
+        target_spartial_size: int = 0
+        for cat_value in values:
+            if hasattr(cat_value, 'numpy'):
+                target_input = cat_value.numpy()
+            if not hasattr(cat_value, 'numpy') and cat_value.shape is not None:
+                target_spartial_size = cat_value.shape[0] - 2
+        if target_spartial_size == len(target_input):
+            target_input = np.asarray([1] + [i for i in target_input] + [1])
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.convert_to_tensor(target_input)
+        tf_type = tf.constant
+
     else:
         try:
             # normal concat attempt
