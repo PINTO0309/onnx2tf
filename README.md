@@ -634,7 +634,7 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
 ### 7. If the accuracy of the INT8 quantized model degrades significantly
-It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445, and  https://github.com/PINTO0309/onnx2tf/issues/269
+It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/269
 
 If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
 
