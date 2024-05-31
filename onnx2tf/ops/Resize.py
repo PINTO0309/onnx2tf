@@ -252,7 +252,9 @@ def make_node(
             sizes = sizes.set_shape(input_tensor_shape.shape)
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
-            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
+            new_size = tf.cast(tf.convert_to_tensor(sizes[1:input_tensor_rank-1]), tf.int32)
+        elif hasattr(sizes, 'numpy'):
+            new_size = tf.cast(tf.convert_to_tensor(sizes.numpy()[1:input_tensor_rank-1]), tf.int32)
         elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
         elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
@@ -304,6 +306,7 @@ def make_node(
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
+            and graph_node_output.shape is not None \
             and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:input_tensor_rank-1]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]

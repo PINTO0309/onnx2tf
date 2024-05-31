@@ -125,6 +125,7 @@ def make_node(
     # Simple Resize
     simple_resize = False
     if nhwc:
+        # 1. Gather -> Unsqueeze -> Concat -> Resize
         consumer_count = 0
         consumer_nodes: List[gs.Node] = []
         while True:
@@ -201,10 +202,73 @@ def make_node(
                                     break
                             if consumer_count == 1:
                                 simple_resize = True
+                                tf_layers_dict[graph_node_output.name]['simple_resize'] = True
+                                tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_output.name]['tf_node']
 
-    if simple_resize:
-        tf_layers_dict[graph_node_output.name]['simple_resize'] = True
-        tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_output.name]['tf_node']
+        if not simple_resize:
+            # 2. Slice -> Concat -> Resize
+            consumer_count = 0
+            consumer_nodes: List[gs.Node] = []
+            while True:
+                try:
+                    consumer_node = graph_node.o(consumer_count, 0)
+                    consumer_nodes.append(consumer_node)
+                    consumer_count += 1
+                except:
+                    break
+            slice_count = 0
+            slice_nodes: List[gs.Node] = []
+            if consumer_count == 1:
+                for consumer_node in consumer_nodes:
+                    if consumer_node.op == 'Slice':
+                        slice_nodes.append(consumer_node)
+                        slice_count += 1
+            if slice_count == 1:
+                consumer_count_total = 0
+                consumer_nodes: List[gs.Node] = []
+                for slice_node in slice_nodes:
+                    consumer_count = 0
+                    while True:
+                        try:
+                            consumer_node = slice_node.o(consumer_count, 0)
+                            consumer_nodes.append(consumer_node)
+                            consumer_count += 1
+                        except:
+                            break
+                    consumer_count_total += consumer_count
+                if consumer_count_total == 1:
+                    target_concat_node: gs.Node = None
+                    simple_resize_concat: bool = True
+                    for consumer_node in consumer_nodes:
+                        if target_concat_node is None \
+                            and consumer_node.op == 'Concat':
+                            target_concat_node = consumer_node
+                            simple_resize_concat = simple_resize_concat and True
+                        elif target_concat_node is not None \
+                            and consumer_node.op == 'Concat' \
+                            and consumer_node.name == target_concat_node.name:
+                            simple_resize_concat = simple_resize_concat and True
+                        else:
+                            simple_resize_concat = simple_resize_concat and False
+                    if simple_resize_concat:
+                        consumer_count = 0
+                        consumer_nodes: List[gs.Node] = []
+                        while True:
+                            try:
+                                consumer_node: gs.Node = target_concat_node.o(consumer_count, 0)
+                                if consumer_node.op == 'Resize':
+                                    consumer_nodes.append(consumer_node)
+                                    consumer_count += 1
+                            except:
+                                break
+                        if consumer_count == 1:
+                            simple_resize = True
+                            tf_layers_dict[graph_node_output.name]['simple_resize2'] = True
+                            tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_output.name]['tf_node']
+
+    # if simple_resize:
+    #     tf_layers_dict[graph_node_output.name]['simple_resize'] = True
+    #     tf_layers_dict[graph_node_output.name]['simple_resize_shape_op'] = tf_layers_dict[graph_node_output.name]['tf_node']
 
 
     # Post-process transpose
