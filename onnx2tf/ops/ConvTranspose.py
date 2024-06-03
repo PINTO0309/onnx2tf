@@ -268,19 +268,19 @@ def make_node(
 
                 activation_function = activation_mapping.get(optype, None)
                 # act = tf_keras.layers.ReLU(max_value=None, negative_slope=0.99999, threshold=0.0)
-                act = tf_keras.layers.LeakyReLU(alpha=0.99999, name=graph_node.name)
-                # act = tf.keras.layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(value=1.00), shared_axes=[1, 2], name=graph_node.name) if spatial_size == 2 else tf.keras.layers.PReLU(shared_axes=[1, 2, 3], name=graph_node.name)
+                # act = tf_keras.layers.LeakyReLU(alpha=0.99999, name=graph_node.name)
+                act = tf.keras.layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(value=1.00), shared_axes=[1, 2], name=graph_node.name) if spatial_size == 2 else tf.keras.layers.PReLU(shared_axes=[1, 2, 3], name=graph_node.name)
 
                 conv_layer = conv_layer(
-                        filters=num_filters,
-                        kernel_size=kernel_shape,
-                        strides=strides, 
-                        padding=pad_mode, 
-                        dilation_rate=dilations,
-                        activation=act,
-                        data_format='channels_last',
-                        use_bias=use_bias,
-                    )
+                            filters=num_filters,
+                            kernel_size=kernel_shape,
+                            strides=strides, 
+                            padding=pad_mode, 
+                            dilation_rate=dilations,
+                            activation=act,
+                            data_format='channels_last',
+                            use_bias=use_bias,
+                        )
                 
                 conv_rs = conv_layer(input_tensor_split)
                 dummy_biases = np.ones(num_filters)
