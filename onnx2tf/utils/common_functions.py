@@ -4651,6 +4651,7 @@ def rewrite_tflite_inout_opname(
                 f.write(model_bytes)
 
     except Exception as ex:
+        raise ex
         warn(
             'If you want tflite input OP name and output OP name ' +
             'to match ONNX input and output names, ' +
