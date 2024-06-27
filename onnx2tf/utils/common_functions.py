@@ -4544,6 +4544,8 @@ def rewrite_tflite_inout_opname(
     tflite_file_name: str,
     onnx_input_names: List[str],
     onnx_output_names: List[str],
+    onnx_graph_input_shapes: List[List[int |str]],
+    onnx_graph_output_shapes: List[List[int |str]],
 ):
     """Rewrite the input/output OP name of tflite to the input/output OP name of ONNX.
     Pre-installation of flatc is required.
@@ -4561,6 +4563,12 @@ def rewrite_tflite_inout_opname(
 
     onnx_output_names: List[str]
         List of ONNX output OP names
+
+    onnx_graph_input_shapes: List[List[int |str]]
+        List of ONNX input OP shapes
+
+    onnx_graph_output_shapes: List[List[int |str]]
+        List of ONNX output OP shapes
     """
     try:
         # Check to see if flatc is installed
@@ -4611,12 +4619,50 @@ def rewrite_tflite_inout_opname(
         flat_output_nums: List[int] = flat_subgraphs.outputs
         flat_input_infos = [flat_tensors[idx] for idx in flat_input_nums]
         flat_output_infos = [flat_tensors[idx] for idx in flat_output_nums]
+
+        # Determination of the number of inputs/outputs of the same shape
+        # Correct name discrepancies based on shape if multiple inputs/outputs shapes do not overlap
+        # However, if there are inputs/outputs containing undefined dimensions,
+        # workaround is skipped because correction is not possible.
+        # https://github.com/PINTO0309/onnx2tf/issues/650
+        inputs_second_dim_elements = [
+            tuple(onnx_graph_input_shape) \
+                for onnx_graph_input_shape in onnx_graph_input_shapes
+        ]
+        inputs_has_duplicates = len(inputs_second_dim_elements) != len(set(inputs_second_dim_elements))
+        inputs_has_undefined_dim = any(isinstance(item, str) for onnx_graph_input_shape in onnx_graph_input_shapes for item in onnx_graph_input_shape)
+
+        outputs_second_dim_elements = [
+            tuple(onnx_graph_output_shape) \
+                for onnx_graph_output_shape in onnx_graph_output_shapes
+        ]
+        outputs_has_duplicates = len(outputs_second_dim_elements) != len(set(outputs_second_dim_elements))
+        outputs_has_undefined_dim = any(isinstance(item, str) for onnx_graph_output_shape in onnx_graph_output_shapes for item in onnx_graph_output_shape)
+
         # INPUT
-        for idx, flat_input_info in enumerate(flat_input_infos):
-            flat_input_info.name = onnx_input_names[idx]
+        if not inputs_has_duplicates and not inputs_has_undefined_dim:
+            for onnx_input_name, onnx_input_shape in zip(onnx_input_names, onnx_graph_input_shapes):
+                for flat_input_info in flat_input_infos:
+                    if np.prod(onnx_input_shape) == np.prod(list(flat_input_info.shape)):
+                        flat_input_info.name = onnx_input_name
+                        break
+        else:
+            for idx, flat_input_info in enumerate(flat_input_infos):
+                flat_input_info.name = onnx_input_names[idx]
+
         # OUTPUT
-        for idx, flat_output_info in enumerate(flat_output_infos):
-            flat_output_info.name = onnx_output_names[idx]
+        if not outputs_has_duplicates and not outputs_has_undefined_dim:
+            for onnx_output_name, onnx_output_shape in zip(onnx_output_names, onnx_graph_output_shapes):
+                for flat_output_info in flat_output_infos:
+                    if np.prod(onnx_output_shape) == np.prod(list(flat_output_info.shape)):
+                        flat_output_info.name = onnx_output_name
+                        break
+        else:
+            for idx, flat_output_info in enumerate(flat_output_infos):
+                flat_output_info.name = onnx_output_names[idx]
+
+        if inputs_has_duplicates or inputs_has_undefined_dim or outputs_has_duplicates or outputs_has_undefined_dim:
+            warn('Carefully check the output .tflite as the order of input OP names and output OP names may have been corrupted by TensorFlow.')
 
         # make signature_defs
         """
