@@ -188,7 +188,7 @@ def make_node(
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always
-        pad_mode = 'SAME'
+        pad_mode = 'VALID'
     elif auto_pad == "SAME_UPPER":
         # TODO: this may generates flex operation, need to check
         pad_mode = "SAME"
@@ -258,8 +258,12 @@ def make_node(
 
                 use_bias = input_bias is not None
 
+                # turning off bias seems to increase accuracy
+                # todo: investigate why and if it can be turned back for some layers
+                use_bias = False
+
                 activation_mapping = {
-                    'Relu': 'elu',
+                    'Relu': 'linear',
                     'Sigmoid': 'sigmoid',
                     'Tanh': 'tanh',
                     'Softmax': 'softmax',
@@ -271,6 +275,7 @@ def make_node(
                 # act = tf_keras.layers.LeakyReLU(alpha=0.99999, name=graph_node.name)
                 act = tf.keras.layers.PReLU(alpha_initializer=tf.keras.initializers.Constant(value=1.00), shared_axes=[1, 2], name=graph_node.name) if spatial_size == 2 else tf.keras.layers.PReLU(shared_axes=[1, 2, 3], name=graph_node.name)
 
+                
                 conv_layer = conv_layer(
                             filters=num_filters,
                             kernel_size=kernel_shape,
@@ -283,15 +288,12 @@ def make_node(
                         )
                 
                 conv_rs = conv_layer(input_tensor_split)
-                dummy_biases = np.ones(num_filters)
-                if input_bias is not None:
-                    dummy_biases = input_bias
-
+                
                 if use_bias:
                     if isinstance(act, tf.keras.layers.PReLU):
-                        conv_layer.set_weights([input_weights, dummy_biases, np.ones((1, 1, num_filters))])
+                        conv_layer.set_weights([input_weights, input_bias, np.ones((1, 1, num_filters))])
                     else:
-                        conv_layer.set_weights([input_weights, dummy_biases])
+                        conv_layer.set_weights([input_weights, input_bias])
                 else:
                     if isinstance(act, tf.keras.layers.PReLU):
                         conv_layer.set_weights([input_weights, np.ones((1, 1, num_filters))])
@@ -299,7 +301,6 @@ def make_node(
                         conv_layer.set_weights([input_weights])
 
             except Exception as ex1:
-                raise ex1
                 # Shape Unmatch Error Mitigation Measures
                 # Search for and transpose shapes that do not cause shape unmatch errors
                 tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_split.shape))))
