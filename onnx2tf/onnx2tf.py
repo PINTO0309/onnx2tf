@@ -1455,7 +1455,10 @@ def convert(
                         [
                             tf.image.resize(
                                 calib_data.copy(),
-                                (model_input.shape[1], model_input.shape[2])
+                                (
+                                    model_input.shape[1] if model_input.shape[1] is not None else 640,
+                                    model_input.shape[2] if model_input.shape[2] is not None else 640,
+                                )
                             ),
                             MEAN,
                             STD,
