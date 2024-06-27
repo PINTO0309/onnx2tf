@@ -856,6 +856,12 @@ def convert(
         onnx_graph_output_names: List[str] = [
             outputop.name for outputop in graph.outputs
         ]
+        onnx_graph_input_shapes: List[List[int | str]] = [
+            inputop.shape for inputop in graph.inputs
+        ]
+        onnx_graph_output_shapes: List[List[int | str]] = [
+            outputop.shape for outputop in graph.outputs
+        ]
 
         # Inputs
         for graph_input in graph.inputs:
@@ -1298,6 +1304,8 @@ def convert(
                 tflite_file_name=f'{output_file_name}_float32.tflite',
                 onnx_input_names=onnx_graph_input_names,
                 onnx_output_names=onnx_graph_output_names,
+                onnx_graph_input_shapes=onnx_graph_input_shapes,
+                onnx_graph_output_shapes=onnx_graph_output_shapes,
             )
         if output_weights:
             weights_export(
@@ -1325,6 +1333,8 @@ def convert(
                 tflite_file_name=f'{output_file_name}_float16.tflite',
                 onnx_input_names=onnx_graph_input_names,
                 onnx_output_names=onnx_graph_output_names,
+                onnx_graph_input_shapes=onnx_graph_input_shapes,
+                onnx_graph_output_shapes=onnx_graph_output_shapes,
             )
         if output_weights:
             weights_export(
@@ -1372,6 +1382,8 @@ def convert(
                         tflite_file_name=f'{output_file_name}_dynamic_range_quant.tflite',
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
+                        onnx_graph_input_shapes=onnx_graph_input_shapes,
+                        onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
                 if output_weights:
                     weights_export(
@@ -1501,6 +1513,8 @@ def convert(
                         tflite_file_name=f'{output_file_name}_integer_quant.tflite',
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
+                        onnx_graph_input_shapes=onnx_graph_input_shapes,
+                        onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
                 if output_weights:
                     weights_export(
@@ -1536,6 +1550,8 @@ def convert(
                         tflite_file_name=f'{output_file_name}_full_integer_quant.tflite',
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
+                        onnx_graph_input_shapes=onnx_graph_input_shapes,
+                        onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
                 if output_weights:
                     weights_export(
@@ -1572,6 +1588,8 @@ def convert(
                         tflite_file_name=f'{output_file_name}_integer_quant_with_int16_act.tflite',
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
+                        onnx_graph_input_shapes=onnx_graph_input_shapes,
+                        onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
                 info(Color.GREEN(f'INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
@@ -1603,6 +1621,8 @@ def convert(
                         tflite_file_name=f'{output_file_name}_full_integer_quant_with_int16_act.tflite',
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
+                        onnx_graph_input_shapes=onnx_graph_input_shapes,
+                        onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
                 info(Color.GREEN(f'Full INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
