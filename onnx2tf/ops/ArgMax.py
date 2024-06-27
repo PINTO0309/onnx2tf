@@ -7,6 +7,7 @@ import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     convert_axis,
     alternative_argmax,
+    alternative_argmax_new,
     alternative_fused_argmax,
     get_constant_or_variable,
     print_node_info,
@@ -55,6 +56,8 @@ def make_node(
         kwargs['replace_argmax_to_reducemax_and_indices_is_int64']
     replace_argmax_to_reducemax_and_indices_is_float32 = \
         kwargs['replace_argmax_to_reducemax_and_indices_is_float32']
+    replace_argmax_to_reducemax_new = \
+        kwargs['replace_argmax_to_reducemax_new']
     replace_argmax_to_fused_argmax_and_indices_is_int64 = \
         kwargs['replace_argmax_to_fused_argmax_and_indices_is_int64']
     replace_argmax_to_fused_argmax_and_indices_is_float32 = \
@@ -113,6 +116,7 @@ def make_node(
     tf_op_type = None
     if not replace_argmax_to_reducemax_and_indices_is_int64 \
         and not replace_argmax_to_reducemax_and_indices_is_float32 \
+        and not replace_argmax_to_reducemax_new \
         and not replace_argmax_to_fused_argmax_and_indices_is_int64 \
         and not replace_argmax_to_fused_argmax_and_indices_is_float32:
         argmaxed_tensor = tf.math.argmax(
@@ -143,6 +147,13 @@ def make_node(
             replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
         )
         tf_op_type = 'alternative_argmax'
+    elif replace_argmax_to_reducemax_new:
+        final_tensor = alternative_argmax_new(
+            input_tensor=reversed_tensor,
+            axis=axis,
+            keepdims=keepdims,
+        )
+        tf_op_type = 'alternative_argmax_new'
     elif (
             replace_argmax_to_fused_argmax_and_indices_is_int64 \
             or replace_argmax_to_fused_argmax_and_indices_is_float32

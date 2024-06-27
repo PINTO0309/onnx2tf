@@ -94,6 +94,7 @@ def convert(
     optimization_for_gpu_delegate: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool] = False,
+    replace_argmax_to_reducemax_new: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool] = False,
     fused_argmax_scale_ratio: Optional[float] = 0.5,
@@ -523,6 +524,7 @@ def convert(
     ra_option_list = [
         replace_argmax_to_reducemax_and_indices_is_int64,
         replace_argmax_to_reducemax_and_indices_is_float32,
+        replace_argmax_to_reducemax_new,
         replace_argmax_to_fused_argmax_and_indices_is_int64,
         replace_argmax_to_fused_argmax_and_indices_is_float32,
     ]
@@ -530,6 +532,7 @@ def convert(
         error(
             f'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and ' +
             f'replace_argmax_to_reducemax_and_indices_is_float32 and ' +
+            f'replace_argmax_to_reducemax_new and ' +
             f'replace_argmax_to_fused_argmax_and_indices_is_int64 and ' +
             f'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
         )
@@ -827,6 +830,7 @@ def convert(
         'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
         'replace_argmax_to_reducemax_and_indices_is_int64': replace_argmax_to_reducemax_and_indices_is_int64,
         'replace_argmax_to_reducemax_and_indices_is_float32': replace_argmax_to_reducemax_and_indices_is_float32,
+        'replace_argmax_to_reducemax_new': replace_argmax_to_reducemax_new,
         'replace_argmax_to_fused_argmax_and_indices_is_int64': replace_argmax_to_fused_argmax_and_indices_is_int64,
         'replace_argmax_to_fused_argmax_and_indices_is_float32': replace_argmax_to_fused_argmax_and_indices_is_float32,
         'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
@@ -2241,6 +2245,17 @@ def main():
             'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
     )
     rar_group.add_argument(
+        '-rarn',
+        '--replace_argmax_to_reducemax_new',
+        action='store_true',
+        help=\
+            'Replace ArgMax with a ReduceMax. The returned indices are float32. \n' +
+            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
+            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
+            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+    )
+    rar_group.add_argument(
         '-rafi64',
         '--replace_argmax_to_fused_argmax_and_indices_is_int64',
         action='store_true',
@@ -2478,6 +2493,7 @@ def main():
         optimization_for_gpu_delegate=args.optimization_for_gpu_delegate,
         replace_argmax_to_reducemax_and_indices_is_int64=args.replace_argmax_to_reducemax_and_indices_is_int64,
         replace_argmax_to_reducemax_and_indices_is_float32=args.replace_argmax_to_reducemax_and_indices_is_float32,
+        replace_argmax_to_reducemax_new=args.replace_argmax_to_reducemax_new,
         replace_argmax_to_fused_argmax_and_indices_is_int64=args.replace_argmax_to_fused_argmax_and_indices_is_int64,
         replace_argmax_to_fused_argmax_and_indices_is_float32=args.replace_argmax_to_fused_argmax_and_indices_is_float32,
         fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,

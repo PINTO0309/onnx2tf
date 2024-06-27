@@ -1297,6 +1297,62 @@ def _nnapi_scalar(
     return tf.constant(value, dtype=dtype, shape=(1,))
 
 
+def alternative_argmax_new(
+    *,
+    input_tensor,
+    axis: int = -1,
+    keepdims: bool = False,
+) -> Any:
+    """Replace ArgMax with a ReduceMax.
+
+    Parameters
+    ----------
+    input_tensor: Tensor
+        Tensor to be processed
+
+    axis: int
+        The axis to reduce across
+        Default: -1
+
+    keepdims: bool
+        True: Array dimensionality is preserved after ArgMax
+        False: Number of array dimensions not maintained after ArgMax
+        Default: False
+
+    Returns
+    ----------
+    pseudo_argmax: Tensor
+        Converted ArgMax
+    """
+
+    # reduce_max as alternative
+
+    # calculate the max value on specified axis
+    axis_max = tf.reduce_max(input_tensor, axis=axis, keepdims=True)
+    
+    # make a mask for max values
+    mask = tf.cast(tf.equal(input_tensor, axis_max), input_tensor.dtype)
+    
+    # get dimensions and generate indices
+    dim_size = tf.shape(input_tensor)[axis]
+    indices = tf.range(dim_size, dtype=input_tensor.dtype)
+
+    # Expand indices to match input tensor's shape
+    shape_to_expand = [1] * len(input_tensor.shape)
+    shape_to_expand[axis] = dim_size
+    indices = tf.reshape(indices, shape_to_expand)
+
+    # broadcast indices across the input tensor
+    expanded_indices = indices + tf.zeros_like(input_tensor, dtype=input_tensor.dtype)
+
+    # mask out the max indices
+    max_indices = expanded_indices * mask
+    
+    # reduce_max again, but to max_indices
+    result = tf.reduce_max(max_indices, axis=axis, keepdims=keepdims)
+    
+    return result
+
 def alternative_argmax(
     *,
     input_tensor,
@@ -1345,34 +1401,103 @@ def alternative_argmax(
         True: Convert final output to float32
         False: Do not convert final output to float32
         Default: False
-
     Returns
     ----------
     pseudo_argmax: Tensor
         Converted ArgMax
     """
+    safe_axis = axis
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
 
-    # reduce_max as alternative
-    axis_max = tf.reduce_max(input_tensor, axis=axis, keepdims=True)
-    
-    mask = tf.cast(tf.equal(input_tensor, axis_max), input_tensor.dtype)
-    
-    dim_size = tf.shape(input_tensor)[axis]
-    indices = tf.range(dim_size, dtype=input_tensor.dtype)
+    if safe_axis < 0:
+        safe_axis = input_tensor_rank + safe_axis
+    reduction_size = input_tensor.shape[axis]
+    axis_max = tf.math.reduce_max(
+        input_tensor,
+        axis=axis,
+        keepdims=True,
+    )
+    zero_if_max = tf.subtract(
+        axis_max,
+        input_tensor,
+    )
+    eps = epsilon if epsilon else 1e-6
 
-    # Expand indices
-    shape_to_expand = [1] * len(input_tensor.shape)
-    shape_to_expand[axis] = dim_size
-    indices = tf.reshape(indices, shape_to_expand)
+    if input_tensor.dtype.is_floating:
+        zero_if_max_else_eps = tf.math.minimum(
+            _nnapi_scalar(eps, input_tensor.dtype),
+            zero_if_max,
+        )
+        zero_if_max_else_one = \
+            zero_if_max_else_eps * _nnapi_scalar(1 / eps, input_tensor.dtype)
+    elif input_tensor.dtype.is_integer:
+        zero_if_max_else_one = tf.math.minimum(
+            _nnapi_scalar(1, input_tensor.dtype),
+            zero_if_max,
+        )
+    else:
+        error_msg = f''+\
+            Color.RED(f'ERROR:') + ' ' +\
+            f'Please specify epsilon for unknown input data type. '
+        print(error_msg)
+        assert False, error_msg
 
-    expanded_indices = indices + tf.zeros_like(input_tensor, dtype=input_tensor.dtype)
+    zero_if_max_else_one = tf.cast(
+        zero_if_max_else_one,
+        dtype=output_type,
+    )
+    zero_if_max_else_one = zero_if_max_else_one
+    one_if_max_else_zero = tf.math.subtract(
+        _nnapi_scalar(1, output_type),
+        zero_if_max_else_one,
+    )
+    rev_index = tf.range(
+        reduction_size,
+        0,
+        -1,
+        dtype=output_type,
+    )
+    for index in range(safe_axis + 1, len(input_tensor.shape)):
+        rev_index = tf.expand_dims(
+            rev_index,
+            axis=index - safe_axis,
+        )
+    rev_index = rev_index
+    rev_index_if_max_else_zero = tf.math.multiply(
+        one_if_max_else_zero,
+        rev_index,
+    )
+    reverse_argmax = tf.math.reduce_max(
+        rev_index_if_max_else_zero,
+        axis=axis,
+        keepdims=keepdims,
+    )
 
-    max_indices = expanded_indices * mask
-    
-    result = tf.reduce_max(max_indices, axis=axis, keepdims=keepdims)
-    
-    return result
-
+    if replace_argmax_to_reducemax_and_indices_is_int64:
+        return tf.cast(
+            tf.math.subtract(
+                _nnapi_scalar(reduction_size, output_type),
+                reverse_argmax,
+                name=name,
+            ),
+            dtype=tf.dtypes.int64,
+        )
+    elif replace_argmax_to_reducemax_and_indices_is_float32:
+        return tf.cast(
+            tf.math.subtract(
+                _nnapi_scalar(reduction_size, output_type),
+                reverse_argmax,
+                name=name,
+            ),
+            dtype=tf.dtypes.float32,
+        )
+    else:
+        return tf.math.subtract(
+            _nnapi_scalar(reduction_size, output_type),
+            reverse_argmax,
+            name=name,
+        )
 
 def alternative_fused_argmax(
     *,
