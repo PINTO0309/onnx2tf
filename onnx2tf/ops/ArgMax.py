@@ -206,7 +206,7 @@ def make_node(
                 'tf_inputs': {
                     'input': input_tensor,
                     'axis': axis,
-                    'output_type': tf.float32 if replace_argmax_to_reducemax_and_indices_is_float32 else dtype,
+                    'output_type': dtype if replace_argmax_to_reducemax_and_indices_is_int64 else tf.float32,
                 },
                 'tf_outputs': {
                     'output': tf_layers_dict[graph_node_output.name]['tf_node'],
