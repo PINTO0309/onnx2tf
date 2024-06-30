@@ -441,7 +441,11 @@ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
 
 # Suppress generation of Flex OP and replace with Pseudo-Function
-# [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger]
+# [
+#     Asin, Acos, Atan, Abs, PReLU,
+#     LeakyReLU, Power, GatherND,
+#     Neg, HardSwish, Erf, GeLU, MatMulInteger,
+# ]
 # Below is a sample of replacing Erf with another set of operations.
 wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/Erf_11.onnx
 onnx2tf -i Erf_11.onnx -rtpo Erf
