@@ -1207,10 +1207,11 @@ def convert(
                 error(traceback.format_exc(), prefix=False)
 
         # Create concrete func
-        run_model = tf.function(lambda *inputs : model(inputs))
-        concrete_func = run_model.get_concrete_function(
-            *[tf.TensorSpec(tensor.shape, tensor.dtype) for tensor in model.inputs]
+        run_model = tf.function(
+            func=lambda *inputs : model(inputs),
+            input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
         )
+        concrete_func = run_model.get_concrete_function()
 
         SIGNATURE_KEY = 'serving_default'
 
@@ -1219,7 +1220,13 @@ def convert(
             # concrete_func
             info(Color.REVERSE(f'saved_model output started'), '=' * 58)
             if not output_signaturedefs and not output_integer_quantized_tflite:
-                tf.saved_model.save(concrete_func, output_folder_path)
+                export_archive = tf_keras.export.ExportArchive()
+                export_archive.add_endpoint(
+                    name=SIGNATURE_KEY,
+                    fn=lambda *inputs : model(inputs),
+                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+                )
+                export_archive.write_out(output_folder_path)
             else:
                 tf.saved_model.save(model, output_folder_path)
             info(Color.GREEN(f'saved_model output complete!'))
@@ -1409,6 +1416,11 @@ def convert(
             input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
             input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
             input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
+            output_keys = list(loaded_saved_model.structured_outputs.keys())
+            output_shapes = [v.shape for v in loaded_saved_model.structured_outputs.values()]
+            output_dtypes = [v.dtype for v in loaded_saved_model.structured_outputs.values()]
+
+            print('')
             info(Color.BLUE(f'Input signature information for quantization'))
             info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
             for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
@@ -1417,6 +1429,13 @@ def convert(
                     Color.BLUE(f'shape') + f': {input_shape} '+
                     Color.BLUE(f'dtype') + f': {input_dtype}'
                 )
+            for idx, (output_key, output_shape, output_dtype) in enumerate(zip(output_keys, output_shapes, output_dtypes)):
+                info(
+                    Color.BLUE(f'output_name.{idx}') + f': {output_key} '+
+                    Color.BLUE(f'shape') + f': {output_shape} '+
+                    Color.BLUE(f'dtype') + f': {output_dtype}'
+                )
+            print('')
 
             # INT8 Converter
             converter = tf.lite.TFLiteConverter.from_saved_model(
