@@ -1421,7 +1421,7 @@ def convert(
             output_dtypes = [v.dtype for v in loaded_saved_model.structured_outputs.values()]
 
             print('')
-            info(Color.BLUE(f'Input signature information for quantization'))
+            info(Color.BLUE(f'Signature information for quantization'))
             info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
             for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
                 info(
