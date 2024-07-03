@@ -4584,7 +4584,7 @@ def rewrite_tflite_inout_opname(
             result = subprocess.check_output(
                 [
                     'curl',
-                    'https://raw.githubusercontent.com/tensorflow/tensorflow/v2.11.0/tensorflow/lite/schema/schema.fbs',
+                    'https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0-rc1/tensorflow/compiler/mlir/lite/schema/schema.fbs',
                     '-o',
                     f'{output_folder_path}/schema.fbs'
                 ],
