@@ -37,15 +37,18 @@ RUN wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.ta
     && mv flatc /usr/bin/
 
 ENV USERNAME=user
+ARG WKDIR=/workdir
+
 RUN echo "root:root" | chpasswd \
     && adduser --disabled-password --gecos "" "${USERNAME}" \
     && echo "${USERNAME}:${USERNAME}" | chpasswd \
     && echo "%${USERNAME}    ALL=(ALL)   NOPASSWD:    ALL" >> /etc/sudoers.d/${USERNAME} \
-    && chmod 0440 /etc/sudoers.d/${USERNAME}
+    && chmod 0440 /etc/sudoers.d/${USERNAME} \
+    && mkdir -p ${WKDIR} \
+    && chown ${USERNAME}:${USERNAME} ${WKDIR}
+
 USER ${USERNAME}
-ARG WKDIR=/workdir
 WORKDIR ${WKDIR}
-RUN sudo chown ${USERNAME}:${USERNAME} ${WKDIR}
 
 RUN echo 'export CUDA_VISIBLE_DEVICES=-1' >> ${HOME}/.bashrc \
     && echo 'export TF_CPP_MIN_LOG_LEVEL=3' >> ${HOME}/.bashrc
