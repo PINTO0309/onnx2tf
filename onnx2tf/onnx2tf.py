@@ -1220,6 +1220,8 @@ def convert(
             # concrete_func
             info(Color.REVERSE(f'saved_model output started'), '=' * 58)
             if not output_signaturedefs and not output_integer_quantized_tflite:
+                tf.saved_model.save(model, output_folder_path)
+            else:
                 export_archive = tf_keras.export.ExportArchive()
                 export_archive.add_endpoint(
                     name=SIGNATURE_KEY,
@@ -1227,8 +1229,6 @@ def convert(
                     input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
                 )
                 export_archive.write_out(output_folder_path)
-            else:
-                tf.saved_model.save(model, output_folder_path)
             info(Color.GREEN(f'saved_model output complete!'))
         except TypeError as e:
             # Switch to .pb
@@ -1239,11 +1239,13 @@ def convert(
                 for s in msg_list:
                     if 'Failed to add concrete function' in s \
                         or "Tried to export a function which references an 'untracked' resource" in s:
-                        warn(
-                            f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                            f'but is not output because saved_model does not support GroupConvolution. ' +
-                            f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
+                        export_archive = tf_keras.export.ExportArchive()
+                        export_archive.add_endpoint(
+                            name=SIGNATURE_KEY,
+                            fn=lambda *inputs : model(inputs),
+                            input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
                         )
+                        export_archive.write_out(output_folder_path)
                         break
             else:
                 error(e)
