@@ -41,7 +41,8 @@ jobs:
     strategy:
       fail-fast: false  # do not cancel even if any platform fails.
       matrix:
-        platform: [linux/amd64,linux/arm64]
+        # platform: [linux/amd64,linux/arm64]
+        platform: [linux/amd64]
     steps:
       - name: Git checkout
         uses: actions/checkout@v3
