@@ -1416,8 +1416,9 @@ See: https://github.com/apple/coremltools
 </div></details>
 
 ## CLI Parameter
-```
+<details><summary>Click to expand</summary><div>
 
+```
 onnx2tf -h
 
 usage: onnx2tf
@@ -1880,7 +1881,12 @@ optional arguments:
     Default: "debug" (for backwards compatability)
 ```
 
+</div></details>
+
 ## In-script Usage
+
+<details><summary>Click to expand</summary><div>
+
 ```python
 >>> from onnx2tf import convert
 >>> help(convert)
@@ -2358,8 +2364,12 @@ convert(
       Model
 ```
 
+</div></details>
+
 ## Parameter replacement
 This tool is used to convert `NCW` to `NWC`, `NCHW` to `NHWC`, `NCDHW` to `NDHWC`, `NCDDHW` to `NDDHWC`, `NCDDDDDDHW` to `NDDDDDDHWC`. Therefore, as stated in the Key Concepts, the conversion will inevitably break down at some point in the model. You need to look at the entire conversion log to see which OP transpositions are failing and correct them yourself. I dare to explain very little because I know that no matter how much detail I put in the README, you guys will not read it at all. `attribute` or `INPUT constant` or `INPUT Initializer` can be replaced with the specified value.
+
+<details><summary>Click to expand</summary><div>
 
 Starting from `v1.3.0`, almost all OPs except for some special OPs support pre- and post-transposition by `pre_process_transpose` and `post_process_transpose`.
 
@@ -2488,6 +2498,8 @@ Do not submit an issue that only contains an amount of information that cannot b
   |22|Transpose|1. "param_target": "attributes"<br>`perm`: Value of `perm`<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
 
   </div></details>
+
+</div></details>
 
 ## Generated Model
 - YOLOv7-tiny with Post-Process (NMS) ONNX to TFLite Float32
