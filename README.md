@@ -1274,6 +1274,10 @@ onnx2tf -i model.onnx -b 1 -osd
 
   ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/ccad4eaa-ce1d-46aa-80e9-9720467a3afb)
 
+Click here to see how to perform inference using the dynamic shape tensor.
+
+https://github.com/PINTO0309/onnx2tf/tree/main?tab=readme-ov-file#14-inference-with-dynamic-tensors-in-tflite
+
 ### 18. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
