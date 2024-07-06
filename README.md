@@ -369,8 +369,8 @@ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#17-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#18-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#18-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#19-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -1238,7 +1238,43 @@ Constant Output:
 array([1., 2., 3., 4., 5.], dtype=float32)
 ```
 
-### 17. Conversion to TensorFlow.js
+### 17. Conversion of models that use variable length tokens and embedding, such as LLM and sound models
+This refers to a model with undefined dimensions, either all dimensions or multiple dimensions including batch size, as shown in the figure below.
+
+- Sample model
+
+  https://github.com/PINTO0309/onnx2tf/releases/download/1.24.0/bge-m3.onnx
+
+- Structure
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/2235bf5e-b8d8-458a-8f1c-65d2c6de5249)
+
+If such a model is converted without any options, TensorFlow/Keras will abort. This is an internal TensorFlow/Keras implementation issue rather than an onnx2tf issue. TensorFlow/Keras does not allow more than two undefined dimensions in the `shape` attribute of `Reshape` due to the specification, so an error occurs during the internal transformation operation of the `Reshape` OP as shown below. This has been an inherent problem in TensorFlow/Keras since long ago and has not been resolved to this day. See: [RuntimeError: tensorflow/lite/kernels/range.cc:39 (start > limit && delta < 0) || (start < limit && delta > 0) was not true.Node number 3 (RANGE) failed to invoke. Node number 393 (WHILE) failed to invoke. current error :RuntimeError: tensorflow/lite/kernels/reshape.cc:55 stretch_dim != -1 (0 != -1)Node number 83 (RESHAPE) failed to prepare. #40504](https://github.com/tensorflow/tensorflow/issues/40504)
+
+- OP where the problem occurs
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/ffb16181-9d60-432a-94f0-fafc5d19c512)
+
+- Error message
+  ```
+  error: 'tf.Reshape' op requires 'shape' to have at most one dynamic dimension, but got multiple dynamic dimensions at indices 0 and 3
+  ```
+
+Thus, for models such as this, where all dimensions, including batch size, are dynamic shapes, it is often possible to convert by fixing the batch size to `1` with the `-b 1` or `--batch_size 1` option.
+
+```
+onnx2tf -i model.onnx -b 1
+```
+
+- Results
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/213d9bdc-eec6-4289-9fa9-2b7f43f49720)
+
+  When the converted tflite is displayed in Netron, all the dimensions of the dynamic shape are displayed as `1`, but this is a display problem in Netron, and the shape is actually converted to `-1` or `None`.
+
+  ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/ccad4eaa-ce1d-46aa-80e9-9720467a3afb)
+
+### 18. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -1257,7 +1293,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 18. Conversion to CoreML
+### 19. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
