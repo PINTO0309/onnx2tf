@@ -279,6 +279,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 **Note: If you are using TensorFlow v2.13.0 or earlier, use a version older than onnx2tf v1.17.5. onnx2tf v1.17.6 or later will not work properly due to changes in TensorFlow's API.**
 
 - HostPC
+  <details><summary>Click to expand</summary><div>
+
   - When using GHCR, see `Authenticating to the Container registry`
 
     https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry
@@ -327,9 +329,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   pip install -e .
   ```
 
+  </div></details>
+
 or
 
 - Google Colaboratory Python3.10
+  <details><summary>Click to expand</summary><div>
+
   ```
   !sudo apt-get -y update
   !sudo apt-get -y install python3-pip
@@ -354,6 +360,8 @@ or
     && pip install -U tf-keras~=2.16 \
     && pip install flatbuffers>=23.5.26
   ```
+
+  </div></details>
 
 ### 2. Run test
 Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance. See: [CLI Parameter](#cli-parameter)
@@ -487,6 +495,9 @@ onnx2tf -i human_segmentation_pphumanseg_2021oct.onnx -prf replace.json
 ```
 
 ### 3. Accuracy check
+
+<details><summary>Click to expand</summary><div>
+
 Perform error checking of ONNX output and TensorFlow output. Verify that the error of all outputs, one operation at a time, is below a certain threshold. Automatically determines before and after which OPs the tool's automatic conversion of the model failed. Know where dimensional compression, dimensional expansion, and dimensional transposition by `Reshape` and `Traspose` are failing. Once you have identified the problem area, you can refer to the tutorial on [Parameter replacement](#parameter-replacement) to modify the tool's behavior.
 
 After many upgrades, the need for JSON parameter correction has become much less common, but there are still some edge cases where JSON correction is required. If the PC has sufficient free space in its RAM, onnx2tf will convert the model while carefully performing accuracy checks on all OPs. Thus, at the cost of successful model conversion, the conversion speed is a little slower. If the amount of RAM required for the accuracy check is expected to exceed 80% of the total available RAM capacity of the entire PC, the conversion operation will be performed without an accuracy check. Therefore, if the accuracy of the converted model is found to be significantly degraded, the accuracy may be automatically corrected by re-conversion on a PC with a large amount of RAM. For example, my PC has 128GB of RAM, but the StableDiffusion v1.5 model is too complex in its structure and consumed about 180GB of RAM in total with 50GB of SWAP space.
@@ -512,7 +523,12 @@ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.np
 
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 
+</div></details>
+
 ### 4. Match tflite input/output names and input/output order to ONNX
+
+<details><summary>Click to expand</summary><div>
+
 If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-coion` / `--copy_onnx_input_output_names_to_tflite` option to output tflite file. See: https://github.com/PINTO0309/onnx2tf/issues/228
 ```python
 import torch
@@ -592,7 +608,12 @@ print("[TFLite] Model Predictions:", tf_lite_output)
 ```
 ![image](https://user-images.githubusercontent.com/33194443/223318437-b89e56c1-4376-4e91-8c0c-08d29a604637.png)
 
+</div></details>
+
 ### 5. Rewriting of tflite input/output OP names and `signature_defs`
+
+<details><summary>Click to expand</summary><div>
+
 If you do not like tflite input/output names such as `serving_default_*:0` or `StatefulPartitionedCall:0`, you can rewrite them using the following tools and procedures. It can be rewritten from any name to any name, so it does not have to be `serving_default_*:0` or `StatefulPartitionedCall:0`.
 
 https://github.com/PINTO0309/tflite-input-output-rewriter
@@ -628,8 +649,12 @@ pip install -U tfliteiorewriter
 
   ![03](https://github.com/PINTO0309/onnx2tf/assets/33194443/f7b7be16-c69c-4593-b8b5-e1cc23e61be9)
 
+</div></details>
 
 ### 6. Embed metadata in tflite
+
+<details><summary>Click to expand</summary><div>
+
 If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as I do not want to write byte arrays to the tflite file that are not essential to its operation.
 
 - Adding metadata to TensorFlow Lite models
@@ -637,7 +662,12 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
+</div></details>
+
 ### 7. If the accuracy of the INT8 quantized model degrades significantly
+
+<details><summary>Click to expand</summary><div>
+
 It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/269
 
 If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
@@ -701,7 +731,12 @@ The accuracy error rates after quantization for different activation functions a
   2. Pattern with fixed value `-128.0` padded on 4 sides of tensor
     ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35c7d540-b304-4662-894a-af0e053642d7)
 
+</div></details>
+
 ### 8. Calibration data creation for INT8 quantization
+
+<details><summary>Click to expand</summary><div>
+
 Calibration data (.npy) for INT8 quantization (`-cind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
@@ -753,7 +788,12 @@ e.g. How to specify calibration data in CLI or Script respectively.
 """
 ```
 
+</div></details>
+
 ### 9. INT8 quantization of models with multiple inputs requiring non-image data
+
+<details><summary>Click to expand</summary><div>
+
 If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest.
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. The `-b` option is used to convert the batch size by rewriting it as a static integer.
@@ -833,7 +873,12 @@ https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
+</div></details>
+
 ### 10. Fixing the output of NonMaxSuppression (NMS)
+
+<details><summary>Click to expand</summary><div>
+
 PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppression` are not fully compatible. TorchVision's NMS is very inefficient. Therefore, it is inevitable that converting ONNX using NMS in object detection models and other models will be very redundant and will be converted with a structure that is difficult for TensorFlow.js and TFLite models to take advantage of in devices. This is due to the indefinite number of tensors output by the NMS. In this chapter, I share how to easily tune the ONNX generated using TorchVision's redundant NMS to generate an optimized NMS.
 
 1. There are multiple issues with TorchVision's NMS. First, the batch size specification is not supported; second, the `max_output_boxes_per_class` parameter cannot be specified. Please see the NMS sample ONNX part I generated. The `max_output_boxes_per_class` has been changed to `896` instead of `-Infinity`. The biggest problem with TorchVision NMS is that it generates ONNX with `max_output_boxes_per_class` set to `-Infinity` or `9223372036854775807 (Maximum value of INT64)`, resulting in a variable number of NMS outputs from zero to infinite. Thus, by rewriting `-Infinity` or `9223372036854775807 (Maximum value of INT64)` to a constant value, it is possible to output an NMS that can be effortlessly inferred by TFJS or TFLite.
@@ -870,7 +915,12 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
     I would be happy if this is a reference for Android + Java or TFJS implementations. There are tons more tricky model optimization techniques described in my blog posts, so you'll have to find them yourself. I don't dare to list the URL here because it is annoying to see so many `issues` being posted. And unfortunately, all articles are in Japanese.
     ![image](https://user-images.githubusercontent.com/33194443/230780749-9967a34b-abf6-47fe-827d-92e0f6bddf46.png)
 
+</div></details>
+
 ### 11. RNN (RNN, GRU, LSTM) Inference Acceleration
+
+<details><summary>Click to expand</summary><div>
+
 TensorFlow's RNN has a speedup option called `unroll`. The network will be unrolled, else a symbolic loop will be used. Unrolling can speed-up a RNN, although it tends to be more memory-intensive. Unrolling is only suitable for short sequences. onnx2tf allows you to deploy RNNs into memory-intensive operations by specifying the `--enable_rnn_unroll` or `-eru` options. The `--enable_rnn_unroll` option is available for `RNN`, `GRU`, and `LSTM`.
 
 - Keras https://keras.io/api/layers/recurrent_layers/lstm/
@@ -892,7 +942,12 @@ An example of `BidirectionalLSTM` conversion with the `--enable_rnn_unroll` opti
 
   ![image](https://user-images.githubusercontent.com/33194443/234149995-7b68b550-90d9-4070-abd0-158d1e824315.png)
 
+</div></details>
+
 ### 12. If the accuracy of the Float32 model degrades significantly
+
+<details><summary>Click to expand</summary><div>
+
 The pattern of accuracy degradation of the converted model does not only occur when INT8 quantization is performed. A special edge case is when there is a problem with the implementation of a particular OP on the TFLite runtime side. Below, I will reproduce the problem by means of a very simple CNN model and further explain its workaround. Here is the issue that prompted me to add this explanation. [[Conv-TasNet] Facing issue in converting Conv-TasNet model #447](https://github.com/PINTO0309/onnx2tf/issues/447)
 
 Download a sample model for validation.
@@ -993,7 +1048,12 @@ Again, run the test code to check the inference results. The figure below shows 
 
   ![20230817175701](https://github.com/PINTO0309/onnx2tf/assets/33194443/cf1f7b8c-de8f-4f66-a9a7-02fa01506391)
 
+</div></details>
+
 ### 13. Problem of extremely large calculation error in `InstanceNormalization`
+
+<details><summary>Click to expand</summary><div>
+
 Even if the conversion is successful, `InstanceNormalization` tends to have very large errors. This is an ONNX specification.
 
 - See.1: https://discuss.pytorch.org/t/understanding-instance-normalization-2d-with-running-mean-and-running-var/144139
@@ -1005,7 +1065,12 @@ I verified this with a very simple sample model. There are more than 8 million e
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/61d1fd6e-1703-4c0b-8112-e66e3001fc13)
 
+</div></details>
+
 ### 14. Inference with dynamic tensors in TFLite
+
+<details><summary>Click to expand</summary><div>
+
 For some time now, TFLite runtime has supported inference by dynamic tensors. However, the existence of this important function is not widely recognized. In this chapter, I will show how I can convert an ONNX file that contains dynamic geometry in batch size directly into a TFLite file that contains dynamic geometry and then further infer it in variable batch conditions. The issue that inspired me to add this tutorial is here. [[Dynamic batch / Dynamic shape] onnx model with dynamic input is converted to tflite with static input 1 #441](https://github.com/PINTO0309/onnx2tf/issues/441), or [Cannot use converted model with dynamic input shape #521](https://github.com/PINTO0309/onnx2tf/issues/521)
 
 
@@ -1151,7 +1216,12 @@ You can use `signature_runner` to handle dynamic input tensors by performing inf
           3.7874976e-01, 0.0000000e+00]], dtype=float32)}
   ```
 
+</div></details>
+
 ### 15. Significant optimization of the entire model through `Einsum` and `OneHot` optimizations
+
+<details><summary>Click to expand</summary><div>
+
 `Einsum` and `OneHot` are not optimized to the maximum by the standard behavior of onnx-optimizer. Therefore, pre-optimizing the `Einsum` OP and `OneHot` OP using my original method can significantly improve the success rate of model conversion, and the input ONNX model itself can be significantly optimized compared to when onnxsim alone is optimized. See: https://github.com/PINTO0309/onnx2tf/issues/569
 
 - I have made a few unique customizations to the cited model structure.
@@ -1179,7 +1249,12 @@ onnx2tf -i sjy_fused_static_spo.onnx
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/35adb529-58cc-4f10-96b3-f6ecf4f31db1)
 
+</div></details>
+
 ### 16. Add constant outputs to the model that are not connected to the model body
+
+<details><summary>Click to expand</summary><div>
+
 Sometimes you want to always output constants that are not connected to the model body. See: [https://github.com/PINTO0309/onnx2tf/issues/627](https://github.com/PINTO0309/onnx2tf/issues/627). For example, in the case of ONNX as shown in the figure below. You may want to keep scaling parameters and other parameters as fixed values inside the model and always include the same value in the output.
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/38080d00-8048-4a2e-8df4-90378487cebc)
@@ -1240,7 +1315,12 @@ Constant Output:
 array([1., 2., 3., 4., 5.], dtype=float32)
 ```
 
+</div></details>
+
 ### 17. Conversion of models that use variable length tokens and embedding, such as LLM and sound models
+
+<details><summary>Click to expand</summary><div>
+
 This refers to a model with undefined dimensions, either all dimensions or multiple dimensions including batch size, as shown in the figure below.
 
 - Sample model
@@ -1280,7 +1360,12 @@ Click here to see how to perform inference using the dynamic shape tensor.
 
 https://github.com/PINTO0309/onnx2tf/tree/main?tab=readme-ov-file#14-inference-with-dynamic-tensors-in-tflite
 
+</div></details>
+
 ### 18. Conversion to TensorFlow.js
+
+<details><summary>Click to expand</summary><div>
+
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -1299,7 +1384,12 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
+</div></details>
+
 ### 19. Conversion to CoreML
+
+<details><summary>Click to expand</summary><div>
+
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
@@ -1322,6 +1412,8 @@ model.save(f'{FOLDER_PATH}/model.mlmodel')
 See: https://github.com/apple/coremltools
 
 ![image](https://user-images.githubusercontent.com/33194443/224185761-bd0c086c-65e8-4de7-a500-f49b666eea0a.png)
+
+</div></details>
 
 ## CLI Parameter
 ```
