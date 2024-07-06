@@ -1090,6 +1090,8 @@ If you want to infer in variable batches, you need to infer using `signature`. I
 
 https://github.com/PINTO0309/onnx2tf#4-match-tflite-inputoutput-names-and-inputoutput-order-to-onnx
 
+You can use `signature_runner` to handle dynamic input tensors by performing inference using `signature`. Below I show that both `batch_size=5` and `batch_size=3` tensors can be inferred with the same model.
+
 - `test.py` - Batch size: `5`
   ```python
   import numpy as np
