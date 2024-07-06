@@ -1263,7 +1263,7 @@ If such a model is converted without any options, TensorFlow/Keras will abort. T
 Thus, for models such as this, where all dimensions, including batch size, are dynamic shapes, it is often possible to convert by fixing the batch size to `1` with the `-b 1` or `--batch_size 1` option.
 
 ```
-onnx2tf -i model.onnx -b 1
+onnx2tf -i model.onnx -b 1 -osd
 ```
 
 - Results
