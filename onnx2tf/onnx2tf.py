@@ -25,6 +25,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ["TF_USE_LEGACY_KERAS"] = '1'
 import tensorflow as tf
 tf.random.set_seed(0)
+from tensorflow.python.saved_model.load import _WrapperFunction
 import tf_keras
 tf_keras.utils.set_random_seed(0)
 tf.config.experimental.enable_op_determinism()
@@ -1412,15 +1413,21 @@ def convert(
         STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
             # Get signatures/input keys
-            loaded_saved_model = tf.saved_model.load(
-                output_folder_path
-            ).signatures[SIGNATURE_KEY]
-            input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
-            input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
-            input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
-            output_keys = list(loaded_saved_model.structured_outputs.keys())
-            output_shapes = [v.shape for v in loaded_saved_model.structured_outputs.values()]
-            output_dtypes = [v.dtype for v in loaded_saved_model.structured_outputs.values()]
+            trackable_obj = \
+                tf.saved_model.load(
+                    output_folder_path
+                )
+            loaded_saved_model: _WrapperFunction = trackable_obj.signatures[SIGNATURE_KEY]
+            structured_input_signature: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_input_signature[1]
+            structured_outputs: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_outputs
+
+            input_keys: List[str] = list(structured_input_signature.keys())
+            input_shapes: List[tf.TensorShape] = [v.shape for v in structured_input_signature.values()]
+            input_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_input_signature.values()]
+
+            output_keys: List[str] = list(structured_outputs.keys())
+            output_shapes: List[tf.TensorShape] = [v.shape for v in structured_outputs.values()]
+            output_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_outputs.values()]
 
             print('')
             info(Color.BLUE(f'Signature information for quantization'))
