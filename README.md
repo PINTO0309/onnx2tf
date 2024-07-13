@@ -297,7 +297,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.25.0
+  ghcr.io/pinto0309/onnx2tf:1.25.1
 
   or
 
@@ -305,7 +305,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.25.0
+  docker.io/pinto0309/onnx2tf:1.25.1
 
   or
 
@@ -379,8 +379,8 @@ onnx2tf -i resnet18-v1-7.onnx
 # saved_model with signaturedefs added.
 # Output in the form of saved_model that can be used for serving
 # or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
-# https://github.com/PINTO0309/onnx2tf#18-conversion-to-tensorflowjs
-# https://github.com/PINTO0309/onnx2tf#19-conversion-to-coreml
+# https://github.com/PINTO0309/onnx2tf#19-conversion-to-tensorflowjs
+# https://github.com/PINTO0309/onnx2tf#20-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -447,8 +447,19 @@ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 
 # Split the model at the middle position for debugging
+# Specify the input name of the OP
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+onnx2tf -i cf_fus.onnx -inimc 448
+
+# Split the model at the middle position for debugging
 # Specify the output name of the OP
-onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+onnx2tf -i cf_fus.onnx -onimc dep_sec
+
+# Split the model at the middle position for debugging
+# Specify the input/output name of the OP
+wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+onnx2tf -i cf_fus.onnx -inimc 448 -onimc velocity
 
 # Suppress generation of Flex OP and replace with Pseudo-Function
 # [
@@ -1367,7 +1378,46 @@ https://github.com/PINTO0309/onnx2tf/tree/main?tab=readme-ov-file#14-inference-w
 
 </div></details>
 
-### 18. Conversion to TensorFlow.js
+### 18. Convert only the intermediate structural part of the ONNX model
+
+<details><summary>Click to expand</summary><div>
+
+By specifying ONNX input or output names, only the middle part of the model can be converted. This is useful when you want to see what output is obtained in what part of the model after conversion, or when debugging the model conversion operation itself.
+
+For example, take a model with multiple inputs and multiple outputs as shown in the figure below to try a partial transformation.
+
+![image](https://github.com/user-attachments/assets/2bfd01e4-3476-47fe-b0d0-d422dafe78bd)
+
+- To convert by specifying only the input name to start the conversion
+
+  ```
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+  onnx2tf -i cf_fus.onnx -inimc 448 -coion
+  ```
+
+  ![image](https://github.com/user-attachments/assets/de873481-3104-4a81-9240-3cfbd0baaf2f)
+
+- To convert by specifying only the output name to end the conversion
+
+  ```
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+  onnx2tf -i cf_fus.onnx -onimc dep_sec -coion
+  ```
+
+  ![image](https://github.com/user-attachments/assets/9f1f78b8-0334-43ea-a358-35dc76619891)
+
+- To perform a conversion by specifying the input name to start the conversion and the output name to end the conversion
+
+  ```
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.25.0/cf_fus.onnx
+  onnx2tf -i cf_fus.onnx -inimc 448 -onimc velocity -coion
+  ```
+
+  ![image](https://github.com/user-attachments/assets/fd42a258-4338-4260-a6e6-5e108a926bad)
+
+</div></details>
+
+### 19. Conversion to TensorFlow.js
 
 <details><summary>Click to expand</summary><div>
 
@@ -1391,7 +1441,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 
 </div></details>
 
-### 19. Conversion to CoreML
+### 20. Conversion to CoreML
 
 <details><summary>Click to expand</summary><div>
 
@@ -1450,6 +1500,7 @@ usage: onnx2tf
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
+[-inimc INPUT_NAMES [INPUT_NAMES ...]]
 [-onimc OUTPUT_NAMES [OUTPUT_NAMES ...]]
 [-dgc]
 [-eatfp16]
@@ -1665,6 +1716,13 @@ optional arguments:
     Name of the INPUT that unconditionally maintains its shape.
     If a nonexistent INPUT OP name is specified, it is ignored.
     e.g. --keep_shape_absolutely_input_names "input0" "input1" "input2"
+
+  -inimc INPUT_NAMES [INPUT_NAMES ...], \
+      --input_names_to_interrupt_model_conversion INPUT_NAMES [INPUT_NAMES ...]
+    Input names of ONNX that interrupt model conversion.
+    Interrupts model transformation at the specified input name and inputs the
+    model partitioned into subgraphs.
+    e.g. --input_names_to_interrupt_model_conversion "input0" "input1" "input2"
 
   -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
       --output_names_to_interrupt_model_conversion OUTPUT_NAMES [OUTPUT_NAMES ...]
@@ -1921,6 +1979,7 @@ convert(
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
+  input_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
@@ -2139,6 +2198,13 @@ convert(
       If a nonexistent INPUT OP name is specified, it is ignored.
       e.g.
       keep_shape_absolutely_input_names=['input0','input1','input2']
+
+    input_names_to_interrupt_model_conversion: Optional[List[str]]
+      Input names of ONNX that interrupt model conversion.
+      Interrupts model transformation at the specified input name
+      and inputs the model partitioned into subgraphs.
+      e.g.
+      input_names_to_interrupt_model_conversion=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
       Output names of ONNX that interrupt model conversion.
