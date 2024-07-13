@@ -82,6 +82,7 @@ def convert(
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
+    input_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     disable_group_convolution: Optional[bool] = False,
     enable_accumulation_type_float16: Optional[bool] = False,
@@ -285,6 +286,13 @@ def convert(
         If a nonexistent INPUT OP name is specified, it is ignored.\n\n
         e.g.\n
         keep_shape_absolutely_input_names=['input0','input1','input2']
+
+    input_names_to_interrupt_model_conversion: Optional[List[str]]
+        Input names that interrupt model conversion.\n
+        Interrupts model transformation at the specified input name\n
+        and inputs the model partitioned into subgraphs.\n\n
+        e.g.\n
+        input_names_to_interrupt_model_conversion=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
         Output names that interrupt model conversion.\n
@@ -687,7 +695,77 @@ def convert(
         metadata_props = onnx_graph.metadata_props
     graph = gs.import_onnx(onnx_graph)
 
-    # List Output
+    # Cut the ONNX graph when an input name is specified that interrupts the conversion
+    if not input_names_to_interrupt_model_conversion:
+        input_names = [
+            graph_input.name for graph_input in graph.inputs
+        ]
+    else:
+        try:
+            from sne4onnx import extraction
+        except Exception as ex:
+            error(
+                f'If --input_names_to_interrupt_model_conversion is specified, ' +\
+                f'you must install sne4onnx. pip install sne4onnx'
+            )
+            sys.exit(1)
+        # Cut ONNX graph at specified input position
+        input_names = [
+            input_op_name \
+                for input_op_name in input_names_to_interrupt_model_conversion
+        ]
+        onnx_graph: onnx.ModelProto = \
+            extraction(
+                input_op_names=input_names,
+                output_op_names=[graph_output.name for graph_output in graph.outputs],
+                onnx_graph=onnx_graph,
+            )
+        # Re-import of onnx_graph
+        del graph
+        graph = gs.import_onnx(onnx_graph)
+
+        total_num_nodes = len(graph.nodes)
+        check_count = 0
+        idx = 0
+        while True:
+            # Delete unused nodes
+            if check_count >= total_num_nodes:
+                break
+            op_input_names: List[str] = [inp.name for inp in graph.nodes[idx].inputs]
+            remove_enable = not any(name in input_names for name in op_input_names)
+            if remove_enable:
+                try:
+                    num_input = len(graph.nodes[idx].inputs)
+                    enable_var_input = False
+                    for sub_idx, graph_node_input in enumerate(graph.nodes[idx].inputs):
+                        if isinstance(graph_node_input, gs.Variable):
+                            enable_var_input = True
+                            break
+                        else:
+                            pass
+                    if enable_var_input:
+                        name = graph.nodes[idx].i(sub_idx).name
+                        if any([graph_node.name == name for graph_node in graph.nodes]):
+                            idx += 1
+                        else:
+                            try:
+                                del graph.nodes[idx]
+                            except IndexError:
+                                break
+                    else:
+                        idx += 1
+                except:
+                    try:
+                        del graph.nodes[idx]
+                    except IndexError:
+                        break
+            else:
+                idx += 1
+            check_count += 1
+        onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
+        if metadata_props is not None:
+            onnx_graph.metadata_props.extend(metadata_props)
+
     # Cut the ONNX graph when an output name is specified that interrupts the conversion
     if not output_names_to_interrupt_model_conversion:
         output_names = [
@@ -707,11 +785,12 @@ def convert(
             output_op_name \
                 for output_op_name in output_names_to_interrupt_model_conversion
         ]
-        onnx_graph: onnx.ModelProto = extraction(
-            input_op_names=[graph_input.name for graph_input in graph.inputs],
-            output_op_names=output_names,
-            onnx_graph=onnx_graph,
-        )
+        onnx_graph: onnx.ModelProto = \
+            extraction(
+                input_op_names=[graph_input.name for graph_input in graph.inputs],
+                output_op_names=output_names,
+                onnx_graph=onnx_graph,
+            )
         # Re-import of onnx_graph
         del graph
         graph = gs.import_onnx(onnx_graph)
@@ -773,6 +852,7 @@ def convert(
             output_name = re.sub('^/', 'wa/', output_name)
             new_output_names.append(output_name)
         output_names = new_output_names
+
     try:
         onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
         if metadata_props is not None:
@@ -2109,6 +2189,18 @@ def main():
             '--keep_shape_absolutely_input_names "input0" "input1" "input2"'
     )
     parser.add_argument(
+        '-inimc',
+        '--input_names_to_interrupt_model_conversion',
+        type=str,
+        nargs='+',
+        help=\
+            'Input names that interrupt model conversion. \n' +
+            'Interrupts model transformation at the specified input name \n' +
+            'and inputs the model partitioned into subgraphs. \n\n' +
+            'e.g. \n' +
+            '--input_names_to_interrupt_model_conversion "input0" "input1" "input2"'
+    )
+    parser.add_argument(
         '-onimc',
         '--output_names_to_interrupt_model_conversion',
         type=str,
@@ -2451,6 +2543,7 @@ def main():
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
+        input_names_to_interrupt_model_conversion=args.input_names_to_interrupt_model_conversion,
         output_names_to_interrupt_model_conversion=args.output_names_to_interrupt_model_conversion,
         disable_group_convolution=args.disable_group_convolution,
         enable_accumulation_type_float16=args.enable_accumulation_type_float16,
