@@ -532,6 +532,9 @@ onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.np
 <details><summary>Click to expand</summary><div>
 
 If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-coion` / `--copy_onnx_input_output_names_to_tflite` option to output tflite file. See: https://github.com/PINTO0309/onnx2tf/issues/228
+
+onnx2tf automatically compares the final input/output shapes of ONNX and the generated TFLite and tries to automatically correct the input/output order as much as possible if there is a difference. However, if INT8 quantization is used and there are multiple inputs and outputs with the same shape, automatic correction may fail. This is because TFLiteConverter shuffles the input-output order by itself only when INT8 quantization is performed.
+
 ```python
 import torch
 import onnxruntime
