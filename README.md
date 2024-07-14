@@ -380,7 +380,7 @@ onnx2tf -i resnet18-v1-7.onnx
 # Output in the form of saved_model that can be used for serving.
 # Also, starting from v1.24.0, efficient TFLite can be generated
 # without unrolling GroupConvolution. e.g. YOLOv9
-# or conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
+# Conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
 # https://github.com/PINTO0309/onnx2tf#19-conversion-to-tensorflowjs
 # https://github.com/PINTO0309/onnx2tf#20-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
