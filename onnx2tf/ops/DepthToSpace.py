@@ -96,6 +96,14 @@ def make_node(
     elif mode == "CRD":
         batch, channel = input_tensor_shape[0], input_tensor_shape[-1]
         height, width = input_tensor_shape[1], input_tensor_shape[2]
+        if batch is None:
+            batch = tf.shape(input_tensor)[0]
+        if channel is None:
+            channel = tf.shape(input_tensor)[-1]
+        if height is None:
+            height = tf.shape(input_tensor)[1]
+        if width is None:
+            width = tf.shape(input_tensor)[2]
         csize = channel // (blocksize**2)
 
         reshape_node = tf.reshape(
