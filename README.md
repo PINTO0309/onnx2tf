@@ -388,6 +388,23 @@ resnet18-v1-7_float32.tflite
 saved_model.pb
 variables
 
+saved_model_cli show \
+--dir saved_model \
+--signature_def serving_default \
+--tag_set serve
+
+The given SavedModel SignatureDef contains the following input(s):
+  inputs['data'] tensor_info:
+      dtype: DT_FLOAT
+      shape: (-1, 224, 224, 3)
+      name: serving_default_data:0
+The given SavedModel SignatureDef contains the following output(s):
+  outputs['output_0'] tensor_info:
+      dtype: DT_FLOAT
+      shape: (1, 1000)
+      name: PartitionedCall:0
+Method name is: tensorflow/serving/predict
+
 # In the interest of efficiency for my development and debugging of onnx2tf,
 # the default configuration shows a large amount of debug level logs.
 # However, for most users, a large number of debug logs are unnecessary.
