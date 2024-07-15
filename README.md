@@ -402,7 +402,7 @@ The given SavedModel SignatureDef contains the following input(s):
 The given SavedModel SignatureDef contains the following output(s):
   outputs['output_0'] tensor_info:
       dtype: DT_FLOAT
-      shape: (1, 1000)
+      shape: (1, 1000) # <-- Model design bug in resnet18-v1-7.onnx
       name: PartitionedCall:0
 Method name is: tensorflow/serving/predict
 
