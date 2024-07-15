@@ -160,10 +160,24 @@ def make_node(
                     perm = new_perm
 
     # Preserving Graph Structure (Dict)
+    nwhc = False
+    if nwc_nhwc_ndhwc_keep:
+        nhwc = True
+    elif isinstance(graph_node_input, gs.Variable) \
+        and 'nhwc' in tf_layers_dict[graph_node_input.name].keys():
+        nhwc = tf_layers_dict[graph_node_input.name]['nhwc']
+        if nhwc and perm == [i for i in range(len(input_tensor_shape))]:
+            nhwc = True
+        else:
+            nhwc = False
+    else:
+        nhwc = False
+
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
         'shape': output_shape,
         'dtype': dtype,
+        'nhwc': nhwc,
         'nwc_nhwc_ndhwc_keep': nwc_nhwc_ndhwc_keep,
     }
 

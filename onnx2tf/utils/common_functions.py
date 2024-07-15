@@ -2185,7 +2185,7 @@ def process_neg_idx(
             and not isinstance(indices_shape[-1], np.ndarray) \
             and not isinstance(indices_shape[-1], tf.Tensor) \
             and tf_keras.backend.is_keras_tensor(indices_shape[-1]):
-            if data_shape != tf.TensorShape([None]):
+            if tf.TensorShape(None) not in data_shape :
                 max_i = tf.cast(
                     tf.strided_slice(
                         input_=data_shape,

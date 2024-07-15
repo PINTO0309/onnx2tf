@@ -107,6 +107,9 @@ def make_node(
         'optype': graph_node.op,
         'shape': onnx_output_shape,
         'dtype': dtype,
+        'nhwc': tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+            if isinstance(graph_node_input_1, gs.Variable) \
+                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
 
     onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
