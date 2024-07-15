@@ -388,6 +388,7 @@ resnet18-v1-7_float32.tflite
 saved_model.pb
 variables
 
+TF_CPP_MIN_LOG_LEVEL=3 \
 saved_model_cli show \
 --dir saved_model \
 --signature_def serving_default \
