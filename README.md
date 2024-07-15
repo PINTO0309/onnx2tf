@@ -277,8 +277,10 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Sample Usage
 ### 1. Install
+#### Note:
+**1. If you are using TensorFlow v2.13.0 or earlier, use a version older than onnx2tf v1.17.5. onnx2tf v1.17.6 or later will not work properly due to changes in TensorFlow's API.**
 
-**Note: If you are using TensorFlow v2.13.0 or earlier, use a version older than onnx2tf v1.17.5. onnx2tf v1.17.6 or later will not work properly due to changes in TensorFlow's API.**
+**2. The latest onnx2tf implementation is based on Keras API 3 and will not work properly if you install TensorFlow v2.15.0 or earlier.**
 
 - HostPC
   <details><summary>Click to expand</summary><div>
