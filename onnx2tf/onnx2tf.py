@@ -1970,6 +1970,7 @@ def main():
         '-osd',
         '--output_signaturedefs',
         action='store_true',
+        default=True,
         help=\
             'Signature is added to the output for serving or for conversion \n' +
             'to other model formats. However, this can significantly reduce the speed \n' +
