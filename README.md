@@ -370,7 +370,7 @@ Only patterns that are considered to be used particularly frequently are describ
 ```bash
 # Float32, Float16
 # This is the fastest way to generate tflite.
-# Improved to automatically generate `signature` without `-osd` starting from v1.24.0.
+# Improved to automatically generate `signature` without `-osd` starting from v1.25.3.
 # Also, starting from v1.24.0, efficient TFLite can be generated
 # without unrolling `GroupConvolution`. e.g. YOLOv9, YOLOvN
 # Conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
