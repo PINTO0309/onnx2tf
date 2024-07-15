@@ -370,21 +370,14 @@ Only patterns that are considered to be used particularly frequently are describ
 ```bash
 # Float32, Float16
 # This is the fastest way to generate tflite,
-# but the accompanying saved_model will not have a signature.
-# "ValueError: Only support at least one signature key."
-# If you are having trouble with this error, please use the `-osd` option.
-wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-onnx2tf -i resnet18-v1-7.onnx
-
-# saved_model with signaturedefs added.
-# Output in the form of saved_model that can be used for serving.
+# Improved to automatically generate `signature` without `-osd` starting from v1.24.0.
 # Also, starting from v1.24.0, efficient TFLite can be generated
-# without unrolling GroupConvolution. e.g. YOLOv9
+# without unrolling GroupConvolution. e.g. YOLOv9, YOLOvN
 # Conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
 # https://github.com/PINTO0309/onnx2tf#19-conversion-to-tensorflowjs
 # https://github.com/PINTO0309/onnx2tf#20-conversion-to-coreml
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
-onnx2tf -i resnet18-v1-7.onnx -osd
+onnx2tf -i resnet18-v1-7.onnx
 
 # In the interest of efficiency for my development and debugging of onnx2tf,
 # the default configuration shows a large amount of debug level logs.
