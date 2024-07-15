@@ -369,10 +369,10 @@ or
 Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance. See: [CLI Parameter](#cli-parameter)
 ```bash
 # Float32, Float16
-# This is the fastest way to generate tflite,
+# This is the fastest way to generate tflite.
 # Improved to automatically generate `signature` without `-osd` starting from v1.24.0.
 # Also, starting from v1.24.0, efficient TFLite can be generated
-# without unrolling GroupConvolution. e.g. YOLOv9, YOLOvN
+# without unrolling `GroupConvolution`. e.g. YOLOv9, YOLOvN
 # Conversion to other frameworks. e.g. TensorFlow.js, CoreML, etc
 # https://github.com/PINTO0309/onnx2tf#19-conversion-to-tensorflowjs
 # https://github.com/PINTO0309/onnx2tf#20-conversion-to-coreml
