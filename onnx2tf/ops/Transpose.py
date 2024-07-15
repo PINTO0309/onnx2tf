@@ -166,6 +166,10 @@ def make_node(
     elif isinstance(graph_node_input, gs.Variable) \
         and 'nhwc' in tf_layers_dict[graph_node_input.name].keys():
         nhwc = tf_layers_dict[graph_node_input.name]['nhwc']
+        if nhwc and perm == [i for i in range(len(input_tensor_shape))]:
+            nhwc = True
+        else:
+            nhwc = False
     else:
         nhwc = False
 
