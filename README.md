@@ -379,6 +379,15 @@ Only patterns that are considered to be used particularly frequently are describ
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx
 
+ls -lh saved_model/
+
+assets
+fingerprint.pb
+resnet18-v1-7_float16.tflite
+resnet18-v1-7_float32.tflite
+saved_model.pb
+variables
+
 # In the interest of efficiency for my development and debugging of onnx2tf,
 # the default configuration shows a large amount of debug level logs.
 # However, for most users, a large number of debug logs are unnecessary.
