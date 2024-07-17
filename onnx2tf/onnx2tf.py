@@ -1526,8 +1526,6 @@ def convert(
                 )
 
         # Quantized TFLite
-        MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-        STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
             # Get signatures/input keys
             trackable_obj = \
@@ -1587,14 +1585,29 @@ def convert(
                 for model_input in model.inputs:
                     if model_input.dtype != tf.float32 \
                         or len(model_input.shape) != 4 \
-                        or model_input.shape[-1] != 3:
+                        or model_input.shape[-1] not in [3, 4]:
                         error(
                             f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
-                            f'using non-rgb-image input tensors, specify the calibration data with '+
+                            f'using non-rgb-image/non-rgba-image input tensors, specify the calibration data with '+
                             f'--quant_calib_input_op_name_np_data_path. '+
                             f'model_input[n].shape: {model_input.shape}'
                         )
                         sys.exit(1)
+
+                    if model_input.shape[-1] == 3:
+                        # RGB
+                        mean = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
+                        std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
+                    elif model_input.shape[-1] == 4:
+                        # RGBA
+                        mean = np.asarray([[[[0.485, 0.456, 0.406, 0.000]]]], dtype=np.float32)
+                        std = np.asarray([[[[0.229, 0.224, 0.225, 1.000]]]], dtype=np.float32)
+                        new_element_array = np.full((*calib_data.shape[:-1], 1), 0.500, dtype=np.float32)
+                        calib_data = np.concatenate((calib_data, new_element_array), axis=-1)
+                    else:
+                        # Others
+                        mean = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
+                        std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
 
                     calib_data_dict[model_input.name] = \
                         [
@@ -1605,8 +1618,8 @@ def convert(
                                     model_input.shape[2] if model_input.shape[2] is not None else 640,
                                 )
                             ),
-                            MEAN,
-                            STD,
+                            mean,
+                            std,
                         ]
             elif custom_input_op_name_np_data_path is not None:
                 for param in custom_input_op_name_np_data_path:
