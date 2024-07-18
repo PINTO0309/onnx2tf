@@ -252,13 +252,13 @@ def make_node(
             )
         tf_type = tf.slice
 
-    elif simple_resize2 and len(values) == 2:
-        target_input: np.ndarray = None
+    elif simple_resize2 and len(values) >= 2:
+        target_input: np.ndarray = np.array([], dtype=np.int64)
         target_spartial_size: int = 0
         for cat_value in values:
             if hasattr(cat_value, 'numpy'):
-                target_input = cat_value.numpy()
-            if not hasattr(cat_value, 'numpy') and cat_value.shape is not None:
+                target_input = np.append(target_input, cat_value.numpy())
+            elif not hasattr(cat_value, 'numpy') and cat_value.shape is not None:
                 target_spartial_size = cat_value.shape[0] - 2
         if target_spartial_size == len(target_input):
             target_input = np.asarray([1] + [i for i in target_input] + [1])
