@@ -268,11 +268,14 @@ def make_node(
             [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
             [[0, 0]]
 
-        padded_tensor = tf.pad(
-            tensor=input_tensor,
-            paddings=tf_pads,
-            mode='CONSTANT',
-        )
+        if spatial_size == 1 and kernel_shape[0] > input_tensor_shape[1]:
+            padded_tensor = input_tensor
+        else:
+            padded_tensor = tf.pad(
+                tensor=input_tensor,
+                paddings=tf_pads,
+                mode='CONSTANT',
+            )
 
     else:
         padded_tensor = input_tensor
@@ -306,11 +309,18 @@ def make_node(
     # Generation of TF OP
     tf_op_type = None
     if len(kernel_shape) == 1:
-        pooled_tensor = AveragePooling1D(
-            pool_size=kernel_shape,
-            strides=strides,
-            padding=tf_pad_mode.upper(),
-        )(padded_tensor)
+        if kernel_shape[0] > padded_tensor.shape[1]:
+            pooled_tensor = AveragePooling1D(
+                pool_size=[padded_tensor.shape[1]],
+                strides=[padded_tensor.shape[1]],
+                padding=tf_pad_mode.upper(),
+            )(padded_tensor)
+        else:
+            pooled_tensor = AveragePooling1D(
+                pool_size=kernel_shape,
+                strides=strides,
+                padding=tf_pad_mode.upper(),
+            )(padded_tensor)
         tf_op_type = AveragePooling1D
 
     elif len(kernel_shape) == 2:
