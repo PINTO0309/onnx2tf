@@ -64,23 +64,6 @@ def make_node(
     indices = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    before_cast_indices = None
-    if isinstance(indices, np.ndarray) and indices.ndim == 1 and len(indices) == 1 and indices[0] is not None:
-        if indices[0] >= 0:
-            before_cast_indices = indices[0]
-    elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
-        if indices >= 0:
-            before_cast_indices = int(indices)
-
-    simple_indices = None
-    if isinstance(indices, np.ndarray) and indices.ndim == 1 and None not in indices:
-        simple_indices = indices.copy()
-    elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
-        simple_indices = int(indices)
-
-    shape = graph_node_output.shape
-    dtype = graph_node_output.dtype
-
     axis = graph_node.attrs.get("axis", 0)
     axis = convert_axis(
         axis=axis,
@@ -95,6 +78,74 @@ def make_node(
         param_name='axis',
         **kwargs,
     )
+
+    nhwc = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
+        if isinstance(graph_node_input_1, gs.Variable) \
+            and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+
+    before_cast_indices = None
+    if isinstance(indices, np.ndarray) and indices.ndim == 1 and len(indices) == 1 and indices[0] is not None:
+        if indices[0] >= 0:
+            before_cast_indices = indices[0]
+            # 直前が Shape だった場合のみの特別なワークアラウンドで、入力がNHWCで確定しているときはindicesを変換する
+            # 1. ind=0 のときはそのまま
+            # 2. ind=1 のときは末尾
+            # 3. ind=2 のときは1
+            # 4. ind=3 のときは2
+            # 5. ind=4 のときは3
+            #
+            # ONNX: ind=2
+            #   0,1,2 -> 0,2,1
+            #   0,1,2,3 -> 0,2,3,1
+            #   0,1,2,3,4 -> 0,2,3,4,1
+            #   0,1,2,3,4,5 -> 0,2,3,4,5,1
+            if nhwc and graph_node.i().op == 'Shape':
+                input_tensor_rank = input_tensor.shape[0]
+                if before_cast_indices == 0:
+                    # batch
+                    pass
+                elif before_cast_indices == 1:
+                    # channel
+                    before_cast_indices = input_tensor_rank - 1
+                else:
+                    # spartial dim
+                    before_cast_indices = before_cast_indices - 1
+
+    elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
+        if indices >= 0:
+            before_cast_indices = int(indices)
+            # 直前が Shape だった場合のみの特別なワークアラウンドで、入力がNHWCで確定しているときはindicesを変換する
+            # 1. ind=0 のときはそのまま
+            # 2. ind=1 のときは末尾
+            # 3. ind=2 のときは1
+            # 4. ind=3 のときは2
+            # 5. ind=4 のときは3
+            #
+            # ONNX: ind=2
+            #   0,1,2 -> 0,2,1
+            #   0,1,2,3 -> 0,2,3,1
+            #   0,1,2,3,4 -> 0,2,3,4,1
+            #   0,1,2,3,4,5 -> 0,2,3,4,5,1
+            if nhwc and graph_node.i().op == 'Shape':
+                input_tensor_rank = input_tensor.shape[0]
+                if before_cast_indices == 0:
+                    # batch
+                    pass
+                elif before_cast_indices == 1:
+                    # channel
+                    before_cast_indices = input_tensor_rank - 1
+                else:
+                    # spartial dim
+                    before_cast_indices = before_cast_indices - 1
+
+    simple_indices = None
+    if isinstance(indices, np.ndarray) and indices.ndim == 1 and None not in indices:
+        simple_indices = indices.copy()
+    elif isinstance(indices, np.ndarray) and indices.ndim == 0 and indices is not None:
+        simple_indices = int(indices)
+
+    shape = graph_node_output.shape
+    dtype = graph_node_output.dtype
 
     optimization_for_gpu_delegate: bool = \
         kwargs['optimization_for_gpu_delegate']
@@ -141,9 +192,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
-        'nhwc': tf_layers_dict[graph_node_input_1.name]['nhwc'] \
-            if isinstance(graph_node_input_1, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+        'nhwc': nhwc,
     }
 
     # Param replacement
