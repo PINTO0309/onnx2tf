@@ -259,6 +259,8 @@ def make_node(
                                 if consumer_node.op == 'Resize':
                                     consumer_nodes.append(consumer_node)
                                     consumer_count += 1
+                                else:
+                                    break
                             except:
                                 break
                         if consumer_count == 1:
