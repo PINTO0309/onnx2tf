@@ -91,7 +91,7 @@ def make_node(
         and len(graph_node_output.shape) == 2 \
         and axis == input_tensor_rank - 1 \
         and not isinstance(graph_node_output.shape[0], str):
-        cal_shape = (1, -1)
+        cal_shape = (graph_node_output.shape[0], -1)
     elif graph_node_output.shape is not None \
         and len(graph_node_output.shape) == 2 \
         and axis == input_tensor_rank - 1 \
