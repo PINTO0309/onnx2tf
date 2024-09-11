@@ -87,8 +87,20 @@ def make_node(
         cal_shape = (1, -1)
     elif axis >= input_tensor_rank:
         cal_shape = (-1, 1)
-    elif graph_node_output.shape is not None and len(graph_node_output.shape) == 2 and axis == input_tensor_rank - 1:
+    elif graph_node_output.shape is not None \
+        and len(graph_node_output.shape) == 2 \
+        and axis == input_tensor_rank - 1 \
+        and not isinstance(graph_node_output.shape[0], str):
         cal_shape = (1, -1)
+    elif graph_node_output.shape is not None \
+        and len(graph_node_output.shape) == 2 \
+        and axis == input_tensor_rank - 1 \
+        and isinstance(graph_node_output.shape[0], str):
+        try:
+            dim_prod = int(np.prod(graph_node_output.shape[1:]))
+            cal_shape = (-1, dim_prod)
+        except:
+            cal_shape = (1, -1)
     elif input_tensor_rank >= 2 \
         and input_tensor_shape[0] is None \
         and len([idx for idx in input_tensor_shape[1:] if idx is not None]) == input_tensor_rank - 1 \
