@@ -57,14 +57,17 @@ def make_node(
     output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get("axis", 0)
-    if graph_node_input.shape is not None \
-        and axis < input_tensor_rank:
-        axis = convert_axis(
-            axis=axis,
-            tensor_rank=len(graph_node_input.shape),
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        )
+    axis = graph_node.attrs.get("axis", None)
+    if axis is not None:
+        if graph_node_input.shape is not None \
+            and axis < input_tensor_rank:
+            axis = convert_axis(
+                axis=axis,
+                tensor_rank=len(graph_node_input.shape),
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            )
+    else:
+        axis = input_tensor_rank - 1
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

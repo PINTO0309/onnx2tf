@@ -299,7 +299,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.25.11
+  ghcr.io/pinto0309/onnx2tf:1.25.12
 
   or
 
@@ -307,7 +307,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.25.11
+  docker.io/pinto0309/onnx2tf:1.25.12
 
   or
 
@@ -404,7 +404,7 @@ The given SavedModel SignatureDef contains the following input(s):
 The given SavedModel SignatureDef contains the following output(s):
   outputs['output_0'] tensor_info:
       dtype: DT_FLOAT
-      shape: (1, 1000) # <-- Model design bug in resnet18-v1-7.onnx
+      shape: (-1, 1000)
       name: PartitionedCall:0
 Method name is: tensorflow/serving/predict
 
