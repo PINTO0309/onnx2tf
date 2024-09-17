@@ -716,7 +716,7 @@ Gist: [Quantization error simulation of SiLU (Swish) activation](https://gist.gi
 
 The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error. The vertical axis is the number of samples. `SiLU (Swish)` produces catastrophic errors after INT8 quantization.
 
-![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
+![image](https://github.com/user-attachments/assets/964e281d-1b6a-4cd1-96cf-6497069e5906)
 
 - e.g. YOLOX-Nano
   - https://github.com/motokimura/yolox-ti-lite_tflite
