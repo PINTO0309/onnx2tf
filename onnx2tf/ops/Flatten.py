@@ -115,6 +115,12 @@ def make_node(
         and axis == 1:
         # Use Keras Flatten() if there are two or more undefined dimensions
         cal_shape = None
+    elif input_tensor_rank >= 2 \
+        and input_tensor_shape[0] is None \
+        and len([idx for idx in input_tensor_shape[1:] if idx is not None]) != input_tensor_rank - 1 \
+        and axis == 2:
+        # Use Keras Flatten() if there are two or more undefined dimensions
+        cal_shape = None
     else:
         cal_shape = (
             tf.reduce_prod(input_tensor_shape[0:axis]),
