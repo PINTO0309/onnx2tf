@@ -92,6 +92,10 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
+    # issue: https://github.com/PINTO0309/onnx2tf/issues/698
+    if isinstance(input_tensor_1, np.ndarray) and not isinstance(input_tensor_2, np.ndarray):
+        input_tensor_1, input_tensor_2 = input_tensor_2, input_tensor_1
+
     disable_strict_mode: bool = kwargs['disable_strict_mode']
     gelu_replace_op_names: dict = kwargs['gelu_replace_op_names']
 
