@@ -72,7 +72,6 @@ def convert(
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
-    input_output_quant_dtype: Optional[str] = 'int8',
     input_quant_dtype: Optional[str] = 'int8',
     output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
@@ -2138,16 +2137,6 @@ def main():
             'Otherwise, an error will occur during the -oiqt stage.'
     )
     parser.add_argument(
-        '-ioqd',
-        '--input_output_quant_dtype',
-        type=str,
-        choices=['int8', 'uint8'],
-        default='int8',
-        help=\
-            'Input and Output dtypes when doing Full INT8 Quantization. \n' +
-            '"int8"(default) or "uint8"'
-    )
-    parser.add_argument(
         '-iqd',
         '--input_quant_dtype',
         type=str,
@@ -2614,7 +2603,6 @@ def main():
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
         custom_input_op_name_np_data_path=custom_params,
-        input_output_quant_dtype=args.input_output_quant_dtype,
         input_quant_dtype=args.input_quant_dtype,
         output_quant_dtype=args.output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
