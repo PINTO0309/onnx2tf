@@ -73,6 +73,8 @@ def convert(
     quant_type: Optional[str] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
     input_output_quant_dtype: Optional[str] = 'int8',
+    input_quant_dtype: Optional[str] = 'int8',
+    output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
@@ -1693,15 +1695,23 @@ def convert(
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
-                inf_type = None
-                if input_output_quant_dtype == 'int8':
-                    inf_type = tf.int8
-                elif input_output_quant_dtype == 'uint8':
-                    inf_type = tf.uint8
+                inf_type_input = None
+                inf_type_output = None
+                if input_quant_dtype == 'int8':
+                    inf_type_input = tf.int8
+                elif input_quant_dtype == 'uint8':
+                    inf_type_input = tf.uint8
                 else:
-                    inf_type = tf.int8
-                converter.inference_input_type = inf_type
-                converter.inference_output_type = inf_type
+                    inf_type_input = tf.int8
+                
+                if output_quant_dtype == 'int8':
+                    inf_type_output = tf.int8
+                elif output_quant_dtype == 'uint8':
+                    inf_type_output = tf.uint8
+                else:
+                    inf_type_output = tf.int8
+                converter.inference_input_type = inf_type_input
+                converter.inference_output_type = inf_type_output
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
@@ -2135,6 +2145,26 @@ def main():
         default='int8',
         help=\
             'Input and Output dtypes when doing Full INT8 Quantization. \n' +
+            '"int8"(default) or "uint8"'
+    )
+    parser.add_argument(
+        '-iqd',
+        '--input_quant_dtype',
+        type=str,
+        choices=['int8', 'uint8'],
+        default='int8',
+        help=\
+            'Input dtypes when doing Full INT8 Quantization. \n' +
+            '"int8"(default) or "uint8"'
+    )
+    parser.add_argument(
+        '-oqd',
+        '--output_quant_dtype',
+        type=str,
+        choices=['int8', 'uint8'],
+        default='int8',
+        help=\
+            'Output dtypes when doing Full INT8 Quantization. \n' +
             '"int8"(default) or "uint8"'
     )
     parser.add_argument(
@@ -2585,6 +2615,8 @@ def main():
         quant_type=args.quant_type,
         custom_input_op_name_np_data_path=custom_params,
         input_output_quant_dtype=args.input_output_quant_dtype,
+        input_quant_dtype=args.input_quant_dtype,
+        output_quant_dtype=args.output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
