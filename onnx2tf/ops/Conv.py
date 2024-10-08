@@ -14,6 +14,7 @@ from tensorflow.python.keras.layers import (
 )
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
+    get_replacement_parameter,
     get_constant_or_variable,
     get_weights_constant_or_variable,
     get_padding_as_op,
@@ -24,6 +25,7 @@ from onnx2tf.utils.common_functions import (
     transpose_with_flexing_deterrence,
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
+    post_process_transpose,
 )
 from typing import Any, Dict
 from onnx2tf.utils.logging import *
@@ -33,6 +35,7 @@ INF_INDEX_VALUE: int = 4294967296
 
 @print_node_info
 @inverted_operation_enable_disable
+@get_replacement_parameter
 def make_node(
     *,
     graph_node: gs.Node,
@@ -931,6 +934,15 @@ def make_node(
                     strides,
                     dilations,
                 )
+
+    # Post-process transpose
+    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+        post_process_transpose(
+            value_before_transpose=tf_layers_dict[graph_node_output.name]['tf_node'],
+            param_target='outputs',
+            param_name=graph_node.outputs[0].name,
+            **kwargs,
+        )
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
