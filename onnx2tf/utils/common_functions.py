@@ -5857,11 +5857,18 @@ def correction_process_for_accuracy_errors(
         onnx_output_same_shape_counts = collections.Counter(onnx_output_shape)
         if sum([1 if dim > 1 and cnt > 1 else 0 for dim, cnt in onnx_output_same_shape_counts.items()]) >= 1:
             # Generate dummy op
-            dummy_op = tf_func(
-                input_tensor_1,
-                input_tensor_2,
-            )
-            if dummy_op.shape != tf.TensorShape(None):
+            dummy_op = None
+            tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
+            for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
+                try:
+                    dummy_op = tf_func(
+                        input_tensor_1,
+                        tf.transpose(a=input_tensor_2, perm=tensor_2_candidate_for_transposition),
+                    )
+                    break
+                except Exception as ex:
+                    pass
+            if dummy_op is not None and dummy_op.shape != tf.TensorShape(None):
                 tf_output_shape = [dim if dim is not None else -1 for dim in dummy_op.shape]
                 number_of_dim_other_than_1 = sum([1 if i != 1 else 0 for i in onnx_output_shape])
                 # Processing continues only if there are two or more dimensions other than 1
@@ -5889,7 +5896,7 @@ def correction_process_for_accuracy_errors(
                             tensor_1_candidate_for_transpositions = \
                                 obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_1.shape)
                             tensor_2_candidate_for_transpositions = \
-                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_2.shape)
+                                list(itertools.permutations(range(len(validation_data_2.shape))))
                             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                                     try:
