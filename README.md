@@ -1514,7 +1514,8 @@ usage: onnx2tf
 [-oiqt]
 [-qt {per-channel,per-tensor}]
 [-cind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
-[-ioqd {int8,uint8}]
+[-iqd {int8,uint8}]
+[-oqd {int8,uint8}]
 [-nuo]
 [-nuonag]
 [-b BATCH_SIZE]
@@ -1671,8 +1672,12 @@ optional arguments:
       and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered.
       Otherwise, an error will occur during the -oiqt stage.
 
-  -ioqd {int8,uint8}, --input_output_quant_dtype {int8,uint8}
-    Input and Output dtypes when doing Full INT8 Quantization.
+  -iqd {int8,uint8}, --input_quant_dtype {int8,uint8}
+    Input dtypes when doing Full INT8 Quantization.
+    "int8"(default) or "uint8"
+
+  -oqd {int8,uint8}, --output_quant_dtype {int8,uint8}
+    Output dtypes when doing Full INT8 Quantization.
     "int8"(default) or "uint8"
 
   -nuo, --not_use_onnxsim
@@ -1993,7 +1998,8 @@ convert(
   output_integer_quantized_tflite: Optional[bool] = False,
   quant_type: Optional[str] = 'per-channel',
   custom_input_op_name_np_data_path: Optional[List] = None,
-  input_output_quant_dtype: Optional[str] = 'int8',
+  input_quant_dtype: Optional[str] = 'int8',
+  output_quant_dtype: Optional[str] = 'int8',
   not_use_onnxsim: Optional[bool] = False,
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
@@ -2157,8 +2163,12 @@ convert(
         and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered.
         Otherwise, an error will occur during the -oiqt stage.
 
-    input_output_quant_dtype: Optional[str]
-      Input and Output dtypes when doing Full INT8 Quantization.
+    input_quant_dtype: Optional[str]
+      Input dtypes when doing Full INT8 Quantization.
+      "int8"(default) or "uint8"
+
+    output_quant_dtype: Optional[str]
+      Output dtypes when doing Full INT8 Quantization.
       "int8"(default) or "uint8"
 
     not_use_onnxsim: Optional[bool]
