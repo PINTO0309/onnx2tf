@@ -222,8 +222,12 @@ def convert(
             ["input2","input2.npy",[0.3],[0.07]],\n
         ]
 
-    input_output_quant_dtype: Optional[str]
-        Input and Output dtypes when doing Full INT8 Quantization.\n
+    input_quant_dtype: Optional[str]
+        Input dtypes when doing Full INT8 Quantization.\n
+        "int8"(default) or "uint8"
+
+    output_quant_dtype: Optional[str]
+        Output dtypes when doing Full INT8 Quantization.\n
         "int8"(default) or "uint8"
 
     not_use_onnxsim: Optional[bool]
@@ -1702,7 +1706,7 @@ def convert(
                     inf_type_input = tf.uint8
                 else:
                     inf_type_input = tf.int8
-                
+
                 if output_quant_dtype == 'int8':
                     inf_type_output = tf.int8
                 elif output_quant_dtype == 'uint8':
