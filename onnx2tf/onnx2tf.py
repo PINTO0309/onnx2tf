@@ -222,9 +222,13 @@ def convert(
             ["input2","input2.npy",[0.3],[0.07]],\n
         ]
 
-    input_output_quant_dtype: Optional[str]
-        Input and Output dtypes when doing Full INT8 Quantization.\n
-        "int8"(default) or "uint8"
+    input_quant_dtype: Optional[str]
+        Input dtypes when doing Full INT8 Quantization.\n
+        "int8"(default) or "uint8" or "float32"
+
+    output_quant_dtype: Optional[str]
+        Output dtypes when doing Full INT8 Quantization.\n
+        "int8"(default) or "uint8" or "float32"
 
     not_use_onnxsim: Optional[bool]
         No optimization by onnx-simplifier is performed.\n
