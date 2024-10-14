@@ -1514,8 +1514,8 @@ usage: onnx2tf
 [-oiqt]
 [-qt {per-channel,per-tensor}]
 [-cind INPUT_NAME NUMPY_FILE_PATH MEAN STD]
-[-iqd {int8,uint8}]
-[-oqd {int8,uint8}]
+[-iqd {int8,uint8,float32}]
+[-oqd {int8,uint8,float32}]
 [-nuo]
 [-nuonag]
 [-b BATCH_SIZE]
@@ -1672,11 +1672,11 @@ optional arguments:
       and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered.
       Otherwise, an error will occur during the -oiqt stage.
 
-  -iqd {int8,uint8}, --input_quant_dtype {int8,uint8}
+  -iqd {int8,uint8,float32}, --input_quant_dtype {int8,uint8,float32}
     Input dtypes when doing Full INT8 Quantization.
     "int8"(default) or "uint8"
 
-  -oqd {int8,uint8}, --output_quant_dtype {int8,uint8}
+  -oqd {int8,uint8,float32}, --output_quant_dtype {int8,uint8,float32}
     Output dtypes when doing Full INT8 Quantization.
     "int8"(default) or "uint8"
 
@@ -2165,11 +2165,11 @@ convert(
 
     input_quant_dtype: Optional[str]
       Input dtypes when doing Full INT8 Quantization.
-      "int8"(default) or "uint8"
+      "int8"(default) or "uint8" or "float32"
 
     output_quant_dtype: Optional[str]
       Output dtypes when doing Full INT8 Quantization.
-      "int8"(default) or "uint8"
+      "int8"(default) or "uint8" or "float32"
 
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
