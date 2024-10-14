@@ -299,7 +299,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.26.0
+  ghcr.io/pinto0309/onnx2tf:1.26.1
 
   or
 
@@ -307,7 +307,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.26.0
+  docker.io/pinto0309/onnx2tf:1.26.1
 
   or
 
@@ -1674,11 +1674,11 @@ optional arguments:
 
   -iqd {int8,uint8,float32}, --input_quant_dtype {int8,uint8,float32}
     Input dtypes when doing Full INT8 Quantization.
-    "int8"(default) or "uint8"
+    "int8"(default) or "uint8" or "float32"
 
   -oqd {int8,uint8,float32}, --output_quant_dtype {int8,uint8,float32}
     Output dtypes when doing Full INT8 Quantization.
-    "int8"(default) or "uint8"
+    "int8"(default) or "uint8" or "float32"
 
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.

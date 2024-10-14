@@ -1,3 +1,3 @@
 from onnx2tf.onnx2tf import convert, main
 
-__version__ = '1.26.0'
+__version__ = '1.26.1'
