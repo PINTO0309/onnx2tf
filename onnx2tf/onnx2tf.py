@@ -2158,7 +2158,7 @@ def main():
         default='int8',
         help=\
             'Output dtypes when doing Full INT8 Quantization. \n' +
-            '"int8"(default) or "uint8" or "float32'
+            '"int8"(default) or "uint8" or "float32"'
     )
     parser.add_argument(
         '-nuo',
