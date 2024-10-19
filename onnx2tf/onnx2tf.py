@@ -1628,7 +1628,7 @@ def convert(
                         ]
 
             elif custom_input_op_name_np_data_path is not None:
-                for param, model_input in zip(custom_input_op_name_np_data_path, model.inputs):
+                for param in custom_input_op_name_np_data_path:
                     if len(param) != 4:
                         error(
                             "If you want to use custom input with the '-oiqt' option, " +
