@@ -1626,8 +1626,9 @@ def convert(
                             mean,
                             std,
                         ]
+
             elif custom_input_op_name_np_data_path is not None:
-                for param in custom_input_op_name_np_data_path:
+                for param, model_input in zip(custom_input_op_name_np_data_path, model.inputs):
                     if len(param) != 4:
                         error(
                             "If you want to use custom input with the '-oiqt' option, " +
@@ -1652,11 +1653,14 @@ def convert(
 
             # representative_dataset_gen
             def representative_dataset_gen():
-                for idx in range(data_count):
+                batch_size = model.inputs[0].shape[0]
+                if not isinstance(batch_size, int):
+                    batch_size = 1
+                for idx in range(0, data_count, batch_size):
                     yield_data_dict = {}
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
-                        normalized_calib_data: np.ndarray = (calib_data[idx] - mean) / std
+                        normalized_calib_data: np.ndarray = (calib_data[idx:idx+batch_size] - mean) / std
                         yield_data_dict[model_input_name] = tf.cast(tf.convert_to_tensor(normalized_calib_data), tf.float32)
                     yield yield_data_dict
 
@@ -1708,7 +1712,7 @@ def convert(
                     inf_type_input = tf.float32
                 else:
                     inf_type_input = tf.int8
-                
+
                 if output_quant_dtype == 'int8':
                     inf_type_output = tf.int8
                 elif output_quant_dtype == 'uint8':
