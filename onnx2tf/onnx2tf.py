@@ -654,8 +654,7 @@ def convert(
                 info(result)
             info(Color.GREEN(f'Model optimizing complete!'))
         except Exception as e:
-            warn(traceback.format_exc(), prefix=False)
-            warn(
+            warn_tb(
                 'Failed to optimize the onnx file.'
             )
 
@@ -672,8 +671,7 @@ def convert(
             )
             info(Color.GREEN(f'Automatic generation of each OP name complete!'))
         except Exception as e:
-            warn(traceback.format_exc(), prefix=False)
-            warn(
+            warn_tb(
                 'Failed to automatic generation of each OP name.'
             )
 
@@ -1114,7 +1112,7 @@ def convert(
                                 ).decode('utf-8')
                                 graph = gs.import_onnx(onnx.load(input_onnx_file_path))
                             except Exception as e:
-                                warn(traceback.format_exc(), prefix=False)
+                                warn_tb('')
                     else:
                         graph = gs.import_onnx(estimated_graph)
                 except:
@@ -1201,40 +1199,36 @@ def convert(
                     open(f'{output_folder_path}/{output_file_name}_float32.json', 'w').write(model.to_json())
                     info(Color.GREEN(f'json output finish'))
                 except Exception as e:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
                 # Weights (h5)
                 try:
                     info(Color.GREEN(f'weights.h5 output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.h5', save_format='h5')
                     info(Color.GREEN(f'weights.h5 output finish'))
                 except Exception as e:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
+                    
                 # Weights (keras)
                 try:
                     info(Color.GREEN(f'weights.keras output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.keras', save_format='keras')
                     info(Color.GREEN(f'weights.keras output finish'))
                 except Exception as e:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
                 # Weights (TF)
                 try:
                     info(Color.GREEN(f'weights.tf output start...'))
                     model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.tf', save_format='tf')
                     info(Color.GREEN(f'weights.tf output finish'))
                 except Exception as e:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
                 # Monolithic (keras)
                 try:
                     info(Color.GREEN(f'keras output start...'))
                     model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format='keras')
                     info(Color.GREEN(f'keras output finish'))
                 except Exception as e:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
                 # Monolithic (h5)
                 info(Color.GREEN(f'h5 output start...'))
                 model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
@@ -1251,11 +1245,9 @@ def convert(
                             )
                             break
                 else:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
             except Exception as e:
-                error(e)
-                error(traceback.format_exc(), prefix=False)
+                error_tb(e)
 
         # Output in Keras keras_v3 format
         if output_keras_v3:
@@ -1275,11 +1267,9 @@ def convert(
                             )
                             break
                 else:
-                    error(e)
-                    error(traceback.format_exc(), prefix=False)
+                    error_tb(e)
             except Exception as e:
-                error(e)
-                error(traceback.format_exc(), prefix=False)
+                error_tb(e)
 
         # Create concrete func
         run_model = tf.function(
@@ -1338,11 +1328,9 @@ def convert(
                                 )
                                 sys.exit(1)
                     else:
-                        error(e)
-                        error(traceback.format_exc(), prefix=False)
+                        error_tb(e)
             else:
-                error(e)
-                error(traceback.format_exc(), prefix=False)
+                error_tb(e)
         except ValueError as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
@@ -1358,11 +1346,9 @@ def convert(
                         )
                         sys.exit(1)
             else:
-                error(e)
-                error(traceback.format_exc(), prefix=False)
+                error_tb(e)
         except Exception as e:
-            error(e)
-            error(traceback.format_exc(), prefix=False)
+            error_tb(e)
 
         # TFv1 .pb
         if output_tfv1_pb:
@@ -1386,8 +1372,7 @@ def convert(
                     f'so onnx2tf skip the output of TensorFlow v1 pb.'
                 )
             except Exception as e:
-                error(e)
-                error(traceback.format_exc(), prefix=False)
+                error_tb(e)
 
         # TFLite
         """
@@ -1469,8 +1454,7 @@ def convert(
                     gpu_compatibility=True,
                 )
             except Exception as ex:
-                warn(traceback.format_exc(), prefix=False)
-                warn(
+                warn_tb
                     'TFLite ModelAnalyzer failed.'
                 )
 
@@ -1507,8 +1491,7 @@ def convert(
                     )
                 info(Color.GREEN(f'Dynamic Range Quantization tflite output complete!'))
             except RuntimeError as ex:
-                warn(traceback.format_exc(), prefix=False)
-                warn(
+                warn_tb(
                     'Dynamic Range Quantization tflite output failed.'
                 )
 
@@ -1724,8 +1707,7 @@ def convert(
                     )
                 info(Color.GREEN(f'Full INT8 Quantization tflite output complete!'))
             except RuntimeError as ex:
-                warn(traceback.format_exc(), prefix=False)
-                warn(
+                warn_tb(
                     'Full INT8 Quantization tflite output failed.'
                 )
 
@@ -1756,8 +1738,7 @@ def convert(
                     )
                 info(Color.GREEN(f'INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                warn(traceback.format_exc(), prefix=False)
-                warn(
+                warn_tb(
                     'INT8 Quantization with int16 activations tflite output failed.'
                 )
 
@@ -1788,8 +1769,7 @@ def convert(
                     )
                 info(Color.GREEN(f'Full INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                warn(traceback.format_exc(), prefix=False)
-                warn(
+                warn_tb(
                     'Full INT8 Quantization with int16 activations tflite output failed.'
                 )
 

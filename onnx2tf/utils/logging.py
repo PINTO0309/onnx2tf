@@ -1,7 +1,8 @@
+import traceback
 from enum import Enum
 from typing import Union
 
-__all__ = ["Color", "LOG_LEVELS", "debug", "info", "warn", "error", "set_log_level", "get_log_level"]
+__all__ = ["Color", "LOG_LEVELS", "debug", "info", "warn", "error", "set_log_level", "get_log_level", "error_tb", "warn_tb"]
 
 class Color(Enum):
     BLACK          = '\033[30m'
@@ -56,9 +57,11 @@ def get_log_level():
 def debug(*args):
     if log_level <= LOG_LEVELS['debug']:
         print(*args)
+
 def info(*args):
     if log_level <= LOG_LEVELS['info']:
         print(*args)
+
 def warn(*args, prefix=True):
     if log_level <= LOG_LEVELS['warn']:
         if prefix and any(args):
@@ -68,6 +71,7 @@ def warn(*args, prefix=True):
             )
         else:
             print(*args)
+
 def error(*args, prefix=True):
     if log_level <= LOG_LEVELS['error']:
         if prefix and any(args):
@@ -77,3 +81,11 @@ def error(*args, prefix=True):
             )
         else:
             print(*args)
+
+def warn_tb(*args, **kwargs):
+    warn(traceback.format_exc(), prefix=False)
+    warn(*args, **kwargs)
+
+def error_tb(*args, **kwargs):
+    error(*args, **kwargs)
+    error(traceback.format_exc(), prefix=False)
