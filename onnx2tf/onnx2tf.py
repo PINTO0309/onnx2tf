@@ -37,7 +37,7 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
 import onnx_graphsurgeon as gs
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Literal
 from argparse import ArgumentParser
 
 import importlib
@@ -59,59 +59,59 @@ from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
 def convert(
-    input_onnx_file_path: Optional[str] = '',
+    input_onnx_file_path: str = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
-    output_folder_path: Optional[str] = 'saved_model',
-    output_signaturedefs: Optional[bool] = False,
-    output_h5: Optional[bool] = False,
-    output_keras_v3: Optional[bool] = False,
-    output_tfv1_pb: Optional[bool] = False,
-    output_weights: Optional[bool] = False,
-    copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
-    output_dynamic_range_quantized_tflite: Optional[bool] = False,
-    output_integer_quantized_tflite: Optional[bool] = False,
-    quant_type: Optional[str] = 'per-channel',
+    output_folder_path: str = 'saved_model',
+    output_signaturedefs: bool = False,
+    output_h5: bool = False,
+    output_keras_v3: bool = False,
+    output_tfv1_pb: bool = False,
+    output_weights: bool = False,
+    copy_onnx_input_output_names_to_tflite: bool = False,
+    output_dynamic_range_quantized_tflite: bool = False,
+    output_integer_quantized_tflite: bool = False,
+    quant_type: Optional[Literal["per-channel", "per-tensor"]] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
-    input_quant_dtype: Optional[str] = 'int8',
-    output_quant_dtype: Optional[str] = 'int8',
-    not_use_onnxsim: Optional[bool] = False,
-    not_use_opname_auto_generate: Optional[bool] = False,
+    input_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = 'int8',
+    output_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = 'int8',
+    not_use_onnxsim: bool = False,
+    not_use_opname_auto_generate: bool = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
-    no_large_tensor: Optional[bool] = False,
-    output_nms_with_dynamic_tensor: Optional[bool] = False,
+    no_large_tensor: bool = False,
+    output_nms_with_dynamic_tensor: bool = False,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
     input_names_to_interrupt_model_conversion: Optional[List[str]] = None,
     output_names_to_interrupt_model_conversion: Optional[List[str]] = None,
-    disable_group_convolution: Optional[bool] = False,
-    enable_accumulation_type_float16: Optional[bool] = False,
-    enable_batchmatmul_unfold: Optional[bool] = False,
-    enable_rnn_unroll: Optional[bool] = False,
-    disable_suppression_flextranspose: Optional[bool] = False,
-    disable_strict_mode: Optional[bool] = False,
-    number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
-    disable_suppression_flexstridedslice: Optional[bool] = False,
-    number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
-    optimization_for_gpu_delegate: Optional[bool] = False,
-    replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool] = False,
-    replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool] = False,
-    replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool] = False,
-    replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool] = False,
-    fused_argmax_scale_ratio: Optional[float] = 0.5,
+    disable_group_convolution: bool = False,
+    enable_accumulation_type_float16: bool = False,
+    enable_batchmatmul_unfold: bool = False,
+    enable_rnn_unroll: bool = False,
+    disable_suppression_flextranspose: bool = False,
+    disable_strict_mode: bool = False,
+    number_of_dimensions_after_flextranspose_compression: int = 6,
+    disable_suppression_flexstridedslice: bool = False,
+    number_of_dimensions_after_flexstridedslice_compression: int = 5,
+    optimization_for_gpu_delegate: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_int64: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_float32: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_int64: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
+    fused_argmax_scale_ratio: float = 0.5,
     replace_to_pseudo_operators: List[str] = None,
     param_replacement_file: Optional[str] = '',
-    check_gpu_delegate_compatibility: Optional[bool] = False,
-    check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
-    check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
-    check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
-    check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
-    check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
-    mvn_epsilon: Optional[float] = 0.0000000001,
-    disable_model_save: Optional[bool] = False,
-    non_verbose: Optional[bool] = False,
-    verbosity: Optional[str] = 'debug',
+    check_gpu_delegate_compatibility: bool = False,
+    check_onnx_tf_outputs_elementwise_close: bool = False,
+    check_onnx_tf_outputs_elementwise_close_full: bool = False,
+    check_onnx_tf_outputs_sample_data_normalization: Optional[Literal["norm", "denorm"]] = 'norm',
+    check_onnx_tf_outputs_elementwise_close_rtol: float = 0.0,
+    check_onnx_tf_outputs_elementwise_close_atol: float = 1e-4,
+    mvn_epsilon: float = 0.0000000001,
+    disable_model_save: bool = False,
+    non_verbose: bool = False,
+    verbosity: Optional[Literal["debug", "info", "warn", "error"]] = 'debug',
 ) -> tf_keras.Model:
     """Convert ONNX to TensorFlow models.
 
@@ -130,24 +130,24 @@ def convert(
         Output tensorflow model folder path.\n
         Default: "saved_model"
 
-    output_signaturedefs: Optional[bool]
+    output_signaturedefs: bool
         Signature is added to the output for serving or for conversion\n
         to other model formats. However, this can significantly reduce the speed\n
         of model conversion and significant increase the size of the model.
 
-    output_h5: Optional[bool]
+    output_h5: bool
         Output model in Keras (hdf5) format.
 
-    output_keras_v3: Optional[bool]
+    output_keras_v3: bool
         Output model in Keras (keras_v3) format.
 
-    output_tfv1_pb: Optional[bool]
+    output_tfv1_pb: bool
         Output model in TF v1 (.pb) format.
 
-    output_weights: Optional[bool]
+    output_weights: bool
         Output weights in hdf5 format.
 
-    copy_onnx_input_output_names_to_tflite: Optional[bool]
+    copy_onnx_input_output_names_to_tflite: bool
         Copy the input/output OP name of ONNX to the input/output OP name of tflite.\n
         Due to Tensorflow internal operating specifications,\n
         the input/output order of ONNX does not necessarily match\n
@@ -158,10 +158,10 @@ def convert(
         Therefore, it is strongly discouraged to use it on large models of hundreds\n
         of megabytes or more.
 
-    output_dynamic_range_quantized_tflite: Optional[bool]
+    output_dynamic_range_quantized_tflite: bool
         Output of dynamic range quantized tflite.
 
-    output_integer_quantized_tflite: Optional[bool]
+    output_integer_quantized_tflite: bool
         Output of integer quantized tflite.
 
     quant_type: Optional[str]
@@ -230,11 +230,11 @@ def convert(
         Output dtypes when doing Full INT8 Quantization.\n
         "int8"(default) or "uint8" or "float32"
 
-    not_use_onnxsim: Optional[bool]
+    not_use_onnxsim: bool
         No optimization by onnx-simplifier is performed.\n
         If this option is used, the probability of a conversion error is very high.
 
-    not_use_opname_auto_generate: Optional[bool]
+    not_use_opname_auto_generate: bool
         Automatic generation of each OP name in the old format ONNX file\n
         and assignment of OP name are not performed.
 
@@ -254,11 +254,11 @@ def convert(
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
 
-    no_large_tensor: Optional[bool]
+    no_large_tensor: bool
         Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
         See: https://github.com/daquexian/onnx-simplifier/issues/178
 
-    output_nms_with_dynamic_tensor: Optional[bool]
+    output_nms_with_dynamic_tensor: bool
         The number of bounding boxes in the NMS output results is\n
         not fixed at the maximum number of max_output_boxes_per_class,\n
         but rather at the smallest possible number of dynamic tensors.\n
@@ -306,28 +306,28 @@ def convert(
         e.g.\n
         output_names_to_interrupt_model_conversion=['output0','output1','output2']
 
-    disable_group_convolution: Optional[bool]
+    disable_group_convolution: bool
         Disable GroupConvolution and replace it with SeparableConvolution\n
         for output to saved_model format.
 
-    enable_accumulation_type_float16: Optional[bool]
+    enable_accumulation_type_float16: bool
         Hint for XNNPack fp16 inference on float16 tflite model.\n
         XNNPACK float16 inference on certain ARM64 cores is 2x faster.\n
         Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.\n
         https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
-    enable_batchmatmul_unfold: Optional[bool]
+    enable_batchmatmul_unfold: bool
         BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
-    enable_rnn_unroll: Optional[bool]
+    enable_rnn_unroll: bool
         Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN),\n
         RAM consumption will increase because all tensors are expanded and embedded in the model.\n
         https://keras.io/api/layers/recurrent_layers/
 
-    disable_suppression_flextranspose: Optional[bool]
+    disable_suppression_flextranspose: bool
         Disables FlexTranspose generation suppression.
 
-    disable_strict_mode: Optional[bool]
+    disable_strict_mode: bool
         If specified, the conversion speed is greatly accelerated because the strict accuracy\n
         correction process is skipped, but the frequency of transposition errors increases\n
         and accuracy errors are more likely to occur. Strict mode is enabled by default.
@@ -337,18 +337,18 @@ def convert(
         Also suppress the creation of the Transpose itself by specifying 2.\n
         Default: 6
 
-    disable_suppression_flexstridedslice: Optional[bool]
+    disable_suppression_flexstridedslice: bool
         Disables FlexStridedSlice generation suppression.
 
     number_of_dimensions_after_flexstridedslice_compression: Optional[int]
         Number of StridedSlice OP dimensions generated after avoiding FlexStridedSlice generation.\n
         Default: 5
 
-    optimization_for_gpu_delegate: Optional[bool]
+    optimization_for_gpu_delegate: bool
         Replace operations that do not support gpu delegate with those\n
         that do as much as possible.
 
-    replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool]
+    replace_argmax_to_reducemax_and_indices_is_int64: bool
         Replace ArgMax with a ReduceMax. The returned indices are int64.\n
         Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
         replace_argmax_to_reducemax_and_indices_is_float32 and \n
@@ -356,7 +356,7 @@ def convert(
         replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool]
+    replace_argmax_to_reducemax_and_indices_is_float32: bool
         Replace ArgMax with a ReduceMax. The returned indices are float32.\n
         Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n
         replace_argmax_to_reducemax_and_indices_is_float32 and \n
@@ -364,7 +364,7 @@ def convert(
         replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool]
+    replace_argmax_to_fused_argmax_and_indices_is_int64: bool
         Replace ArgMax with a ReduceMax. The returned indices are int64.\n
         It improves inference speed at the cost of a small sacrifice in accuracy.\n
         See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
@@ -375,7 +375,7 @@ def convert(
         replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.\n
         Default: False
 
-    replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool]
+    replace_argmax_to_fused_argmax_and_indices_is_float32: bool
         Replace ArgMax with a ReduceMax. The returned indices are float32.\n
         It improves inference speed at the cost of a small sacrifice in accuracy.\n
         See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency\n
@@ -407,11 +407,11 @@ def convert(
     param_replacement_file: Optional[str]
         Parameter replacement file path. (.json)
 
-    check_gpu_delegate_compatibility: Optional[bool]
+    check_gpu_delegate_compatibility: bool
         Run TFLite ModelAnalyzer on the generated Float16 tflite model\n
         to check if the model can be supported by GPU Delegate.
 
-    check_onnx_tf_outputs_elementwise_close: Optional[bool]
+    check_onnx_tf_outputs_elementwise_close: bool
         Returns "Matches" if the output of onnx and the output of TF are\n
         within acceptable proximity element by element.\n
         Returns "Unmatched" if the output of onnx and the output of TF are\n
@@ -422,7 +422,7 @@ def convert(
         values are compared, causing OutOfMemory.\n
         Only the output content of the models final output OP is checked.
 
-    check_onnx_tf_outputs_elementwise_close_full: Optional[bool]
+    check_onnx_tf_outputs_elementwise_close_full: bool
         Returns "Matches" if the output of onnx and the output of TF are\n
         within acceptable proximity element by element.\n
         Check the output of all OPs in sequence from the beginning,\n
@@ -451,11 +451,11 @@ def convert(
         The absolute tolerance parameter.\n
         Default: 1e-4
 
-    disable_model_save: Optional[bool]
+    disable_model_save: bool
         Does not save the converted model. For CIs RAM savings.\n
         Default: False
 
-    non_verbose: Optional[bool]
+    non_verbose: bool
         Shorthand to specify a verbosity of "error".\n
         Default: False
 
