@@ -55,8 +55,11 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.enums import (
     CUDA_ONLY_OPS,
 )
-from onnx2tf.utils.logging import *
+from onnx2tf.utils.logging import Color, debug, info, warn, error, set_log_level, error_tb, warn_tb
 from sng4onnx import generate as op_name_auto_generate
+
+class ConvertError(Exception):
+    pass
 
 def convert(
     input_onnx_file_path: str = '',
@@ -476,10 +479,9 @@ def convert(
 
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
-        error(
-            f'One of input_onnx_file_path or onnx_graph must be specified.'
-        )
-        sys.exit(1)
+        msg = 'One of input_onnx_file_path or onnx_graph must be specified.'
+        error(msg)
+        raise ConvertError(msg)
 
     # If output_folder_path is empty, set the initial value
     if not output_folder_path:
@@ -491,11 +493,12 @@ def convert(
 
     # Input file existence check
     if not os.path.exists(input_onnx_file_path) and not onnx_graph:
-        error(
-            f'The specified *.onnx file does not exist. ' +
+        msg = (
+            'The specified *.onnx file does not exist. ' +
             f'input_onnx_file_path: {input_onnx_file_path}'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     # Extracting onnx filenames
     output_file_name = ''
@@ -508,27 +511,27 @@ def convert(
 
     # batch_size
     if batch_size is not None and batch_size <= 0:
-        error(
-            f'batch_size must be greater than or equal to 1. batch_size: {batch_size}'
-        )
-        sys.exit(1)
+        msg = f'batch_size must be greater than or equal to 1. batch_size: {batch_size}'
+        error(msg)
+        raise ConvertError(msg)
 
     # overwrite_input_shape
     if overwrite_input_shape is not None \
         and not isinstance(overwrite_input_shape, list):
-        error(
-            f'overwrite_input_shape must be specified by list.'
-        )
-        sys.exit(1)
+        msg = f'overwrite_input_shape must be specified by list.'
+        error(msg)
+        raise ConvertError(msg)
 
     # determination of errors in custom input
     if custom_input_op_name_np_data_path is not None:
         for param in custom_input_op_name_np_data_path:
             if len(param) not in [2, 4]:
-                error(
-                    f"'-cind' option must have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
+                msg = (
+                    "custom_input_op_name_np_data_path ('-cind' option) must "
+                    "have INPUT_NAME, NUMPY_FILE_PATH, MEAN(optional), STD(optional)"
                 )
-                sys.exit(1)
+                error(msg)
+                raise ConvertError(msg)
 
     # replace_argmax_to_reducemax_and_indices_is_int64
     # replace_argmax_to_reducemax_and_indices_is_float32
@@ -541,49 +544,54 @@ def convert(
         replace_argmax_to_fused_argmax_and_indices_is_float32,
     ]
     if ra_option_list.count(True) > 1:
-        error(
+        msg = (
             f'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and ' +
             f'replace_argmax_to_reducemax_and_indices_is_float32 and ' +
             f'replace_argmax_to_fused_argmax_and_indices_is_int64 and ' +
             f'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     # fused_argmax_scale_ratio
     if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
-        error(
+        msg = (
             f'fused_argmax_scale_ratio must be specified in the range '+
             f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
             f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     # number_of_dimensions_after_flextranspose_compression
     if number_of_dimensions_after_flextranspose_compression < 2:
-        error(
-            f'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
-            f'number_of_dimensions_after_flextranspose_compression: ' +
+        msg = (
+            'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
+            'number_of_dimensions_after_flextranspose_compression: ' +
             f'{number_of_dimensions_after_flextranspose_compression}'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     # number_of_dimensions_after_flexstridedslice_compression
     if number_of_dimensions_after_flexstridedslice_compression < 1:
-        error(
-            f'number_of_dimensions_after_flexstridedslice_compression must be at least 1. '+
-            f'number_of_dimensions_after_flexstridedslice_compression: ' +
+        msg = (
+            'number_of_dimensions_after_flexstridedslice_compression must be at least 1. '+
+            'number_of_dimensions_after_flexstridedslice_compression: ' +
             f'{number_of_dimensions_after_flexstridedslice_compression}'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     replacement_parameters = None
     if param_replacement_file:
         if not os.path.isfile(param_replacement_file):
-            error(
-                f'File specified in param_replacement_file not found. \n' +
+            msg = (
+                'File specified in param_replacement_file not found. \n' +
                 f'param_replacement_file: {param_replacement_file}'
             )
-            sys.exit(1)
+            error(msg)
+            raise ConvertError(msg)
         try:
             with open(param_replacement_file, 'r') as f:
                 replacement_parameters = json.load(f)['operations']
@@ -593,11 +601,13 @@ def convert(
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
                         operations['param_name'] = re.sub('^/', 'wa/', operations['param_name'])
         except json.decoder.JSONDecodeError as ex:
-            error(
-                f'The file specified in param_replacement_file is not in JSON format. \n' +
+            msg = (
+                'The file specified in param_replacement_file is not in JSON format. \n' +
                 f'param_replacement_file: {param_replacement_file}'
             )
-            sys.exit(1)
+            error(msg)
+            raise ConvertError(msg)
+
 
     # onnx-simplifier
     # To fully optimize the model, run onnxsim three times in a row.
@@ -705,11 +715,12 @@ def convert(
         try:
             from sne4onnx import extraction
         except Exception as ex:
-            error(
-                f'If --input_names_to_interrupt_model_conversion is specified, ' +\
-                f'you must install sne4onnx. pip install sne4onnx'
+            msg = (
+                'If --input_names_to_interrupt_model_conversion is specified, ' +\
+                'you must install sne4onnx. pip install sne4onnx'
             )
-            sys.exit(1)
+            error(msg)
+            raise ConvertError(msg)
         # Cut ONNX graph at specified input position
         input_names = [
             input_op_name \
@@ -776,11 +787,12 @@ def convert(
         try:
             from sne4onnx import extraction
         except Exception as ex:
-            error(
-                f'If --output_names_to_interrupt_model_conversion is specified, ' +\
-                f'you must install sne4onnx. pip install sne4onnx'
+            msg = (
+                'If --output_names_to_interrupt_model_conversion is specified, ' +
+                'you must install sne4onnx. pip install sne4onnx'
             )
-            sys.exit(1)
+            error(msg)
+            raise ConvertError(msg)
         # Cut ONNX graph at specified output position
         output_names = [
             output_op_name \
@@ -868,11 +880,12 @@ def convert(
     use_cuda = sum([1 if op_type in CUDA_ONLY_OPS else 0 for op_type in op_type_list]) > 0
     # Suggests that if there is an OP that can only work with CUDA and CUDA is disabled, the conversion may fail
     if use_cuda and not check_cuda_enabled():
-        error(
-            f'If the following OPs are included, CUDA must be available and onnxruntime-gpu must be installed. ' +
+        msg - (
+            'If the following OPs are included, CUDA must be available and onnxruntime-gpu must be installed. ' +
             f'{CUDA_ONLY_OPS}'
         )
-        sys.exit(1)
+        error(msg)
+        raise ConvertError(msg)
 
     # CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
     if not use_cuda:
@@ -964,13 +977,14 @@ def convert(
             if output_integer_quantized_tflite \
                 and custom_input_op_name_np_data_path is None \
                 and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
-                error(
-                    f'For INT8 quantization, the input data type must be Float32. ' +
-                    f'Also, if --custom_input_op_name_np_data_path is not specified, ' +
-                    f'all input OPs must assume 4D tensor image data. ' +
+                msg = (
+                    'For INT8 quantization, the input data type must be Float32. ' +
+                    'Also, if --custom_input_op_name_np_data_path is not specified, ' +
+                    'all input OPs must assume 4D tensor image data. ' +
                     f'INPUT Name: {graph_input.name} INPUT Shape: {graph_input.shape} INPUT dtype: {graph_input.dtype}'
                 )
-                sys.exit(1)
+                error(msg)
+                raise ConvertError(msg)
 
             # make input
             op = importlib.import_module(f'onnx2tf.ops.Input')
@@ -1124,10 +1138,9 @@ def convert(
             try:
                 op = importlib.import_module(f'onnx2tf.ops.{optype}')
             except ModuleNotFoundError as ex:
-                error(
-                    f'{optype} OP is not yet implemented.'
-                )
-                sys.exit(1)
+                msg = f'{optype} OP is not yet implemented.'
+                error(msg)
+                raise ConvertError(msg)
 
             # substitution because saved_model does not allow colons
             # Substitution because saved_model does not allow leading slashes in op names
@@ -1322,10 +1335,11 @@ def convert(
                                 )
                                 matches = re.findall(r"'([^']*)'", s)
                                 error(f'{matches[0]}')
-                                error(
-                                    f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                                msg = (
+                                    'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                                 )
-                                sys.exit(1)
+                                error(msg)
+                                raise ConvertError(msg)
                     else:
                         error_tb(e)
             else:
@@ -1340,10 +1354,11 @@ def convert(
                         )
                         matches = re.findall(r"'([^']*)'", s)
                         error(f'{matches[0]}')
-                        error(
-                            f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                        msg = (
+                            'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                         )
-                        sys.exit(1)
+                        error(msg)
+                        raise ConvertError(msg)
             else:
                 error_tb(e)
         except Exception as e:
@@ -1352,7 +1367,7 @@ def convert(
         # TFv1 .pb
         if output_tfv1_pb:
             try:
-                info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
+                info(Color.REVERSE('TFv1 v1 .pb output started'), '=' * 58)
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
                 imported = tf.saved_model.load(output_folder_path)
                 f = imported.signatures[SIGNATURE_KEY]
@@ -1453,7 +1468,7 @@ def convert(
                     gpu_compatibility=True,
                 )
             except Exception as ex:
-                warn_tb
+                warn_tb(
                     'TFLite ModelAnalyzer failed.'
                 )
 
@@ -1555,13 +1570,14 @@ def convert(
                     if model_input.dtype != tf.float32 \
                         or len(model_input.shape) != 4 \
                         or model_input.shape[-1] not in [3, 4]:
-                        error(
+                        msg = (
                             f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
                             f'using non-rgb-image/non-rgba-image input tensors, specify the calibration data with '+
                             f'--quant_calib_input_op_name_np_data_path. '+
                             f'model_input[n].shape: {model_input.shape}'
                         )
-                        sys.exit(1)
+                        error(msg)
+                        raise ConvertError(msg)
 
                     if model_input.shape[-1] == 3:
                         # RGB
@@ -1594,12 +1610,13 @@ def convert(
             elif custom_input_op_name_np_data_path is not None:
                 for param in custom_input_op_name_np_data_path:
                     if len(param) != 4:
-                        error(
+                        msg = (
                             "If you want to use custom input with the '-oiqt' option, " +
                             "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. " +
                             f"However, you have only entered {len(param)} options. "
                         )
-                        sys.exit(1)
+                        error(msg)
+                        raise ConvertError(msg)
 
                     input_op_name = str(param[0])
                     numpy_file_path = str(param[1])
@@ -1781,11 +1798,12 @@ def convert(
                 import onnxruntime
                 import sne4onnx
             except Exception as ex:
-                error(
-                    f'If --check_onnx_tf_outputs_elementwise_close is specified, ' +\
-                    f'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
+                msg = (
+                    'If --check_onnx_tf_outputs_elementwise_close is specified, ' +\
+                    'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
                 )
-                sys.exit(1)
+                error(msg)
+                raise ConvertError(msg)
 
             info('')
             info(Color.REVERSE(f'ONNX and TF output value validation started'), '=' * 41)
