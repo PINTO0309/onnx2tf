@@ -1,46 +1,55 @@
 #! /usr/bin/env python
 
-import os
-import re
-__path__ = (os.path.dirname(__file__), )
-with open(os.path.join(__path__[0], '__init__.py')) as f:
-    init_text = f.read()
-    __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
-import sys
-sys.setrecursionlimit(2147483647) # C int maximum
 import ast
+import importlib
 import json
 import logging
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-warnings.simplefilter(action='ignore', category=Warning)
-warnings.simplefilter(action='ignore', category=DeprecationWarning)
-warnings.simplefilter(action='ignore', category=RuntimeWarning)
+import os
 import subprocess
+import sys
 import random
+import re
+import warnings
+from argparse import ArgumentParser
+from typing import Optional, List, Any, Dict, Literal
+
+__path__ = (os.path.dirname(__file__),)
+with open(os.path.join(__path__[0], "__init__.py")) as f:
+    init_text = f.read()
+    __version__ = re.search(r"__version__\s*=\s*[\'\"](.+?)[\'\"]", init_text).group(1)
+
+sys.setrecursionlimit(2147483647)  # C int maximum
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.simplefilter(action="ignore", category=Warning)
+warnings.simplefilter(action="ignore", category=DeprecationWarning)
+warnings.simplefilter(action="ignore", category=RuntimeWarning)
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 random.seed(0)
 import numpy as np
+
 np.random.seed(0)
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ["TF_USE_LEGACY_KERAS"] = '1'
 import tensorflow as tf
+
 tf.random.set_seed(0)
 from tensorflow.python.saved_model.load import _WrapperFunction
 import tf_keras
+
 tf_keras.utils.set_random_seed(0)
 tf.config.experimental.enable_op_determinism()
-tf.get_logger().setLevel('INFO')
+tf.get_logger().setLevel("INFO")
 tf.autograph.set_verbosity(0)
 tf.get_logger().setLevel(logging.FATAL)
 from absl import logging as absl_logging
+
 absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
 import onnx_graphsurgeon as gs
-from typing import Optional, List, Any, Dict, Literal
-from argparse import ArgumentParser
 
-import importlib
 from onnx2tf.utils.common_functions import (
     dummy_onnx_inference,
     dummy_tf_inference,
@@ -55,16 +64,27 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.enums import (
     CUDA_ONLY_OPS,
 )
-from onnx2tf.utils.logging import Color, debug, info, warn, error, set_log_level, error_tb, warn_tb
+from onnx2tf.utils.logging import (
+    Color,
+    debug,
+    info,
+    warn,
+    error,
+    set_log_level,
+    error_tb,
+    warn_tb,
+)
 from sng4onnx import generate as op_name_auto_generate
+
 
 class ConvertError(Exception):
     pass
 
+
 def convert(
-    input_onnx_file_path: str = '',
+    input_onnx_file_path: str = "",
     onnx_graph: Optional[onnx.ModelProto] = None,
-    output_folder_path: str = 'saved_model',
+    output_folder_path: str = "saved_model",
     output_signaturedefs: bool = False,
     output_h5: bool = False,
     output_keras_v3: bool = False,
@@ -73,10 +93,10 @@ def convert(
     copy_onnx_input_output_names_to_tflite: bool = False,
     output_dynamic_range_quantized_tflite: bool = False,
     output_integer_quantized_tflite: bool = False,
-    quant_type: Optional[Literal["per-channel", "per-tensor"]] = 'per-channel',
+    quant_type: Optional[Literal["per-channel", "per-tensor"]] = "per-channel",
     custom_input_op_name_np_data_path: Optional[List] = None,
-    input_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = 'int8',
-    output_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = 'int8',
+    input_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = "int8",
+    output_quant_dtype: Optional[Literal["int8", "uint8", "float32"]] = "int8",
     not_use_onnxsim: bool = False,
     not_use_opname_auto_generate: bool = False,
     batch_size: Optional[int] = None,
@@ -104,17 +124,19 @@ def convert(
     replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
     fused_argmax_scale_ratio: float = 0.5,
     replace_to_pseudo_operators: List[str] = None,
-    param_replacement_file: Optional[str] = '',
+    param_replacement_file: Optional[str] = "",
     check_gpu_delegate_compatibility: bool = False,
     check_onnx_tf_outputs_elementwise_close: bool = False,
     check_onnx_tf_outputs_elementwise_close_full: bool = False,
-    check_onnx_tf_outputs_sample_data_normalization: Optional[Literal["norm", "denorm"]] = 'norm',
+    check_onnx_tf_outputs_sample_data_normalization: Optional[
+        Literal["norm", "denorm"]
+    ] = "norm",
     check_onnx_tf_outputs_elementwise_close_rtol: float = 0.0,
     check_onnx_tf_outputs_elementwise_close_atol: float = 1e-4,
     mvn_epsilon: float = 0.0000000001,
     disable_model_save: bool = False,
     non_verbose: bool = False,
-    verbosity: Optional[Literal["debug", "info", "warn", "error"]] = 'debug',
+    verbosity: Optional[Literal["debug", "info", "warn", "error"]] = "debug",
 ) -> tf_keras.Model:
     """Convert ONNX to TensorFlow models.
 
@@ -474,51 +496,50 @@ def convert(
     """
 
     if verbosity is None:
-        verbosity = 'debug'
-    set_log_level('error' if non_verbose else verbosity)
+        verbosity = "debug"
+    set_log_level("error" if non_verbose else verbosity)
 
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
-        msg = 'One of input_onnx_file_path or onnx_graph must be specified.'
+        msg = "One of input_onnx_file_path or onnx_graph must be specified."
         error(msg)
         raise ConvertError(msg)
 
     # If output_folder_path is empty, set the initial value
     if not output_folder_path:
-        output_folder_path = 'saved_model'
+        output_folder_path = "saved_model"
 
     # Escape
-    input_onnx_file_path = fr'{input_onnx_file_path}'
-    output_folder_path = fr'{output_folder_path}'
+    input_onnx_file_path = rf"{input_onnx_file_path}"
+    output_folder_path = rf"{output_folder_path}"
 
     # Input file existence check
     if not os.path.exists(input_onnx_file_path) and not onnx_graph:
         msg = (
-            'The specified *.onnx file does not exist. ' +
-            f'input_onnx_file_path: {input_onnx_file_path}'
+            "The specified *.onnx file does not exist. "
+            + f"input_onnx_file_path: {input_onnx_file_path}"
         )
         error(msg)
         raise ConvertError(msg)
 
     # Extracting onnx filenames
-    output_file_name = ''
+    output_file_name = ""
     if input_onnx_file_path:
-        output_file_name = os.path.splitext(
-            os.path.basename(input_onnx_file_path)
-        )[0]
+        output_file_name = os.path.splitext(os.path.basename(input_onnx_file_path))[0]
     else:
-        output_file_name = 'model'
+        output_file_name = "model"
 
     # batch_size
     if batch_size is not None and batch_size <= 0:
-        msg = f'batch_size must be greater than or equal to 1. batch_size: {batch_size}'
+        msg = f"batch_size must be greater than or equal to 1. batch_size: {batch_size}"
         error(msg)
         raise ConvertError(msg)
 
     # overwrite_input_shape
-    if overwrite_input_shape is not None \
-        and not isinstance(overwrite_input_shape, list):
-        msg = f'overwrite_input_shape must be specified by list.'
+    if overwrite_input_shape is not None and not isinstance(
+        overwrite_input_shape, list
+    ):
+        msg = "overwrite_input_shape must be specified by list."
         error(msg)
         raise ConvertError(msg)
 
@@ -545,10 +566,10 @@ def convert(
     ]
     if ra_option_list.count(True) > 1:
         msg = (
-            f'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and ' +
-            f'replace_argmax_to_reducemax_and_indices_is_float32 and ' +
-            f'replace_argmax_to_fused_argmax_and_indices_is_int64 and ' +
-            f'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+            "Only one of replace_argmax_to_reducemax_and_indices_is_int64 and "
+            + "replace_argmax_to_reducemax_and_indices_is_float32 and "
+            + "replace_argmax_to_fused_argmax_and_indices_is_int64 and "
+            + "replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified."
         )
         error(msg)
         raise ConvertError(msg)
@@ -556,9 +577,9 @@ def convert(
     # fused_argmax_scale_ratio
     if ra_option_list.count(True) > 0 and not (0.0 < fused_argmax_scale_ratio <= 1.0):
         msg = (
-            f'fused_argmax_scale_ratio must be specified in the range '+
-            f'0.0 < fused_argmax_scale_ratio <= 1.0. '+
-            f'fused_argmax_scale_ratio: {fused_argmax_scale_ratio}'
+            "fused_argmax_scale_ratio must be specified in the range "
+            + "0.0 < fused_argmax_scale_ratio <= 1.0. "
+            + f"fused_argmax_scale_ratio: {fused_argmax_scale_ratio}"
         )
         error(msg)
         raise ConvertError(msg)
@@ -566,9 +587,9 @@ def convert(
     # number_of_dimensions_after_flextranspose_compression
     if number_of_dimensions_after_flextranspose_compression < 2:
         msg = (
-            'number_of_dimensions_after_flextranspose_compression must be at least 2. '+
-            'number_of_dimensions_after_flextranspose_compression: ' +
-            f'{number_of_dimensions_after_flextranspose_compression}'
+            "number_of_dimensions_after_flextranspose_compression must be at least 2. "
+            + "number_of_dimensions_after_flextranspose_compression: "
+            + f"{number_of_dimensions_after_flextranspose_compression}"
         )
         error(msg)
         raise ConvertError(msg)
@@ -576,9 +597,9 @@ def convert(
     # number_of_dimensions_after_flexstridedslice_compression
     if number_of_dimensions_after_flexstridedslice_compression < 1:
         msg = (
-            'number_of_dimensions_after_flexstridedslice_compression must be at least 1. '+
-            'number_of_dimensions_after_flexstridedslice_compression: ' +
-            f'{number_of_dimensions_after_flexstridedslice_compression}'
+            "number_of_dimensions_after_flexstridedslice_compression must be at least 1. "
+            + "number_of_dimensions_after_flexstridedslice_compression: "
+            + f"{number_of_dimensions_after_flexstridedslice_compression}"
         )
         error(msg)
         raise ConvertError(msg)
@@ -587,27 +608,30 @@ def convert(
     if param_replacement_file:
         if not os.path.isfile(param_replacement_file):
             msg = (
-                'File specified in param_replacement_file not found. \n' +
-                f'param_replacement_file: {param_replacement_file}'
+                "File specified in param_replacement_file not found. \n"
+                + f"param_replacement_file: {param_replacement_file}"
             )
             error(msg)
             raise ConvertError(msg)
         try:
-            with open(param_replacement_file, 'r') as f:
-                replacement_parameters = json.load(f)['operations']
+            with open(param_replacement_file, "rb") as f:
+                replacement_parameters = json.load(f)["operations"]
                 for operations in replacement_parameters:
-                    operations['op_name'] = operations['op_name'].replace(':','_')
+                    operations["op_name"] = operations["op_name"].replace(":", "_")
                     if output_signaturedefs or output_integer_quantized_tflite:
-                        operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
-                        operations['param_name'] = re.sub('^/', 'wa/', operations['param_name'])
-        except json.decoder.JSONDecodeError as ex:
+                        operations["op_name"] = re.sub(
+                            "^/", "wa/", operations["op_name"]
+                        )
+                        operations["param_name"] = re.sub(
+                            "^/", "wa/", operations["param_name"]
+                        )
+        except json.decoder.JSONDecodeError:
             msg = (
-                'The file specified in param_replacement_file is not in JSON format. \n' +
-                f'param_replacement_file: {param_replacement_file}'
+                "The file specified in param_replacement_file is not in JSON format. \n"
+                + f"param_replacement_file: {param_replacement_file}"
             )
             error(msg)
             raise ConvertError(msg)
-
 
     # onnx-simplifier
     # To fully optimize the model, run onnxsim three times in a row.
@@ -615,30 +639,42 @@ def convert(
     # I have no choice but to use subprocesses that we do not want to use.
     if not not_use_onnxsim:
         try:
-            info('')
-            info(Color.REVERSE(f'Model optimizing started'), '=' * 60)
+            info("")
+            info(Color.REVERSE("Model optimizing started"), "=" * 60)
             # Initialization of useless output shapes
             if input_onnx_file_path:
                 try:
                     tmp_onnx_graph = onnx.load(input_onnx_file_path)
                     domain: str = tmp_onnx_graph.domain
                     ir_version: int = tmp_onnx_graph.ir_version
-                    meta_data = {'domain': domain, 'ir_version': ir_version}
+                    meta_data = {"domain": domain, "ir_version": ir_version}
                     metadata_props = None
-                    if hasattr(tmp_onnx_graph, 'metadata_props'):
+                    if hasattr(tmp_onnx_graph, "metadata_props"):
                         metadata_props = tmp_onnx_graph.metadata_props
                     tmp_graph = gs.import_onnx(tmp_onnx_graph)
                     output_clear = False
                     for graph_output in tmp_graph.outputs:
-                        if graph_output.shape is not None \
-                            and sum([1 if isinstance(s, int) and s < 1 else 0 for s in graph_output.shape]) > 0:
+                        if (
+                            graph_output.shape is not None
+                            and sum(
+                                [
+                                    1 if isinstance(s, int) and s < 1 else 0
+                                    for s in graph_output.shape
+                                ]
+                            )
+                            > 0
+                        ):
                             graph_output.shape = None
                             output_clear = True
                     if output_clear:
-                        exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
+                        exported_onnx_graph = gs.export_onnx(
+                            tmp_graph, do_type_check=False, **meta_data
+                        )
                         if metadata_props is not None:
                             exported_onnx_graph.metadata_props.extend(metadata_props)
-                        estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
+                        estimated_graph = onnx.shape_inference.infer_shapes(
+                            exported_onnx_graph
+                        )
                         onnx.save(estimated_graph, f=input_onnx_file_path)
                         del estimated_graph
                 except Exception:
@@ -648,45 +684,45 @@ def convert(
                         del tmp_onnx_graph
             # Simplify
             for _ in range(3):
-                append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
-                    if overwrite_input_shape is not None else []
-                append_param = append_param + ['--no-large-tensor', '10MB'] \
-                    if no_large_tensor else append_param
+                append_param = (
+                    list(["--overwrite-input-shape"] + overwrite_input_shape)
+                    if overwrite_input_shape is not None
+                    else []
+                )
+                append_param = (
+                    append_param + ["--no-large-tensor", "10MB"]
+                    if no_large_tensor
+                    else append_param
+                )
                 result = subprocess.check_output(
-                    [
-                        'onnxsim',
-                        f'{input_onnx_file_path}',
-                        f'{input_onnx_file_path}'
-                    ] + append_param,
-                    stderr=subprocess.PIPE
-                ).decode('utf-8')
+                    ["onnxsim", f"{input_onnx_file_path}", f"{input_onnx_file_path}"]
+                    + append_param,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
                 info(result)
-            info(Color.GREEN(f'Model optimizing complete!'))
-        except Exception as e:
-            warn_tb(
-                'Failed to optimize the onnx file.'
-            )
+            info(Color.GREEN("Model optimizing complete!"))
+        except Exception:
+            warn_tb("Failed to optimize the onnx file.")
 
     # Automatic generation of each OP name - sng4onnx
     if not not_use_opname_auto_generate:
-        info('')
-        info(Color.REVERSE(f'Automatic generation of each OP name started'), '=' * 40)
+        info("")
+        info(Color.REVERSE("Automatic generation of each OP name started"), "=" * 40)
         try:
             op_name_auto_generate(
-                input_onnx_file_path=f'{input_onnx_file_path}',
+                input_onnx_file_path=f"{input_onnx_file_path}",
                 onnx_graph=onnx_graph,
-                output_onnx_file_path=f'{input_onnx_file_path}',
+                output_onnx_file_path=f"{input_onnx_file_path}",
                 non_verbose=True,
             )
-            info(Color.GREEN(f'Automatic generation of each OP name complete!'))
-        except Exception as e:
-            warn_tb(
-                'Failed to automatic generation of each OP name.'
-            )
+            info(Color.GREEN("Automatic generation of each OP name complete!"))
+        except Exception:
+            warn_tb("Failed to automatic generation of each OP name.")
 
     # quantization_type
-    disable_per_channel = False \
-        if quant_type is not None and quant_type == 'per-channel' else True
+    disable_per_channel = (
+        False if quant_type is not None and quant_type == "per-channel" else True
+    )
 
     # Output model in TF v1 (.pb) format
     # Output signatures to saved_model
@@ -700,38 +736,34 @@ def convert(
 
     domain: str = onnx_graph.domain
     ir_version: int = onnx_graph.ir_version
-    meta_data = {'domain': domain, 'ir_version': ir_version}
+    meta_data = {"domain": domain, "ir_version": ir_version}
     metadata_props = None
-    if hasattr(onnx_graph, 'metadata_props'):
+    if hasattr(onnx_graph, "metadata_props"):
         metadata_props = onnx_graph.metadata_props
     graph = gs.import_onnx(onnx_graph)
 
     # Cut the ONNX graph when an input name is specified that interrupts the conversion
     if not input_names_to_interrupt_model_conversion:
-        input_names = [
-            graph_input.name for graph_input in graph.inputs
-        ]
+        input_names = [graph_input.name for graph_input in graph.inputs]
     else:
         try:
             from sne4onnx import extraction
-        except Exception as ex:
+        except Exception:
             msg = (
-                'If --input_names_to_interrupt_model_conversion is specified, ' +\
-                'you must install sne4onnx. pip install sne4onnx'
+                "If --input_names_to_interrupt_model_conversion is specified, "
+                + "you must install sne4onnx. pip install sne4onnx"
             )
             error(msg)
             raise ConvertError(msg)
         # Cut ONNX graph at specified input position
         input_names = [
-            input_op_name \
-                for input_op_name in input_names_to_interrupt_model_conversion
+            input_op_name for input_op_name in input_names_to_interrupt_model_conversion
         ]
-        onnx_graph: onnx.ModelProto = \
-            extraction(
-                input_op_names=input_names,
-                output_op_names=[graph_output.name for graph_output in graph.outputs],
-                onnx_graph=onnx_graph,
-            )
+        onnx_graph: onnx.ModelProto = extraction(
+            input_op_names=input_names,
+            output_op_names=[graph_output.name for graph_output in graph.outputs],
+            onnx_graph=onnx_graph,
+        )
         # Re-import of onnx_graph
         del graph
         graph = gs.import_onnx(onnx_graph)
@@ -747,7 +779,6 @@ def convert(
             remove_enable = not any(name in input_names for name in op_input_names)
             if remove_enable:
                 try:
-                    num_input = len(graph.nodes[idx].inputs)
                     enable_var_input = False
                     for sub_idx, graph_node_input in enumerate(graph.nodes[idx].inputs):
                         if isinstance(graph_node_input, gs.Variable):
@@ -780,79 +811,76 @@ def convert(
 
     # Cut the ONNX graph when an output name is specified that interrupts the conversion
     if not output_names_to_interrupt_model_conversion:
-        output_names = [
-            graph_output.name for graph_output in graph.outputs
-        ]
+        output_names = [graph_output.name for graph_output in graph.outputs]
     else:
         try:
             from sne4onnx import extraction
-        except Exception as ex:
+        except Exception:
             msg = (
-                'If --output_names_to_interrupt_model_conversion is specified, ' +
-                'you must install sne4onnx. pip install sne4onnx'
+                "If --output_names_to_interrupt_model_conversion is specified, "
+                + "you must install sne4onnx. pip install sne4onnx"
             )
             error(msg)
             raise ConvertError(msg)
         # Cut ONNX graph at specified output position
         output_names = [
-            output_op_name \
-                for output_op_name in output_names_to_interrupt_model_conversion
+            output_op_name
+            for output_op_name in output_names_to_interrupt_model_conversion
         ]
-        onnx_graph: onnx.ModelProto = \
-            extraction(
-                input_op_names=[graph_input.name for graph_input in graph.inputs],
-                output_op_names=output_names,
-                onnx_graph=onnx_graph,
-            )
+        onnx_graph: onnx.ModelProto = extraction(
+            input_op_names=[graph_input.name for graph_input in graph.inputs],
+            output_op_names=output_names,
+            onnx_graph=onnx_graph,
+        )
         # Re-import of onnx_graph
         del graph
         graph = gs.import_onnx(onnx_graph)
 
     def sanitizing(node):
-        if hasattr(node, 'name'):
-            node.name = node.name.replace(':','__')
-            if hasattr(node, 'outputs'):
+        if hasattr(node, "name"):
+            node.name = node.name.replace(":", "__")
+            if hasattr(node, "outputs"):
                 for o in node.outputs:
-                    if hasattr(o, 'name'):
-                        o.name = o.name.replace(':','__')
-                    elif hasattr(o, '_name'):
-                        o._name = o._name.replace(':','__')
+                    if hasattr(o, "name"):
+                        o.name = o.name.replace(":", "__")
+                    elif hasattr(o, "_name"):
+                        o._name = o._name.replace(":", "__")
             if output_signaturedefs or output_integer_quantized_tflite:
-                node.name = re.sub('^/', 'wa/', node.name)
-                if hasattr(node, 'inputs'):
+                node.name = re.sub("^/", "wa/", node.name)
+                if hasattr(node, "inputs"):
                     for i in node.inputs:
-                        if hasattr(i, 'name'):
-                            i.name = re.sub('^/', 'wa/', i.name)
-                        elif hasattr(i, '_name'):
-                            i._name = re.sub('^/', 'wa/', i._name)
-                if hasattr(node, 'outputs'):
+                        if hasattr(i, "name"):
+                            i.name = re.sub("^/", "wa/", i.name)
+                        elif hasattr(i, "_name"):
+                            i._name = re.sub("^/", "wa/", i._name)
+                if hasattr(node, "outputs"):
                     for o in node.outputs:
-                        if hasattr(o, 'name'):
-                            o.name = re.sub('^/', 'wa/', o.name)
-                        elif hasattr(o, '_name'):
-                            o._name = re.sub('^/', 'wa/', o._name)
-        elif hasattr(node, '_name'):
-            node._name = node._name.replace(':','__')
-            if hasattr(node, 'outputs'):
+                        if hasattr(o, "name"):
+                            o.name = re.sub("^/", "wa/", o.name)
+                        elif hasattr(o, "_name"):
+                            o._name = re.sub("^/", "wa/", o._name)
+        elif hasattr(node, "_name"):
+            node._name = node._name.replace(":", "__")
+            if hasattr(node, "outputs"):
                 for o in node.outputs:
-                    if hasattr(o, 'name'):
-                        o.name = o.name.replace(':','__')
-                    elif hasattr(o, '_name'):
-                        o._name = o._name.replace(':','__')
+                    if hasattr(o, "name"):
+                        o.name = o.name.replace(":", "__")
+                    elif hasattr(o, "_name"):
+                        o._name = o._name.replace(":", "__")
             if output_signaturedefs or output_integer_quantized_tflite:
-                node._name = re.sub('^/', 'wa/', node._name)
-                if hasattr(node, 'inputs'):
+                node._name = re.sub("^/", "wa/", node._name)
+                if hasattr(node, "inputs"):
                     for i in node.inputs:
-                        if hasattr(i, 'name'):
-                            i.name = re.sub('^/', 'wa/', i.name)
-                        elif hasattr(i, '_name'):
-                            i._name = re.sub('^/', 'wa/', i._name)
-                if hasattr(node, 'outputs'):
+                        if hasattr(i, "name"):
+                            i.name = re.sub("^/", "wa/", i.name)
+                        elif hasattr(i, "_name"):
+                            i._name = re.sub("^/", "wa/", i._name)
+                if hasattr(node, "outputs"):
                     for o in node.outputs:
-                        if hasattr(o, 'name'):
-                            o.name = re.sub('^/', 'wa/', o.name)
-                        elif hasattr(o, '_name'):
-                            o._name = re.sub('^/', 'wa/', o._name)
+                        if hasattr(o, "name"):
+                            o.name = re.sub("^/", "wa/", o.name)
+                        elif hasattr(o, "_name"):
+                            o._name = re.sub("^/", "wa/", o._name)
 
     # sanitizing ':', '/'
     _ = [sanitizing(graph_input) for graph_input in graph.inputs]
@@ -861,8 +889,8 @@ def convert(
     if output_signaturedefs or output_integer_quantized_tflite:
         new_output_names = []
         for output_name in output_names:
-            output_name = output_name.replace(':','__')
-            output_name = re.sub('^/', 'wa/', output_name)
+            output_name = output_name.replace(":", "__")
+            output_name = re.sub("^/", "wa/", output_name)
             new_output_names.append(output_name)
         output_names = new_output_names
 
@@ -870,29 +898,31 @@ def convert(
         onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
         if metadata_props is not None:
             onnx_graph.metadata_props.extend(metadata_props)
-    except Exception as ex:
+    except Exception:
         # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
         pass
 
     # Check if there is an OP that can work only with CUDA
     # Automatically set use_cuda to True if there is an OP that can run only on CUDA
     op_type_list = list(set([node.op for node in graph.nodes]))
-    use_cuda = sum([1 if op_type in CUDA_ONLY_OPS else 0 for op_type in op_type_list]) > 0
+    use_cuda = (
+        sum([1 if op_type in CUDA_ONLY_OPS else 0 for op_type in op_type_list]) > 0
+    )
     # Suggests that if there is an OP that can only work with CUDA and CUDA is disabled, the conversion may fail
     if use_cuda and not check_cuda_enabled():
         msg - (
-            'If the following OPs are included, CUDA must be available and onnxruntime-gpu must be installed. ' +
-            f'{CUDA_ONLY_OPS}'
+            "If the following OPs are included, CUDA must be available and onnxruntime-gpu must be installed. "
+            + f"{CUDA_ONLY_OPS}"
         )
         error(msg)
         raise ConvertError(msg)
 
     # CUDA is used for dummy inference during accuracy checks, but accuracy is degraded.
     if not use_cuda:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-    info('')
-    info(Color.REVERSE(f'Model loaded'), '=' * 72)
+    info("")
+    info(Color.REVERSE("Model loaded"), "=" * 72)
 
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
@@ -906,48 +936,47 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
-        'input_onnx_file_path': input_onnx_file_path if input_onnx_file_path is not None else None,
-        'onnx_graph': onnx_graph,
-        'opset': graph.opset,
-        'op_counta': op_counta,
-        'total_op_count': total_op_count,
-        'batch_size': batch_size,
-        'disable_group_convolution': disable_group_convolution,
-        'enable_rnn_unroll': enable_rnn_unroll,
-        'disable_suppression_flextranspose': disable_suppression_flextranspose,
-        'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
-        'disable_suppression_flexstridedslice': disable_suppression_flexstridedslice,
-        'disable_strict_mode': disable_strict_mode,
-        'number_of_dimensions_after_flexstridedslice_compression': number_of_dimensions_after_flexstridedslice_compression,
-        'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
-        'replace_argmax_to_reducemax_and_indices_is_int64': replace_argmax_to_reducemax_and_indices_is_int64,
-        'replace_argmax_to_reducemax_and_indices_is_float32': replace_argmax_to_reducemax_and_indices_is_float32,
-        'replace_argmax_to_fused_argmax_and_indices_is_int64': replace_argmax_to_fused_argmax_and_indices_is_int64,
-        'replace_argmax_to_fused_argmax_and_indices_is_float32': replace_argmax_to_fused_argmax_and_indices_is_float32,
-        'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
-        'replace_to_pseudo_operators': replace_to_pseudo_operators,
-        'replacement_parameters': replacement_parameters,
-        'mvn_epsilon': mvn_epsilon,
-        'output_signaturedefs': output_signaturedefs,
-        'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
-        'output_integer_quantized_tflite': output_integer_quantized_tflite,
-        'gelu_replace_op_names': {},
-        'space_to_depth_replace_op_names': {},
-        'relu_relu6_merge_op_names': {},
-        'mul_div_replace_op_names': {},
-        'use_cuda': use_cuda,
+        "input_onnx_file_path": input_onnx_file_path
+        if input_onnx_file_path is not None
+        else None,
+        "onnx_graph": onnx_graph,
+        "opset": graph.opset,
+        "op_counta": op_counta,
+        "total_op_count": total_op_count,
+        "batch_size": batch_size,
+        "disable_group_convolution": disable_group_convolution,
+        "enable_rnn_unroll": enable_rnn_unroll,
+        "disable_suppression_flextranspose": disable_suppression_flextranspose,
+        "number_of_dimensions_after_flextranspose_compression": number_of_dimensions_after_flextranspose_compression,
+        "disable_suppression_flexstridedslice": disable_suppression_flexstridedslice,
+        "disable_strict_mode": disable_strict_mode,
+        "number_of_dimensions_after_flexstridedslice_compression": number_of_dimensions_after_flexstridedslice_compression,
+        "optimization_for_gpu_delegate": optimization_for_gpu_delegate,
+        "replace_argmax_to_reducemax_and_indices_is_int64": replace_argmax_to_reducemax_and_indices_is_int64,
+        "replace_argmax_to_reducemax_and_indices_is_float32": replace_argmax_to_reducemax_and_indices_is_float32,
+        "replace_argmax_to_fused_argmax_and_indices_is_int64": replace_argmax_to_fused_argmax_and_indices_is_int64,
+        "replace_argmax_to_fused_argmax_and_indices_is_float32": replace_argmax_to_fused_argmax_and_indices_is_float32,
+        "fused_argmax_scale_ratio": fused_argmax_scale_ratio,
+        "replace_to_pseudo_operators": replace_to_pseudo_operators,
+        "replacement_parameters": replacement_parameters,
+        "mvn_epsilon": mvn_epsilon,
+        "output_signaturedefs": output_signaturedefs,
+        "output_nms_with_dynamic_tensor": output_nms_with_dynamic_tensor,
+        "output_integer_quantized_tflite": output_integer_quantized_tflite,
+        "gelu_replace_op_names": {},
+        "space_to_depth_replace_op_names": {},
+        "relu_relu6_merge_op_names": {},
+        "mul_div_replace_op_names": {},
+        "use_cuda": use_cuda,
     }
 
     tf_layers_dict = {}
 
-    info('')
-    info(Color.REVERSE(f'Model conversion started'), '=' * 60)
+    info("")
+    info(Color.REVERSE("Model conversion started"), "=" * 60)
 
     with graph.node_ids():
-
-        onnx_graph_input_names: List[str] = [
-            inputop.name for inputop in graph.inputs
-        ]
+        onnx_graph_input_names: List[str] = [inputop.name for inputop in graph.inputs]
         onnx_graph_output_names: List[str] = [
             outputop.name for outputop in graph.outputs
         ]
@@ -974,20 +1003,24 @@ def convert(
             graph_input.name: 'input'
             """
             # AUTO calib 4D check
-            if output_integer_quantized_tflite \
-                and custom_input_op_name_np_data_path is None \
-                and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
+            if (
+                output_integer_quantized_tflite
+                and custom_input_op_name_np_data_path is None
+                and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4)
+            ):
                 msg = (
-                    'For INT8 quantization, the input data type must be Float32. ' +
-                    'Also, if --custom_input_op_name_np_data_path is not specified, ' +
-                    'all input OPs must assume 4D tensor image data. ' +
-                    f'INPUT Name: {graph_input.name} INPUT Shape: {graph_input.shape} INPUT dtype: {graph_input.dtype}'
+                    "For INT8 quantization, the input data type must be Float32. "
+                    + "Also, if --custom_input_op_name_np_data_path is not specified, "
+                    + "all input OPs must assume 4D tensor image data. "
+                    + f"INPUT Name: {graph_input.name} "
+                    + f"INPUT Shape: {graph_input.shape} "
+                    + f"INPUT dtype: {graph_input.dtype}"
                 )
                 error(msg)
                 raise ConvertError(msg)
 
             # make input
-            op = importlib.import_module(f'onnx2tf.ops.Input')
+            op = importlib.import_module("onnx2tf.ops.Input")
 
             # substitution because saved_model does not allow colons
             # Substitution because saved_model does not allow leading slashes in op names
@@ -1002,7 +1035,7 @@ def convert(
                 **additional_parameters,
             )
             op_counta += 1
-            additional_parameters['op_counta'] = op_counta
+            additional_parameters["op_counta"] = op_counta
 
         # Get Inputs
         inputs = get_tf_model_inputs(
@@ -1012,13 +1045,14 @@ def convert(
         # download test data
         all_four_dim = sum(
             [
-                1 for input in inputs \
-                    if len(input.shape) == 4 \
-                        and input.shape[0] is not None \
-                        and input.shape[0] <= 20 \
-                        and input.shape[-1] == 3 \
-                        and input.shape[1] is not None \
-                        and input.shape[2] is not None
+                1
+                for input in inputs
+                if len(input.shape) == 4
+                and input.shape[0] is not None
+                and input.shape[0] <= 20
+                and input.shape[-1] == 3
+                and input.shape[1] is not None
+                and input.shape[2] is not None
             ]
         ) == len(inputs)
         same_batch_dim = False
@@ -1029,7 +1063,7 @@ def convert(
         test_data_nhwc = None
         if all_four_dim and same_batch_dim:
             test_data: np.ndarray = download_test_image_data()
-            test_data_nhwc = test_data[:inputs[0].shape[0], ...]
+            test_data_nhwc = test_data[: inputs[0].shape[0], ...]
             if check_onnx_tf_outputs_sample_data_normalization == "norm":
                 pass
             elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
@@ -1047,16 +1081,15 @@ def convert(
             full_ops_output_names.extend(full_ops_output_names_sub)
         # Models with errors during inference in onnxruntime skip dummy inference.
         try:
-            onnx_outputs_for_validation: List[np.ndarray] = \
-                dummy_onnx_inference(
-                    onnx_graph=onnx_graph,
-                    output_names=full_ops_output_names,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    tf_layers_dict=tf_layers_dict,
-                    use_cuda=use_cuda,
-                    disable_strict_mode=disable_strict_mode,
-                )
+            onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=full_ops_output_names,
+                test_data_nhwc=test_data_nhwc,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                tf_layers_dict=tf_layers_dict,
+                use_cuda=use_cuda,
+                disable_strict_mode=disable_strict_mode,
+            )
             """
             onnx_tensor_infos_for_validation:
                 {
@@ -1067,20 +1100,25 @@ def convert(
                 }
             """
             onnx_tensor_infos_for_validation = {
-                ops_output_name: onnx_output_for_validation \
-                    for ops_output_name, onnx_output_for_validation \
-                        in zip(full_ops_output_names, onnx_outputs_for_validation)
+                ops_output_name: onnx_output_for_validation
+                for ops_output_name, onnx_output_for_validation in zip(
+                    full_ops_output_names, onnx_outputs_for_validation
+                )
             }
             del onnx_outputs_for_validation
         except Exception as ex:
             warn(
-                f'The optimization process for shape estimation is skipped ' +
-                f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
+                "The optimization process for shape estimation is skipped "
+                + "because it contains OPs that cannot be inferred by the standard onnxruntime."
             )
-            warn(f'{ex}')
-        additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
-        additional_parameters['test_data_nhwc'] = test_data_nhwc
-        additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
+            warn(f"{ex}")
+        additional_parameters[
+            "onnx_tensor_infos_for_validation"
+        ] = onnx_tensor_infos_for_validation
+        additional_parameters["test_data_nhwc"] = test_data_nhwc
+        additional_parameters[
+            "custom_input_op_name_np_data_path"
+        ] = custom_input_op_name_np_data_path
 
         # Addressing Einsum and OneHot shape_inference failure for onnx.
         # However, relief is provided only when the input tensor does not contain undefined dimensions.
@@ -1095,37 +1133,59 @@ def convert(
                 is_none_in_inputs = True
                 break
         if onnx_tensor_infos_for_validation is not None and not is_none_in_inputs:
-            correction_ops = [graph_node for graph_node in graph.nodes if graph_node.op in ['Einsum', 'OneHot']]
+            correction_ops = [
+                graph_node
+                for graph_node in graph.nodes
+                if graph_node.op in ["Einsum", "OneHot"]
+            ]
             if len(correction_ops) > 0:
                 for correction_op in correction_ops:
                     correction_op_output: gs.Variable = correction_op.outputs[0]
                     if correction_op_output.name in onnx_tensor_infos_for_validation:
-                        onnx_output_shape = list(onnx_tensor_infos_for_validation[correction_op_output.name].shape)
+                        onnx_output_shape = list(
+                            onnx_tensor_infos_for_validation[
+                                correction_op_output.name
+                            ].shape
+                        )
                         correction_op_output.shape = onnx_output_shape
                 try:
-                    exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
+                    exported_onnx_graph = gs.export_onnx(
+                        graph, do_type_check=False, **meta_data
+                    )
                     if metadata_props is not None:
                         exported_onnx_graph.metadata_props.extend(metadata_props)
-                    estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
+                    estimated_graph = onnx.shape_inference.infer_shapes(
+                        exported_onnx_graph
+                    )
                     if input_onnx_file_path is not None:
                         onnx.save(estimated_graph, input_onnx_file_path)
                         if not not_use_onnxsim:
                             try:
-                                append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
-                                    if overwrite_input_shape is not None else []
-                                append_param = append_param + ['--no-large-tensor', '10MB'] \
-                                    if no_large_tensor else append_param
+                                append_param = (
+                                    list(
+                                        ["--overwrite-input-shape"]
+                                        + overwrite_input_shape
+                                    )
+                                    if overwrite_input_shape is not None
+                                    else []
+                                )
+                                append_param = (
+                                    append_param + ["--no-large-tensor", "10MB"]
+                                    if no_large_tensor
+                                    else append_param
+                                )
                                 result = subprocess.check_output(
                                     [
-                                        'onnxsim',
-                                        f'{input_onnx_file_path}',
-                                        f'{input_onnx_file_path}'
-                                    ] + append_param,
-                                    stderr=subprocess.PIPE
-                                ).decode('utf-8')
+                                        "onnxsim",
+                                        f"{input_onnx_file_path}",
+                                        f"{input_onnx_file_path}",
+                                    ]
+                                    + append_param,
+                                    stderr=subprocess.PIPE,
+                                ).decode("utf-8")
                                 graph = gs.import_onnx(onnx.load(input_onnx_file_path))
-                            except Exception as e:
-                                warn_tb('')
+                            except Exception:
+                                warn_tb("")
                     else:
                         graph = gs.import_onnx(estimated_graph)
                 except Exception:
@@ -1136,9 +1196,9 @@ def convert(
         for graph_node in graph.nodes:
             optype = graph_node.op
             try:
-                op = importlib.import_module(f'onnx2tf.ops.{optype}')
-            except ModuleNotFoundError as ex:
-                msg = f'{optype} OP is not yet implemented.'
+                op = importlib.import_module(f"onnx2tf.ops.{optype}")
+            except ModuleNotFoundError:
+                msg = f"{optype} OP is not yet implemented."
                 error(msg)
                 raise ConvertError(msg)
 
@@ -1152,9 +1212,9 @@ def convert(
                 **additional_parameters,
             )
             op_counta += 1
-            additional_parameters['op_counta'] = op_counta
+            additional_parameters["op_counta"] = op_counta
 
-        del additional_parameters['onnx_tensor_infos_for_validation']
+        del additional_parameters["onnx_tensor_infos_for_validation"]
         del onnx_tensor_infos_for_validation
 
         # Get Outputs
@@ -1163,9 +1223,13 @@ def convert(
             output_names=output_names,
         )
         if not outputs:
-            output_names = [output_name.replace(':','__') for output_name in output_names]
+            output_names = [
+                output_name.replace(":", "__") for output_name in output_names
+            ]
             if output_signaturedefs or output_integer_quantized_tflite:
-                output_names = [re.sub('^/', '', output_name) for output_name in output_names]
+                output_names = [
+                    re.sub("^/", "", output_name) for output_name in output_names
+                ]
             outputs = get_tf_model_outputs(
                 tf_layers_dict=tf_layers_dict,
                 output_names=output_names,
@@ -1173,29 +1237,28 @@ def convert(
 
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
-            if hasattr(output, 'node'):
-                output.node.layer._name = name.replace(':','__')
+            if hasattr(output, "node"):
+                output.node.layer._name = name.replace(":", "__")
                 if output_signaturedefs or output_integer_quantized_tflite:
-                    output.node.layer._name = re.sub('^/', '', output.node.layer._name)
+                    output.node.layer._name = re.sub("^/", "", output.node.layer._name)
 
         # Support for constant output
         # Bring constant layers unconnected to the model into the model.
         # It is assumed that the "-nuo" option is specified because
         # running onnxsim will remove constants from the ONNX file.
         # https://github.com/PINTO0309/onnx2tf/issues/627
-        if isinstance(inputs, List) \
-            and len(inputs) > 0 \
-            and isinstance(outputs, List):
+        if isinstance(inputs, List) and len(inputs) > 0 and isinstance(outputs, List):
             x = inputs[0]
 
             for oidx, output_layer in enumerate(outputs):
-                if isinstance(output_layer, tf.Tensor) \
-                    and hasattr(output_layer, 'numpy'):
+                if isinstance(output_layer, tf.Tensor) and hasattr(
+                    output_layer, "numpy"
+                ):
                     y = output_layer.numpy()
                     outputs[oidx] = tf_keras.layers.Lambda(lambda x: tf.constant(y))(x)
 
         model = tf_keras.Model(inputs=inputs, outputs=outputs)
-        debug('')
+        debug("")
 
         # The process ends normally without saving the model.
         if disable_model_save:
@@ -1204,56 +1267,73 @@ def convert(
         # Output in Keras h5 format
         if output_h5:
             try:
-                info(Color.REVERSE(f'h5 output started'), '=' * 67)
+                info(Color.REVERSE("h5 output started"), "=" * 67)
                 # Structure (JSON)
                 try:
-                    info(Color.GREEN(f'json output start...'))
-                    open(f'{output_folder_path}/{output_file_name}_float32.json', 'w').write(model.to_json())
-                    info(Color.GREEN(f'json output finish'))
+                    info(Color.GREEN("json output start..."))
+                    open(
+                        f"{output_folder_path}/{output_file_name}_float32.json", "w"
+                    ).write(model.to_json())
+                    info(Color.GREEN("json output finish"))
                 except Exception as e:
                     error_tb(e)
                 # Weights (h5)
                 try:
-                    info(Color.GREEN(f'weights.h5 output start...'))
-                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.h5', save_format='h5')
-                    info(Color.GREEN(f'weights.h5 output finish'))
+                    info(Color.GREEN("weights.h5 output start..."))
+                    model.save_weights(
+                        f"{output_folder_path}/{output_file_name}_float32.weights.h5",
+                        save_format="h5",
+                    )
+                    info(Color.GREEN("weights.h5 output finish"))
                 except Exception as e:
                     error_tb(e)
-                    
+
                 # Weights (keras)
                 try:
-                    info(Color.GREEN(f'weights.keras output start...'))
-                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.keras', save_format='keras')
-                    info(Color.GREEN(f'weights.keras output finish'))
+                    info(Color.GREEN("weights.keras output start..."))
+                    model.save_weights(
+                        f"{output_folder_path}/{output_file_name}_float32.weights.keras",
+                        save_format="keras",
+                    )
+                    info(Color.GREEN("weights.keras output finish"))
                 except Exception as e:
                     error_tb(e)
                 # Weights (TF)
                 try:
-                    info(Color.GREEN(f'weights.tf output start...'))
-                    model.save_weights(f'{output_folder_path}/{output_file_name}_float32.weights.tf', save_format='tf')
-                    info(Color.GREEN(f'weights.tf output finish'))
+                    info(Color.GREEN("weights.tf output start..."))
+                    model.save_weights(
+                        f"{output_folder_path}/{output_file_name}_float32.weights.tf",
+                        save_format="tf",
+                    )
+                    info(Color.GREEN("weights.tf output finish"))
                 except Exception as e:
                     error_tb(e)
                 # Monolithic (keras)
                 try:
-                    info(Color.GREEN(f'keras output start...'))
-                    model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format='keras')
-                    info(Color.GREEN(f'keras output finish'))
+                    info(Color.GREEN("keras output start..."))
+                    model.save(
+                        f"{output_folder_path}/{output_file_name}_float32.keras",
+                        save_format="keras",
+                    )
+                    info(Color.GREEN("keras output finish"))
                 except Exception as e:
                     error_tb(e)
                 # Monolithic (h5)
-                info(Color.GREEN(f'h5 output start...'))
-                model.save(f'{output_folder_path}/{output_file_name}_float32.h5', save_format='h5')
-                info(Color.GREEN(f'h5 output complete!'))
+                info(Color.GREEN("h5 output start..."))
+                model.save(
+                    f"{output_folder_path}/{output_file_name}_float32.h5",
+                    save_format="h5",
+                )
+                info(Color.GREEN("h5 output complete!"))
             except ValueError as e:
                 msg_list = [s for s in e.args if isinstance(s, str)]
                 if len(msg_list) > 0:
                     for s in msg_list:
-                        if 'Unable to serialize VariableSpec' in s:
+                        if "Unable to serialize VariableSpec" in s:
                             warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because h5 does not support GroupConvolution. ' +
-                                f'If h5 is needed, specify --disable_group_convolution to retransform the model.'
+                                "This model contains GroupConvolution and is automatically optimized for TFLite, "
+                                + "but is not output because h5 does not support GroupConvolution. "
+                                + "If h5 is needed, specify --disable_group_convolution to retransform the model."
                             )
                             break
                 else:
@@ -1264,18 +1344,21 @@ def convert(
         # Output in Keras keras_v3 format
         if output_keras_v3:
             try:
-                info(Color.REVERSE(f'keras_v3 output started'), '=' * 61)
-                model.save(f'{output_folder_path}/{output_file_name}_float32_v3.keras', save_format="keras_v3")
-                info(Color.GREEN(f'keras_v3 output complete!'))
+                info(Color.REVERSE("keras_v3 output started"), "=" * 61)
+                model.save(
+                    f"{output_folder_path}/{output_file_name}_float32_v3.keras",
+                    save_format="keras_v3",
+                )
+                info(Color.GREEN("keras_v3 output complete!"))
             except ValueError as e:
                 msg_list = [s for s in e.args if isinstance(s, str)]
                 if len(msg_list) > 0:
                     for s in msg_list:
-                        if 'Unable to serialize VariableSpec' in s:
+                        if "Unable to serialize VariableSpec" in s:
                             warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because keras_v3 does not support GroupConvolution. ' +
-                                f'If keras_v3 is needed, specify --disable_group_convolution to retransform the model.'
+                                "This model contains GroupConvolution and is automatically optimized for TFLite, "
+                                + "but is not output because keras_v3 does not support GroupConvolution. "
+                                + "If keras_v3 is needed, specify --disable_group_convolution to retransform the model."
                             )
                             break
                 else:
@@ -1285,43 +1368,61 @@ def convert(
 
         # Create concrete func
         run_model = tf.function(
-            func=lambda *inputs : model(inputs),
-            input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+            func=lambda *inputs: model(inputs),
+            input_signature=[
+                tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name)
+                for tensor in model.inputs
+            ],
         )
         concrete_func = run_model.get_concrete_function()
 
-        SIGNATURE_KEY = 'serving_default'
+        SIGNATURE_KEY = "serving_default"
 
         # saved_model
         try:
             # concrete_func
-            info(Color.REVERSE(f'saved_model output started'), '=' * 58)
+            info(Color.REVERSE("saved_model output started"), "=" * 58)
             if not output_signaturedefs and not output_integer_quantized_tflite:
                 tf.saved_model.save(model, output_folder_path)
             else:
                 export_archive = tf_keras.export.ExportArchive()
                 export_archive.add_endpoint(
                     name=SIGNATURE_KEY,
-                    fn=lambda *inputs : model(inputs),
-                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+                    fn=lambda *inputs: model(inputs),
+                    input_signature=[
+                        tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name)
+                        for tensor in model.inputs
+                    ],
                 )
                 export_archive.write_out(output_folder_path)
-            info(Color.GREEN(f'saved_model output complete!'))
-        except TypeError as e:
+            info(Color.GREEN("saved_model output complete!"))
+        except TypeError:
             # Switch to .pb
-            info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
+            info(
+                Color.GREEN(
+                    "Switch to the output of an optimized protocol buffer file (.pb)."
+                )
+            )
         except (KeyError, AssertionError) as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
                 try:
                     for s in msg_list:
-                        if 'Failed to add concrete function' in s \
-                            or "Tried to export a function which references an 'untracked' resource" in s:
+                        if (
+                            "Failed to add concrete function" in s
+                            or "Tried to export a function which references an 'untracked' resource"
+                            in s
+                        ):
                             export_archive = tf_keras.export.ExportArchive()
                             export_archive.add_endpoint(
                                 name=SIGNATURE_KEY,
-                                fn=lambda *inputs : model(inputs),
-                                input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+                                fn=lambda *inputs: model(inputs),
+                                input_signature=[
+                                    tf.TensorSpec(
+                                        tensor.shape, tensor.dtype, tensor.name
+                                    )
+                                    for tensor in model.inputs
+                                ],
                             )
                             export_archive.write_out(output_folder_path)
                             break
@@ -1329,15 +1430,16 @@ def convert(
                     msg_list = [s for s in e.args if isinstance(s, str)]
                     if len(msg_list) > 0:
                         for s in msg_list:
-                            if 'A root scope name has to match the following pattern' in s:
+                            if (
+                                "A root scope name has to match the following pattern"
+                                in s
+                            ):
                                 error(
-                                    f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                                    "Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$"
                                 )
                                 matches = re.findall(r"'([^']*)'", s)
-                                error(f'{matches[0]}')
-                                msg = (
-                                    'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                                )
+                                error(f"{matches[0]}")
+                                msg = "Please convert again with the `-osd` or `--output_signaturedefs` option."
                                 error(msg)
                                 raise ConvertError(msg)
                     else:
@@ -1348,15 +1450,13 @@ def convert(
             msg_list = [s for s in e.args if isinstance(s, str)]
             if len(msg_list) > 0:
                 for s in msg_list:
-                    if 'A root scope name has to match the following pattern' in s:
+                    if "A root scope name has to match the following pattern" in s:
                         error(
-                            f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                            "Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$"
                         )
                         matches = re.findall(r"'([^']*)'", s)
-                        error(f'{matches[0]}')
-                        msg = (
-                            'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                        )
+                        error(f"{matches[0]}")
+                        msg = "Please convert again with the `-osd` or `--output_signaturedefs` option."
                         error(msg)
                         raise ConvertError(msg)
             else:
@@ -1367,8 +1467,11 @@ def convert(
         # TFv1 .pb
         if output_tfv1_pb:
             try:
-                info(Color.REVERSE('TFv1 v1 .pb output started'), '=' * 58)
-                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+                info(Color.REVERSE("TFv1 v1 .pb output started"), "=" * 58)
+                from tensorflow.python.framework.convert_to_constants import (
+                    convert_variables_to_constants_v2,
+                )
+
                 imported = tf.saved_model.load(output_folder_path)
                 f = imported.signatures[SIGNATURE_KEY]
                 frozen_func = convert_variables_to_constants_v2(f)
@@ -1376,14 +1479,14 @@ def convert(
                 tf.io.write_graph(
                     graph_or_graph_def=frozen_func.graph,
                     logdir=output_folder_path,
-                    name=f'{output_file_name}_float32.pb',
+                    name=f"{output_file_name}_float32.pb",
                     as_text=False,
                 )
-                info(Color.GREEN(f'TFv1 .pb output complete!'))
-            except KeyError as e:
+                info(Color.GREEN("TFv1 .pb output complete!"))
+            except KeyError:
                 warn(
-                    f'Probably due to GroupConvolution, saved_model could not be generated successfully, ' +
-                    f'so onnx2tf skip the output of TensorFlow v1 pb.'
+                    "Probably due to GroupConvolution, saved_model could not be generated successfully, "
+                    + "so onnx2tf skip the output of TensorFlow v1 pb."
                 )
             except Exception as e:
                 error_tb(e)
@@ -1402,21 +1505,19 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
-        converter = tf.lite.TFLiteConverter.from_concrete_functions(
-            [concrete_func]
-        )
+        converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
         ]
         converter.unfold_batchmatmul = enable_batchmatmul_unfold
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/{output_file_name}_float32.tflite', 'wb') as w:
+        with open(f"{output_folder_path}/{output_file_name}_float32.tflite", "wb") as w:
             w.write(tflite_model)
         if copy_onnx_input_output_names_to_tflite:
             rewrite_tflite_inout_opname(
                 output_folder_path=output_folder_path,
-                tflite_file_name=f'{output_file_name}_float32.tflite',
+                tflite_file_name=f"{output_file_name}_float32.tflite",
                 onnx_input_names=onnx_graph_input_names,
                 onnx_output_names=onnx_graph_output_names,
                 onnx_graph_input_shapes=onnx_graph_input_shapes,
@@ -1424,10 +1525,10 @@ def convert(
             )
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float32.tflite',
-                output_weights_file_path=f'{output_folder_path}/{output_file_name}_float32_weights.h5',
+                extract_target_tflite_file_path=f"{output_folder_path}/{output_file_name}_float32.tflite",
+                output_weights_file_path=f"{output_folder_path}/{output_file_name}_float32_weights.h5",
             )
-        info(Color.GREEN(f'Float32 tflite output complete!'))
+        info(Color.GREEN("Float32 tflite output complete!"))
 
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_types = [tf.float16]
@@ -1437,15 +1538,17 @@ def convert(
         ]
 
         if enable_accumulation_type_float16:
-            converter.target_spec._experimental_supported_accumulation_type = tf.dtypes.float16
+            converter.target_spec._experimental_supported_accumulation_type = (
+                tf.dtypes.float16
+            )
 
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/{output_file_name}_float16.tflite', 'wb') as w:
+        with open(f"{output_folder_path}/{output_file_name}_float16.tflite", "wb") as w:
             w.write(tflite_model)
         if copy_onnx_input_output_names_to_tflite:
             rewrite_tflite_inout_opname(
                 output_folder_path=output_folder_path,
-                tflite_file_name=f'{output_file_name}_float16.tflite',
+                tflite_file_name=f"{output_file_name}_float16.tflite",
                 onnx_input_names=onnx_graph_input_names,
                 onnx_output_names=onnx_graph_output_names,
                 onnx_graph_input_shapes=onnx_graph_input_shapes,
@@ -1453,24 +1556,22 @@ def convert(
             )
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float16.tflite',
-                output_weights_file_path=f'{output_folder_path}/{output_file_name}_float16_weights.h5',
+                extract_target_tflite_file_path=f"{output_folder_path}/{output_file_name}_float16.tflite",
+                output_weights_file_path=f"{output_folder_path}/{output_file_name}_float16_weights.h5",
             )
-        info(Color.GREEN(f'Float16 tflite output complete!'))
+        info(Color.GREEN("Float16 tflite output complete!"))
 
         # Run TFLite ModelAnalyzer on the generated Float16 tflite model
         # to check if the model can be supported by GPU Delegate.
         if check_gpu_delegate_compatibility:
-            print('')
+            print("")
             try:
                 tf.lite.experimental.Analyzer.analyze(
                     model_content=tflite_model,
                     gpu_compatibility=True,
                 )
-            except Exception as ex:
-                warn_tb(
-                    'TFLite ModelAnalyzer failed.'
-                )
+            except Exception:
+                warn_tb("TFLite ModelAnalyzer failed.")
 
         # Dynamic Range Quantization
         if output_dynamic_range_quantized_tflite or output_integer_quantized_tflite:
@@ -1487,12 +1588,24 @@ def convert(
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite', 'wb') as w:
+                output_dynamic_range_quant_filename = (
+                    f"{output_file_name}_dynamic_range_quant.tflite"
+                )
+                output_dynamic_range_quant_path = os.path.join(
+                    output_folder_path, output_dynamic_range_quant_filename
+                )
+                output_dynamic_range_quant_weights_filename = (
+                    f"{output_file_name}_dynamic_range_quant_weights.h5"
+                )
+                output_dynamic_range_quant_weights_path = os.path.join(
+                    output_folder_path, output_dynamic_range_quant_weights_filename
+                )
+                with open(output_dynamic_range_quant_path, "wb") as w:
                     w.write(tflite_model)
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
-                        tflite_file_name=f'{output_file_name}_dynamic_range_quant.tflite',
+                        tflite_file_name=f"{output_file_name}_dynamic_range_quant.tflite",
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                         onnx_graph_input_shapes=onnx_graph_input_shapes,
@@ -1500,50 +1613,69 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant_weights.h5',
+                        extract_target_tflite_file_path=output_dynamic_range_quant_path,
+                        output_weights_file_path=output_dynamic_range_quant_weights_path,
                     )
-                info(Color.GREEN(f'Dynamic Range Quantization tflite output complete!'))
-            except RuntimeError as ex:
-                warn_tb(
-                    'Dynamic Range Quantization tflite output failed.'
-                )
+                info(Color.GREEN("Dynamic Range Quantization tflite output complete!"))
+            except RuntimeError:
+                warn_tb("Dynamic Range Quantization tflite output failed.")
 
         # Quantized TFLite
         if output_integer_quantized_tflite:
             # Get signatures/input keys
-            trackable_obj = \
-                tf.saved_model.load(
-                    output_folder_path
-                )
-            loaded_saved_model: _WrapperFunction = trackable_obj.signatures[SIGNATURE_KEY]
-            structured_input_signature: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_input_signature[1]
-            structured_outputs: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_outputs
+            trackable_obj = tf.saved_model.load(output_folder_path)
+            loaded_saved_model: _WrapperFunction = trackable_obj.signatures[
+                SIGNATURE_KEY
+            ]
+            structured_input_signature: Dict[
+                str, tf.TensorSpec
+            ] = loaded_saved_model.structured_input_signature[1]
+            structured_outputs: Dict[
+                str, tf.TensorSpec
+            ] = loaded_saved_model.structured_outputs
 
             input_keys: List[str] = list(structured_input_signature.keys())
-            input_shapes: List[tf.TensorShape] = [v.shape for v in structured_input_signature.values()]
-            input_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_input_signature.values()]
+            input_shapes: List[tf.TensorShape] = [
+                v.shape for v in structured_input_signature.values()
+            ]
+            input_dtypes: List[tf.dtypes.DType] = [
+                v.dtype for v in structured_input_signature.values()
+            ]
 
             output_keys: List[str] = list(structured_outputs.keys())
-            output_shapes: List[tf.TensorShape] = [v.shape for v in structured_outputs.values()]
-            output_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_outputs.values()]
+            output_shapes: List[tf.TensorShape] = [
+                v.shape for v in structured_outputs.values()
+            ]
+            output_dtypes: List[tf.dtypes.DType] = [
+                v.dtype for v in structured_outputs.values()
+            ]
 
-            print('')
-            info(Color.BLUE(f'Signature information for quantization'))
-            info(Color.BLUE(f'signature_name') + f': {SIGNATURE_KEY}')
-            for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
+            print("")
+            info(Color.BLUE("Signature information for quantization"))
+            info(Color.BLUE("signature_name") + f": {SIGNATURE_KEY}")
+            for idx, (input_key, input_shape, input_dtype) in enumerate(
+                zip(input_keys, input_shapes, input_dtypes)
+            ):
                 info(
-                    Color.BLUE(f'input_name.{idx}') + f': {input_key} '+
-                    Color.BLUE(f'shape') + f': {input_shape} '+
-                    Color.BLUE(f'dtype') + f': {input_dtype}'
+                    Color.BLUE(f"input_name.{idx}")
+                    + f": {input_key} "
+                    + Color.BLUE("shape")
+                    + f": {input_shape} "
+                    + Color.BLUE("dtype")
+                    + f": {input_dtype}"
                 )
-            for idx, (output_key, output_shape, output_dtype) in enumerate(zip(output_keys, output_shapes, output_dtypes)):
+            for idx, (output_key, output_shape, output_dtype) in enumerate(
+                zip(output_keys, output_shapes, output_dtypes)
+            ):
                 info(
-                    Color.BLUE(f'output_name.{idx}') + f': {output_key} '+
-                    Color.BLUE(f'shape') + f': {output_shape} '+
-                    Color.BLUE(f'dtype') + f': {output_dtype}'
+                    Color.BLUE(f"output_name.{idx}")
+                    + f": {output_key} "
+                    + Color.BLUE("shape")
+                    + f": {output_shape} "
+                    + Color.BLUE("dtype")
+                    + f": {output_dtype}"
                 )
-            print('')
+            print("")
 
             # INT8 Converter
             converter = tf.lite.TFLiteConverter.from_saved_model(
@@ -1555,26 +1687,27 @@ def convert(
             # and --quant_calib_input_op_name_np_data_path is not specified.
             # Otherwise, calibrate using the data specified in --quant_calib_input_op_name_np_data_path.
             calib_data_dict: Dict[str, List[np.ndarray, np.ndarray, np.ndarray]] = {}
-            model_input_name_list = [
-                model_input.name for model_input in model.inputs
-            ]
+            model_input_name_list = [model_input.name for model_input in model.inputs]
             data_count = 0
-            if custom_input_op_name_np_data_path is None \
-                and model.inputs[0].dtype == tf.float32 \
-                and len(model.inputs[0].shape) == 4:
-
+            if (
+                custom_input_op_name_np_data_path is None
+                and model.inputs[0].dtype == tf.float32
+                and len(model.inputs[0].shape) == 4
+            ):
                 # AUTO calib 4D images
                 calib_data: np.ndarray = download_test_image_data()
                 data_count = calib_data.shape[0]
                 for model_input in model.inputs:
-                    if model_input.dtype != tf.float32 \
-                        or len(model_input.shape) != 4 \
-                        or model_input.shape[-1] not in [3, 4]:
+                    if (
+                        model_input.dtype != tf.float32
+                        or len(model_input.shape) != 4
+                        or model_input.shape[-1] not in [3, 4]
+                    ):
                         msg = (
-                            f'For models that have multiple input OPs and need to perform INT8 quantization calibration '+
-                            f'using non-rgb-image/non-rgba-image input tensors, specify the calibration data with '+
-                            f'--quant_calib_input_op_name_np_data_path. '+
-                            f'model_input[n].shape: {model_input.shape}'
+                            "For models that have multiple input OPs and need to perform INT8 quantization calibration "
+                            + "using non-rgb-image/non-rgba-image input tensors, specify the calibration data with "
+                            + "--quant_calib_input_op_name_np_data_path. "
+                            + f"model_input[n].shape: {model_input.shape}"
                         )
                         error(msg)
                         raise ConvertError(msg)
@@ -1585,35 +1718,46 @@ def convert(
                         std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
                     elif model_input.shape[-1] == 4:
                         # RGBA
-                        mean = np.asarray([[[[0.485, 0.456, 0.406, 0.000]]]], dtype=np.float32)
-                        std = np.asarray([[[[0.229, 0.224, 0.225, 1.000]]]], dtype=np.float32)
-                        new_element_array = np.full((*calib_data.shape[:-1], 1), 0.500, dtype=np.float32)
-                        calib_data = np.concatenate((calib_data, new_element_array), axis=-1)
+                        mean = np.asarray(
+                            [[[[0.485, 0.456, 0.406, 0.000]]]], dtype=np.float32
+                        )
+                        std = np.asarray(
+                            [[[[0.229, 0.224, 0.225, 1.000]]]], dtype=np.float32
+                        )
+                        new_element_array = np.full(
+                            (*calib_data.shape[:-1], 1), 0.500, dtype=np.float32
+                        )
+                        calib_data = np.concatenate(
+                            (calib_data, new_element_array), axis=-1
+                        )
                     else:
                         # Others
                         mean = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
                         std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
 
-                    calib_data_dict[model_input.name] = \
-                        [
-                            tf.image.resize(
-                                calib_data.copy(),
-                                (
-                                    model_input.shape[1] if model_input.shape[1] is not None else 640,
-                                    model_input.shape[2] if model_input.shape[2] is not None else 640,
-                                )
+                    calib_data_dict[model_input.name] = [
+                        tf.image.resize(
+                            calib_data.copy(),
+                            (
+                                model_input.shape[1]
+                                if model_input.shape[1] is not None
+                                else 640,
+                                model_input.shape[2]
+                                if model_input.shape[2] is not None
+                                else 640,
                             ),
-                            mean,
-                            std,
-                        ]
+                        ),
+                        mean,
+                        std,
+                    ]
 
             elif custom_input_op_name_np_data_path is not None:
                 for param in custom_input_op_name_np_data_path:
                     if len(param) != 4:
                         msg = (
-                            "If you want to use custom input with the '-oiqt' option, " +
-                            "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. " +
-                            f"However, you have only entered {len(param)} options. "
+                            "If you want to use custom input with the '-oiqt' option, "
+                            + "{input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. "
+                            + f"However, you have only entered {len(param)} options. "
                         )
                         error(msg)
                         raise ConvertError(msg)
@@ -1625,12 +1769,11 @@ def convert(
                     mean = param[2]
                     std = param[3]
 
-                    calib_data_dict[input_op_name] = \
-                        [
-                            calib_data.copy(),
-                            mean,
-                            std,
-                        ]
+                    calib_data_dict[input_op_name] = [
+                        calib_data.copy(),
+                        mean,
+                        std,
+                    ]
 
             # representative_dataset_gen
             def representative_dataset_gen():
@@ -1641,8 +1784,12 @@ def convert(
                     yield_data_dict = {}
                     for model_input_name in model_input_name_list:
                         calib_data, mean, std = calib_data_dict[model_input_name]
-                        normalized_calib_data: np.ndarray = (calib_data[idx:idx+batch_size] - mean) / std
-                        yield_data_dict[model_input_name] = tf.cast(tf.convert_to_tensor(normalized_calib_data), tf.float32)
+                        normalized_calib_data: np.ndarray = (
+                            calib_data[idx : idx + batch_size] - mean
+                        ) / std
+                        yield_data_dict[model_input_name] = tf.cast(
+                            tf.convert_to_tensor(normalized_calib_data), tf.float32
+                        )
                     yield yield_data_dict
 
             # INT8 Quantization
@@ -1656,12 +1803,15 @@ def convert(
                 converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
+                with open(
+                    f"{output_folder_path}/{output_file_name}_integer_quant.tflite",
+                    "wb",
+                ) as w:
                     w.write(tflite_model)
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
-                        tflite_file_name=f'{output_file_name}_integer_quant.tflite',
+                        tflite_file_name=f"{output_file_name}_integer_quant.tflite",
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                         onnx_graph_input_shapes=onnx_graph_input_shapes,
@@ -1669,10 +1819,10 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
+                        extract_target_tflite_file_path=f"{output_folder_path}/{output_file_name}_integer_quant.tflite",
+                        output_weights_file_path=f"{output_folder_path}/{output_file_name}_integer_quant_weights.h5",
                     )
-                info(Color.GREEN(f'INT8 Quantization tflite output complete!'))
+                info(Color.GREEN("INT8 Quantization tflite output complete!"))
 
                 # Full Integer Quantization
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -1685,32 +1835,44 @@ def convert(
                 converter.representative_dataset = representative_dataset_gen
                 inf_type_input = None
                 inf_type_output = None
-                if input_quant_dtype == 'int8':
+                if input_quant_dtype == "int8":
                     inf_type_input = tf.int8
-                elif input_quant_dtype == 'uint8':
+                elif input_quant_dtype == "uint8":
                     inf_type_input = tf.uint8
-                elif input_quant_dtype == 'float32':
+                elif input_quant_dtype == "float32":
                     inf_type_input = tf.float32
                 else:
                     inf_type_input = tf.int8
 
-                if output_quant_dtype == 'int8':
+                if output_quant_dtype == "int8":
                     inf_type_output = tf.int8
-                elif output_quant_dtype == 'uint8':
+                elif output_quant_dtype == "uint8":
                     inf_type_output = tf.uint8
-                elif output_quant_dtype == 'float32':
+                elif output_quant_dtype == "float32":
                     inf_type_output = tf.float32
                 else:
                     inf_type_output = tf.int8
                 converter.inference_input_type = inf_type_input
                 converter.inference_output_type = inf_type_output
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite', 'wb') as w:
+                output_full_integer_quant_filename = (
+                    f"{output_file_name}_full_integer_quant.tflite"
+                )
+                output_full_integer_quant_path = os.path.join(
+                    output_folder_path, output_full_integer_quant_filename
+                )
+                output_full_integer_quant_weights_filename = (
+                    f"{output_file_name}_full_integer_quant_weights.h5"
+                )
+                output_full_integer_quant_weights_path = os.path.join(
+                    output_folder_path, output_full_integer_quant_weights_filename
+                )
+                with open(output_full_integer_quant_path, "wb") as w:
                     w.write(tflite_model)
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
-                        tflite_file_name=f'{output_file_name}_full_integer_quant.tflite',
+                        tflite_file_name=output_full_integer_quant_filename,
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                         onnx_graph_input_shapes=onnx_graph_input_shapes,
@@ -1718,14 +1880,12 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant_weights.h5',
+                        extract_target_tflite_file_path=output_full_integer_quant_path,
+                        output_weights_file_path=output_full_integer_quant_weights_path,
                     )
-                info(Color.GREEN(f'Full INT8 Quantization tflite output complete!'))
-            except RuntimeError as ex:
-                warn_tb(
-                    'Full INT8 Quantization tflite output failed.'
-                )
+                info(Color.GREEN("Full INT8 Quantization tflite output complete!"))
+            except RuntimeError:
+                warn_tb("Full INT8 Quantization tflite output failed.")
 
             # Integer quantization with int16 activations
             try:
@@ -1741,21 +1901,28 @@ def convert(
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
+                with open(
+                    f"{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite",
+                    "wb",
+                ) as w:
                     w.write(tflite_model)
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
-                        tflite_file_name=f'{output_file_name}_integer_quant_with_int16_act.tflite',
+                        tflite_file_name=f"{output_file_name}_integer_quant_with_int16_act.tflite",
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                         onnx_graph_input_shapes=onnx_graph_input_shapes,
                         onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
-                info(Color.GREEN(f'INT8 Quantization with int16 activations tflite output complete!'))
-            except RuntimeError as ex:
+                info(
+                    Color.GREEN(
+                        "INT8 Quantization with int16 activations tflite output complete!"
+                    )
+                )
+            except RuntimeError:
                 warn_tb(
-                    'INT8 Quantization with int16 activations tflite output failed.'
+                    "INT8 Quantization with int16 activations tflite output failed."
                 )
 
             # Full Integer quantization with int16 activations
@@ -1772,47 +1939,60 @@ def convert(
                 converter.inference_input_type = tf.int16
                 converter.inference_output_type = tf.int16
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
+                with open(
+                    f"{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite",
+                    "wb",
+                ) as w:
                     w.write(tflite_model)
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
-                        tflite_file_name=f'{output_file_name}_full_integer_quant_with_int16_act.tflite',
+                        tflite_file_name=f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
                         onnx_input_names=onnx_graph_input_names,
                         onnx_output_names=onnx_graph_output_names,
                         onnx_graph_input_shapes=onnx_graph_input_shapes,
                         onnx_graph_output_shapes=onnx_graph_output_shapes,
                     )
-                info(Color.GREEN(f'Full INT8 Quantization with int16 activations tflite output complete!'))
-            except RuntimeError as ex:
+                info(
+                    Color.GREEN(
+                        "Full INT8 Quantization with int16 activations tflite output complete!"
+                    )
+                )
+            except RuntimeError:
                 warn_tb(
-                    'Full INT8 Quantization with int16 activations tflite output failed.'
+                    "Full INT8 Quantization with int16 activations tflite output failed."
                 )
 
         # Returns true if the two arrays, the output of onnx and the output of TF,
         # are elementwise equal within an acceptable range.
         # https://numpy.org/doc/stable/reference/generated/numpy.allclose.html#numpy-allclose
         # numpy.allclose(a, b, rtol=1e-05, atol=1e-05, equal_nan=True)
-        if check_onnx_tf_outputs_elementwise_close or check_onnx_tf_outputs_elementwise_close_full:
+        if (
+            check_onnx_tf_outputs_elementwise_close
+            or check_onnx_tf_outputs_elementwise_close_full
+        ):
             try:
                 import onnxruntime
                 import sne4onnx
-            except Exception as ex:
+            except Exception:
                 msg = (
-                    'If --check_onnx_tf_outputs_elementwise_close is specified, ' +\
-                    'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
+                    "If --check_onnx_tf_outputs_elementwise_close is specified, "
+                    + "you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime"
                 )
                 error(msg)
                 raise ConvertError(msg)
 
-            info('')
-            info(Color.REVERSE(f'ONNX and TF output value validation started'), '=' * 41)
+            info("")
+            info(Color.REVERSE("ONNX and TF output value validation started"), "=" * 41)
             info(
-                Color.GREEN(f'INFO:') + ' ' + Color.GREEN(f'validation_conditions') + ': '+
-                f'np.allclose(onnx_outputs, tf_outputs, '+
-                f'rtol={check_onnx_tf_outputs_elementwise_close_rtol}, '+
-                f'atol={check_onnx_tf_outputs_elementwise_close_atol}, '+
-                f'equal_nan=True)'
+                Color.GREEN("INFO:")
+                + " "
+                + Color.GREEN("validation_conditions")
+                + ": "
+                + "np.allclose(onnx_outputs, tf_outputs, "
+                + f"rtol={check_onnx_tf_outputs_elementwise_close_rtol}, "
+                + f"atol={check_onnx_tf_outputs_elementwise_close_atol}, "
+                + "equal_nan=True)"
             )
 
             # Listing of output_names
@@ -1839,43 +2019,43 @@ def convert(
             # Rebuild model for validation
             del model
             outputs = [
-                layer_info['tf_node'] \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and not hasattr(layer_info['tf_node'], 'numpy')
+                layer_info["tf_node"]
+                for opname, layer_info in tf_layers_dict.items()
+                if opname in ops_output_names
+                and not hasattr(layer_info["tf_node"], "numpy")
             ]
             exclude_output_names = [
-                opname \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and hasattr(layer_info['tf_node'], 'numpy')
+                opname
+                for opname, layer_info in tf_layers_dict.items()
+                if opname in ops_output_names
+                and hasattr(layer_info["tf_node"], "numpy")
             ]
             model = tf_keras.Model(inputs=inputs, outputs=outputs)
 
             # Exclude output OPs not subject to validation
             ops_output_names = [
-                ops_output_name for ops_output_name in ops_output_names \
-                    if ops_output_name not in exclude_output_names
+                ops_output_name
+                for ops_output_name in ops_output_names
+                if ops_output_name not in exclude_output_names
             ]
 
             dummy_onnx_outputs = None
             try:
                 # ONNX dummy inference
-                dummy_onnx_outputs: List[np.ndarray] = \
-                    dummy_onnx_inference(
-                        onnx_graph=onnx_graph,
-                        output_names=ops_output_names,
-                        test_data_nhwc=test_data_nhwc,
-                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                        tf_layers_dict=tf_layers_dict,
-                        use_cuda=use_cuda,
-                    )
+                dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=ops_output_names,
+                    test_data_nhwc=test_data_nhwc,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    tf_layers_dict=tf_layers_dict,
+                    use_cuda=use_cuda,
+                )
             except Exception as ex:
                 warn(
-                    f'The accuracy error measurement process was skipped ' +
-                    f'because the standard onnxruntime contains OPs that cannot be inferred.'
+                    "The accuracy error measurement process was skipped "
+                    + "because the standard onnxruntime contains OPs that cannot be inferred."
                 )
-                warn(f'{ex}')
+                warn(f"{ex}")
             else:
                 # TF dummy inference
                 tf_tensor_infos: Dict[Any] = dummy_tf_inference(
@@ -1886,8 +2066,10 @@ def convert(
                 )
                 # Validation
                 onnx_tensor_infos = {
-                    output_name: dummy_onnx_output \
-                        for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+                    output_name: dummy_onnx_output
+                    for output_name, dummy_onnx_output in zip(
+                        ops_output_names, dummy_onnx_outputs
+                    )
                 }
                 """
                 np.allclose(
@@ -1909,13 +2091,20 @@ def convert(
                 """
                 input_names = [k.name for k in inputs]
                 for k, v in tf_layers_dict.items():
-                    if 'tf_node_info' in v:
-                        if v['tf_node_info']['tf_op_type'] == 'identity':
-                            tf_tensor_infos[v['tf_node'].name] = np.ndarray([0], dtype=np.int64)
+                    if "tf_node_info" in v:
+                        if v["tf_node_info"]["tf_op_type"] == "identity":
+                            tf_tensor_infos[v["tf_node"].name] = np.ndarray(
+                                [0], dtype=np.int64
+                            )
                 onnx_tf_output_pairs = {
-                    (k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
-                        for k, v in tf_layers_dict.items() \
-                            if k not in input_names and not hasattr(v['tf_node'], 'numpy') and k in onnx_tensor_infos
+                    (k, v["tf_node"].name): (
+                        onnx_tensor_infos[k],
+                        tf_tensor_infos[v["tf_node"].name],
+                    )
+                    for k, v in tf_layers_dict.items()
+                    if k not in input_names
+                    and not hasattr(v["tf_node"], "numpy")
+                    and k in onnx_tensor_infos
                 }
 
                 check_results = onnx_tf_tensor_validation(
@@ -1923,31 +2112,49 @@ def convert(
                     rtol=check_onnx_tf_outputs_elementwise_close_rtol,
                     atol=check_onnx_tf_outputs_elementwise_close_atol,
                 )
-                for (onnx_output_name, tf_output_name), checked_value in check_results.items():
+                for (
+                    onnx_output_name,
+                    tf_output_name,
+                ), checked_value in check_results.items():
                     validated_onnx_tensor: np.ndarray = checked_value[0]
                     matched_flg: int = checked_value[1]
                     max_abs_err: Any = checked_value[2]
-                    message = ''
+                    message = ""
                     if matched_flg == 0:
-                        message = \
-                            Color.GREEN(f'validate_result') + ': ' +\
-                            Color.REVERSE(f'{Color.YELLOW} Unmatched ') + ' ' +\
-                            Color.GREEN(f'max_abs_error') + f': {max_abs_err}'
+                        message = (
+                            Color.GREEN("validate_result")
+                            + ": "
+                            + Color.REVERSE(f"{Color.YELLOW} Unmatched ")
+                            + " "
+                            + Color.GREEN("max_abs_error")
+                            + f": {max_abs_err}"
+                        )
                     elif matched_flg == 1:
-                        message = \
-                            Color.GREEN(f'validate_result') + ': ' +\
-                            Color.REVERSE(f'{Color.GREEN} Matches ')
+                        message = (
+                            Color.GREEN("validate_result")
+                            + ": "
+                            + Color.REVERSE(f"{Color.GREEN} Matches ")
+                        )
                     elif matched_flg == 2:
-                        message = \
-                            Color.GREEN(f'validate_result') + ': ' +\
-                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) ')
+                        message = (
+                            Color.GREEN("validate_result")
+                            + ": "
+                            + Color.REVERSE(
+                                f"{Color.BLUE} Skipped (Deleted or Shape Unmatched) "
+                            )
+                        )
                     print(
-                        Color.GREEN(f'INFO:') + ' '+
-                        Color.GREEN(f'onnx_output_name') + f': {onnx_output_name} '+
-                        Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
-                        Color.GREEN(f'shape') + f': {validated_onnx_tensor.shape} '+
-                        Color.GREEN(f'dtype') + f': {validated_onnx_tensor.dtype} '+
-                        f'{message}'
+                        Color.GREEN("INFO:")
+                        + " "
+                        + Color.GREEN("onnx_output_name")
+                        + f": {onnx_output_name} "
+                        + Color.GREEN("tf_output_name")
+                        + f": {tf_output_name} "
+                        + Color.GREEN("shape")
+                        + f": {validated_onnx_tensor.shape} "
+                        + Color.GREEN("dtype")
+                        + f": {validated_onnx_tensor.dtype} "
+                        + f"{message}"
                     )
 
         return model
@@ -1957,587 +2164,528 @@ def main():
     parser = ArgumentParser()
     iV_group = parser.add_mutually_exclusive_group(required=True)
     iV_group.add_argument(
-        '-i',
-        '--input_onnx_file_path',
-        type=str,
-        help='Input onnx file path.'
+        "-i", "--input_onnx_file_path", type=str, help="Input onnx file path."
     )
     iV_group.add_argument(
-        '-V',
-        '--version',
-        action='store_true',
-        help='Show version and exit.'
+        "-V", "--version", action="store_true", help="Show version and exit."
     )
     parser.add_argument(
-        '-o',
-        '--output_folder_path',
+        "-o",
+        "--output_folder_path",
         type=str,
-        help=\
-            'Output folder path. \n' +
-            'Default: "saved_model"'
+        help="Output folder path. \n" + 'Default: "saved_model"',
     )
     parser.add_argument(
-        '-osd',
-        '--output_signaturedefs',
-        action='store_true',
+        "-osd",
+        "--output_signaturedefs",
+        action="store_true",
         default=True,
-        help=\
-            'Signature is added to the output for serving or for conversion \n' +
-            'to other model formats. However, this can significantly reduce the speed \n' +
-            'of model conversion and significant increase the size of the model.'
+        help="Signature is added to the output for serving or for conversion \n"
+        + "to other model formats. However, this can significantly reduce the speed \n"
+        + "of model conversion and significant increase the size of the model.",
     )
     parser.add_argument(
-        '-oh5',
-        '--output_h5',
-        action='store_true',
-        help=\
-            'Output model in Keras (hdf5) format.'
+        "-oh5",
+        "--output_h5",
+        action="store_true",
+        help="Output model in Keras (hdf5) format.",
     )
     parser.add_argument(
-        '-okv3',
-        '--output_keras_v3',
-        action='store_true',
-        help=\
-            'Output model in Keras (keras_v3) format.'
+        "-okv3",
+        "--output_keras_v3",
+        action="store_true",
+        help="Output model in Keras (keras_v3) format.",
     )
     parser.add_argument(
-        '-otfv1pb',
-        '--output_tfv1_pb',
-        action='store_true',
-        help=\
-            'Output model in TF v1 (.pb) format.'
+        "-otfv1pb",
+        "--output_tfv1_pb",
+        action="store_true",
+        help="Output model in TF v1 (.pb) format.",
     )
     parser.add_argument(
-        '-ow',
-        '--output_weights',
-        action='store_true',
-        help=\
-            'Output weights in hdf5 format.'
+        "-ow",
+        "--output_weights",
+        action="store_true",
+        help="Output weights in hdf5 format.",
     )
     parser.add_argument(
-        '-coion',
-        '--copy_onnx_input_output_names_to_tflite',
-        action='store_true',
-        help=\
-            'Copy the input/output OP name of ONNX to the input/output OP name of tflite. \n' +
-            'Due to Tensorflow internal operating specifications, \n' +
-            'the input/output order of ONNX does not necessarily match \n' +
-            'the input/output order of tflite. \n' +
-            'Be sure to check that the input/output OP names in the generated \n' +
-            'tflite file have been converted as expected. \n' +
-            'Also, this option generates a huge JSON file as a temporary file for processing. \n' +
-            'Therefore, it is strongly discouraged to use it on large models of hundreds \n'
-            'of megabytes or more.'
+        "-coion",
+        "--copy_onnx_input_output_names_to_tflite",
+        action="store_true",
+        help="Copy the input/output OP name of ONNX to the input/output OP name of tflite. \n"
+        + "Due to Tensorflow internal operating specifications, \n"
+        + "the input/output order of ONNX does not necessarily match \n"
+        + "the input/output order of tflite. \n"
+        + "Be sure to check that the input/output OP names in the generated \n"
+        + "tflite file have been converted as expected. \n"
+        + "Also, this option generates a huge JSON file as a temporary file for processing. \n"
+        + "Therefore, it is strongly discouraged to use it on large models of hundreds \n"
+        "of megabytes or more.",
     )
     parser.add_argument(
-        '-odrqt',
-        '--output_dynamic_range_quantized_tflite',
-        action='store_true',
-        help=\
-            'Output of dynamic range quantized tflite.'
+        "-odrqt",
+        "--output_dynamic_range_quantized_tflite",
+        action="store_true",
+        help="Output of dynamic range quantized tflite.",
     )
     parser.add_argument(
-        '-oiqt',
-        '--output_integer_quantized_tflite',
-        action='store_true',
-        help=\
-            'Output of integer quantized tflite.'
+        "-oiqt",
+        "--output_integer_quantized_tflite",
+        action="store_true",
+        help="Output of integer quantized tflite.",
     )
     parser.add_argument(
-        '-qt',
-        '--quant_type',
+        "-qt",
+        "--quant_type",
         type=str,
-        choices=['per-channel', 'per-tensor'],
-        default='per-channel',
-        help=\
-            'Selects whether "per-channel" or "per-tensor" quantization is used. \n' +
-            'Default: "per-channel"'
+        choices=["per-channel", "per-tensor"],
+        default="per-channel",
+        help='Selects whether "per-channel" or "per-tensor" quantization is used. \n'
+        + 'Default: "per-channel"',
     )
     parser.add_argument(
-        '-cind',
-        '--custom_input_op_name_np_data_path',
+        "-cind",
+        "--custom_input_op_name_np_data_path",
         type=str,
-        action='append',
-        nargs='+',
-        help=\
-            'Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt, \n' +
-            'and mean (optional) and std (optional). \n' +
-
-            '\n<Usage in -cotof> \n' +
-            'When using -cotof, custom input defined by the user, instead of dummy data, is used. \n' +
-            'In this case, mean and std are omitted from the input. \n' +
-            '-cind {input_op_name} {numpy_file_path} \n' +
-            'ex) -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof \n' +
-            'The input_op_name must be the same as in ONNX, \n' +
-            'and it may not work if the input format is different between ONNX and TF. \n' +
-
-            '\n<Usage in -oiqt> \n' +
-            'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
-            'and mean and std. \n' +
-            'The specification can be omitted only when the input OP is a single 4D tensor image data. \n' +
-            'If omitted, it is automatically calibrated using 20 normalized MS-COCO images. \n' +
-            'The type of the input OP must be Float32. \n' +
-            'Data for calibration must be pre-normalized to a range of 0 to 1. \n' +
-            '-cind {input_op_name} {numpy_file_path} {mean} {std} \n' +
-            'Numpy file paths must be specified the same number of times as the number of input OPs. \n' +
-            'Normalize the value of the input OP based on the tensor specified in mean and std. \n' +
-            '(input_value - mean) / std \n' +
-            'Tensors in Numpy file format must be in dimension order after conversion to TF. \n' +
-            'Note that this is intended for deployment on low-resource devices, \n' +
-            'so the batch size is limited to 1 only. \n\n' +
-            'e.g. \n' +
-            'The example below shows a case where there are three input OPs. \n' +
-            'Assume input0 is 128x128 RGB image data. \n' +
-            'In addition, input0 should be a value that has been divided by 255 \n' +
-            'in the preprocessing and normalized to a range between 0 and 1. \n' +
-            'input1 and input2 assume the input of something that is not an image. \n' +
-            'Because input1 and input2 assume something that is not an image, \n' +
-            'the divisor is not 255 when normalizing from 0 to 1. \n' +
-            '"n" is the number of calibration data. \n\n' +
-            'ONNX INPUT shapes: \n' +
-            '   input0: [n,3,128,128] \n' +
-            '       mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]] \n' +
-            '       std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]] \n' +
-            '   input1: [n,64,64] \n' +
-            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
-            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
-            '   input2: [n,5] \n' +
-            '       mean: [1] -> [0.3] \n' +
-            '       std:  [1] -> [0.07] \n' +
-            'TensorFlow INPUT shapes (Numpy file ndarray shapes): \n' +
-            '   input0: [n,128,128,3] \n' +
-            '       mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]] \n' +
-            '       std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]] \n' +
-            '   input1: [n,64,64] \n' +
-            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
-            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
-            '   input2: [n,5] \n' +
-            '       mean: [1] -> [0.3] \n' +
-            '       std:  [1] -> [0.07] \n' +
-            '-cind "input0" "../input0.npy" "[[[[0.485,0.456,0.406]]]]" "[[[[0.229,0.224,0.225]]]]" \n' +
-            '-cind "input1" "./input1.npy" "[0.1,...,0.64]" "[0.05,...,0.08]" \n' +
-            '-cind "input2" "input2.npy" "[0.3]" "[0.07]" \n\n' +
-            '\n<Using -cotof and -oiqt at the same time> \n' +
-            'To use -cotof and -oiqt simultaneously, \n' +
-            'you need to enter the Input name of OP, path of data file, mean, and std all together. \n' +
-            'And the data file must be in Float32 format, \n' +
-            'and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. \n' +
-            'Otherwise, an error will occur during the -oiqt stage.'
+        action="append",
+        nargs="+",
+        help="Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt, \n"
+        + "and mean (optional) and std (optional). \n"
+        + "\n<Usage in -cotof> \n"
+        + "When using -cotof, custom input defined by the user, instead of dummy data, is used. \n"
+        + "In this case, mean and std are omitted from the input. \n"
+        + "-cind {input_op_name} {numpy_file_path} \n"
+        + "ex) -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof \n"
+        + "The input_op_name must be the same as in ONNX, \n"
+        + "and it may not work if the input format is different between ONNX and TF. \n"
+        + "\n<Usage in -oiqt> \n"
+        + "INPUT Name of OP and path of calibration data file (Numpy) for quantization \n"
+        + "and mean and std. \n"
+        + "The specification can be omitted only when the input OP is a single 4D tensor image data. \n"
+        + "If omitted, it is automatically calibrated using 20 normalized MS-COCO images. \n"
+        + "The type of the input OP must be Float32. \n"
+        + "Data for calibration must be pre-normalized to a range of 0 to 1. \n"
+        + "-cind {input_op_name} {numpy_file_path} {mean} {std} \n"
+        + "Numpy file paths must be specified the same number of times as the number of input OPs. \n"
+        + "Normalize the value of the input OP based on the tensor specified in mean and std. \n"
+        + "(input_value - mean) / std \n"
+        + "Tensors in Numpy file format must be in dimension order after conversion to TF. \n"
+        + "Note that this is intended for deployment on low-resource devices, \n"
+        + "so the batch size is limited to 1 only. \n\n"
+        + "e.g. \n"
+        + "The example below shows a case where there are three input OPs. \n"
+        + "Assume input0 is 128x128 RGB image data. \n"
+        + "In addition, input0 should be a value that has been divided by 255 \n"
+        + "in the preprocessing and normalized to a range between 0 and 1. \n"
+        + "input1 and input2 assume the input of something that is not an image. \n"
+        + "Because input1 and input2 assume something that is not an image, \n"
+        + "the divisor is not 255 when normalizing from 0 to 1. \n"
+        + '"n" is the number of calibration data. \n\n'
+        + "ONNX INPUT shapes: \n"
+        + "   input0: [n,3,128,128] \n"
+        + "       mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]] \n"
+        + "       std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]] \n"
+        + "   input1: [n,64,64] \n"
+        + "       mean: [1,64] -> [0.1, ..., 0.64] \n"
+        + "       std:  [1,64] -> [0.05, ..., 0.08] \n"
+        + "   input2: [n,5] \n"
+        + "       mean: [1] -> [0.3] \n"
+        + "       std:  [1] -> [0.07] \n"
+        + "TensorFlow INPUT shapes (Numpy file ndarray shapes): \n"
+        + "   input0: [n,128,128,3] \n"
+        + "       mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]] \n"
+        + "       std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]] \n"
+        + "   input1: [n,64,64] \n"
+        + "       mean: [1,64] -> [0.1, ..., 0.64] \n"
+        + "       std:  [1,64] -> [0.05, ..., 0.08] \n"
+        + "   input2: [n,5] \n"
+        + "       mean: [1] -> [0.3] \n"
+        + "       std:  [1] -> [0.07] \n"
+        + '-cind "input0" "../input0.npy" "[[[[0.485,0.456,0.406]]]]" "[[[[0.229,0.224,0.225]]]]" \n'
+        + '-cind "input1" "./input1.npy" "[0.1,...,0.64]" "[0.05,...,0.08]" \n'
+        + '-cind "input2" "input2.npy" "[0.3]" "[0.07]" \n\n'
+        + "\n<Using -cotof and -oiqt at the same time> \n"
+        + "To use -cotof and -oiqt simultaneously, \n"
+        + "you need to enter the Input name of OP, path of data file, mean, and std all together. \n"
+        + "And the data file must be in Float32 format, \n"
+        + "and {input_op_name}, {numpy_file_path}, {mean}, and {std} must all be entered. \n"
+        + "Otherwise, an error will occur during the -oiqt stage.",
     )
     parser.add_argument(
-        '-iqd',
-        '--input_quant_dtype',
+        "-iqd",
+        "--input_quant_dtype",
         type=str,
-        choices=['int8', 'uint8', 'float32'],
-        default='int8',
-        help=\
-            'Input dtypes when doing Full INT8 Quantization. \n' +
-            '"int8"(default) or "uint8" or "float32"'
+        choices=["int8", "uint8", "float32"],
+        default="int8",
+        help="Input dtypes when doing Full INT8 Quantization. \n"
+        + '"int8"(default) or "uint8" or "float32"',
     )
     parser.add_argument(
-        '-oqd',
-        '--output_quant_dtype',
+        "-oqd",
+        "--output_quant_dtype",
         type=str,
-        choices=['int8', 'uint8', 'float32'],
-        default='int8',
-        help=\
-            'Output dtypes when doing Full INT8 Quantization. \n' +
-            '"int8"(default) or "uint8" or "float32"'
+        choices=["int8", "uint8", "float32"],
+        default="int8",
+        help="Output dtypes when doing Full INT8 Quantization. \n"
+        + '"int8"(default) or "uint8" or "float32"',
     )
     parser.add_argument(
-        '-nuo',
-        '--not_use_onnxsim',
-        action='store_true',
-        help=\
-            'No optimization by onnx-simplifier is performed. \n' +
-            'If this option is used, the probability of a conversion error is very high.'
+        "-nuo",
+        "--not_use_onnxsim",
+        action="store_true",
+        help="No optimization by onnx-simplifier is performed. \n"
+        + "If this option is used, the probability of a conversion error is very high.",
     )
     parser.add_argument(
-        '-nuonag',
-        '--not_use_opname_auto_generate',
-        action='store_true',
-        help=\
-            'Automatic generation of each OP name in the old format ONNX file '+
-            'and assignment of OP name are not performed.'
+        "-nuonag",
+        "--not_use_opname_auto_generate",
+        action="store_true",
+        help="Automatic generation of each OP name in the old format ONNX file "
+        + "and assignment of OP name are not performed.",
     )
     parser.add_argument(
-        '-b',
-        '--batch_size',
+        "-b",
+        "--batch_size",
         type=int,
-        help=\
-            'Fixes the dynamic batch size to the specified numeric batch size. \n' +
-            'A value of 1 or more must be specified.'
+        help="Fixes the dynamic batch size to the specified numeric batch size. \n"
+        + "A value of 1 or more must be specified.",
     )
     parser.add_argument(
-        '-ois',
-        '--overwrite_input_shape',
+        "-ois",
+        "--overwrite_input_shape",
         type=str,
-        nargs='+',
-        help=\
-            'Overwrite the input shape. \n' +
-            'The format is\n' +
-            '"input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n' +
-            'When there is only one input, for example, \n' +
-            '"data:1,3,224,224" \n' +
-            'When there are multiple inputs, for example, \n' +
-            '"data1:1,3,224,224" "data2:1,3,112,112" "data3:5" \n' +
-            'A value of 1 or more must be specified. \n' +
-            'Numerical values other than dynamic dimensions are ignored. \n' +
-            'Ignores --batch_size if specified at the same time as --batch_size.'
+        nargs="+",
+        help="Overwrite the input shape. \n"
+        + "The format is\n"
+        + '"input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n'
+        + "When there is only one input, for example, \n"
+        + '"data:1,3,224,224" \n'
+        + "When there are multiple inputs, for example, \n"
+        + '"data1:1,3,224,224" "data2:1,3,112,112" "data3:5" \n'
+        + "A value of 1 or more must be specified. \n"
+        + "Numerical values other than dynamic dimensions are ignored. \n"
+        + "Ignores --batch_size if specified at the same time as --batch_size.",
     )
     parser.add_argument(
-        '-nlt',
-        '--no_large_tensor',
-        action='store_true',
-        help=\
-            'Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim. \n' +
-            'See: https://github.com/daquexian/onnx-simplifier/issues/178'
+        "-nlt",
+        "--no_large_tensor",
+        action="store_true",
+        help="Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim. \n"
+        + "See: https://github.com/daquexian/onnx-simplifier/issues/178",
     )
     parser.add_argument(
-        '-onwdt',
-        '--output_nms_with_dynamic_tensor',
-        action='store_true',
-        help=\
-            'The number of bounding boxes in the NMS output results is \n' +
-            'not fixed at the maximum number of max_output_boxes_per_class, \n' +
-            'but rather at the smallest possible number of dynamic tensors. \n' +
-            'If this option is disabled, NMS output is padded to the number \n' +
-            'set in the max_output_boxes_per_class attribute. \n' +
-            'e.g. \n' +
-            'disable --output_nms_with_dynamic_tensor: \n' +
-            '    output_tensor_shape: [100, 7] \n' +
-            'enable --output_nms_with_dynamic_tensor: \n' +
-            '    output_tensor_shape: [N, 7]'
+        "-onwdt",
+        "--output_nms_with_dynamic_tensor",
+        action="store_true",
+        help="The number of bounding boxes in the NMS output results is \n"
+        + "not fixed at the maximum number of max_output_boxes_per_class, \n"
+        + "but rather at the smallest possible number of dynamic tensors. \n"
+        + "If this option is disabled, NMS output is padded to the number \n"
+        + "set in the max_output_boxes_per_class attribute. \n"
+        + "e.g. \n"
+        + "disable --output_nms_with_dynamic_tensor: \n"
+        + "    output_tensor_shape: [100, 7] \n"
+        + "enable --output_nms_with_dynamic_tensor: \n"
+        + "    output_tensor_shape: [N, 7]",
     )
     parser.add_argument(
-        '-k',
-        '--keep_ncw_or_nchw_or_ncdhw_input_names',
+        "-k",
+        "--keep_ncw_or_nchw_or_ncdhw_input_names",
         type=str,
-        nargs='+',
-        help=\
-            'Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names. \n' +
-            'If a nonexistent INPUT OP name is specified, it is ignored. \n' +
-            'Valid only for 3D, 4D and 5D input tensors. \n\n' +
-            'e.g. \n' +
-            '--keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"'
+        nargs="+",
+        help="Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names. \n"
+        + "If a nonexistent INPUT OP name is specified, it is ignored. \n"
+        + "Valid only for 3D, 4D and 5D input tensors. \n\n"
+        + "e.g. \n"
+        + '--keep_ncw_or_nchw_or_ncdhw_input_names "input0" "input1" "input2"',
     )
     parser.add_argument(
-        '-kt',
-        '--keep_nwc_or_nhwc_or_ndhwc_input_names',
+        "-kt",
+        "--keep_nwc_or_nhwc_or_ndhwc_input_names",
         type=str,
-        nargs='+',
-        help=\
-            'Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names. \n' +
-            'If a nonexistent INPUT OP name is specified, it is ignored. \n' +
-            'If the input OP name is the same as the input OP name specified \n' +
-            'in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored. \n' +
-            'Valid only for 3D, 4D and 5D input tensors. \n\n' +
-            'e.g. \n' +
-            '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"'
+        nargs="+",
+        help="Holds the NWC or NHWC or NDHWC of the input shape for the specified INPUT OP names. \n"
+        + "If a nonexistent INPUT OP name is specified, it is ignored. \n"
+        + "If the input OP name is the same as the input OP name specified \n"
+        + "in the keep_ncw_or_nchw_or_ncdhw_input_names option, it is ignored. \n"
+        + "Valid only for 3D, 4D and 5D input tensors. \n\n"
+        + "e.g. \n"
+        + '--keep_nwc_or_nhwc_or_ndhwc_input_names "input0" "input1" "input2"',
     )
     parser.add_argument(
-        '-kat',
-        '--keep_shape_absolutely_input_names',
+        "-kat",
+        "--keep_shape_absolutely_input_names",
         type=str,
-        nargs='+',
-        help=\
-            'Name of the INPUT that unconditionally maintains its shape. \n' +
-            'If a nonexistent INPUT OP name is specified, it is ignored. \n\n' +
-            'e.g. \n' +
-            '--keep_shape_absolutely_input_names "input0" "input1" "input2"'
+        nargs="+",
+        help="Name of the INPUT that unconditionally maintains its shape. \n"
+        + "If a nonexistent INPUT OP name is specified, it is ignored. \n\n"
+        + "e.g. \n"
+        + '--keep_shape_absolutely_input_names "input0" "input1" "input2"',
     )
     parser.add_argument(
-        '-inimc',
-        '--input_names_to_interrupt_model_conversion',
+        "-inimc",
+        "--input_names_to_interrupt_model_conversion",
         type=str,
-        nargs='+',
-        help=\
-            'Input names that interrupt model conversion. \n' +
-            'Interrupts model transformation at the specified input name \n' +
-            'and inputs the model partitioned into subgraphs. \n\n' +
-            'e.g. \n' +
-            '--input_names_to_interrupt_model_conversion "input0" "input1" "input2"'
+        nargs="+",
+        help="Input names that interrupt model conversion. \n"
+        + "Interrupts model transformation at the specified input name \n"
+        + "and inputs the model partitioned into subgraphs. \n\n"
+        + "e.g. \n"
+        + '--input_names_to_interrupt_model_conversion "input0" "input1" "input2"',
     )
     parser.add_argument(
-        '-onimc',
-        '--output_names_to_interrupt_model_conversion',
+        "-onimc",
+        "--output_names_to_interrupt_model_conversion",
         type=str,
-        nargs='+',
-        help=\
-            'Output names that interrupt model conversion. \n' +
-            'Interrupts model transformation at the specified output name \n' +
-            'and outputs the model partitioned into subgraphs. \n\n' +
-            'e.g. \n' +
-            '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
+        nargs="+",
+        help="Output names that interrupt model conversion. \n"
+        + "Interrupts model transformation at the specified output name \n"
+        + "and outputs the model partitioned into subgraphs. \n\n"
+        + "e.g. \n"
+        + '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"',
     )
     parser.add_argument(
-        '-dgc',
-        '--disable_group_convolution',
-        action='store_true',
-        help=\
-            'Disable GroupConvolution and replace it with SeparableConvolution \n' +
-            'for output to saved_model format.'
+        "-dgc",
+        "--disable_group_convolution",
+        action="store_true",
+        help="Disable GroupConvolution and replace it with SeparableConvolution \n"
+        + "for output to saved_model format.",
     )
     parser.add_argument(
-        '-eatfp16',
-        '--enable_accumulation_type_float16',
-        action='store_true',
-        help=\
-            'Hint for XNNPack fp16 inference on float16 tflite model. \n' +
-            'XNNPACK float16 inference on certain ARM64 cores is 2x faster. \n' +
-            'Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.'
+        "-eatfp16",
+        "--enable_accumulation_type_float16",
+        action="store_true",
+        help="Hint for XNNPack fp16 inference on float16 tflite model. \n"
+        + "XNNPACK float16 inference on certain ARM64 cores is 2x faster. \n"
+        + "Float16 inference doubling on devices with ARM64 ARMv8.2 or higher instruction set.",
     )
     parser.add_argument(
-        '-ebu',
-        '--enable_batchmatmul_unfold',
-        action='store_true',
-        help=\
-            'BatchMatMul is separated batch by batch to generate a primitive MatMul.'
+        "-ebu",
+        "--enable_batchmatmul_unfold",
+        action="store_true",
+        help="BatchMatMul is separated batch by batch to generate a primitive MatMul.",
     )
     parser.add_argument(
-        '-eru',
-        '--enable_rnn_unroll',
-        action='store_true',
-        help=\
-            'Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN), \n' +
-            'RAM consumption will increase because all tensors are expanded and embedded in the model. \n' +
-            'https://keras.io/api/layers/recurrent_layers/'
+        "-eru",
+        "--enable_rnn_unroll",
+        action="store_true",
+        help="Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN), \n"
+        + "RAM consumption will increase because all tensors are expanded and embedded in the model. \n"
+        + "https://keras.io/api/layers/recurrent_layers/",
     )
     parser.add_argument(
-        '-dsft',
-        '--disable_suppression_flextranspose',
-        action='store_true',
-        help=\
-            'Disables FlexTranspose generation suppression.'
+        "-dsft",
+        "--disable_suppression_flextranspose",
+        action="store_true",
+        help="Disables FlexTranspose generation suppression.",
     )
     parser.add_argument(
-        '-nodaftc',
-        '--number_of_dimensions_after_flextranspose_compression',
+        "-nodaftc",
+        "--number_of_dimensions_after_flextranspose_compression",
         type=int,
         default=6,
-        help=\
-            'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
-            'Also suppress the creation of the Transpose itself by specifying 2. \n' +
-            'Default: 6'
+        help="Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n"
+        + "Also suppress the creation of the Transpose itself by specifying 2. \n"
+        + "Default: 6",
     )
     parser.add_argument(
-        '-dsfs',
-        '--disable_suppression_flexstridedslice',
-        action='store_true',
-        help=\
-            'Disables FlexStridedSlice generation suppression.'
+        "-dsfs",
+        "--disable_suppression_flexstridedslice",
+        action="store_true",
+        help="Disables FlexStridedSlice generation suppression.",
     )
     parser.add_argument(
-        '-dsm',
-        '--disable_strict_mode',
-        action='store_true',
-        help=\
-            'If specified, the conversion speed is greatly accelerated because the strict accuracy \n' +
-            'correction process is skipped, but the frequency of transposition errors increases \n' +
-            'and accuracy errors are more likely to occur. Strict mode is enabled by default.'
+        "-dsm",
+        "--disable_strict_mode",
+        action="store_true",
+        help="If specified, the conversion speed is greatly accelerated because the strict accuracy \n"
+        + "correction process is skipped, but the frequency of transposition errors increases \n"
+        + "and accuracy errors are more likely to occur. Strict mode is enabled by default.",
     )
     parser.add_argument(
-        '-nodafsc',
-        '--number_of_dimensions_after_flexstridedslice_compression',
+        "-nodafsc",
+        "--number_of_dimensions_after_flexstridedslice_compression",
         type=int,
         default=5,
-        help=\
-            'Number of StricedSlice OP dimensions generated after avoiding FlexStridedSlice generation. \n' +
-            'Default: 5'
+        help="Number of StricedSlice OP dimensions generated after avoiding FlexStridedSlice generation. \n"
+        + "Default: 5",
     )
     parser.add_argument(
-        '-ofgd',
-        '--optimization_for_gpu_delegate',
-        action='store_true',
-        help=\
-            'Replace operations that do not support gpu delegate with those \n' +
-            'that do as much as possible.'
+        "-ofgd",
+        "--optimization_for_gpu_delegate",
+        action="store_true",
+        help="Replace operations that do not support gpu delegate with those \n"
+        + "that do as much as possible.",
     )
     rar_group = parser.add_mutually_exclusive_group()
     rar_group.add_argument(
-        '-rari64',
-        '--replace_argmax_to_reducemax_and_indices_is_int64',
-        action='store_true',
-        help=\
-            'Replace ArgMax with a ReduceMax. The returned indices are int64. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+        "-rari64",
+        "--replace_argmax_to_reducemax_and_indices_is_int64",
+        action="store_true",
+        help="Replace ArgMax with a ReduceMax. The returned indices are int64. \n"
+        + "Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_reducemax_and_indices_is_float32 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.",
     )
     rar_group.add_argument(
-        '-rarf32',
-        '--replace_argmax_to_reducemax_and_indices_is_float32',
-        action='store_true',
-        help=\
-            'Replace ArgMax with a ReduceMax. The returned indices are float32. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+        "-rarf32",
+        "--replace_argmax_to_reducemax_and_indices_is_float32",
+        action="store_true",
+        help="Replace ArgMax with a ReduceMax. The returned indices are float32. \n"
+        + "Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_reducemax_and_indices_is_float32 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.",
     )
     rar_group.add_argument(
-        '-rafi64',
-        '--replace_argmax_to_fused_argmax_and_indices_is_int64',
-        action='store_true',
-        help=\
-            'Replace ArgMax with a Fused_ArgMax. The returned indices are int64. \n' +
-            'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
-            'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
-            'Currently, only 4D tensors are supported. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+        "-rafi64",
+        "--replace_argmax_to_fused_argmax_and_indices_is_int64",
+        action="store_true",
+        help="Replace ArgMax with a Fused_ArgMax. The returned indices are int64. \n"
+        + "It improves inference speed at the cost of a small sacrifice in accuracy. \n"
+        + "See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n"
+        + "Currently, only 4D tensors are supported. \n"
+        + "Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_reducemax_and_indices_is_float32 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.",
     )
     rar_group.add_argument(
-        '-raff32',
-        '--replace_argmax_to_fused_argmax_and_indices_is_float32',
-        action='store_true',
-        help=\
-            'Replace ArgMax with a Fused_ArgMax. The returned indices are float32. \n' +
-            'It improves inference speed at the cost of a small sacrifice in accuracy. \n' +
-            'See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n' +
-            'Currently, only 4D tensors are supported. \n' +
-            'Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n' +
-            'replace_argmax_to_reducemax_and_indices_is_float32 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_int64 and \n'+
-            'replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.'
+        "-raff32",
+        "--replace_argmax_to_fused_argmax_and_indices_is_float32",
+        action="store_true",
+        help="Replace ArgMax with a Fused_ArgMax. The returned indices are float32. \n"
+        + "It improves inference speed at the cost of a small sacrifice in accuracy. \n"
+        + "See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency \n"
+        + "Currently, only 4D tensors are supported. \n"
+        + "Only one of replace_argmax_to_reducemax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_reducemax_and_indices_is_float32 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_int64 and \n"
+        + "replace_argmax_to_fused_argmax_and_indices_is_float32 can be specified.",
     )
     parser.add_argument(
-        '-fasr',
-        '--fused_argmax_scale_ratio',
+        "-fasr",
+        "--fused_argmax_scale_ratio",
         type=float,
         default=0.5,
-        help=\
-            'For Fused ArgMax. \n' +
-            'Scale ratio when generating Fused ArgMax. \n' +
-            '0.0 < fused_argmax_scale_ratio <= 1.0 \n' +
-            'Default: 0.5'
+        help="For Fused ArgMax. \n"
+        + "Scale ratio when generating Fused ArgMax. \n"
+        + "0.0 < fused_argmax_scale_ratio <= 1.0 \n"
+        + "Default: 0.5",
     )
     parser.add_argument(
-        '-rtpo',
-        '--replace_to_pseudo_operators',
-        nargs='*',
+        "-rtpo",
+        "--replace_to_pseudo_operators",
+        nargs="*",
         default=[],
-        help=\
-            'Replace list of operators to pseudo operators. \n ' +
-            'Full name of the target operators should be given. \n ' +
-            'Currently supported operators : \n' +
-            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger'
+        help="Replace list of operators to pseudo operators. \n "
+        + "Full name of the target operators should be given. \n "
+        + "Currently supported operators : \n"
+        + "Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger",
     )
     parser.add_argument(
-        '-me',
-        '--mvn_epsilon',
+        "-me",
+        "--mvn_epsilon",
         type=float,
         default=0.0000000001,
-        help=\
-            'For MeanVarianceNormalization. \n' +
-            'The number to be added to the variance to avoid division by zero when normalizing the value. \n' +
-            '(input_tensor - mean) / tf.sqrt(variance + mvn_epsilon) \n' +
-            'Default: 0.0000000001'
+        help="For MeanVarianceNormalization. \n"
+        + "The number to be added to the variance to avoid division by zero when normalizing the value. \n"
+        + "(input_tensor - mean) / tf.sqrt(variance + mvn_epsilon) \n"
+        + "Default: 0.0000000001",
     )
     parser.add_argument(
-        '-prf',
-        '--param_replacement_file',
+        "-prf",
+        "--param_replacement_file",
         type=str,
-        default='',
-        help='Parameter replacement file path. (.json)'
+        default="",
+        help="Parameter replacement file path. (.json)",
     )
     parser.add_argument(
-        '-cgdc',
-        '--check_gpu_delegate_compatibility',
-        action='store_true',
-        help=\
-            'Run TFLite ModelAnalyzer on the generated Float16 tflite model ' +
-            'to check if the model can be supported by GPU Delegate.'
+        "-cgdc",
+        "--check_gpu_delegate_compatibility",
+        action="store_true",
+        help="Run TFLite ModelAnalyzer on the generated Float16 tflite model "
+        + "to check if the model can be supported by GPU Delegate.",
     )
     coto_group = parser.add_mutually_exclusive_group()
     coto_group.add_argument(
-        '-coto',
-        '--check_onnx_tf_outputs_elementwise_close',
-        action='store_true',
-        help=\
-            'Returns "Matches" if the output of onnx and the output of TF are'+
-            'within acceptable proximity element by element. '+
-            'Returns "Unmatched" if the output of onnx and the output of TF are '+
-            'not within acceptable proximity element by element. '+
-            'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '+
-            'between the output of onnx and that of TF. This is because when undefined '+
-            'dimensions are present, a situation often arises where very large index '+
-            'values are compared, causing OutOfMemory. '+
-            'Only the output content of the models final output OP is checked.'
+        "-coto",
+        "--check_onnx_tf_outputs_elementwise_close",
+        action="store_true",
+        help='Returns "Matches" if the output of onnx and the output of TF are'
+        + "within acceptable proximity element by element. "
+        + 'Returns "Unmatched" if the output of onnx and the output of TF are '
+        + "not within acceptable proximity element by element. "
+        + 'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '
+        + "between the output of onnx and that of TF. This is because when undefined "
+        + "dimensions are present, a situation often arises where very large index "
+        + "values are compared, causing OutOfMemory. "
+        + "Only the output content of the models final output OP is checked.",
     )
     coto_group.add_argument(
-        '-cotof',
-        '--check_onnx_tf_outputs_elementwise_close_full',
-        action='store_true',
-        help=\
-            'Returns "Matches" if the output of onnx and the output of TF are '+
-            'within acceptable proximity element by element. '+
-            'Check the output of all OPs in sequence from the beginning, '+
-            'including all but the final output OP of the model. '+
-            'Returns "Unmatched" if the output of onnx and the output of TF are '+
-            'not within acceptable proximity element by element. '+
-            'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '+
-            'between the output of onnx and that of TF. This is because when undefined '+
-            'dimensions are present, a situation often arises where very large index '+
-            'values are compared, causing OutOfMemory. ' +
-            'It is very time consuming because it performs as many inferences as '+
-            'there are operations.'
+        "-cotof",
+        "--check_onnx_tf_outputs_elementwise_close_full",
+        action="store_true",
+        help='Returns "Matches" if the output of onnx and the output of TF are '
+        + "within acceptable proximity element by element. "
+        + "Check the output of all OPs in sequence from the beginning, "
+        + "including all but the final output OP of the model. "
+        + 'Returns "Unmatched" if the output of onnx and the output of TF are '
+        + "not within acceptable proximity element by element. "
+        + 'If the output of onnx is 1D, it returns "Skipped" and skips the comparison '
+        + "between the output of onnx and that of TF. This is because when undefined "
+        + "dimensions are present, a situation often arises where very large index "
+        + "values are compared, causing OutOfMemory. "
+        + "It is very time consuming because it performs as many inferences as "
+        + "there are operations.",
     )
     parser.add_argument(
-        '-coton',
-        '--check_onnx_tf_outputs_sample_data_normalization',
+        "-coton",
+        "--check_onnx_tf_outputs_sample_data_normalization",
         type=str,
-        choices=['norm', 'denorm'],
-        default='norm',
-        help=\
-            'norm: Validate using random data normalized to the range 0.0 to 1.0 ' +
-            'denorm: Validate using random data in the range 0.0 to 255.0 ' +
-            'If there is a normalization layer at the models entry point, ' +
-            'or if the model was trained on denormalized data, "denorm" must be specified. ' +
-            'Default: "norm"'
+        choices=["norm", "denorm"],
+        default="norm",
+        help="norm: Validate using random data normalized to the range 0.0 to 1.0 "
+        + "denorm: Validate using random data in the range 0.0 to 255.0 "
+        + "If there is a normalization layer at the models entry point, "
+        + 'or if the model was trained on denormalized data, "denorm" must be specified. '
+        + 'Default: "norm"',
     )
     parser.add_argument(
-        '-cotor',
-        '--check_onnx_tf_outputs_elementwise_close_rtol',
+        "-cotor",
+        "--check_onnx_tf_outputs_elementwise_close_rtol",
         type=float,
         default=0.0,
-        help=\
-            'The relative tolerance parameter \n' +
-            'Default: 0.0'
+        help="The relative tolerance parameter \n" + "Default: 0.0",
     )
     parser.add_argument(
-        '-cotoa',
-        '--check_onnx_tf_outputs_elementwise_close_atol',
+        "-cotoa",
+        "--check_onnx_tf_outputs_elementwise_close_atol",
         type=float,
         default=1e-4,
-        help=\
-            'The absolute tolerance parameter \n' +
-            'Default: 1e-4'
+        help="The absolute tolerance parameter \n" + "Default: 1e-4",
     )
     parser.add_argument(
-        '-dms',
-        '--disable_model_save',
-        action='store_true',
-        help='Does not save the converted model. For CIs RAM savings.'
+        "-dms",
+        "--disable_model_save",
+        action="store_true",
+        help="Does not save the converted model. For CIs RAM savings.",
     )
     parser.add_argument(
-        '-n',
-        '--non_verbose',
-        action='store_true',
-        help='Shorthand to specify a verbosity of "error".'
+        "-n",
+        "--non_verbose",
+        action="store_true",
+        help='Shorthand to specify a verbosity of "error".',
     )
     parser.add_argument(
-        '-v',
-        '--verbosity',
+        "-v",
+        "--verbosity",
         type=str,
-        choices=['debug', 'info', 'warn', 'error'],
-        default='debug',
-        help=\
-            'Change the level of information printed. ' +
-            'Default: "debug" (for backwards compatability)'
+        choices=["debug", "info", "warn", "error"],
+        default="debug",
+        help="Change the level of information printed. "
+        + 'Default: "debug" (for backwards compatability)',
     )
     args = parser.parse_args()
 
@@ -2557,18 +2705,20 @@ def main():
         for param in args.custom_input_op_name_np_data_path:
             tmp = []
             if len(param) == 2:
-                tmp.append(str(param[0])) # input_op_name
-                tmp.append(str(param[1])) # numpy_file_path
+                tmp.append(str(param[0]))  # input_op_name
+                tmp.append(str(param[1]))  # numpy_file_path
 
             if len(param) == 4:
-                tmp.append(str(param[0])) # input_op_name
-                tmp.append(str(param[1])) # numpy_file_path
-                tmp.append(np.asarray(ast.literal_eval(param[2]), dtype=np.float32)) # mean
-                tmp.append(np.asarray(ast.literal_eval(param[3]), dtype=np.float32)) # std
+                tmp.append(str(param[0]))  # input_op_name
+                tmp.append(str(param[1]))  # numpy_file_path
+                tmp.append(
+                    np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
+                )  # mean
+                tmp.append(
+                    np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
+                )  # std
 
-            custom_params.append(
-                tmp
-            )
+            custom_params.append(tmp)
 
     if len(custom_params) == 0:
         custom_params = None
@@ -2578,7 +2728,7 @@ def main():
     ]
 
     # Convert
-    model = convert(
+    _ = convert(
         input_onnx_file_path=args.input_onnx_file_path,
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
@@ -2634,6 +2784,5 @@ def main():
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
