@@ -11,6 +11,7 @@ sys.setrecursionlimit(2147483647) # C int maximum
 import ast
 import json
 import logging
+import traceback
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
@@ -653,7 +654,6 @@ def convert(
                 info(result)
             info(Color.GREEN(f'Model optimizing complete!'))
         except Exception as e:
-            import traceback
             warn(traceback.format_exc(), prefix=False)
             warn(
                 'Failed to optimize the onnx file.'
@@ -672,7 +672,6 @@ def convert(
             )
             info(Color.GREEN(f'Automatic generation of each OP name complete!'))
         except Exception as e:
-            import traceback
             warn(traceback.format_exc(), prefix=False)
             warn(
                 'Failed to automatic generation of each OP name.'
@@ -1115,7 +1114,6 @@ def convert(
                                 ).decode('utf-8')
                                 graph = gs.import_onnx(onnx.load(input_onnx_file_path))
                             except Exception as e:
-                                import traceback
                                 warn(traceback.format_exc(), prefix=False)
                     else:
                         graph = gs.import_onnx(estimated_graph)
@@ -1204,7 +1202,6 @@ def convert(
                     info(Color.GREEN(f'json output finish'))
                 except Exception as e:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
                 # Weights (h5)
                 try:
@@ -1213,7 +1210,6 @@ def convert(
                     info(Color.GREEN(f'weights.h5 output finish'))
                 except Exception as e:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
                 # Weights (keras)
                 try:
@@ -1222,7 +1218,6 @@ def convert(
                     info(Color.GREEN(f'weights.keras output finish'))
                 except Exception as e:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
                 # Weights (TF)
                 try:
@@ -1231,7 +1226,6 @@ def convert(
                     info(Color.GREEN(f'weights.tf output finish'))
                 except Exception as e:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
                 # Monolithic (keras)
                 try:
@@ -1240,7 +1234,6 @@ def convert(
                     info(Color.GREEN(f'keras output finish'))
                 except Exception as e:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
                 # Monolithic (h5)
                 info(Color.GREEN(f'h5 output start...'))
@@ -1259,11 +1252,9 @@ def convert(
                             break
                 else:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
             except Exception as e:
                 error(e)
-                import traceback
                 error(traceback.format_exc(), prefix=False)
 
         # Output in Keras keras_v3 format
@@ -1285,11 +1276,9 @@ def convert(
                             break
                 else:
                     error(e)
-                    import traceback
                     error(traceback.format_exc(), prefix=False)
             except Exception as e:
                 error(e)
-                import traceback
                 error(traceback.format_exc(), prefix=False)
 
         # Create concrete func
@@ -1350,11 +1339,9 @@ def convert(
                                 sys.exit(1)
                     else:
                         error(e)
-                        import traceback
                         error(traceback.format_exc(), prefix=False)
             else:
                 error(e)
-                import traceback
                 error(traceback.format_exc(), prefix=False)
         except ValueError as e:
             msg_list = [s for s in e.args if isinstance(s, str)]
@@ -1372,11 +1359,9 @@ def convert(
                         sys.exit(1)
             else:
                 error(e)
-                import traceback
                 error(traceback.format_exc(), prefix=False)
         except Exception as e:
             error(e)
-            import traceback
             error(traceback.format_exc(), prefix=False)
 
         # TFv1 .pb
@@ -1402,7 +1387,6 @@ def convert(
                 )
             except Exception as e:
                 error(e)
-                import traceback
                 error(traceback.format_exc(), prefix=False)
 
         # TFLite
@@ -1485,7 +1469,6 @@ def convert(
                     gpu_compatibility=True,
                 )
             except Exception as ex:
-                import traceback
                 warn(traceback.format_exc(), prefix=False)
                 warn(
                     'TFLite ModelAnalyzer failed.'
@@ -1524,7 +1507,6 @@ def convert(
                     )
                 info(Color.GREEN(f'Dynamic Range Quantization tflite output complete!'))
             except RuntimeError as ex:
-                import traceback
                 warn(traceback.format_exc(), prefix=False)
                 warn(
                     'Dynamic Range Quantization tflite output failed.'
@@ -1742,7 +1724,6 @@ def convert(
                     )
                 info(Color.GREEN(f'Full INT8 Quantization tflite output complete!'))
             except RuntimeError as ex:
-                import traceback
                 warn(traceback.format_exc(), prefix=False)
                 warn(
                     'Full INT8 Quantization tflite output failed.'
@@ -1775,7 +1756,6 @@ def convert(
                     )
                 info(Color.GREEN(f'INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                import traceback
                 warn(traceback.format_exc(), prefix=False)
                 warn(
                     'INT8 Quantization with int16 activations tflite output failed.'
@@ -1808,7 +1788,6 @@ def convert(
                     )
                 info(Color.GREEN(f'Full INT8 Quantization with int16 activations tflite output complete!'))
             except RuntimeError as ex:
-                import traceback
                 warn(traceback.format_exc(), prefix=False)
                 warn(
                     'Full INT8 Quantization with int16 activations tflite output failed.'
