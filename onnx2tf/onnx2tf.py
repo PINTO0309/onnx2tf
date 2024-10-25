@@ -62,12 +62,12 @@ def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
-    output_saved_model: Optional[bool] = True,
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
     output_keras_v3: Optional[bool] = False,
     output_tfv1_pb: Optional[bool] = False,
     output_weights: Optional[bool] = False,
+    not_output_saved_model: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
@@ -147,6 +147,12 @@ def convert(
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
+
+    not_output_saved_model: Optional[bool]
+        Skip output of the SavedModel format.\n
+        Skipping is useful in cases where only a TFLite model is needed,
+        especially if for some reason (e.g. grouped convolutions) the SavedModel
+        format fails.
 
     copy_onnx_input_output_names_to_tflite: Optional[bool]
         Copy the input/output OP name of ONNX to the input/output OP name of tflite.\n
@@ -1303,7 +1309,7 @@ def convert(
         SIGNATURE_KEY = 'serving_default'
 
         # saved_model
-        if output_saved_model:
+        if not not_output_saved_model:
             try:
                 # concrete_func
                 info(Color.REVERSE(f'saved_model output started'), '=' * 58)
