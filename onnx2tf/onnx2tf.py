@@ -2047,6 +2047,16 @@ def main():
             'Output weights in hdf5 format.'
     )
     parser.add_argument(
+        '-nosm',
+        '--not_output_saved_model',
+        action='store_true',
+        help=\
+            'Skip output of the SavedModel format.\n' +
+            'Skipping is useful in cases where only a TFLite model is needed, ' +
+            'especially if for some reason (e.g. grouped convolutions) the SavedModel' +
+            'format fails.'
+    )
+    parser.add_argument(
         '-coion',
         '--copy_onnx_input_output_names_to_tflite',
         action='store_true',
@@ -2618,6 +2628,7 @@ def main():
         output_keras_v3=args.output_keras_v3,
         output_tfv1_pb=args.output_tfv1_pb,
         output_weights=args.output_weights,
+        not_output_saved_model=args.not_output_saved_model,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
