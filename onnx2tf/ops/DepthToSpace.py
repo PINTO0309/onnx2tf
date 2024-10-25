@@ -21,7 +21,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
 )
-from typing import List, Dict, Any
+from typing import Any, Dict
 
 
 @print_node_info

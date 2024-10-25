@@ -3,7 +3,6 @@ import os
 import io
 import sys
 import copy
-import json
 import psutil
 import random
 random.seed(0)
@@ -11,7 +10,6 @@ import requests
 import flatbuffers
 import itertools
 import collections
-import traceback
 import subprocess
 import numpy as np
 np.random.seed(0)

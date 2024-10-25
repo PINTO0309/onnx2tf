@@ -1,10 +1,7 @@
-import sys
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
-import itertools
-import collections
 import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -22,13 +19,9 @@ from onnx2tf.utils.common_functions import (
     shape_unmatched_special_avoidance_workaround,
     merge_two_consecutive_identical_ops_into_one,
     deterring_shape_corruption_due_to_broadcast,
-    acquisition_of_validation_data,
-    onnx_tf_tensor_validation,
-    obtaining_an_inverted_pattern_for_brute_force_validation,
     correction_process_for_accuracy_errors,
     nhwc_determination_of_output_value_of_binary_input_op,
 )
-from typing import Any, Dict
 
 
 @print_node_info

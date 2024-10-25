@@ -1,5 +1,4 @@
 import sys
-import copy
 import random
 random.seed(0)
 import numpy as np

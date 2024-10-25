@@ -11,7 +11,6 @@ sys.setrecursionlimit(2147483647) # C int maximum
 import ast
 import json
 import logging
-import traceback
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
@@ -632,7 +631,7 @@ def convert(
                         estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
                         onnx.save(estimated_graph, f=input_onnx_file_path)
                         del estimated_graph
-                except:
+                except Exception:
                     if tmp_graph is not None:
                         del tmp_graph
                     if tmp_onnx_graph is not None:
@@ -756,7 +755,7 @@ def convert(
                                 break
                     else:
                         idx += 1
-                except:
+                except Exception:
                     try:
                         del graph.nodes[idx]
                     except IndexError:
@@ -1115,7 +1114,7 @@ def convert(
                                 warn_tb('')
                     else:
                         graph = gs.import_onnx(estimated_graph)
-                except:
+                except Exception:
                     pass
 
         # Nodes
