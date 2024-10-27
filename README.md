@@ -1448,7 +1448,11 @@ For example, take a model with multiple inputs and multiple outputs as shown in 
 When converting to TensorFlow.js, process as follows.
 
 ```bash
-pip install tensorflowjs
+pip install -U --no-deps \
+tensorflowjs \
+tensorflow_decision_forests \
+ydf \
+tensorflow_hub
 
 onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -osd -dgc
 
