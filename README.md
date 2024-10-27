@@ -1450,7 +1450,7 @@ When converting to TensorFlow.js, process as follows.
 ```bash
 pip install tensorflowjs
 
-onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -osd
+onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -osd -dgc
 
 tensorflowjs_converter \
 --input_format tf_saved_model \
