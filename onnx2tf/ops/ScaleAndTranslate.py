@@ -15,11 +15,8 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     pre_process_transpose,
     post_process_transpose,
-    make_tf_partial_model_inputs,
-    dummy_tf_inference,
     transpose_with_flexing_deterrence,
 )
-from typing import Any, Dict, List
 from onnx2tf.utils.logging import *
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
