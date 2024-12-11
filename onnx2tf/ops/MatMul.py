@@ -87,7 +87,7 @@ def make_node(
     input_tensor_2_is_one_d = False
     if input_tensor_1.shape is not None \
         and len(input_tensor_1.shape) == 1:
-        input_tensor_1 = tf.expand_dims(input_tensor_2, axis=0)
+        input_tensor_1 = tf.expand_dims(input_tensor_1, axis=0)
         input_tensor_1_is_one_d = True
     elif input_tensor_2.shape is not None \
             and len(input_tensor_2.shape) == 1:
