@@ -67,6 +67,7 @@ def convert(
     output_keras_v3: Optional[bool] = False,
     output_tfv1_pb: Optional[bool] = False,
     output_weights: Optional[bool] = False,
+    not_output_saved_model: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
@@ -146,6 +147,12 @@ def convert(
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
+
+    not_output_saved_model: Optional[bool]
+        Skip output of the SavedModel format.\n
+        Skipping is useful in cases where only a TFLite model is needed,
+        especially if for some reason (e.g. grouped convolutions) the SavedModel
+        format fails.
 
     copy_onnx_input_output_names_to_tflite: Optional[bool]
         Copy the input/output OP name of ONNX to the input/output OP name of tflite.\n
@@ -1302,82 +1309,83 @@ def convert(
         SIGNATURE_KEY = 'serving_default'
 
         # saved_model
-        try:
-            # concrete_func
-            info(Color.REVERSE(f'saved_model output started'), '=' * 58)
-            if not output_signaturedefs and not output_integer_quantized_tflite:
-                tf.saved_model.save(model, output_folder_path)
-            else:
-                export_archive = tf_keras.export.ExportArchive()
-                export_archive.add_endpoint(
-                    name=SIGNATURE_KEY,
-                    fn=lambda *inputs : model(inputs),
-                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
-                )
-                export_archive.write_out(output_folder_path)
-            info(Color.GREEN(f'saved_model output complete!'))
-        except TypeError as e:
-            # Switch to .pb
-            info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
-        except (KeyError, AssertionError) as e:
-            msg_list = [s for s in e.args if isinstance(s, str)]
-            if len(msg_list) > 0:
-                try:
-                    for s in msg_list:
-                        if 'Failed to add concrete function' in s \
-                            or "Tried to export a function which references an 'untracked' resource" in s:
-                            export_archive = tf_keras.export.ExportArchive()
-                            export_archive.add_endpoint(
-                                name=SIGNATURE_KEY,
-                                fn=lambda *inputs : model(inputs),
-                                input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
-                            )
-                            export_archive.write_out(output_folder_path)
-                            break
-                except ValueError as e:
-                    msg_list = [s for s in e.args if isinstance(s, str)]
-                    if len(msg_list) > 0:
+        if not not_output_saved_model:
+            try:
+                # concrete_func
+                info(Color.REVERSE(f'saved_model output started'), '=' * 58)
+                if not output_signaturedefs and not output_integer_quantized_tflite:
+                    tf.saved_model.save(model, output_folder_path)
+                else:
+                    export_archive = tf_keras.export.ExportArchive()
+                    export_archive.add_endpoint(
+                        name=SIGNATURE_KEY,
+                        fn=lambda *inputs : model(inputs),
+                        input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+                    )
+                    export_archive.write_out(output_folder_path)
+                info(Color.GREEN(f'saved_model output complete!'))
+            except TypeError as e:
+                # Switch to .pb
+                info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
+            except (KeyError, AssertionError) as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    try:
                         for s in msg_list:
-                            if 'A root scope name has to match the following pattern' in s:
-                                error(
-                                    f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                            if 'Failed to add concrete function' in s \
+                                or "Tried to export a function which references an 'untracked' resource" in s:
+                                export_archive = tf_keras.export.ExportArchive()
+                                export_archive.add_endpoint(
+                                    name=SIGNATURE_KEY,
+                                    fn=lambda *inputs : model(inputs),
+                                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
                                 )
-                                matches = re.findall(r"'([^']*)'", s)
-                                error(f'{matches[0]}')
-                                error(
-                                    f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                                )
-                                sys.exit(1)
-                    else:
-                        error(e)
-                        import traceback
-                        error(traceback.format_exc(), prefix=False)
-            else:
+                                export_archive.write_out(output_folder_path)
+                                break
+                    except ValueError as e:
+                        msg_list = [s for s in e.args if isinstance(s, str)]
+                        if len(msg_list) > 0:
+                            for s in msg_list:
+                                if 'A root scope name has to match the following pattern' in s:
+                                    error(
+                                        f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                                    )
+                                    matches = re.findall(r"'([^']*)'", s)
+                                    error(f'{matches[0]}')
+                                    error(
+                                        f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                                    )
+                                    sys.exit(1)
+                        else:
+                            error(e)
+                            import traceback
+                            error(traceback.format_exc(), prefix=False)
+                else:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
+            except ValueError as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    for s in msg_list:
+                        if 'A root scope name has to match the following pattern' in s:
+                            error(
+                                f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                            )
+                            matches = re.findall(r"'([^']*)'", s)
+                            error(f'{matches[0]}')
+                            error(
+                                f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                            )
+                            sys.exit(1)
+                else:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
+            except Exception as e:
                 error(e)
                 import traceback
                 error(traceback.format_exc(), prefix=False)
-        except ValueError as e:
-            msg_list = [s for s in e.args if isinstance(s, str)]
-            if len(msg_list) > 0:
-                for s in msg_list:
-                    if 'A root scope name has to match the following pattern' in s:
-                        error(
-                            f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
-                        )
-                        matches = re.findall(r"'([^']*)'", s)
-                        error(f'{matches[0]}')
-                        error(
-                            f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                        )
-                        sys.exit(1)
-            else:
-                error(e)
-                import traceback
-                error(traceback.format_exc(), prefix=False)
-        except Exception as e:
-            error(e)
-            import traceback
-            error(traceback.format_exc(), prefix=False)
 
         # TFv1 .pb
         if output_tfv1_pb:
@@ -2039,6 +2047,16 @@ def main():
             'Output weights in hdf5 format.'
     )
     parser.add_argument(
+        '-nosm',
+        '--not_output_saved_model',
+        action='store_true',
+        help=\
+            'Skip output of the SavedModel format.\n' +
+            'Skipping is useful in cases where only a TFLite model is needed, ' +
+            'especially if for some reason (e.g. grouped convolutions) the SavedModel' +
+            'format fails.'
+    )
+    parser.add_argument(
         '-coion',
         '--copy_onnx_input_output_names_to_tflite',
         action='store_true',
@@ -2610,6 +2628,7 @@ def main():
         output_keras_v3=args.output_keras_v3,
         output_tfv1_pb=args.output_tfv1_pb,
         output_weights=args.output_weights,
+        not_output_saved_model=args.not_output_saved_model,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
