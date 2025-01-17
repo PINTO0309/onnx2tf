@@ -2386,6 +2386,15 @@ def shape_unmatched_special_avoidance_workaround(
     input_tensor_2: Any
         Input shape-corrected TensorFlow input node Y
     """
+    try:
+        if hasattr(input_tensor_1, "shape") \
+            and hasattr(input_tensor_2, "shape") \
+            and input_tensor_1.shape is not None \
+            and input_tensor_2.shape is not None \
+            and input_tensor_1.shape == input_tensor_2.shape:
+            return input_tensor_1, input_tensor_2
+    except:
+        pass
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed

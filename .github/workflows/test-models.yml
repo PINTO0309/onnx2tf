@@ -36,11 +36,6 @@ jobs:
           sudo rm -rf "/usr/local/share/phantomjs*" || true
           sudo rm -rf "/usr/share/sbt" || true
           sudo rm -rf "/usr/local/sqlpackage" || true
-          docker rmi $(docker image ls -q --filter "reference=node*")
-          docker rmi $(docker image ls -q --filter "reference=moby/buildkit*")
-          docker rmi $(docker image ls -q --filter "reference=debian*")
-          docker rmi $(docker image ls -q --filter "reference=alpine*")
-          docker rmi $(docker image ls -q --filter "reference=ubuntu:20.04")
           sudo npm uninstall bazel
           rustup self uninstall -y
           sudo apt purge \
