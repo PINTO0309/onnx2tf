@@ -37,7 +37,6 @@ jobs:
           sudo rm -rf "/usr/share/sbt" || true
           sudo rm -rf "/usr/local/sqlpackage" || true
           docker rmi $(docker image ls -q --filter "reference=node*")
-          docker rmi $(docker image ls -q --filter "reference=moby/buildkit*")
           docker rmi $(docker image ls -q --filter "reference=debian*")
           docker rmi $(docker image ls -q --filter "reference=alpine*")
           sudo npm uninstall bazel
