@@ -80,6 +80,7 @@ def convert(
     overwrite_input_shape: Optional[List[str]] = None,
     no_large_tensor: Optional[bool] = False,
     output_nms_with_dynamic_tensor: Optional[bool] = False,
+    switch_nms_version: Optional[str] = 'v4',
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -269,6 +270,12 @@ def convert(
             output_tensor_shape: [100, 7]\n
         enable --output_nms_with_dynamic_tensor:\n
             output_tensor_shape: [N, 7]
+
+    switch_nms_version: Optional[str]
+        Switch the NMS version to V4 or V5 to convert.\n\n
+        e.g.\n
+        NonMaxSuppressionV4(default): --switch_nms_version v4\n
+        NonMaxSuppressionV5: --switch_nms_version v5
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
@@ -921,6 +928,7 @@ def convert(
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+        'switch_nms_version': switch_nms_version,
         'output_integer_quantized_tflite': output_integer_quantized_tflite,
         'gelu_replace_op_names': {},
         'space_to_depth_replace_op_names': {},
@@ -2234,6 +2242,18 @@ def main():
             '    output_tensor_shape: [N, 7]'
     )
     parser.add_argument(
+        '-snms',
+        '--switch_nms_version',
+        type=str,
+        choices=['v4', 'v5'],
+        default='v4',
+        help=\
+            'Switch the NMS version to V4 or V5 to convert. \n' +
+            'e.g. \n' +
+            'NonMaxSuppressionV4(default): --switch_nms_version v4 \n' +
+            'NonMaxSuppressionV5: --switch_nms_version v5'
+    )
+    parser.add_argument(
         '-k',
         '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
@@ -2623,6 +2643,7 @@ def main():
         overwrite_input_shape=args.overwrite_input_shape,
         no_large_tensor=args.no_large_tensor,
         output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
+        switch_nms_version=args.switch_nms_version,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,

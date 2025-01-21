@@ -299,7 +299,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.26.4
+  ghcr.io/pinto0309/onnx2tf:1.26.5
 
   or
 
@@ -307,7 +307,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.26.4
+  docker.io/pinto0309/onnx2tf:1.26.5
 
   or
 
@@ -1526,6 +1526,7 @@ usage: onnx2tf
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
 [-nlt]
 [-onwdt]
+[-snms {v4,v5}]
 [-k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...]]
 [-kt KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES [KEEP_NWC_OR_NHWC_OR_NDHWC_INPUT_NAMES ...]]
 [-kat KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES [KEEP_SHAPE_ABSOLUTELY_INPUT_NAMES ...]]
@@ -1724,6 +1725,12 @@ optional arguments:
         output_tensor_shape: [100, 7]
     enable --output_nms_with_dynamic_tensor:
         output_tensor_shape: [N, 7]
+
+  -snms {v4,v5}, --switch_nms_version {v4,v5}
+    Switch the NMS version to V4 or V5 to convert.
+    e.g.
+    NonMaxSuppressionV4(default): --switch_nms_version v4
+    NonMaxSuppressionV5: --switch_nms_version v5
 
   -k KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES [KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES ...], \
       --keep_ncw_or_nchw_or_ncdhw_input_names KEEP_NCW_OR_NCHW_OR_NCDHW_INPUT_NAMES \
@@ -2010,6 +2017,7 @@ convert(
   overwrite_input_shape: Union[List[str], NoneType] = None,
   no_large_tensor: Optional[bool] = False,
   output_nms_with_dynamic_tensor: Optional[bool] = False,
+  switch_nms_version: Optional[str] = 'v4',
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -2214,6 +2222,12 @@ convert(
           output_tensor_shape: [100, 7]
       enable --output_nms_with_dynamic_tensor:
           output_tensor_shape: [N, 7]
+
+    switch_nms_version {v4,v5}
+      Switch the NMS version to V4 or V5 to convert.
+      e.g.
+      NonMaxSuppressionV4(default): switch_nms_version="v4"
+      NonMaxSuppressionV5: switch_nms_version="v5"
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
       Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.
