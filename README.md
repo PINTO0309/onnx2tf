@@ -265,12 +265,20 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - psutil==5.9.5
 - ml_dtypes==0.3.2
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
-- flatbuffers>=23.5.26
+- flatbuffers>=23.1.21
   ```bash
-  # Custom flatc v23.5.26 binary for Ubuntu 20.04+
+  # Custom flatc binary for Ubuntu 22.04+
   # https://github.com/PINTO0309/onnx2tf/issues/196
+
+  # x86_64/amd64 v23.5.26
   wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
   && tar -zxvf flatc.tar.gz \
+  && sudo chmod +x flatc \
+  && sudo mv flatc /usr/bin/
+
+  # arm64 v23.1.21
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.26.6/flatc_arm64.tar.gz \
+  && tar -zxvf flatc_arm64.tar.gz \
   && sudo chmod +x flatc \
   && sudo mv flatc /usr/bin/
   ```
