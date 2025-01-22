@@ -101,12 +101,14 @@ def make_node(
 
     # Reshape process is needed for per-axis dequantization
     # when scale is a 1-D tensor
-    if x_scale_rank == 1:
+    if x_scale_rank == 1 and x_scale_shape[0] != 1:
         shape_broadcast = list([1 for _ in range(axis)] + [input_tensor_shape[axis]] + [1 for _ in range(axis + 1, input_tensor_rank)])
         x_scale = tf.reshape(
             tensor=x_scale,
             shape=shape_broadcast,
         )
+    elif x_scale_rank == 1 and x_scale_shape[0] == 1:
+        shape_broadcast = [1 for i in range(input_tensor_rank)]
 
     subed_tensor = input_tensor
     if len(graph_node.inputs) >= 3 and input_tensor.dtype != tf.int32:
