@@ -80,7 +80,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          build-args: BUILD_ARCH=${{ matrix.platforms }}
+          build-args: BUILD_ARCH=${{ matrix.platform }}
           push: true
           labels: ${{ steps.meta_gh.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }},push-by-digest=true,name-canonical=true,push=true
@@ -105,7 +105,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          build-args: BUILD_ARCH=${{ matrix.platforms }}
+          build-args: BUILD_ARCH=${{ matrix.platform }}
           push: true
           labels: ${{ steps.meta_gh.outputs.labels }}
           outputs: type=image,name=${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }},push-by-digest=true,name-canonical=true,push=true
