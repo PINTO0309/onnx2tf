@@ -1,6 +1,7 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG BUILD_ARCH="linux/amd64"
 
 RUN apt-get update \
     && apt-get install -y \
@@ -31,7 +32,13 @@ RUN pip install pip -U \
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
 # https://github.com/PINTO0309/onnx2tf/issues/196
-RUN wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
+RUN if [ "${BUILD_ARCH}" = "linux/amd64" ]; then \
+        wget -O flatc.tar.gz https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz; \
+    elif [ "${BUILD_ARCH}" = "linux/arm64" ]; then \
+        wget -O flatc.tar.gz https://github.com/PINTO0309/onnx2tf/releases/download/1.26.6/flatc_arm64.tar.gz; \
+    else \
+        echo "Unsupported architecture: ${BUILD_ARCH}" && exit 1; \
+    fi \
     && tar -zxvf flatc.tar.gz \
     && chmod +x flatc \
     && mv flatc /usr/bin/
