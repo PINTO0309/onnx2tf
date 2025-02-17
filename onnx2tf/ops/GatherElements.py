@@ -184,7 +184,8 @@ def make_node(
                 tf_layers_dict=tf_layers_dict,
             )
             val_model = None
-            if not isinstance(input_tensor, np.ndarray):
+            if not isinstance(input_tensor, np.ndarray) \
+                and not hasattr(input_tensor, "numpy"):
                 val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=[
