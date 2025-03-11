@@ -298,12 +298,10 @@ def make_node(
     # Generation of TF OP
     axes = list(axes) if axes is not None else None
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.norm(
-            tensor=input_tensor,
-            ord=1,
+        tf.reduce_sum(
+            tf.abs(input_tensor),
             axis=axes if len(axes) > 1 else axes[0],
             keepdims=keepdims,
-            name=graph_node.name,
         )
 
     # Post-process transpose
