@@ -16,6 +16,7 @@ import subprocess
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 import tf_keras
 from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
@@ -4143,8 +4144,7 @@ def weights_export(
         Path to file in hdf5 format to save the extracted weights
     """
     import h5py
-    from tensorflow.lite.python import interpreter as interpreter_wrapper
-    interpreter = interpreter_wrapper.Interpreter(
+    interpreter = Interpreter(
         model_path=extract_target_tflite_file_path,
     )
     interpreter.allocate_tensors()

@@ -13,20 +13,20 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install onnx==1.16.1 \
+    && pip install onnx==1.17.0 \
     && pip install onnxsim==0.4.33 \
     && pip install nvidia-pyindex \
     && pip install onnx_graphsurgeon \
     && pip install onnx2tf \
     && pip install onnx2tf \
     && pip install simple_onnx_processing_tools \
-    && pip install tensorflow==2.17.0 \
-    && pip install protobuf==3.20.3 \
+    && pip install tensorflow==2.19.0 \
+    && pip install protobuf==4.25.5 \
     && pip install h5py==3.11.0 \
     && pip install psutil==5.9.5 \
     && pip install onnxruntime==1.18.1 \
-    && pip install ml_dtypes==0.3.2 \
-    && pip install tf-keras~=2.16 \
+    && pip install ml_dtypes==0.5.1 \
+    && pip install tf-keras==2.19.0 \
     && pip install flatbuffers>=23.5.26
 
 # Re-release flatc with some customizations of our own to address

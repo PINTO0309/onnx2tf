@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 from onnx2tf import onnx2tf
 from onnx2tf.utils.logging import *
 
@@ -24,7 +25,7 @@ def run_torch_softmax(input, axis):
 
 def run_tflite_softmax(input, tflite_model_file):
     # Load the TFLite model and allocate tensors
-    interpreter = tf.lite.Interpreter(model_path=tflite_model_file)
+    interpreter = Interpreter(model_path=tflite_model_file)
     interpreter.allocate_tensors()
 
     # Get input and output tensors

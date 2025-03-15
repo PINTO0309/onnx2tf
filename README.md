@@ -261,9 +261,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.17.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
+- tensorflow==2.19.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
+- tf-keras==2.19.0
+- ai-edge-litert==1.2.0
 - psutil==5.9.5
-- ml_dtypes==0.3.2
+- ml_dtypes==0.5.1
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
 - flatbuffers>=23.1.21
   ```bash
@@ -307,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.26.9
+  ghcr.io/pinto0309/onnx2tf:1.27.0
 
   or
 
@@ -315,11 +317,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.26.9
+  docker.io/pinto0309/onnx2tf:1.27.0
 
   or
 
-  pip install -U onnx==1.16.1 \
+  pip install -U onnx==1.17.0 \
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U onnxruntime==1.18.1 \
@@ -327,13 +329,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U simple_onnx_processing_tools \
   && pip install -U sne4onnx>=1.0.13 \
   && pip install -U sng4onnx>=1.0.4 \
-  && pip install -U tensorflow==2.17.0 \
+  && pip install -U tensorflow==2.19.0 \
   && pip install -U protobuf==3.20.3 \
   && pip install -U onnx2tf \
   && pip install -U h5py==3.11.0 \
   && pip install -U psutil==5.9.5 \
-  && pip install -U ml_dtypes==0.3.2 \
-  && pip install -U tf-keras~=2.16 \
+  && pip install -U ml_dtypes==0.5.1 \
+  && pip install -U tf-keras==2.19.0 \
   && pip install flatbuffers>=23.5.26
 
   or
@@ -357,8 +359,8 @@ or
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
   !pip install -U pip \
-    && pip install tensorflow==2.17.0 \
-    && pip install -U onnx==1.16.1 \
+    && pip install tensorflow==2.19.0 \
+    && pip install -U onnx==1.17.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnxruntime==1.18.1 \
@@ -368,8 +370,8 @@ or
     && pip install -U protobuf==3.20.3 \
     && pip install -U h5py==3.11.0 \
     && pip install -U psutil==5.9.5 \
-    && pip install -U ml_dtypes==0.3.2 \
-    && pip install -U tf-keras~=2.16 \
+    && pip install -U ml_dtypes==0.5.1 \
+    && pip install -U tf-keras==2.19.0 \
     && pip install flatbuffers>=23.5.26
   ```
 
@@ -584,7 +586,7 @@ import onnxruntime
 import numpy as np
 import onnx2tf
 import tensorflow as tf
-from tensorflow.lite.python import interpreter as tflite_interpreter
+from ai_edge_litert.interpreter import Interpreter
 
 class Model(torch.nn.Module):
     def forward(self, x, y):
@@ -623,7 +625,7 @@ onnx2tf.convert(
 )
 
 # Now, test the newer TFLite model
-interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
+interpreter = Interpreter(model_path="model.tf/model_float32.tflite")
 tf_lite_model = interpreter.get_signature_runner()
 inputs = {
   'x': np.asarray([10], dtype=np.int64),
@@ -1037,10 +1039,10 @@ Now, let's try inference with the TFLite runtime instead of the TensorFlow runti
   import time
   import numpy as np
   np.random.seed(0)
-  import tensorflow as tf
+  from ai_edge_litert.interpreter import Interpreter
 
   # Load TFLite model
-  interpreter = tf.lite.Interpreter(model_path="./saved_model/prelu_check_float32.tflite")
+  interpreter = Interpreter(model_path="./saved_model/prelu_check_float32.tflite")
   interpreter.allocate_tensors()
   tensor_shape = (256, 20)
   input_data = {'waveform': np.random.randn(*tensor_shape).astype(np.float32)}
@@ -1208,10 +1210,10 @@ You can use `signature_runner` to handle dynamic input tensors by performing inf
 - `test.py` - Batch size: `5`
   ```python
   import numpy as np
-  import tensorflow as tf
+  from ai_edge_litert.interpreter import Interpreter
   from pprint import pprint
 
-  interpreter = tf.lite.Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
+  interpreter = Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
   tf_lite_model = interpreter.get_signature_runner()
   inputs = {
       'images': np.ones([5,256,128,3], dtype=np.float32),
@@ -1239,10 +1241,10 @@ You can use `signature_runner` to handle dynamic input tensors by performing inf
 - `test.py` - Batch size: `3`
   ```python
   import numpy as np
-  import tensorflow as tf
+  from ai_edge_litert.interpreter import Interpreter
   from pprint import pprint
 
-  interpreter = tf.lite.Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
+  interpreter = Interpreter(model_path="saved_model/osnet_x0_25_msmt17_float32.tflite")
   tf_lite_model = interpreter.get_signature_runner()
   inputs = {
       'images': np.ones([3,256,128,3], dtype=np.float32),
@@ -1326,11 +1328,11 @@ The relationship between the ONNX before conversion and the TFLite file after co
 Use the generated TFLite file to inference and ensure that it always contains fixed value output.
 
 ```python
-import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 import numpy as np
 from pprint import pprint
 
-interpreter = tf.lite.Interpreter(model_path="saved_model/toy_with_constant_float32.tflite")
+interpreter = Interpreter(model_path="saved_model/toy_with_constant_float32.tflite")
 interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()

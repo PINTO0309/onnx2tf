@@ -47,7 +47,10 @@ https://github.com/PINTO0309/onnx2tf/issues
     && pip install -U simple_onnx_processing_tools \
     && pip install -U onnx2tf \
     && pip install -U h5py==3.7.0
-    && pip install tensorflow==2.12.0
+    && pip install -U tensorflow==2.19.0 \
+    && pip install -U protobuf==4.25.5 \
+    && pip install -U tf-keras==2.19.0 \
+    && pip install -U ai-edge-litert==1.2.0
     ```
 
 https://github.com/PINTO0309/onnx2tf/pulls

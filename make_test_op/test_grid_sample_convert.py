@@ -7,10 +7,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 import onnxruntime
 from onnx2tf import onnx2tf
 from onnx2tf.utils.logging import *
-
 
 class GridSampleOperator(torch.nn.Module):
     def forward(self, input: torch.Tensor, grid: torch.Tensor):
@@ -45,7 +45,7 @@ def run_onnx_grid_sampler(input, grid, onnx_model_file):
 
 def run_tflite_grid_sampler(input, grid, tflite_model_file):
     # Load the TFLite model and allocate tensors
-    interpreter = tf.lite.Interpreter(model_path=tflite_model_file)
+    interpreter = Interpreter(model_path=tflite_model_file)
     interpreter.allocate_tensors()
 
     # Get input and output tensors
