@@ -93,6 +93,7 @@ jobs:
         pip install psutil==5.9.5
         pip install onnx==1.17.0
         pip install tensorflow==2.19.0
+        pip install ai_edge_litert==1.2.0
         pip install nvidia-pyindex
         pip install onnx-graphsurgeon
         pip install protobuf==4.25.5
