@@ -329,6 +329,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U simple_onnx_processing_tools \
   && pip install -U sne4onnx>=1.0.13 \
   && pip install -U sng4onnx>=1.0.4 \
+  && pip install -U ai_edge_litert==1.2.0 \
   && pip install -U tensorflow==2.19.0 \
   && pip install -U protobuf==3.20.3 \
   && pip install -U onnx2tf \
@@ -360,6 +361,7 @@ or
     && sudo mv flatc /usr/bin/
   !pip install -U pip \
     && pip install tensorflow==2.19.0 \
+    && pip install ai_edge_litert==1.2.0 \
     && pip install -U onnx==1.17.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \

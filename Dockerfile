@@ -21,6 +21,7 @@ RUN pip install pip -U \
     && pip install onnx2tf \
     && pip install simple_onnx_processing_tools \
     && pip install tensorflow==2.19.0 \
+    && pip install ai_edge_litert==1.2.0 \
     && pip install protobuf==4.25.5 \
     && pip install h5py==3.11.0 \
     && pip install psutil==5.9.5 \
