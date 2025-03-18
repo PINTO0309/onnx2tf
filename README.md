@@ -1488,7 +1488,7 @@ See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
-pip install coremltools
+pip install coremltools==8.2
 
 onnx2tf -i mobilenetv2-12.onnx -k input -ois input:1,3,224,224 -osd
 ```
@@ -1501,7 +1501,7 @@ model = ct.convert(
     model=FOLDER_PATH,
     source='tensorflow',
 )
-model.save(f'{FOLDER_PATH}/model.mlmodel')
+model.save(f'{FOLDER_PATH}/model.mlpackage')
 ```
 
 See: https://github.com/apple/coremltools
