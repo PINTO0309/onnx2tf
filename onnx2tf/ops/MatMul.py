@@ -128,6 +128,12 @@ def make_node(
     output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
         if isinstance(dtype, np.dtype) else dtype
 
+    # Workaround for Float16
+    if input_tensor_1.dtype == tf.float32 and output_dtype in [tf.int32, tf.int64, tf.float16]:
+        output_dtype = tf.float32
+    elif output_dtype and input_tensor_2.dtype == tf.float32:
+        output_dtype = tf.float32
+
     # Shape Unmatch Error Mitigation Measures
     # Search for and transpose shapes that do not cause shape unmatch errors
     min_abs_err = sys.maxsize
