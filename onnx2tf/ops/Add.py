@@ -130,9 +130,9 @@ def make_node(
     )
 
     # Workaround for ConvInteger
-    if input_tensor_1.dtype == tf.float32 and input_tensor_2.dtype in [tf.int32, tf.int64]:
+    if input_tensor_1.dtype == tf.float32 and input_tensor_2.dtype in [tf.int32, tf.int64, tf.float16]:
         input_tensor_2 = tf.cast(input_tensor_2, dtype=tf.float32)
-    elif input_tensor_1.dtype in [tf.int32, tf.int64] and input_tensor_2.dtype == tf.float32:
+    elif input_tensor_1.dtype in [tf.int32, tf.int64, tf.float16] and input_tensor_2.dtype == tf.float32:
         input_tensor_1 = tf.cast(input_tensor_1, dtype=tf.float32)
 
     # Disable unnecessary Transpose
