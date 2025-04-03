@@ -167,11 +167,46 @@ def make_node(
         input_tensor=input_tensor
     )
 
-    func = math.ceil if ceil_mode else math.floor
-    output_spatial_shape = [
-        func((i + pb + pe - d * (k - 1) - 1) / s + 1)
-        for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
-    ]
+    # func = math.ceil if ceil_mode else math.floor
+    # output_spatial_shape = [
+    #     func((i + pb + pe - d * (k - 1) - 1) / s + 1)
+    #     for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
+    # ]
+
+    def compute_output_spatial_shape_from_tensor(input_tensor, pads, kernel_shape, dilations, strides, ceil_mode=False):
+        # input_tensor: [N, C, H, W] 形式
+        input_shape = tf.shape(input_tensor)  # 動的 shape を取得
+        input_spatial = input_shape[2:]       # [H, W] など、空間次元だけを使う（例：input_tensor.shape = [N, C, H, W]）
+
+        pad_begin = pads[:len(pads) // 2]
+        pad_end = pads[len(pads) // 2:]
+
+        round_func = tf.math.ceil if ceil_mode else tf.math.floor
+
+        output_spatial = []
+        for i, pb, pe, k, d, s in zip(tf.unstack(input_spatial), pad_begin, pad_end, kernel_shape, dilations, strides):
+            i = tf.cast(i, tf.float32)
+            pb = tf.constant(pb, dtype=tf.float32)
+            pe = tf.constant(pe, dtype=tf.float32)
+            k = tf.constant(k, dtype=tf.float32)
+            d = tf.constant(d, dtype=tf.float32)
+            s = tf.constant(s, dtype=tf.float32)
+
+            numerator = i + pb + pe - d * (k - 1) - 1
+            raw_output = numerator / s + 1
+            output_dim = tf.cast(round_func(raw_output), tf.int32)
+            output_spatial.append(output_dim)
+
+        return output_spatial
+
+    output_spatial_shape = compute_output_spatial_shape_from_tensor(
+        input_tensor=input_tensor,
+        pads=pads,
+        kernel_shape=kernel_shape,
+        dilations=dilations,
+        strides=strides,
+        ceil_mode=ceil_mode
+    )
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
@@ -216,30 +251,76 @@ def make_node(
         raise ValueError(error_msg)
 
     # count nonzero elements in kernel each strides for the case count_include_pad is False
-    non_zero_counts = []
+    def compute_non_zero_counts_loop(input_tensor, output_spatial_shape, kernel_shape, dilations, strides, pads):
+        input_shape = tf.shape(input_tensor)
+        input_rank = tf.rank(input_tensor)
+        spatial_shape = input_shape[1:input_rank - 1]  # NHWC, NDHWC → 空間次元のみ抽出
+        spatial_dims = tf.shape(spatial_shape)[0]
 
-    for input_spatial_shape, output_size, kernel, dilation, stride, pads_begin, pads_end \
-            in zip(input_tensor_shape[1:-1], output_spatial_shape, kernel_shape,
-                   dilations, strides, pads[:len(pads) // 2], pads[len(pads) // 2:]):
-        sample_target = np.concatenate([
-            np.zeros(pads_begin),
-            np.ones(input_spatial_shape),
-            np.zeros(pads_end)]
-        )
-        sample_kernel = np.zeros((kernel - 1) * dilation + 1)
-        sample_kernel[::dilation] = 1
+        pad_begin = tf.convert_to_tensor(pads[:len(pads)//2], dtype=tf.int32)
+        pad_end = tf.convert_to_tensor(pads[len(pads)//2:], dtype=tf.int32)
 
-        counts = []
-        for i in range(output_size):
-            start = i * stride
-            stride_target = sample_target[start:start+len(sample_kernel)]
-            # pad target to match size
-            stride_target = np.concatenate([stride_target, np.zeros(len(sample_kernel) - len(stride_target))])
-            counts.extend(np.convolve(stride_target, sample_kernel, mode='valid'))
+        counts_list = []
 
-        non_zero_counts.append(counts)
+        for dim in range(len(kernel_shape)):  # ← kernel_shape は list[int] なので使える！
+            input_size = spatial_shape[dim]
+            output_size = output_spatial_shape[dim]
+            k = kernel_shape[dim]
+            d = dilations[dim]
+            s = strides[dim]
+            pb = pad_begin[dim]
+            pe = pad_end[dim]
 
-    need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
+            sample_target = tf.concat([
+                tf.zeros(pb, dtype=tf.float32),
+                tf.ones(input_size, dtype=tf.float32),
+                tf.zeros(pe, dtype=tf.float32)
+            ], axis=0)
+
+            kernel_len = (k - 1) * d + 1
+            kernel_indices = tf.range(0, kernel_len, delta=d)
+            sample_kernel = tf.scatter_nd(
+                indices=tf.expand_dims(kernel_indices, 1),
+                updates=tf.ones_like(kernel_indices, dtype=tf.float32),
+                shape=[kernel_len]
+            )
+
+            conv_kernel = tf.reshape(sample_kernel, [-1, 1, 1])
+            sample_input = tf.reshape(sample_target, [1, -1, 1])
+
+            conv_output = tf.nn.conv1d(
+                input=sample_input,
+                filters=conv_kernel,
+                stride=s,
+                padding='VALID'
+            )
+            conv_output = tf.reshape(conv_output, [-1])  # shape: [output_size]
+            counts_list.append(conv_output)
+
+        return tf.stack(counts_list, axis=0)  # shape: [num_spatial_dims, output_size]
+
+    non_zero_counts = compute_non_zero_counts_loop(
+        input_tensor=input_tensor,
+        output_spatial_shape=output_spatial_shape,
+        kernel_shape=kernel_shape,
+        dilations=dilations,
+        strides=strides,
+        pads=pads
+    )
+
+    # need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
+
+    def check_need_multiplier(non_zero_counts_tensor):
+        # non_zero_counts_tensor: shape = [num_spatial_dims, output_size_per_dim]
+        flat = tf.reshape(non_zero_counts_tensor, [-1])  # 平坦化
+        unique_vals, _ = tf.unique(flat)
+        need_multiplier = tf.shape(unique_vals)[0] != 1  # ユニーク値が1つでないなら True
+        return need_multiplier
+
+    need_multiplier = check_need_multiplier(non_zero_counts)
+
+
+
 
     # default tensorflow option for count_include_pad is True and cannot control
     # average value should be compensated in cases below
