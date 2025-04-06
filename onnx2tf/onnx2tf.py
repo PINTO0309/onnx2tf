@@ -24,12 +24,6 @@ np.random.seed(0)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ["TF_USE_LEGACY_KERAS"] = '1'
 import tensorflow as tf
-# モデルを保存する前に最適化オプションを設定
-tf.config.optimizer.set_experimental_options({
-    "constant_folding": False,
-    'remapping': False,
-    'arithmetic_optimization': False
-})
 tf.random.set_seed(0)
 from tensorflow.python.saved_model.load import _WrapperFunction
 import tf_keras
@@ -1319,7 +1313,6 @@ def convert(
         try:
             # concrete_func
             info(Color.REVERSE(f'saved_model output started'), '=' * 58)
-            output_signaturedefs = False
             if not output_signaturedefs and not output_integer_quantized_tflite:
                 tf.saved_model.save(model, output_folder_path)
             else:
