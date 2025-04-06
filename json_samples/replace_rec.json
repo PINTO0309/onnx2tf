@@ -1,0 +1,26 @@
+{
+  "model": "https://github.com/PINTO0309/onnx2tf/releases/download/1.27.1/rec.onnx",
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/747",
+  "command": "onnx2tf -i rec.onnx -prf replace_rec.json",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "p2o.Transpose.2",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,3,2]
+    },
+    {
+      "op_name": "p2o.Transpose.5",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,3,2]
+    },
+    {
+      "op_name": "p2o.Transpose.7",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2,3]
+    }
+  ]
+}
