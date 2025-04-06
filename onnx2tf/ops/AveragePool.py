@@ -167,16 +167,10 @@ def make_node(
         input_tensor=input_tensor
     )
 
-    # func = math.ceil if ceil_mode else math.floor
-    # output_spatial_shape = [
-    #     func((i + pb + pe - d * (k - 1) - 1) / s + 1)
-    #     for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
-    # ]
-
     def compute_output_spatial_shape_from_tensor(input_tensor, pads, kernel_shape, dilations, strides, ceil_mode=False):
-        # input_tensor: [N, C, H, W] 形式
-        input_shape = tf.shape(input_tensor)  # 動的 shape を取得
-        input_spatial = input_shape[2:]       # [H, W] など、空間次元だけを使う（例：input_tensor.shape = [N, C, H, W]）
+        # input_tensor: [N, C, H, W] format
+        input_shape = tf.shape(input_tensor)  # Get dynamic shape
+        input_spatial = input_shape[2:]       # Use only spatial dimensions, such as [H, W] (e.g. input_tensor.shape = [N, C, H, W])
 
         pad_begin = pads[:len(pads) // 2]
         pad_end = pads[len(pads) // 2:]
@@ -254,7 +248,7 @@ def make_node(
     def compute_non_zero_counts_loop(input_tensor, output_spatial_shape, kernel_shape, dilations, strides, pads):
         input_shape = tf.shape(input_tensor)
         input_rank = tf.rank(input_tensor)
-        spatial_shape = input_shape[1:input_rank - 1]  # NHWC, NDHWC → 空間次元のみ抽出
+        spatial_shape = input_shape[1:input_rank - 1]  # NHWC, NDHWC → Extract only spatial dimensions
         spatial_dims = tf.shape(spatial_shape)[0]
 
         pad_begin = tf.convert_to_tensor(pads[:len(pads)//2], dtype=tf.int32)
@@ -262,7 +256,7 @@ def make_node(
 
         counts_list = []
 
-        for dim in range(len(kernel_shape)):  # ← kernel_shape は list[int] なので使える！
+        for dim in range(len(kernel_shape)):
             input_size = spatial_shape[dim]
             output_size = output_spatial_shape[dim]
             k = kernel_shape[dim]
@@ -308,19 +302,14 @@ def make_node(
         pads=pads
     )
 
-    # need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
-
     def check_need_multiplier(non_zero_counts_tensor):
         # non_zero_counts_tensor: shape = [num_spatial_dims, output_size_per_dim]
-        flat = tf.reshape(non_zero_counts_tensor, [-1])  # 平坦化
+        flat = tf.reshape(non_zero_counts_tensor, [-1])  # Flatten
         unique_vals, _ = tf.unique(flat)
-        need_multiplier = tf.shape(unique_vals)[0] != 1  # ユニーク値が1つでないなら True
+        need_multiplier = tf.shape(unique_vals)[0] != 1  # True if there is not exactly one unique value
         return need_multiplier
 
     need_multiplier = check_need_multiplier(non_zero_counts)
-
-
-
 
     # default tensorflow option for count_include_pad is True and cannot control
     # average value should be compensated in cases below
