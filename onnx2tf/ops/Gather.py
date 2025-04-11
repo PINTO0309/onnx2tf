@@ -358,6 +358,7 @@ def make_node(
                 and indices._inferred_value is not None else indices
 
         # Disable negative indexes
+        process_flatten_gather = False
         if isinstance(indices_values, np.ndarray) \
             and None not in indices_values \
             and input_tensor.shape[axis] is not None:
@@ -375,16 +376,43 @@ def make_node(
         elif tf_keras.backend.is_keras_tensor(indices_values) \
             and indices_values.shape == tf.TensorShape(None):
             indices_values = tf.reshape(indices_values, [-1])
+        # https://github.com/PINTO0309/onnx2tf/issues/751
+        elif hasattr(input_tensor, 'shape') \
+            and hasattr(indices_values, 'shape') \
+            and input_tensor.shape != tf.TensorShape(None) \
+            and indices_values.shape != tf.TensorShape(None) \
+            and len(input_tensor.shape) > 0 \
+            and len(indices_values.shape) > 0 \
+            and len(input_tensor.shape) == len(indices_values.shape) \
+            and input_tensor.shape[axis] is not None \
+            and indices_values.shape[axis] is not None \
+            and None in input_tensor.shape \
+            and None in indices_values.shape:
+                process_flatten_gather = True
 
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.gather(
-                params=input_tensor,
-                indices=indices_values \
-                    if not isinstance(indices_values, np.ndarray) \
-                        else tf.convert_to_tensor(indices_values),
-                axis=axis,
-                name=graph_node.name,
-            )
+        if not process_flatten_gather:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.gather(
+                    params=input_tensor,
+                    indices=indices_values \
+                        if not isinstance(indices_values, np.ndarray) \
+                            else tf.convert_to_tensor(indices_values),
+                    axis=axis,
+                    name=graph_node.name,
+                )
+        else:
+            # https://github.com/PINTO0309/onnx2tf/issues/751
+            # input_tensor.shape: TensorShape([1500, None])
+            # indices_values.shape: TensorShape([300, None])
+            # axis: 0
+            # output.shape: TensorShape([300, None])
+            flattened_indices = tf.reshape(indices_values, [-1])  # shape: [?,]
+            gathered = tf.gather(input_tensor, flattened_indices, axis=0)  # shape: [?, None]
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.reshape(
+                    tensor=gathered,
+                    shape=tf.shape(indices_values),
+                )
         tf_type = tf.gather
 
     # Post-process transpose

@@ -1,0 +1,13 @@
+{
+  "issue": "https://github.com/PINTO0309/onnx2tf/issues/751",
+  "command": "onnx2tf -i latest.opset17.onnx -prf replace_obb.json",
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/model/model.23/Concat_10",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
+    }
+  ]
+}
