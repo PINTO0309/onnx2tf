@@ -1259,11 +1259,6 @@ def convert(
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because h5 does not support GroupConvolution. ' +
-                                f'If h5 is needed, specify --disable_group_convolution to retransform the model.'
-                            )
                             break
                 else:
                     error(e)
@@ -1285,11 +1280,6 @@ def convert(
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because keras_v3 does not support GroupConvolution. ' +
-                                f'If keras_v3 is needed, specify --disable_group_convolution to retransform the model.'
-                            )
                             break
                 else:
                     error(e)
@@ -1404,10 +1394,7 @@ def convert(
                 )
                 info(Color.GREEN(f'TFv1 .pb output complete!'))
             except KeyError as e:
-                warn(
-                    f'Probably due to GroupConvolution, saved_model could not be generated successfully, ' +
-                    f'so onnx2tf skip the output of TensorFlow v1 pb.'
-                )
+                pass
             except Exception as e:
                 error(e)
                 import traceback
