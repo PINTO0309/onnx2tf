@@ -417,12 +417,6 @@ def make_node(
             error_check_tf_op_type = 'conv_nobias'
 
         else:
-            if kernel_size in (1, 2, 3) and not disable_group_convolution:
-                warn(
-                    f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                    f'but is not output because saved_model does not support GroupConvolution. ' +
-                    f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
-                )
             # GroupedConvolution - Conv1D, Conv2D, Conv3D - No Bias
             if kernel_size == 1 and not disable_group_convolution:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
