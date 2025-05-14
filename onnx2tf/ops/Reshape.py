@@ -136,14 +136,18 @@ def make_node(
             else:
                 transposed_tensor = input_tensor
         except:
-            transposed_tensor = \
-                transpose_with_flexing_deterrence(
-                    input_tensor=input_tensor,
-                    perm=list(perm) if perm is not None else None,
-                    output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
-                    name=graph_node.name,
-                    **kwargs,
-                )
+            try:
+                transposed_tensor = \
+                    transpose_with_flexing_deterrence(
+                        input_tensor=input_tensor,
+                        perm=list(perm) if perm is not None else None,
+                        output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
+                        name=graph_node.name,
+                        **kwargs,
+                    )
+            except:
+                transposed_tensor = input_tensor
+
         test_data = None
         if not isinstance(input_tensor, np.ndarray):
             if not isinstance(graph_node_input_1, np.ndarray) \
