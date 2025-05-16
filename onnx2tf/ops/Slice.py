@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     convert_axis,
     replace_max_values_negative_values,
     get_replacement_parameter,
+    replace_parameter,
     pre_process_transpose,
     post_process_transpose,
     stridedslice_with_flexing_deterrence,
@@ -278,6 +279,43 @@ def make_node(
                 )
                 sys.exit(1)
 
+    # Param replacement - starts
+    if len(graph_node.inputs) >= 2:
+        starts = replace_parameter(
+            value_before_replacement=starts,
+            param_target='inputs',
+            param_name=graph_node.inputs[1].name,
+            **kwargs,
+        )
+    starts = tf.convert_to_tensor(starts)
+    # Param replacement - ends
+    if len(graph_node.inputs) >= 3:
+        ends = replace_parameter(
+            value_before_replacement=ends,
+            param_target='inputs',
+            param_name=graph_node.inputs[2].name,
+            **kwargs,
+        )
+        ends = tf.convert_to_tensor(ends)
+    # Param replacement - axes
+    if len(graph_node.inputs) >= 4:
+        axes = replace_parameter(
+            value_before_replacement=axes,
+            param_target='inputs',
+            param_name=graph_node.inputs[3].name,
+            **kwargs,
+        )
+        axes = tf.convert_to_tensor(axes)
+    # Param replacement - steps
+    if len(graph_node.inputs) >= 5:
+        steps = replace_parameter(
+            value_before_replacement=steps,
+            param_target='inputs',
+            param_name=graph_node.inputs[4].name,
+            **kwargs,
+        )
+        steps = tf.convert_to_tensor(steps)
+
     # Generation of TF OP
     tf_type = None
     if isinstance(graph_node_input, gs.Variable) \
@@ -409,7 +447,7 @@ def make_node(
             )
             if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
                 end_mask_ = 0
-
+            a=0
             # strided_slice
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.strided_slice(
