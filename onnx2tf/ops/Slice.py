@@ -447,7 +447,7 @@ def make_node(
             )
             if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
                 end_mask_ = 0
-            a=0
+
             # strided_slice
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.strided_slice(
