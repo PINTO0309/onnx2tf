@@ -218,7 +218,7 @@
       "op_name": "Reshape_727",
       "param_target": "inputs",
       "param_name": "1699",
-      "values": [1,80,80,3]
+      "values": [1,80,80,1]
     },
 
     {
