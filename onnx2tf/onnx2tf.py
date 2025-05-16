@@ -595,10 +595,11 @@ def convert(
             with open(param_replacement_file, 'r') as f:
                 replacement_parameters = json.load(f)['operations']
                 for operations in replacement_parameters:
+                    operations: Dict
                     operations['op_name'] = operations['op_name'].replace(':','_')
                     if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
-                        operations['param_name'] = re.sub('^/', 'wa/', operations['param_name'])
+                        operations['param_name'] = re.sub('^/', 'wa/', operations.get('param_name', ""))
         except json.decoder.JSONDecodeError as ex:
             error(
                 f'The file specified in param_replacement_file is not in JSON format. \n' +
