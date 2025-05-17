@@ -158,15 +158,56 @@ def make_node(
                 if idx == axis:
                     end_.append(split_idx + 1)
                 elif input_tensor_shape[idx] is None:
-                    end_.append(-1)
+                    end_.append(0)
                 else:
                     end_.append(input_tensor_shape[idx])
+
+            begin_mask_ = np.sum([2**idx if idx != axis else 0 for idx in range(input_tensor_rank)])
+            end_mask_ = np.sum([2**idx if idx != axis else 0 for idx in range(input_tensor_rank)])
 
             splited_tensors.append(
                 tf.strided_slice(
                     input_=input_tensor,
                     begin=begin_,
                     end=end_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                )
+            )
+    elif isinstance(split, np.ndarray) \
+        and len(list(split)) > 1 \
+        and np.prod(split) != 1 \
+        and np.all(split == split[0]) \
+        and isinstance(input_tensor_shape[axis], int) \
+        and input_tensor_shape[axis] == np.sum(split):
+        # strided_slice - Slice everything in same size
+        # Suppression of FlexSplitV generation
+        # https://github.com/PINTO0309/onnx2tf/issues/751
+        splited_tensors = []
+        split_size = split[0]
+        for split_idx in range(len(list(split))):
+            begin_ = [
+                split_size * split_idx if idx == axis else 0 for idx in range(input_tensor_rank)
+            ]
+            end_ = []
+            for idx in range(input_tensor_rank):
+                if idx == axis:
+                    end_.append(split_size * split_idx + split_size)
+                elif input_tensor_shape[idx] is None:
+                    end_.append(0)
+                else:
+                    end_.append(input_tensor_shape[idx])
+
+            begin_mask_ = np.sum([2**idx if idx != axis else 0 for idx in range(input_tensor_rank)])
+            end_mask_ = np.sum([2**idx if idx != axis else 0 for idx in range(input_tensor_rank)])
+
+            splited_tensors.append(
+                tf.strided_slice(
+                    input_=input_tensor,
+                    begin=begin_,
+                    end=end_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
                 )
             )
     elif isinstance(split, np.ndarray) \

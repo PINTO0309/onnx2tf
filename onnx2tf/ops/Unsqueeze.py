@@ -7,6 +7,7 @@ import tensorflow as tf
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
+    replace_parameter,
     get_constant_or_variable,
     convert_axis,
     print_node_info,
@@ -118,6 +119,14 @@ def make_node(
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:
         axes.sort()
+
+    # Param replacement - axes
+    axes = replace_parameter(
+        value_before_replacement=axes,
+        param_target='attributes',
+        param_name='axes',
+        **kwargs,
+    )
 
     new_shape = copy.deepcopy(input_tensor_shape)
     for idx in axes:

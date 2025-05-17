@@ -1,0 +1,204 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/Shape",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.1/conv/Conv_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/Gather",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Constant_output_0",
+      "values": 2
+    },
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.1/conv/Conv",
+      "param_target": "outputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.1/conv/Conv_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/encoder/encoder/encoder.4/mconv.3/Where_1",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Not_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+
+
+    {
+      "op_name": "/decoder/_pooling/Where",
+      "param_target": "inputs",
+      "param_name": "/decoder/_pooling/attention_layer/attention_layer.2/Conv_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.4/mconv.3/Where_1",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.4/mconv.3/Not_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.0/mout/fc.1/Relu",
+      "param_target": "outputs",
+      "param_name": "/encoder/encoder/encoder.0/mout/fc.1/Relu_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.4/mconv.3/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/encoder/encoder.4/mconv.3/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+    {
+      "op_name": "/decoder/_pooling/Unsqueeze_9",
+      "param_target": "outputs",
+      "param_name": "/decoder/_pooling/Unsqueeze_9_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+
+
+
+    {
+      "op_name": "/decoder/_pooling/Concat_4",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 1
+    },
+    {
+      "op_name": "/decoder/_pooling/Concat_4",
+      "param_target": "outputs",
+      "param_name": "/decoder/_pooling/Concat_4_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+
+
+    {
+      "op_name": "/decoder/_pooling/ReduceSum_3",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [2]
+    },
+    {
+      "op_name": "/decoder/_pooling/ReduceSum_4",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [2]
+    },
+
+
+
+    {
+      "op_name": "/decoder/_pooling/Gather",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Constant_output_0",
+      "values": 2
+    },
+
+
+
+    {
+      "op_name": "/decoder/_pooling/Mul",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.4/mout/fc.1/Relu_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/decoder/_pooling/Mul",
+      "param_target": "outputs",
+      "param_name": "/decoder/_pooling/Mul_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+    {
+      "op_name": "/decoder/_pooling/Mul_1",
+      "param_target": "inputs",
+      "param_name": "/decoder/_pooling/Pow_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/decoder/_pooling/Mul_1",
+      "param_target": "outputs",
+      "param_name": "/decoder/_pooling/Mul_1_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+
+
+
+
+
+    {
+      "op_name": "/decoder/_pooling/Sub_1",
+      "param_target": "inputs",
+      "param_name": "/decoder/_pooling/Unsqueeze_10_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/Sigmoid",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Transpose_1_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/Where_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Where_1_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/ReduceSum",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Where_1_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/encoder/encoder/encoder.0/mconv.3/ReduceSum",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [2]
+    },
+
+    {
+      "op_name": "/encoder/encoder/encoder.1/mconv.13/Where_1",
+      "param_target": "outputs",
+      "param_name": "/encoder/encoder/encoder.0/mconv.3/Where_1_output_0",
+      "post_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/encoder/encoder/encoder.1/mconv.13/ReduceSum",
+      "param_target": "inputs",
+      "param_name": "/encoder/encoder/encoder.1/mconv.13/Where_1_output_0",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "/encoder/encoder/encoder.1/mconv.13/ReduceSum",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [2]
+    }
+
+  ]
+}

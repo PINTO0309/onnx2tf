@@ -595,10 +595,11 @@ def convert(
             with open(param_replacement_file, 'r') as f:
                 replacement_parameters = json.load(f)['operations']
                 for operations in replacement_parameters:
+                    operations: Dict
                     operations['op_name'] = operations['op_name'].replace(':','_')
                     if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
-                        operations['param_name'] = re.sub('^/', 'wa/', operations['param_name'])
+                        operations['param_name'] = re.sub('^/', 'wa/', operations.get('param_name', ""))
         except json.decoder.JSONDecodeError as ex:
             error(
                 f'The file specified in param_replacement_file is not in JSON format. \n' +
@@ -1259,11 +1260,6 @@ def convert(
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because h5 does not support GroupConvolution. ' +
-                                f'If h5 is needed, specify --disable_group_convolution to retransform the model.'
-                            )
                             break
                 else:
                     error(e)
@@ -1285,11 +1281,6 @@ def convert(
                 if len(msg_list) > 0:
                     for s in msg_list:
                         if 'Unable to serialize VariableSpec' in s:
-                            warn(
-                                f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                                f'but is not output because keras_v3 does not support GroupConvolution. ' +
-                                f'If keras_v3 is needed, specify --disable_group_convolution to retransform the model.'
-                            )
                             break
                 else:
                     error(e)
@@ -1404,10 +1395,7 @@ def convert(
                 )
                 info(Color.GREEN(f'TFv1 .pb output complete!'))
             except KeyError as e:
-                warn(
-                    f'Probably due to GroupConvolution, saved_model could not be generated successfully, ' +
-                    f'so onnx2tf skip the output of TensorFlow v1 pb.'
-                )
+                pass
             except Exception as e:
                 error(e)
                 import traceback
@@ -1959,6 +1947,8 @@ def convert(
                     validated_onnx_tensor: np.ndarray = checked_value[0]
                     matched_flg: int = checked_value[1]
                     max_abs_err: Any = checked_value[2]
+                    onnx_shape_tf_shape: str = checked_value[3]
+
                     message = ''
                     if matched_flg == 0:
                         message = \
@@ -1972,11 +1962,11 @@ def convert(
                     elif matched_flg == 2:
                         message = \
                             Color.GREEN(f'validate_result') + ': ' +\
-                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) ')
+                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) {onnx_shape_tf_shape}')
                     print(
                         Color.GREEN(f'INFO:') + ' '+
-                        Color.GREEN(f'onnx_output_name') + f': {onnx_output_name} '+
-                        Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
+                        Color.GREEN(f'onnx_output_name') + f': {re.sub("^wa/", "/", onnx_output_name)} '+
+                        # Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
                         Color.GREEN(f'shape') + f': {validated_onnx_tensor.shape} '+
                         Color.GREEN(f'dtype') + f': {validated_onnx_tensor.dtype} '+
                         f'{message}'
