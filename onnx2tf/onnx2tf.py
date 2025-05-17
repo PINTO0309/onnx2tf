@@ -1965,7 +1965,7 @@ def convert(
                             Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) {onnx_shape_tf_shape}')
                     print(
                         Color.GREEN(f'INFO:') + ' '+
-                        Color.GREEN(f'onnx_output_name') + f': {onnx_output_name} '+
+                        Color.GREEN(f'onnx_output_name') + f': {re.sub("^wa/", "/", onnx_output_name)} '+
                         # Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
                         Color.GREEN(f'shape') + f': {validated_onnx_tensor.shape} '+
                         Color.GREEN(f'dtype') + f': {validated_onnx_tensor.dtype} '+
