@@ -4033,18 +4033,19 @@ def onnx_tf_tensor_validation(
 
     Returns
     ----------
-    check_results: Dict[str, List[np.ndarray, int, float|int]]
+    check_results: Dict[str, List[np.ndarray, int, float|int], str]
         Tensor Comparison Results
         {
             onnx_output_name: [
                 onnx_tensor,
                 matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched),
                 max_abs_err,
+                onnx_shape_tf_shape,
             ]
         }
     """
     check_results = {
-        k: [v[0], False, 0.0] \
+        k: [v[0], False, 0.0, ""] \
             for k, v in output_pairs.items()
     }
 
@@ -4120,9 +4121,12 @@ def onnx_tf_tensor_validation(
             # If there was no match between ONNX and TensorFlow output shapes.
             check_results[names_pair][1] = 2
             check_results[names_pair][2] = max_abs_err
+            check_results[names_pair][3] = \
+                f"onnx.shape:{onnx_tensor.shape if hasattr(onnx_tensor, 'shape') else 'None'}/tf.shape:{tf_tensor.shape if hasattr(tf_tensor, 'shape') else 'None'}"
         else:
             check_results[names_pair][1] = validate_result
             check_results[names_pair][2] = max_abs_err
+            check_results[names_pair][3] = ""
 
     return check_results
 
