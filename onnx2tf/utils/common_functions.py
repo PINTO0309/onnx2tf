@@ -1,6 +1,7 @@
 import math
 import os
 import io
+import re
 import sys
 import copy
 import json
@@ -280,7 +281,7 @@ def print_node_info(func):
             if graph_input is not None:
                 debug(
                     Color.GREEN(f'INFO:') + ' '+
-                    Color.GREEN(f'input_op_name') + f': {graph_input.name} '+
+                    Color.GREEN(f'input_op_name') + f': {re.sub("^wa/", "/", graph_input.name)} '+
                     Color.GREEN(f'shape') + f': {graph_input.shape} '+
                     Color.GREEN(f'dtype') + f': {graph_input.dtype}'
                 )
@@ -294,18 +295,18 @@ def print_node_info(func):
                 )
                 debug(
                     Color.GREEN(f'INFO:') + ' ' + Color.MAGENTA(f'onnx_op_type') + ': '+
-                    f'{graph_node.op}' + Color.MAGENTA(' onnx_op_name') + f': {graph_node.name}')
+                    f'{graph_node.op}' + Color.MAGENTA(' onnx_op_name') + f': {re.sub("^wa/", "/", graph_node.name)}')
                 for idx, graph_node_input in enumerate(graph_node.inputs):
                     debug(
                         Color.GREEN(f'INFO:') + ' '+
-                        Color.CYAN(f' input_name.{idx+1}') + f': {graph_node_input.name} '+
+                        Color.CYAN(f' input_name.{idx+1}') + f': {re.sub("^wa/", "/", graph_node_input.name)} '+
                         Color.CYAN(f'shape') + f': {graph_node_input.shape} '+
                         Color.CYAN(f'dtype') + f': {graph_node_input.dtype}'
                     )
                 for idx, graph_node_output in enumerate(graph_node.outputs):
                     debug(
                         Color.GREEN(f'INFO:') + ' '+
-                        Color.CYAN(f' output_name.{idx+1}') + f': {graph_node_output.name} '+
+                        Color.CYAN(f' output_name.{idx+1}') + f': {re.sub("^wa/", "/", graph_node_output.name)} '+
                         Color.CYAN(f'shape') + f': {graph_node_output.shape} '+
                         Color.CYAN(f'dtype') + f': {graph_node_output.dtype}'
                     )
@@ -4033,18 +4034,19 @@ def onnx_tf_tensor_validation(
 
     Returns
     ----------
-    check_results: Dict[str, List[np.ndarray, int, float|int]]
+    check_results: Dict[str, List[np.ndarray, int, float|int], str]
         Tensor Comparison Results
         {
             onnx_output_name: [
                 onnx_tensor,
                 matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched),
                 max_abs_err,
+                onnx_shape_tf_shape,
             ]
         }
     """
     check_results = {
-        k: [v[0], False, 0.0] \
+        k: [v[0], False, 0.0, ""] \
             for k, v in output_pairs.items()
     }
 
@@ -4120,9 +4122,12 @@ def onnx_tf_tensor_validation(
             # If there was no match between ONNX and TensorFlow output shapes.
             check_results[names_pair][1] = 2
             check_results[names_pair][2] = max_abs_err
+            check_results[names_pair][3] = \
+                f"onnx.shape:{onnx_tensor.shape if hasattr(onnx_tensor, 'shape') else 'None'}/tf.shape:{tf_tensor.shape if hasattr(tf_tensor, 'shape') else 'None'}"
         else:
             check_results[names_pair][1] = validate_result
             check_results[names_pair][2] = max_abs_err
+            check_results[names_pair][3] = ""
 
     return check_results
 

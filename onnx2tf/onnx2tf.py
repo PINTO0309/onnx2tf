@@ -1947,6 +1947,8 @@ def convert(
                     validated_onnx_tensor: np.ndarray = checked_value[0]
                     matched_flg: int = checked_value[1]
                     max_abs_err: Any = checked_value[2]
+                    onnx_shape_tf_shape: str = checked_value[3]
+
                     message = ''
                     if matched_flg == 0:
                         message = \
@@ -1960,11 +1962,11 @@ def convert(
                     elif matched_flg == 2:
                         message = \
                             Color.GREEN(f'validate_result') + ': ' +\
-                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) ')
+                            Color.REVERSE(f'{Color.BLUE} Skipped (Deleted or Shape Unmatched) {onnx_shape_tf_shape}')
                     print(
                         Color.GREEN(f'INFO:') + ' '+
-                        Color.GREEN(f'onnx_output_name') + f': {onnx_output_name} '+
-                        Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
+                        Color.GREEN(f'onnx_output_name') + f': {re.sub("^wa/", "/", onnx_output_name)} '+
+                        # Color.GREEN(f'tf_output_name') + f': {tf_output_name} '+
                         Color.GREEN(f'shape') + f': {validated_onnx_tensor.shape} '+
                         Color.GREEN(f'dtype') + f': {validated_onnx_tensor.dtype} '+
                         f'{message}'
