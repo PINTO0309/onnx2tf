@@ -295,7 +295,10 @@ def make_node(
 
             non_zero_counts.append(counts)
 
-    need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
+    if not is_known_shape:
+        need_multiplier = False  # Default to False for dynamic tensors to avoid errors
+    else:
+        need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
 
     # default tensorflow option for count_include_pad is True and cannot control
     # average value should be compensated in cases below
@@ -351,7 +354,9 @@ def make_node(
                 multiplier[-1] = k / (k - extra_pad)
                 average_multiplier.append(multiplier)
         else:
-            for i, k, non_zero_count, extra_pad in enumerate(zip(kernel_shape, non_zero_counts, extra_pads)):
+            for i in range(len(kernel_shape)):
+                k = kernel_shape[i]
+                extra_pad = extra_pads[i]
                 average_multiplier[i][-1] = k / (k - extra_pad)
 
     # Preserving Graph Structure (Dict)
