@@ -309,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.27.8
+  ghcr.io/pinto0309/onnx2tf:1.27.9
 
   or
 
@@ -317,7 +317,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.27.8
+  docker.io/pinto0309/onnx2tf:1.27.9
 
   or
 
@@ -1722,6 +1722,21 @@ optional arguments:
     Numerical values other than dynamic dimensions are ignored.
     Ignores --batch_size if specified at the same time as --batch_size.
 
+  -sh SHAPE_HINTS [SHAPE_HINTS ...], \
+      --shape_hints SHAPE_HINTS [SHAPE_HINTS ...]
+    Shape hints for input tensors containing dynamic dimensions.
+    Specify input shapes for test inference with -cotof or -coto.
+    Unlike `--overwrite_input_shape`, this operation does not overwrite
+    the ONNX input shape with a static shape.
+    The format is
+    "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN"
+    When there is only one input, for example,
+    "data:1,3,224,224"
+    When there are multiple inputs, for example,
+    "data1:1,3,224,224" "data2:1,3,112" "data3:5"
+    A value of 1 or more must be specified.
+    Numerical values other than dynamic dimensions are ignored.
+
   -nlt, --no_large_tensor
     Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
     See: https://github.com/daquexian/onnx-simplifier/issues/178
@@ -2027,6 +2042,7 @@ convert(
   not_use_opname_auto_generate: Optional[bool] = False,
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
+  shape_hints: Union[List[str], NoneType] = None,
   no_large_tensor: Optional[bool] = False,
   output_nms_with_dynamic_tensor: Optional[bool] = False,
   switch_nms_version: Optional[str] = 'v4',
@@ -2218,6 +2234,20 @@ convert(
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
       Ignores batch_size if specified at the same time as batch_size.
+
+    shape_hints: Optional[List[str]]
+      Shape hints for input tensors containing dynamic dimensions.
+      Specify input shapes for test inference with -cotof or -coto.
+      Unlike `--overwrite_input_shape`, this operation does not overwrite
+      the ONNX input shape with a static shape.
+      The format is
+      ['i1:dim0,...,dimN', 'i2:dim0,...,dimN', 'i3:dim0,...,dimN']
+      When there is only one input, for example,
+      ['data:1,3,224,224']
+      When there are multiple inputs, for example,
+      ['data1:1,3,224,224', 'data2:1,3,112', 'data3:5']
+      A value of 1 or more must be specified.
+      Numerical values other than dynamic dimensions are ignored.
 
     no_large_tensor: Optional[bool]
       Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.

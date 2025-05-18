@@ -78,6 +78,7 @@ def convert(
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
+    shape_hints: Optional[List[str]] = None,
     no_large_tensor: Optional[bool] = False,
     output_nms_with_dynamic_tensor: Optional[bool] = False,
     switch_nms_version: Optional[str] = 'v4',
@@ -254,6 +255,20 @@ def convert(
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
+
+    shape_hints: Optional[List[str]]
+        Shape hints for input tensors containing dynamic dimensions.\n
+        Specify input shapes for test inference with -cotof or -coto.\n
+        Unlike `--overwrite_input_shape`, this operation does not overwrite\n
+        the ONNX input shape with a static shape.\n
+        The format is\n
+        ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].\n
+        When there is only one input, for example,\n
+        ['data:1,3,224,224']\n
+        When there are multiple inputs, for example,\n
+        ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
+        A value of 1 or more must be specified.\n
+        Numerical values other than dynamic dimensions are ignored.
 
     no_large_tensor: Optional[bool]
         Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
@@ -1055,6 +1070,7 @@ def convert(
                     tf_layers_dict=tf_layers_dict,
                     use_cuda=use_cuda,
                     disable_strict_mode=disable_strict_mode,
+                    shape_hints=shape_hints if (check_onnx_tf_outputs_elementwise_close or check_onnx_tf_outputs_elementwise_close_full) else None,
                 )
             """
             onnx_tensor_infos_for_validation:
@@ -1889,6 +1905,7 @@ def convert(
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         tf_layers_dict=tf_layers_dict,
                         use_cuda=use_cuda,
+                        shape_hints=shape_hints,
                     )
             except Exception as ex:
                 warn(
@@ -1898,12 +1915,17 @@ def convert(
                 warn(f'{ex}')
             else:
                 # TF dummy inference
-                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                    model=model,
-                    inputs=inputs,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                )
+                tf_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=model,
+                        inputs=inputs,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                        keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                        keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                        keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                    )
                 # Validation
                 onnx_tensor_infos = {
                     output_name: dummy_onnx_output \
@@ -2206,6 +2228,25 @@ def main():
             'A value of 1 or more must be specified. \n' +
             'Numerical values other than dynamic dimensions are ignored. \n' +
             'Ignores --batch_size if specified at the same time as --batch_size.'
+    )
+    parser.add_argument(
+        '-sh',
+        '--shape_hints',
+        type=str,
+        nargs='+',
+        help=\
+            'Shape hints for input tensors containing dynamic dimensions. \n' +
+            'Specify input shapes for test inference with -cotof or -coto. \n' +
+            'Unlike `--overwrite_input_shape`, this operation does not overwrite \n' +
+            'the ONNX input shape with a static shape.\n' +
+            'The format is\n' +
+            '"input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n' +
+            'When there is only one input, for example, \n' +
+            '"data:1,3,224,224" \n' +
+            'When there are multiple inputs, for example, \n' +
+            '"data1:1,3,224,224" "data2:1,3,112,112" "data3:5" \n' +
+            'Only applied to dynamic dimensions in inputs. \n' +
+            'Only used when -cotof or -coto are specified.'
     )
     parser.add_argument(
         '-nlt',
@@ -2631,6 +2672,7 @@ def main():
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
+        shape_hints=args.shape_hints,
         no_large_tensor=args.no_large_tensor,
         output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
         switch_nms_version=args.switch_nms_version,
