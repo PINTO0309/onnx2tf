@@ -1536,6 +1536,7 @@ usage: onnx2tf
 [-nuonag]
 [-b BATCH_SIZE]
 [-ois OVERWRITE_INPUT_SHAPE [OVERWRITE_INPUT_SHAPE ...]]
+[-sh SHAPE_HINTS [SHAPE_HINTS ...]]
 [-nlt]
 [-onwdt]
 [-snms {v4,v5}]
