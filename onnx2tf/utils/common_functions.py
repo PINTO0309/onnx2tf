@@ -3776,24 +3776,6 @@ def dummy_onnx_inference(
     onnx_inputs = gs_graph.inputs
     input_names: List[str] = [inp.name for inp in onnx_inputs]
     input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
-    # new_input_sizes = []
-    # for input_size in input_sizes:
-    #     new_input_size = []
-    #     for idx, dim in enumerate(input_size):
-    #         if idx == 0 and input_sizes[0][0] is not None \
-    #             and not isinstance(input_sizes[0][0], str) \
-    #             and len(input_sizes[0]) == len(input_size) \
-    #             and (dim is None or isinstance(dim, str)):
-    #             # Batch size assignment for input OPs
-    #             new_input_size.append(input_sizes[0][0])
-    #         elif dim is None or isinstance(dim, str):
-    #             # Fixed and assigned 1
-    #             new_input_size.append(1)
-    #         else:
-    #             # Assign input shape as is
-    #             new_input_size.append(dim)
-    #     new_input_sizes.append(new_input_size)
-    # input_sizes = new_input_sizes
 
     if shape_hints is not None:
         shape_hints_dict = {}
@@ -3939,23 +3921,6 @@ def dummy_tf_inference(
     """
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
-    # new_input_sizes = []
-    # for input_size in input_sizes:
-    #     new_input_size = []
-    #     for idx, dim in enumerate(input_size):
-    #         if idx == 0 and input_sizes[0][0] is not None \
-    #             and len(input_sizes[0]) == len(input_size) \
-    #             and dim is None:
-    #             # Batch size assignment for input OPs
-    #             new_input_size.append(input_sizes[0][0])
-    #         elif dim is None:
-    #             # Fixed and assigned 1
-    #             new_input_size.append(1)
-    #         else:
-    #             # Assign input shape as is
-    #             new_input_size.append(dim)
-    #     new_input_sizes.append(new_input_size)
-    # input_sizes = new_input_sizes
 
     if shape_hints is not None:
         shape_hints_dict = {}
