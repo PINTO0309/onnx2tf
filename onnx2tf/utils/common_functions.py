@@ -3633,6 +3633,7 @@ def dummy_onnx_inference(
     tf_layers_dict: Optional[Dict] = None,
     use_cuda: bool = False,
     disable_strict_mode: bool = False,
+    shape_hints: Optional[List[str]] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3793,6 +3794,28 @@ def dummy_onnx_inference(
                 new_input_size.append(dim)
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
+    
+    if shape_hints is not None:
+        shape_hints_dict = {}
+        for hint in shape_hints:
+            parts = hint.split(':')
+            if len(parts) == 2:
+                input_name = parts[0]
+                shape_values = [int(val) for val in parts[1].split(',')]
+                shape_hints_dict[input_name] = shape_values
+        
+        for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
+            if input_name in shape_hints_dict:
+                hint_shape = shape_hints_dict[input_name]
+                updated_shape = []
+                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
+                    # Otherwise use the hint dimension
+                    if orig_dim is not None and not isinstance(orig_dim, str):
+                        updated_shape.append(orig_dim)
+                    else:
+                        updated_shape.append(hint_dim)
+                input_sizes[i] = updated_shape
+    
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
     input_datas = {}
 
@@ -3886,6 +3909,7 @@ def dummy_tf_inference(
     test_data_nhwc: Optional[np.ndarray] = None,
     verification_datas: Optional[List[np.ndarray]] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
+    shape_hints: Optional[List[str]] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -3931,6 +3955,28 @@ def dummy_tf_inference(
                 new_input_size.append(dim)
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
+    
+    if shape_hints is not None:
+        shape_hints_dict = {}
+        for hint in shape_hints:
+            parts = hint.split(':')
+            if len(parts) == 2:
+                input_name = parts[0]
+                shape_values = [int(val) for val in parts[1].split(',')]
+                shape_hints_dict[input_name] = shape_values
+        
+        for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
+            if input_name in shape_hints_dict:
+                hint_shape = shape_hints_dict[input_name]
+                updated_shape = []
+                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
+                    # Otherwise use the hint dimension
+                    if orig_dim is not None:
+                        updated_shape.append(orig_dim)
+                    else:
+                        updated_shape.append(hint_dim)
+                input_sizes[i] = updated_shape
+    
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
 
