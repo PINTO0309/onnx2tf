@@ -259,6 +259,8 @@ def convert(
     shape_hints: Optional[List[str]]
         Shape hints for input tensors containing dynamic dimensions.\n
         Specify input shapes for test inference with -cotof or -coto.\n
+        Unlike `--overwrite_input_shape`, this operation does not overwrite\n
+        the ONNX input shape with a static shape.\n
         The format is\n
         ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].\n
         When there is only one input, for example,\n
@@ -2235,6 +2237,8 @@ def main():
         help=\
             'Shape hints for input tensors containing dynamic dimensions. \n' +
             'Specify input shapes for test inference with -cotof or -coto. \n' +
+            'Unlike `--overwrite_input_shape`, this operation does not overwrite \n' +
+            'the ONNX input shape with a static shape.\n' +
             'The format is\n' +
             '"input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n' +
             'When there is only one input, for example, \n' +

@@ -1726,6 +1726,8 @@ optional arguments:
       --shape_hints SHAPE_HINTS [SHAPE_HINTS ...]
     Shape hints for input tensors containing dynamic dimensions.
     Specify input shapes for test inference with -cotof or -coto.
+    Unlike `--overwrite_input_shape`, this operation does not overwrite
+    the ONNX input shape with a static shape.
     The format is
     "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN"
     When there is only one input, for example,
@@ -2236,12 +2238,14 @@ convert(
     shape_hints: Optional[List[str]]
       Shape hints for input tensors containing dynamic dimensions.
       Specify input shapes for test inference with -cotof or -coto.
+      Unlike `--overwrite_input_shape`, this operation does not overwrite
+      the ONNX input shape with a static shape.
       The format is
-      "i1:dim0,...,dimN" "i2:dim0,...,dimN" "i3:dim0,...,dimN"
+      ['i1:dim0,...,dimN', 'i2:dim0,...,dimN', 'i3:dim0,...,dimN']
       When there is only one input, for example,
-      "data:1,3,224,224"
+      ['data:1,3,224,224']
       When there are multiple inputs, for example,
-      "data1:1,3,224,224" "data2:1,3,112" "data3:5"
+      ['data1:1,3,224,224', 'data2:1,3,112', 'data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
 
