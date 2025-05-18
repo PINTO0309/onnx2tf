@@ -167,11 +167,46 @@ def make_node(
         input_tensor=input_tensor
     )
 
-    func = math.ceil if ceil_mode else math.floor
-    output_spatial_shape = [
-        func((i + pb + pe - d * (k - 1) - 1) / s + 1)
-        for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
-    ]
+    if not is_known_shape:
+        def compute_output_spatial_shape_from_tensor(input_tensor, pads, kernel_shape, dilations, strides, ceil_mode=False):
+            input_shape = tf.shape(input_tensor)  # Get dynamic shape
+            input_spatial = input_shape[1:-1]  # Extract spatial dimensions only (NHWC format)
+
+            pad_begin = pads[:len(pads) // 2]
+            pad_end = pads[len(pads) // 2:]
+
+            round_func = tf.math.ceil if ceil_mode else tf.math.floor
+
+            output_spatial = []
+            for i, pb, pe, k, d, s in zip(tf.unstack(input_spatial), pad_begin, pad_end, kernel_shape, dilations, strides):
+                i = tf.cast(i, tf.float32)
+                pb = tf.constant(pb, dtype=tf.float32)
+                pe = tf.constant(pe, dtype=tf.float32)
+                k = tf.constant(k, dtype=tf.float32)
+                d = tf.constant(d, dtype=tf.float32)
+                s = tf.constant(s, dtype=tf.float32)
+
+                numerator = i + pb + pe - d * (k - 1) - 1
+                raw_output = numerator / s + 1
+                output_dim = tf.cast(round_func(raw_output), tf.int32)
+                output_spatial.append(output_dim)
+
+            return output_spatial
+
+        output_spatial_shape = compute_output_spatial_shape_from_tensor(
+            input_tensor=input_tensor,
+            pads=pads,
+            kernel_shape=kernel_shape,
+            dilations=dilations,
+            strides=strides,
+            ceil_mode=ceil_mode
+        )
+    else:
+        func = math.ceil if ceil_mode else math.floor
+        output_spatial_shape = [
+            func((i + pb + pe - d * (k - 1) - 1) / s + 1)
+            for i, pb, pe, k, d, s in zip(input_tensor_shape[1:-1], pads[:len(pads) // 2], pads[len(pads) // 2:], kernel_shape, dilations, strides)
+        ]
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
     if auto_pad == 'NOTSET':
@@ -218,28 +253,52 @@ def make_node(
     # count nonzero elements in kernel each strides for the case count_include_pad is False
     non_zero_counts = []
 
-    for input_spatial_shape, output_size, kernel, dilation, stride, pads_begin, pads_end \
-            in zip(input_tensor_shape[1:-1], output_spatial_shape, kernel_shape,
-                   dilations, strides, pads[:len(pads) // 2], pads[len(pads) // 2:]):
-        sample_target = np.concatenate([
-            np.zeros(pads_begin),
-            np.ones(input_spatial_shape),
-            np.zeros(pads_end)]
+    if not is_known_shape:
+        def compute_non_zero_counts_loop(input_tensor, output_spatial_shape, kernel_shape, dilations, strides, pads):
+            
+            counts_list = []
+            
+            for dim in range(len(kernel_shape)):
+                k = kernel_shape[dim]
+                counts = [k] * (output_spatial_shape[dim].numpy() if tf.is_tensor(output_spatial_shape[dim]) and hasattr(output_spatial_shape[dim], 'numpy') else output_spatial_shape[dim])
+                counts_list.append(counts)
+                
+            return counts_list
+
+        non_zero_counts = compute_non_zero_counts_loop(
+            input_tensor=input_tensor,
+            output_spatial_shape=output_spatial_shape,
+            kernel_shape=kernel_shape,
+            dilations=dilations,
+            strides=strides,
+            pads=pads
         )
-        sample_kernel = np.zeros((kernel - 1) * dilation + 1)
-        sample_kernel[::dilation] = 1
+    else:
+        for input_spatial_shape, output_size, kernel, dilation, stride, pads_begin, pads_end \
+                in zip(input_tensor_shape[1:-1], output_spatial_shape, kernel_shape,
+                       dilations, strides, pads[:len(pads) // 2], pads[len(pads) // 2:]):
+            sample_target = np.concatenate([
+                np.zeros(pads_begin),
+                np.ones(input_spatial_shape),
+                np.zeros(pads_end)]
+            )
+            sample_kernel = np.zeros((kernel - 1) * dilation + 1)
+            sample_kernel[::dilation] = 1
 
-        counts = []
-        for i in range(output_size):
-            start = i * stride
-            stride_target = sample_target[start:start+len(sample_kernel)]
-            # pad target to match size
-            stride_target = np.concatenate([stride_target, np.zeros(len(sample_kernel) - len(stride_target))])
-            counts.extend(np.convolve(stride_target, sample_kernel, mode='valid'))
+            counts = []
+            for i in range(output_size):
+                start = i * stride
+                stride_target = sample_target[start:start+len(sample_kernel)]
+                # pad target to match size
+                stride_target = np.concatenate([stride_target, np.zeros(len(sample_kernel) - len(stride_target))])
+                counts.extend(np.convolve(stride_target, sample_kernel, mode='valid'))
 
-        non_zero_counts.append(counts)
+            non_zero_counts.append(counts)
 
-    need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
+    if not is_known_shape:
+        need_multiplier = False  # Default to False for dynamic tensors to avoid errors
+    else:
+        need_multiplier = len(set([i for sublist in non_zero_counts for i in sublist])) != 1
 
     # default tensorflow option for count_include_pad is True and cannot control
     # average value should be compensated in cases below
@@ -295,7 +354,9 @@ def make_node(
                 multiplier[-1] = k / (k - extra_pad)
                 average_multiplier.append(multiplier)
         else:
-            for i, k, non_zero_count, extra_pad in enumerate(zip(kernel_shape, non_zero_counts, extra_pads)):
+            for i in range(len(kernel_shape)):
+                k = kernel_shape[i]
+                extra_pad = extra_pads[i]
                 average_multiplier[i][-1] = k / (k - extra_pad)
 
     # Preserving Graph Structure (Dict)
