@@ -3777,7 +3777,27 @@ def dummy_onnx_inference(
     input_names: List[str] = [inp.name for inp in onnx_inputs]
     input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
 
-    if shape_hints is not None:
+    if shape_hints is None:
+        new_input_sizes = []
+        for input_size in input_sizes:
+            new_input_size = []
+            for idx, dim in enumerate(input_size):
+                if idx == 0 and input_sizes[0][0] is not None \
+                    and not isinstance(input_sizes[0][0], str) \
+                    and len(input_sizes[0]) == len(input_size) \
+                    and (dim is None or isinstance(dim, str)):
+                    # Batch size assignment for input OPs
+                    new_input_size.append(input_sizes[0][0])
+                elif dim is None or isinstance(dim, str):
+                    # Fixed and assigned 1
+                    new_input_size.append(1)
+                else:
+                    # Assign input shape as is
+                    new_input_size.append(dim)
+            new_input_sizes.append(new_input_size)
+        input_sizes = new_input_sizes
+
+    else:
         shape_hints_dict = {}
         for hint in shape_hints:
             parts = hint.split(':')
@@ -3922,7 +3942,26 @@ def dummy_tf_inference(
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
 
-    if shape_hints is not None:
+    if shape_hints is None:
+        new_input_sizes = []
+        for input_size in input_sizes:
+            new_input_size = []
+            for idx, dim in enumerate(input_size):
+                if idx == 0 and input_sizes[0][0] is not None \
+                    and len(input_sizes[0]) == len(input_size) \
+                    and dim is None:
+                    # Batch size assignment for input OPs
+                    new_input_size.append(input_sizes[0][0])
+                elif dim is None:
+                    # Fixed and assigned 1
+                    new_input_size.append(1)
+                else:
+                    # Assign input shape as is
+                    new_input_size.append(dim)
+            new_input_sizes.append(new_input_size)
+        input_sizes = new_input_sizes
+
+    else:
         shape_hints_dict = {}
         for hint in shape_hints:
             parts = hint.split(':')
@@ -3937,12 +3976,18 @@ def dummy_tf_inference(
                 updated_shape = []
 
                 # Check if we need to keep the original shape
-                keep_absolutely = (keep_shape_absolutely_input_names is not None and
-                                  input_name in keep_shape_absolutely_input_names)
-                keep_nchw = (keep_ncw_or_nchw_or_ncdhw_input_names is not None and
-                            input_name in keep_ncw_or_nchw_or_ncdhw_input_names)
-                keep_nhwc = (keep_nwc_or_nhwc_or_ndhwc_input_names is not None and
-                            input_name in keep_nwc_or_nhwc_or_ndhwc_input_names)
+                keep_absolutely = (
+                    keep_shape_absolutely_input_names is not None and
+                    input_name in keep_shape_absolutely_input_names
+                )
+                keep_nchw = (
+                    keep_ncw_or_nchw_or_ncdhw_input_names is not None and
+                    input_name in keep_ncw_or_nchw_or_ncdhw_input_names
+                )
+                keep_nhwc = (
+                    keep_nwc_or_nhwc_or_ndhwc_input_names is not None and
+                    input_name in keep_nwc_or_nhwc_or_ndhwc_input_names
+                )
 
                 if keep_absolutely or keep_nchw:
                     updated_shape = hint_shape
