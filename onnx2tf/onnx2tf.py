@@ -256,6 +256,18 @@ def convert(
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
 
+    shape_hints: Optional[List[str]]
+        Shape hints for input tensors containing dynamic dimensions.\n
+        Specify input shapes for test inference with -cotof or -coto.\n
+        The format is\n
+        ["input_name_1:dim0,...,dimN","input_name_2:dim0,...,dimN","input_name_3:dim0,...,dimN"].\n
+        When there is only one input, for example,\n
+        ['data:1,3,224,224']\n
+        When there are multiple inputs, for example,\n
+        ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
+        A value of 1 or more must be specified.\n
+        Numerical values other than dynamic dimensions are ignored.
+
     no_large_tensor: Optional[bool]
         Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
         See: https://github.com/daquexian/onnx-simplifier/issues/178
@@ -2221,6 +2233,7 @@ def main():
         type=str,
         nargs='+',
         help=\
+            'Shape hints for input tensors containing dynamic dimensions. \n' +
             'Specify input shapes for test inference with -cotof or -coto. \n' +
             'The format is\n' +
             '"input_name_1:dim0,...,dimN" "input_name_2:dim0,...,dimN" "input_name_3:dim0,...,dimN". \n' +
