@@ -3907,6 +3907,9 @@ def dummy_tf_inference(
     verification_datas: Optional[List[np.ndarray]] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
+    keep_shape_absolutely_input_names: Optional[List[str]] = None,
+    keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
+    keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -3966,9 +3969,31 @@ def dummy_tf_inference(
             if input_name in shape_hints_dict:
                 hint_shape = shape_hints_dict[input_name]
                 updated_shape = []
-                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
-                    # Otherwise use the hint dimension
-                    updated_shape.append(hint_dim)
+                
+                # Check if we need to keep the original shape
+                keep_absolutely = (keep_shape_absolutely_input_names is not None and 
+                                  input_name in keep_shape_absolutely_input_names)
+                keep_nchw = (keep_ncw_or_nchw_or_ncdhw_input_names is not None and 
+                            input_name in keep_ncw_or_nchw_or_ncdhw_input_names)
+                keep_nhwc = (keep_nwc_or_nhwc_or_ndhwc_input_names is not None and 
+                            input_name in keep_nwc_or_nhwc_or_ndhwc_input_names)
+                
+                if keep_absolutely or keep_nchw:
+                    updated_shape = hint_shape
+                # Otherwise, convert from NCHW to NHWC based on dimensionality
+                elif len(hint_shape) == 3:  # NCW -> NWC [0,2,1]
+                    updated_shape = [hint_shape[0], hint_shape[2], hint_shape[1]]
+                elif len(hint_shape) == 4:  # NCHW -> NHWC [0,3,1,2]
+                    updated_shape = [hint_shape[0], hint_shape[2], hint_shape[3], hint_shape[1]]
+                elif len(hint_shape) == 5:  # NCDHW -> NDHWC [0,4,1,2,3]
+                    updated_shape = [hint_shape[0], hint_shape[2], hint_shape[3], hint_shape[4], hint_shape[1]]
+                else:
+                    updated_shape = hint_shape
+                
+                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, updated_shape)):
+                    if orig_dim is not None and not isinstance(orig_dim, str):
+                        updated_shape[j] = orig_dim
+                
                 input_sizes[i] = updated_shape
 
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]

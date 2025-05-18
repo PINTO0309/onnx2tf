@@ -1908,6 +1908,9 @@ def convert(
                         test_data_nhwc=test_data_nhwc,
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         shape_hints=shape_hints,
+                        keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                        keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                        keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                     )
                 # Validation
                 onnx_tensor_infos = {
