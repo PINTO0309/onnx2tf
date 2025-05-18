@@ -3776,24 +3776,24 @@ def dummy_onnx_inference(
     onnx_inputs = gs_graph.inputs
     input_names: List[str] = [inp.name for inp in onnx_inputs]
     input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
-    new_input_sizes = []
-    for input_size in input_sizes:
-        new_input_size = []
-        for idx, dim in enumerate(input_size):
-            if idx == 0 and input_sizes[0][0] is not None \
-                and not isinstance(input_sizes[0][0], str) \
-                and len(input_sizes[0]) == len(input_size) \
-                and (dim is None or isinstance(dim, str)):
-                # Batch size assignment for input OPs
-                new_input_size.append(input_sizes[0][0])
-            elif dim is None or isinstance(dim, str):
-                # Fixed and assigned 1
-                new_input_size.append(1)
-            else:
-                # Assign input shape as is
-                new_input_size.append(dim)
-        new_input_sizes.append(new_input_size)
-    input_sizes = new_input_sizes
+    # new_input_sizes = []
+    # for input_size in input_sizes:
+    #     new_input_size = []
+    #     for idx, dim in enumerate(input_size):
+    #         if idx == 0 and input_sizes[0][0] is not None \
+    #             and not isinstance(input_sizes[0][0], str) \
+    #             and len(input_sizes[0]) == len(input_size) \
+    #             and (dim is None or isinstance(dim, str)):
+    #             # Batch size assignment for input OPs
+    #             new_input_size.append(input_sizes[0][0])
+    #         elif dim is None or isinstance(dim, str):
+    #             # Fixed and assigned 1
+    #             new_input_size.append(1)
+    #         else:
+    #             # Assign input shape as is
+    #             new_input_size.append(dim)
+    #     new_input_sizes.append(new_input_size)
+    # input_sizes = new_input_sizes
 
     if shape_hints is not None:
         shape_hints_dict = {}
@@ -3806,11 +3806,12 @@ def dummy_onnx_inference(
 
         for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
             if input_name in shape_hints_dict:
-                hint_shape = shape_hints_dict[input_name]
-                updated_shape = []
-                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
-                    # Otherwise use the hint dimension
-                    updated_shape.append(hint_dim)
+                updated_shape = shape_hints_dict[input_name]
+                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, updated_shape)):
+                    if orig_dim is not None and not isinstance(orig_dim, str):
+                        updated_shape[j] = orig_dim
+                    else:
+                        updated_shape[j] = hint_dim
                 input_sizes[i] = updated_shape
 
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
@@ -3938,23 +3939,23 @@ def dummy_tf_inference(
     """
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
-    new_input_sizes = []
-    for input_size in input_sizes:
-        new_input_size = []
-        for idx, dim in enumerate(input_size):
-            if idx == 0 and input_sizes[0][0] is not None \
-                and len(input_sizes[0]) == len(input_size) \
-                and dim is None:
-                # Batch size assignment for input OPs
-                new_input_size.append(input_sizes[0][0])
-            elif dim is None:
-                # Fixed and assigned 1
-                new_input_size.append(1)
-            else:
-                # Assign input shape as is
-                new_input_size.append(dim)
-        new_input_sizes.append(new_input_size)
-    input_sizes = new_input_sizes
+    # new_input_sizes = []
+    # for input_size in input_sizes:
+    #     new_input_size = []
+    #     for idx, dim in enumerate(input_size):
+    #         if idx == 0 and input_sizes[0][0] is not None \
+    #             and len(input_sizes[0]) == len(input_size) \
+    #             and dim is None:
+    #             # Batch size assignment for input OPs
+    #             new_input_size.append(input_sizes[0][0])
+    #         elif dim is None:
+    #             # Fixed and assigned 1
+    #             new_input_size.append(1)
+    #         else:
+    #             # Assign input shape as is
+    #             new_input_size.append(dim)
+    #     new_input_sizes.append(new_input_size)
+    # input_sizes = new_input_sizes
 
     if shape_hints is not None:
         shape_hints_dict = {}
@@ -3969,15 +3970,15 @@ def dummy_tf_inference(
             if input_name in shape_hints_dict:
                 hint_shape = shape_hints_dict[input_name]
                 updated_shape = []
-                
+
                 # Check if we need to keep the original shape
-                keep_absolutely = (keep_shape_absolutely_input_names is not None and 
+                keep_absolutely = (keep_shape_absolutely_input_names is not None and
                                   input_name in keep_shape_absolutely_input_names)
-                keep_nchw = (keep_ncw_or_nchw_or_ncdhw_input_names is not None and 
+                keep_nchw = (keep_ncw_or_nchw_or_ncdhw_input_names is not None and
                             input_name in keep_ncw_or_nchw_or_ncdhw_input_names)
-                keep_nhwc = (keep_nwc_or_nhwc_or_ndhwc_input_names is not None and 
+                keep_nhwc = (keep_nwc_or_nhwc_or_ndhwc_input_names is not None and
                             input_name in keep_nwc_or_nhwc_or_ndhwc_input_names)
-                
+
                 if keep_absolutely or keep_nchw:
                     updated_shape = hint_shape
                 # Otherwise, convert from NCHW to NHWC based on dimensionality
@@ -3989,11 +3990,13 @@ def dummy_tf_inference(
                     updated_shape = [hint_shape[0], hint_shape[2], hint_shape[3], hint_shape[4], hint_shape[1]]
                 else:
                     updated_shape = hint_shape
-                
+
                 for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, updated_shape)):
                     if orig_dim is not None and not isinstance(orig_dim, str):
                         updated_shape[j] = orig_dim
-                
+                    else:
+                        updated_shape[j] = hint_dim
+
                 input_sizes[i] = updated_shape
 
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
