@@ -1901,13 +1901,14 @@ def convert(
                 warn(f'{ex}')
             else:
                 # TF dummy inference
-                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                    model=model,
-                    inputs=inputs,
-                    test_data_nhwc=test_data_nhwc,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    shape_hints=shape_hints,
-                )
+                tf_tensor_infos: Dict[Any] = \
+                    dummy_tf_inference(
+                        model=model,
+                        inputs=inputs,
+                        test_data_nhwc=test_data_nhwc,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                    )
                 # Validation
                 onnx_tensor_infos = {
                     output_name: dummy_onnx_output \

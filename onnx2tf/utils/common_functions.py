@@ -3794,7 +3794,7 @@ def dummy_onnx_inference(
                 new_input_size.append(dim)
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
-    
+
     if shape_hints is not None:
         shape_hints_dict = {}
         for hint in shape_hints:
@@ -3803,19 +3803,16 @@ def dummy_onnx_inference(
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]
                 shape_hints_dict[input_name] = shape_values
-        
+
         for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
             if input_name in shape_hints_dict:
                 hint_shape = shape_hints_dict[input_name]
                 updated_shape = []
                 for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
                     # Otherwise use the hint dimension
-                    if orig_dim is not None and not isinstance(orig_dim, str):
-                        updated_shape.append(orig_dim)
-                    else:
-                        updated_shape.append(hint_dim)
+                    updated_shape.append(hint_dim)
                 input_sizes[i] = updated_shape
-    
+
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
     input_datas = {}
 
@@ -3955,7 +3952,7 @@ def dummy_tf_inference(
                 new_input_size.append(dim)
         new_input_sizes.append(new_input_size)
     input_sizes = new_input_sizes
-    
+
     if shape_hints is not None:
         shape_hints_dict = {}
         for hint in shape_hints:
@@ -3964,19 +3961,16 @@ def dummy_tf_inference(
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]
                 shape_hints_dict[input_name] = shape_values
-        
+
         for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
             if input_name in shape_hints_dict:
                 hint_shape = shape_hints_dict[input_name]
                 updated_shape = []
                 for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, hint_shape)):
                     # Otherwise use the hint dimension
-                    if orig_dim is not None:
-                        updated_shape.append(orig_dim)
-                    else:
-                        updated_shape.append(hint_dim)
+                    updated_shape.append(hint_dim)
                 input_sizes[i] = updated_shape
-    
+
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
 
