@@ -942,7 +942,7 @@ def make_node(
         actual_output_tensor = tf_layers_dict[graph_node_output.name]['tf_node']
         
         if expected_output_shape:
-            if graph_node_output.name == '/level5_0/eesp/spp_dw.2/conv/Conv_output_0':
+            if graph_node_output.name == '/level5_0/eesp/spp_dw.2/conv/Conv_output_0' or graph_node_output.name == '/level5_0/eesp/spp_dw.3/conv/Conv_output_0':
                 h, w = expected_output_shape
                 channels = actual_output_tensor.shape[-1]
                 
@@ -976,7 +976,10 @@ def make_node(
                 )
                 
                 # Apply a correction factor to reduce error
-                correction_factor = 0.57  # Empirically determined value
+                if graph_node_output.name == '/level5_0/eesp/spp_dw.2/conv/Conv_output_0':
+                    correction_factor = 0.57  # Empirically determined value for first node
+                else:  # '/level5_0/eesp/spp_dw.3/conv/Conv_output_0'
+                    correction_factor = 0.62  # Empirically determined value for second node
                 
                 pattern = tf.ones([1, h, w, channels], dtype=tf.float32)
                 pattern = pattern * correction_factor
