@@ -940,26 +940,16 @@ def make_node(
        any(d > 1 for d in dilations) and any(s > 1 for s in strides):
         expected_output_shape = tf_layers_dict[graph_node_output.name]['expected_output_shape']
         actual_output_tensor = tf_layers_dict[graph_node_output.name]['tf_node']
-        actual_shape = tf.shape(actual_output_tensor)
         
-        if len(expected_output_shape) > 0:
-            need_reshape = False
+        if expected_output_shape:
+            resized_tensor = tf.image.resize(
+                actual_output_tensor,
+                size=expected_output_shape,
+                method=tf.image.ResizeMethod.NEAREST_NEIGHBOR
+            )
             
-            for i, expected_dim in enumerate(expected_output_shape):
-                actual_dim = actual_shape[i + 1]
-                if tf.not_equal(actual_dim, expected_dim):
-                    need_reshape = True
-                    break
-                    
-            if need_reshape:
-                resized_tensor = tf.image.resize(
-                    actual_output_tensor,
-                    size=expected_output_shape,
-                    method=tf.image.ResizeMethod.NEAREST_NEIGHBOR
-                )
-                
-                tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
-                
+            tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
+        
         del tf_layers_dict[graph_node_output.name]['expected_output_shape']
 
     # Post-process transpose
