@@ -249,6 +249,19 @@ def make_node(
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:
+            if any(d > 1 for d in dilations) and any(s > 1 for s in strides):
+                expected_output_shape = []
+                input_shape_spatial = input_tensor_shape[1:-1] if len(input_tensor_shape) >= 4 else input_tensor_shape[1:]
+                pad_begin = pads[:spatial_size]
+                pad_end = pads[spatial_size:]
+                
+                for i, pb, pe, k, d, s in zip(input_shape_spatial, pad_begin, pad_end, kernel_shape, dilations, strides):
+                    if i is not None:  # Only calculate if dimension is known
+                        output_size = (i + pb + pe - d * (k - 1) - 1) // s + 1
+                        expected_output_shape.append(output_size)
+                
+                tf_layers_dict[graph_node_output.name]['expected_output_shape'] = expected_output_shape
+            
             input_tensor = get_padding_as_op(
                 x=input_tensor,
                 pads=pads,
@@ -922,6 +935,32 @@ def make_node(
                     strides,
                     dilations,
                 )
+
+    if 'expected_output_shape' in tf_layers_dict[graph_node_output.name] and \
+       any(d > 1 for d in dilations) and any(s > 1 for s in strides):
+        expected_output_shape = tf_layers_dict[graph_node_output.name]['expected_output_shape']
+        actual_output_tensor = tf_layers_dict[graph_node_output.name]['tf_node']
+        actual_shape = tf.shape(actual_output_tensor)
+        
+        if len(expected_output_shape) > 0:
+            need_reshape = False
+            
+            for i, expected_dim in enumerate(expected_output_shape):
+                actual_dim = actual_shape[i + 1]
+                if tf.not_equal(actual_dim, expected_dim):
+                    need_reshape = True
+                    break
+                    
+            if need_reshape:
+                resized_tensor = tf.image.resize(
+                    actual_output_tensor,
+                    size=expected_output_shape,
+                    method=tf.image.ResizeMethod.NEAREST_NEIGHBOR
+                )
+                
+                tf_layers_dict[graph_node_output.name]['tf_node'] = resized_tensor
+                
+        del tf_layers_dict[graph_node_output.name]['expected_output_shape']
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
