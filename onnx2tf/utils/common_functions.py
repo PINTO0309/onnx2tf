@@ -4306,10 +4306,10 @@ def broadcast_for_gpu_delegate(
     if not optimization_for_gpu_delegate:
         return input_tensor_1, input_tensor_2
     xshapes = input_tensor_1.shape
-    xshape_list = [int(dim) for dim in input_tensor_1.shape]
+    xshape_list = [int(dim) if dim is not None else -1 for dim in input_tensor_1.shape]
     xshapes_rank = len(xshapes)
     yshapes = input_tensor_2.shape
-    yshape_list = [int(dim) for dim in input_tensor_2.shape]
+    yshape_list = [int(dim) if dim is not None else -1 for dim in input_tensor_2.shape]
     yshapes_rank = len(yshape_list)
 
     try:
