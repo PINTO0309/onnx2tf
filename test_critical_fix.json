@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "wa/lightglue/posenc/Expand",
+      "param_target": "inputs",
+      "param_name": "wa/lightglue/posenc/Unsqueeze_3_output_0",
+      "pre_process_transpose_perm": [
+        0,
+        4,
+        2,
+        3,
+        1,
+        5
+      ]
+    }
+  ]
+}
