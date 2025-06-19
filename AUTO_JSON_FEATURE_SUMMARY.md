@@ -95,7 +95,7 @@ for perm in all_permutations:
 patterns = [
     r'tf\.math\.(multiply|add|subtract|divide)_(\d+)',
     r'layer "([^"]+)"',
-    r'{{node ([^}]+)}}',
+    r'{{' + 'node ([^}]+)' + '}}',
     r'Dimensions must be equal.*for (\S+)',
 ]
 ```
