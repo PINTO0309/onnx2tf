@@ -309,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.27.10
+  ghcr.io/pinto0309/onnx2tf:1.28.0
 
   or
 
@@ -317,7 +317,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.27.10
+  docker.io/pinto0309/onnx2tf:1.28.0
 
   or
 
@@ -472,6 +472,22 @@ onnx2tf -i resnet18-v1-7.onnx -okv3
 # TensorFlow v1 (.pb) format
 wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 onnx2tf -i resnet18-v1-7.onnx -otfv1pb
+
+# Automatic JSON generation only
+# Generates an optimal parameter replacement JSON file for model conversion.
+# The JSON file is saved to {model_name}_auto.json when conversion errors occur
+# or accuracy issues are detected.
+onnx2tf -i model.onnx -agj
+
+# Accuracy validation only (no JSON generation)
+# Validates the accuracy between ONNX and TensorFlow outputs without generating
+# any parameter replacement JSON file.
+onnx2tf -i model.onnx -cotof
+
+# Accuracy validation + automatic JSON generation
+# First generates an optimal parameter replacement JSON file, then uses it
+# to validate the model accuracy. This ensures the best possible conversion accuracy.
+onnx2tf -i model.onnx -agj -cotof
 
 # INT8 Quantization, Full INT8 Quantization
 # INT8 Quantization with INT16 activation, Full INT8 Quantization with INT16 activation
@@ -1565,6 +1581,7 @@ usage: onnx2tf
 [-coton]
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
+[-agj]
 [-dms]
 [-uc]
 [-n]
@@ -2000,6 +2017,15 @@ optional arguments:
     The absolute tolerance parameter.
     Default: 1e-4
 
+  -agj, --auto_generate_json
+    Automatically generates a parameter replacement JSON file that achieves minimal error
+    when converting the model. This option explores various parameter combinations to find
+    the best settings that result in successful conversion and highest accuracy.
+    The search stops when the final output OP accuracy check shows "Matches".
+    When used together with -cotof, the generated JSON is used to re-evaluate accuracy.
+    WARNING: This option performs an exhaustive search to find the optimal conversion patterns,
+    which can take a very long time depending on the model complexity.
+
   -dms, --disable_model_save
     Does not save the converted model. For CIs RAM savings.
 
@@ -2069,6 +2095,7 @@ convert(
   replace_to_pseudo_operators: List[str] = None,
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
+  auto_generate_json: Optional[bool] = False,
   check_gpu_delegate_compatibility: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
@@ -2412,6 +2439,15 @@ convert(
 
     param_replacement_file: Optional[str]
       Parameter replacement file path. (.json)
+
+    auto_generate_json: Optional[bool]
+      Automatically generates a parameter replacement JSON file that achieves minimal error
+      when converting the model. This option explores various parameter combinations to find
+      the best settings that result in successful conversion and highest accuracy.
+      The search stops when the final output OP accuracy check shows "Matches".
+      When used together with check_onnx_tf_outputs_elementwise_close_full,
+      the generated JSON is used to re-evaluate accuracy.
+      Default: False
 
     check_gpu_delegate_compatibility: Optional[bool]
       Run TFLite ModelAnalyzer on the generated Float16 tflite model

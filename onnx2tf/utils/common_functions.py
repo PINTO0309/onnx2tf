@@ -377,7 +377,8 @@ def print_node_info(func):
                 f'Also, for models that include NonMaxSuppression in the post-processing, ' +
                 f'try the -onwdt option.'
             )
-            sys.exit(1)
+            # Re-raise the exception instead of sys.exit to allow auto JSON generation
+            raise
     return print_wrapper_func
 
 
