@@ -97,7 +97,7 @@ def replace_parameter(
                     bool(replace_value) if isinstance(replace_value, int) and replace_value in [0, 1] else \
                     bool(int(replace_value)) if isinstance(replace_value, str) and replace_value in ["0", "1"] else \
                     False if isinstance(replace_value, str) and replace_value.lower() == "false" else \
-                    True if isinstance(replace_value, str) and replace_value.lower() == "True" else \
+                    True if isinstance(replace_value, str) and replace_value.lower() == "true" else \
                     replace_value
             elif isinstance(value_before_replacement, int):
                 replace_value = int(replace_value)
