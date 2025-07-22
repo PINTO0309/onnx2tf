@@ -25,6 +25,59 @@ from onnx2tf.utils.enums import (
 )
 from typing import Any, Dict, List
 
+def _matmul_output_shape(shape_a, shape_b):
+    """ _matmul_output_shape
+    Computes the shape of matrix M=np.matmul(A, B) given shapes of A and B.
+    
+    Parameters
+    ----------
+        shape_a: tuple with shape of matrix A.
+        shape_b: tuple with shape of matrix B.
+
+    Returns
+    -------
+        Shape of matrix M=np.matmul(A, B)
+    """
+    if len(shape_a) == 0 or len(shape_b) == 0 or \
+            None in shape_a or None in shape_b or \
+            any(dim <= 0 for dim in shape_a) or any(dim <= 0 for dim in shape_b):
+        # If there are no dimensions, any dimension is None or not positive, we cannot determine the output shape
+        return None
+    # Handle 1D cases as per numpy.matmul rules
+    if len(shape_a) == 1 and len(shape_b) == 1:
+        # Vector dot product -> scalar
+        if shape_a[0] != shape_b[0]:
+            return None  # Incompatible shapes for matmul
+        else:
+            return 1
+    elif len(shape_a) == 1:
+        # (K,) @ (..., K, N) -> (..., N)
+        if shape_a[0] != shape_b[-2]:
+            return None  # Incompatible shapes for matmul
+        batch_shape = shape_b[:-2]
+        return batch_shape + (shape_b[-1],)
+    elif len(shape_b) == 1:
+        # (..., M, K) @ (K,) -> (..., M)
+        if shape_a[-1] != shape_b[0]:
+            return None  # Incompatible shapes for matmul
+        batch_shape = shape_a[:-2]
+        return batch_shape + (shape_a[-2],)
+    else:
+        # (..., M, K) @ (..., K, N) -> broadcast(...), M, N
+        # prepend the shorter shape with 1s to match lengths
+        if len(shape_a) < len(shape_b):
+            shape_a = (1,) * (len(shape_b) - len(shape_a)) + shape_a
+        elif len(shape_b) < len(shape_a):
+            shape_b = (1,) * (len(shape_a) - len(shape_b)) + shape_b
+
+        if shape_a[-1] != shape_b[-2]:
+            return None  # Incompatible shapes for matmul
+
+        try:
+            batch_shape = np.broadcast_shapes(shape_a[:-2], shape_b[:-2])
+        except ValueError:
+            return None  # If broadcasting fails, it means the batch dimensions are incompatible
+        return batch_shape + (shape_a[-2], shape_b[-1])
 
 @print_node_info
 @inverted_operation_enable_disable
@@ -199,8 +252,13 @@ def make_node(
                         and sum([1 if isinstance(s, str) else 0 for s in target_onnx_output_shape]) == 0:
                         dummy_np_1 = np.ones(list(input_tensor_1.shape), dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
                         dummy_np_2 = np.ones(list(input_tensor_2.shape), dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
-                        dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
-                        if np.prod(dummy_np_result.shape) != np.prod(target_onnx_output_shape):
+
+                        actual_output_shape = _matmul_output_shape(dummy_np_1.shape, dummy_np_2.shape)
+                        if expected_output_shape is None:
+                            dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
+                            actual_output_shape = dummy_np_result.shape
+                            
+                        if np.prod(actual_output_shape) != np.prod(target_onnx_output_shape):
                             continue
 
                     # Build TF dummy model
