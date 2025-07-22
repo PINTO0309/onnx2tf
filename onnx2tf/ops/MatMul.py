@@ -49,7 +49,7 @@ def _matmul_output_shape(shape_a, shape_b):
         if shape_a[0] != shape_b[0]:
             return None  # Incompatible shapes for matmul
         else:
-            return 1
+            return 0
     elif len(shape_a) == 1:
         # (K,) @ (..., K, N) -> (..., N)
         if shape_a[0] != shape_b[-2]:
