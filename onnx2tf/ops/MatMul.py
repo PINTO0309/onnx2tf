@@ -254,7 +254,7 @@ def make_node(
                         dummy_np_2 = np.ones(list(input_tensor_2.shape), dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
 
                         actual_output_shape = _matmul_output_shape(dummy_np_1.shape, dummy_np_2.shape)
-                        if expected_output_shape is None:
+                        if actual_output_shape is None:
                             dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
                             actual_output_shape = dummy_np_result.shape
                             
