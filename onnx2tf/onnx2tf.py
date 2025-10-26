@@ -109,6 +109,7 @@ def convert(
     replace_to_pseudo_operators: List[str] = None,
     param_replacement_file: Optional[str] = '',
     auto_generate_json: Optional[bool] = False,
+    auto_generate_json_on_error: Optional[bool] = False,
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
@@ -443,6 +444,12 @@ def convert(
         the generated JSON is used to re-evaluate accuracy.\n
         WARNING: This option performs an exhaustive search to find the optimal conversion patterns,\n
         which can take a very long time depending on the model complexity.\n
+        Default: False
+
+    auto_generate_json_on_error: Optional[bool]
+        When accuracy validation detects errors greater than the allowed threshold, automatically\n
+        generate a parameter replacement JSON as a best-effort fix.\n
+        This is now opt-in and requires explicitly enabling the feature.\n
         Default: False
 
     check_gpu_delegate_compatibility: Optional[bool]
@@ -1200,24 +1207,24 @@ def convert(
                 error_onnx_op_name = graph_node.name if 'graph_node' in locals() else None
                 # Attach it to the exception for later use
                 ex.onnx_op_name = error_onnx_op_name
-                
+
             # If no replacement file was provided, try to generate one automatically
             if not param_replacement_file and input_onnx_file_path:
                 info('')
                 info(Color.REVERSE(f'Attempting automatic JSON generation due to conversion error'), '=' * 30)
                 if error_onnx_op_name:
                     info(f'Error occurred at ONNX operation: {error_onnx_op_name}')
-                
+
                 # Try iterative JSON generation with multiple attempts
                 max_attempts = 3
                 attempt = 0
                 successful_conversion = False
                 best_json = None
-                
+
                 while attempt < max_attempts and not successful_conversion:
                     attempt += 1
                     info(f'\nJSON generation attempt {attempt}/{max_attempts}')
-                    
+
                     try:
                         # Generate JSON with unlimited mode for exhaustive search
                         auto_json = generate_auto_replacement_json(
@@ -1230,28 +1237,28 @@ def convert(
                             max_iterations=attempt * 3,  # Increase iterations with each attempt
                             unlimited_mode=True,  # Enable unlimited mode
                         )
-                        
+
                         if auto_json.get('operations'):
                             best_json = auto_json
-                            
+
                             # Save temporary JSON
                             temp_json_path = os.path.join(output_folder_path, f'_temp_attempt_{attempt}.json')
                             with open(temp_json_path, 'w') as f:
                                 json.dump(auto_json, f, indent=2)
-                            
+
                             info(f'Testing generated JSON with {len(auto_json["operations"])} operations...')
-                            
+
                             # Try to re-run just the problematic operation with the JSON
                             # This is a simplified test - in practice we'd need to re-run the full conversion
                             # For now, we'll assume the JSON might work and save it
-                            
+
                             # Clean up temp file
                             if os.path.exists(temp_json_path):
                                 os.remove(temp_json_path)
-                                
+
                     except Exception as json_ex:
                         error(f"Error in attempt {attempt}: {type(json_ex).__name__}: {str(json_ex)}")
-                        
+
                 # Save the best JSON we generated
                 if best_json and best_json.get('operations'):
                     json_path = save_auto_replacement_json(
@@ -2065,23 +2072,22 @@ def convert(
                     rtol=check_onnx_tf_outputs_elementwise_close_rtol,
                     atol=check_onnx_tf_outputs_elementwise_close_atol,
                 )
-                
-                # Check if any errors exceed threshold and auto-generate JSON if needed
-                # Skip this if -agj is specified (will be handled separately)
-                if not param_replacement_file and input_onnx_file_path and not auto_generate_json:
-                    max_error_found = 0.0
-                    has_significant_errors = False
-                    error_count = 0
-                    for (onnx_name, tf_name), checked_value in check_results.items():
-                        matched_flg = checked_value[1]
-                        max_abs_err = checked_value[2]
-                        if (matched_flg == 0 or matched_flg == False) and isinstance(max_abs_err, (int, float, np.float32, np.float64)):
-                            if max_abs_err > 1e-2:
-                                has_significant_errors = True
-                                error_count += 1
-                                max_error_found = max(max_error_found, max_abs_err)
-                    
-                    if has_significant_errors:
+
+                # Inspect validation errors for optional auto JSON generation on error
+                max_error_found = 0.0
+                has_significant_errors = False
+                error_count = 0
+                for (onnx_name, tf_name), checked_value in check_results.items():
+                    matched_flg = checked_value[1]
+                    max_abs_err = checked_value[2]
+                    if (matched_flg == 0 or matched_flg is False) and isinstance(max_abs_err, (int, float, np.float32, np.float64)):
+                        if max_abs_err > 1e-2:
+                            has_significant_errors = True
+                            error_count += 1
+                            max_error_found = max(max_error_found, max_abs_err)
+
+                if has_significant_errors and not auto_generate_json:
+                    if auto_generate_json_on_error and not param_replacement_file and input_onnx_file_path:
                         info('')
                         info(Color.REVERSE(f'Attempting automatic JSON generation due to accuracy errors > 1e-2'), '=' * 25)
                         info(f'Found {error_count} operations with errors > 1e-2')
@@ -2106,9 +2112,14 @@ def convert(
                             )
                         else:
                             warn(
-                                f'Accuracy errors > 1e-2 found but automatic JSON generation could not find a solution.'
+                                'Accuracy errors > 1e-2 found but automatic JSON generation could not find a solution.'
                             )
-                
+                    elif not auto_generate_json_on_error:
+                        warn(
+                            'Accuracy validation found errors > 1e-2. Automatic JSON generation on error is disabled by default.\n' +
+                            'Re-run with --auto_generate_json_on_error or provide a parameter replacement JSON file.'
+                        )
+
                 for (onnx_output_name, tf_output_name), checked_value in check_results.items():
                     validated_onnx_tensor: np.ndarray = checked_value[0]
                     matched_flg: int = checked_value[1]
@@ -2143,34 +2154,34 @@ def convert(
         if auto_generate_json:
             # Store the generated JSON path for later use
             generated_json_path = None
-            
+
             # Check if -cotof was already executed and we have check_results
             if check_onnx_tf_outputs_elementwise_close_full and 'check_results' in locals():
                 # We already have validation results from -cotof
                 info('')
                 info(Color.REVERSE(f'Auto JSON generation started (using -cotof results)'), '=' * 35)
-                
+
                 # Check if any errors exist
                 all_matched = True
                 max_error = 0.0
                 error_count = 0
-                
+
                 for (onnx_name, tf_name), checked_value in check_results.items():
                     matched_flg = checked_value[1]
                     max_abs_err = checked_value[2]
-                    
+
                     if matched_flg == 0:  # Unmatched
                         all_matched = False
                         if isinstance(max_abs_err, (int, float, np.float32, np.float64)):
                             max_error = max(max_error, max_abs_err)
                             error_count += 1
-                
+
                 if all_matched:
                     info(Color.GREEN('All outputs already match! No JSON generation needed.'))
                 else:
                     info(f'Found {error_count} outputs with errors, max error: {max_error:.6f}')
                     info('Generating optimal JSON...')
-                    
+
                     # Generate auto replacement JSON
                     auto_json = generate_auto_replacement_json(
                         onnx_graph=gs.import_onnx(onnx_graph),
@@ -2183,7 +2194,7 @@ def convert(
                         target_accuracy=check_onnx_tf_outputs_elementwise_close_atol,
                         unlimited_mode=True,
                     )
-                    
+
                     if auto_json.get('operations'):
                         # Save the JSON
                         generated_json_path = save_auto_replacement_json(
@@ -2192,17 +2203,17 @@ def convert(
                             output_dir=output_folder_path,
                         )
                         info(f'Generated JSON with {len(auto_json["operations"])} operations: {generated_json_path}')
-                        
+
                         # If both -cotof and -agj are specified, re-run validation with the generated JSON
                         info('')
                         info(Color.REVERSE(f'Re-running validation with auto-generated JSON'), '=' * 35)
-                        
+
                         # TODO: In a full implementation, we would need to:
                         # 1. Re-run the entire conversion with the generated JSON
                         # 2. Re-validate the outputs
                         # 3. Display the new validation results
                         # For now, we just inform the user
-                        
+
                         info(Color.GREEN(f'\nAuto-generated JSON saved to: {generated_json_path}'))
                         info(
                             f'To see the validation results with the generated JSON, please re-run with:\n' +
@@ -2210,7 +2221,7 @@ def convert(
                         )
                     else:
                         warn('No viable parameter replacements found.')
-                        
+
             else:
                 # -agj is specified but -cotof is not, so we need to run our own validation
                 try:
@@ -2222,16 +2233,16 @@ def convert(
                         f'you must install onnxruntime and sne4onnx. pip install sne4onnx onnxruntime'
                     )
                     sys.exit(1)
-                
+
                 info('')
                 info(Color.REVERSE(f'Auto JSON generation started'), '=' * 50)
                 info(
                     'Searching for optimal parameter replacement JSON to achieve minimum error...'
                 )
-                
+
                 # Run validation for final outputs only
                 ops_output_names = output_names
-                
+
                 # Rebuild model for validation
                 outputs = [
                     layer_info['tf_node'] \
@@ -2246,13 +2257,13 @@ def convert(
                                 and hasattr(layer_info['tf_node'], 'numpy')
                 ]
                 validation_model = tf_keras.Model(inputs=inputs, outputs=outputs)
-                
+
                 # Exclude output OPs not subject to validation
                 ops_output_names = [
                     ops_output_name for ops_output_name in ops_output_names \
                         if ops_output_name not in exclude_output_names
                 ]
-                
+
                 # Initial accuracy check
                 try:
                     # ONNX dummy inference
@@ -2266,7 +2277,7 @@ def convert(
                             use_cuda=use_cuda,
                             shape_hints=shape_hints,
                         )
-                    
+
                     # TF dummy inference
                     tf_tensor_infos: Dict[Any] = \
                         dummy_tf_inference(
@@ -2279,13 +2290,13 @@ def convert(
                             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                             keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                         )
-                    
+
                     # Validation
                     onnx_tensor_infos = {
                         output_name: dummy_onnx_output \
                             for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
                     }
-                    
+
                     input_names = [k.name for k in inputs]
                     for k, v in tf_layers_dict.items():
                         if 'tf_node_info' in v:
@@ -2296,34 +2307,34 @@ def convert(
                             for k, v in tf_layers_dict.items() \
                                 if k not in input_names and not hasattr(v['tf_node'], 'numpy') and k in onnx_tensor_infos
                     }
-                    
+
                     agj_check_results = onnx_tf_tensor_validation(
                         output_pairs=onnx_tf_output_pairs,
                         rtol=0.0,
                         atol=1e-4,
                     )
-                    
+
                     # Check if all outputs match
                     all_matched = True
                     max_error = 0.0
                     error_count = 0
-                    
+
                     for (onnx_name, tf_name), checked_value in agj_check_results.items():
                         matched_flg = checked_value[1]
                         max_abs_err = checked_value[2]
-                        
+
                         if matched_flg == 0:  # Unmatched
                             all_matched = False
                             if isinstance(max_abs_err, (int, float, np.float32, np.float64)):
                                 max_error = max(max_error, max_abs_err)
                                 error_count += 1
-                    
+
                     if all_matched:
                         info(Color.GREEN('All outputs already match! No JSON generation needed.'))
                     else:
                         info(f'Initial validation: {error_count} outputs have errors, max error: {max_error:.6f}')
                         info('Generating optimal JSON...')
-                        
+
                         # Generate auto replacement JSON
                         auto_json = generate_auto_replacement_json(
                             onnx_graph=gs.import_onnx(onnx_graph),
@@ -2336,7 +2347,7 @@ def convert(
                             target_accuracy=1e-4,
                             unlimited_mode=True,
                         )
-                        
+
                         if auto_json.get('operations'):
                             # Save the JSON
                             generated_json_path = save_auto_replacement_json(
@@ -2345,7 +2356,7 @@ def convert(
                                 output_dir=output_folder_path,
                             )
                             info(f'Generated JSON with {len(auto_json["operations"])} operations: {generated_json_path}')
-                            
+
                             info(Color.GREEN(f'\nAuto-generated JSON saved to: {generated_json_path}'))
                             info(
                                 f'Please re-run the conversion with: -prf {generated_json_path}\n' +
@@ -2353,7 +2364,7 @@ def convert(
                             )
                         else:
                             warn('No viable parameter replacements found.')
-                            
+
                 except Exception as ex:
                     warn(
                         f'Auto JSON generation failed: {ex}'
@@ -2971,6 +2982,14 @@ def main():
             'Cannot be used together with -cotof. When -cotof is specified, JSON auto-generation is disabled.'
     )
     parser.add_argument(
+        '-agje',
+        '--auto_generate_json_on_error',
+        action='store_true',
+        help=\
+            'Attempts to generate a parameter replacement JSON when accuracy validation detects errors ' +
+            'greater than 1e-2. Requires -cotof to collect accuracy metrics. Disabled by default.'
+    )
+    parser.add_argument(
         '-dms',
         '--disable_model_save',
         action='store_true',
@@ -3077,6 +3096,7 @@ def main():
         replace_to_pseudo_operators=args.replace_to_pseudo_operators,
         param_replacement_file=args.param_replacement_file,
         auto_generate_json=args.auto_generate_json,
+        auto_generate_json_on_error=args.auto_generate_json_on_error,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
         check_onnx_tf_outputs_elementwise_close_full=args.check_onnx_tf_outputs_elementwise_close_full,
@@ -3092,4 +3112,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
