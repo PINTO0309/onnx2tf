@@ -144,6 +144,7 @@ onnx2tf -i model.onnx -prf saved_model/model_auto.json
 
 ### 3. Command Line Integration
 - Added `-agj, --auto_generate_json` option
+- Added `-agje, --auto_generate_json_on_error` option (opt-in, disabled by default)
 - Removed mutual exclusivity with `-cotof`
 - Automatic JSON usage when both options are specified
 
@@ -158,4 +159,4 @@ For a 6D tensor, there are 720 possible permutations to test. The tool will syst
 
 ## Summary
 
-This implementation enables onnx2tf to automatically propose solutions for conversion errors and accuracy issues. Users no longer need to manually create JSON files - the tool automatically discovers optimal conversion parameters through systematic exploration of the parameter space. The feature represents a significant improvement in usability, especially for complex models with non-standard dimension arrangements.
+This implementation enables onnx2tf to automatically propose solutions for conversion errors and accuracy issues. Users no longer need to manually create JSON files - the tool automatically discovers optimal conversion parameters through systematic exploration of the parameter space. The feature represents a significant improvement in usability, especially for complex models with non-standard dimension arrangements. To avoid surprising users with new files, automatic generation on accuracy errors is now opt-in via `--auto_generate_json_on_error`.

@@ -309,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.28.2
+  ghcr.io/pinto0309/onnx2tf:1.28.3
 
   or
 
@@ -317,7 +317,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.28.2
+  docker.io/pinto0309/onnx2tf:1.28.3
 
   or
 
@@ -476,7 +476,7 @@ onnx2tf -i resnet18-v1-7.onnx -otfv1pb
 # Automatic JSON generation only
 # Generates an optimal parameter replacement JSON file for model conversion.
 # The JSON file is saved to {model_name}_auto.json when conversion errors occur
-# or accuracy issues are detected.
+# or accuracy issues are detected and the feature is explicitly enabled.
 onnx2tf -i model.onnx -agj
 
 # Accuracy validation only (no JSON generation)
@@ -488,6 +488,11 @@ onnx2tf -i model.onnx -cotof
 # First generates an optimal parameter replacement JSON file, then uses it
 # to validate the model accuracy. This ensures the best possible conversion accuracy.
 onnx2tf -i model.onnx -agj -cotof
+
+# Accuracy validation with opt-in JSON generation on error
+# Generates a parameter replacement JSON only when accuracy errors greater than 1e-2
+# are detected during validation.
+onnx2tf -i model.onnx -cotof -agje
 
 # INT8 Quantization, Full INT8 Quantization
 # INT8 Quantization with INT16 activation, Full INT8 Quantization with INT16 activation
@@ -2026,6 +2031,11 @@ optional arguments:
     WARNING: This option performs an exhaustive search to find the optimal conversion patterns,
     which can take a very long time depending on the model complexity.
 
+  -agje, --auto_generate_json_on_error
+    Attempts to generate a parameter replacement JSON when accuracy validation finds errors
+    greater than 1e-2. Useful for quickly capturing fixes during -cotof runs.
+    Disabled by default to avoid unexpected file generation.
+
   -dms, --disable_model_save
     Does not save the converted model. For CIs RAM savings.
 
@@ -2096,6 +2106,7 @@ convert(
   mvn_epsilon: Union[float, NoneType] = 0.0000000001,
   param_replacement_file: Optional[str] = '',
   auto_generate_json: Optional[bool] = False,
+  auto_generate_json_on_error: Optional[bool] = False,
   check_gpu_delegate_compatibility: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
   check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
@@ -2447,6 +2458,11 @@ convert(
       The search stops when the final output OP accuracy check shows "Matches".
       When used together with check_onnx_tf_outputs_elementwise_close_full,
       the generated JSON is used to re-evaluate accuracy.
+      Default: False
+
+    auto_generate_json_on_error: Optional[bool]
+      When accuracy validation detects errors greater than 1e-2, attempts to generate
+      a parameter replacement JSON as a best-effort fix.
       Default: False
 
     check_gpu_delegate_compatibility: Optional[bool]
