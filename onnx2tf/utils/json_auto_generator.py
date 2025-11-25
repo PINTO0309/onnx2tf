@@ -1417,7 +1417,7 @@ def generate_auto_replacement_json(
                 info(f"Generated {len(candidate_fixes)} candidate fixes")
                 
                 # Generate fix combinations
-                fix_combinations = combine_fixes(candidate_fixes, max_combinations=5)
+                fix_combinations = combine_fixes(candidate_fixes)
                 
                 # In a real implementation, we would test each combination
                 # For now, we'll use heuristics to select the best combination
