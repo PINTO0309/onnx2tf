@@ -15,7 +15,6 @@ RUN apt-get update \
 RUN pip install pip -U \
     && pip install onnx==1.17.0 \
     && pip install onnxsim==0.4.33 \
-    && pip install nvidia-pyindex \
     && pip install onnx_graphsurgeon \
     && pip install onnx2tf \
     && pip install onnx2tf \
