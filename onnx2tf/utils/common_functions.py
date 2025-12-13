@@ -4275,7 +4275,7 @@ def download_test_image_data() -> np.ndarray:
         except requests.exceptions.Timeout:
             # Wasabi Storage
             URL = f'https://s3.us-central-1.wasabisys.com/onnx2tf-en/datas/{FILE_NAME}'
-            test_sample_images_npy = requests.get(URL).content
+            test_sample_images_npy = requests.get(URL, timeout=(1.0, 5.0)).content
     else:
         with open(LOCAL_FILE_PATH, 'rb') as test_sample_images_npy_file:
             test_sample_images_npy = test_sample_images_npy_file.read()
