@@ -643,7 +643,6 @@ onnx2tf.convert(
     input_onnx_file_path="model.onnx",
     output_folder_path="model.tf",
     copy_onnx_input_output_names_to_tflite=True,
-    output_signaturedefs=True,
     non_verbose=True,
 )
 
