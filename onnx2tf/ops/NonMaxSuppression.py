@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     replace_parameter,
@@ -23,9 +24,10 @@ from tensorflow.python.ops import gen_image_ops
 from tensorflow.python.util import dispatch
 
 
-class NMSLayer(tf.keras.layers.Layer):
-    def __init__(self):
+class NMSLayer(tf_keras.layers.Layer):
+    def __init__(self, switch_nms_version='v4'):
         super(NMSLayer, self).__init__()
+        self.switch_nms_version = switch_nms_version
 
     @dispatch.add_dispatch_support
     def non_max_suppression(
@@ -39,29 +41,56 @@ class NMSLayer(tf.keras.layers.Layer):
         name=None,
     ):
         with ops.name_scope(name, 'non_max_suppression'):
-            selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
-                boxes=boxes,
-                scores=scores,
-                max_output_size=max_output_size \
-                    if not isinstance(max_output_size, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=max_output_size,
-                            name='max_output_size'
-                        ),
-                iou_threshold=iou_threshold \
-                    if not isinstance(iou_threshold, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=iou_threshold,
-                            name='iou_threshold',
-                        ),
-                score_threshold=score_threshold \
-                    if not isinstance(score_threshold, np.ndarray) \
-                        else tf.convert_to_tensor(
-                            value=score_threshold,
-                            name='score_threshold',
-                        ),
-                pad_to_max_output_size=pad_to_max_output_size,
-            )
+            if self.switch_nms_version == 'v4':
+                selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
+                    boxes=boxes,
+                    scores=scores,
+                    max_output_size=max_output_size \
+                        if not isinstance(max_output_size, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=max_output_size,
+                                name='max_output_size'
+                            ),
+                    iou_threshold=iou_threshold \
+                        if not isinstance(iou_threshold, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=iou_threshold,
+                                name='iou_threshold',
+                            ),
+                    score_threshold=score_threshold \
+                        if not isinstance(score_threshold, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=score_threshold,
+                                name='score_threshold',
+                            ),
+                    pad_to_max_output_size=pad_to_max_output_size,
+                )
+
+            elif self.switch_nms_version == 'v5':
+                selected_indices, selected_scores, num_valid = gen_image_ops.non_max_suppression_v5(
+                    boxes=boxes,
+                    scores=scores,
+                    max_output_size=max_output_size \
+                        if not isinstance(max_output_size, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=max_output_size,
+                                name='max_output_size'
+                            ),
+                    iou_threshold=iou_threshold \
+                        if not isinstance(iou_threshold, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=iou_threshold,
+                                name='iou_threshold',
+                            ),
+                    score_threshold=score_threshold \
+                        if not isinstance(score_threshold, np.ndarray) \
+                            else tf.convert_to_tensor(
+                                value=score_threshold,
+                                name='score_threshold',
+                            ),
+                    soft_nms_sigma=0.0,
+                    pad_to_max_output_size=pad_to_max_output_size,
+                )
             if pad_to_max_output_size:
                 return selected_indices
 
@@ -129,8 +158,8 @@ def make_node(
     scores = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    output_nms_with_dynamic_tensor: bool = \
-        kwargs['output_nms_with_dynamic_tensor']
+    output_nms_with_dynamic_tensor: bool = kwargs['output_nms_with_dynamic_tensor']
+    switch_nms_version: str = kwargs['switch_nms_version']
 
     # Pre-process transpose
     boxes = pre_process_transpose(
@@ -338,7 +367,7 @@ def make_node(
                     axis=0,
                 )
             # get the selected boxes indices
-            nms = NMSLayer()
+            nms = NMSLayer(switch_nms_version=switch_nms_version)
             selected_indices = nms(
                 boxes=tf_boxes,
                 scores=tf_scores,

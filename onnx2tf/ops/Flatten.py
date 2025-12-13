@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -56,14 +57,17 @@ def make_node(
     output_shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get("axis", 0)
-    if graph_node_input.shape is not None \
-        and axis < input_tensor_rank:
-        axis = convert_axis(
-            axis=axis,
-            tensor_rank=len(graph_node_input.shape),
-            before_op_output_shape_trans=before_op_output_shape_trans,
-        )
+    axis = graph_node.attrs.get("axis", None)
+    if axis is not None:
+        if graph_node_input.shape is not None \
+            and axis < input_tensor_rank:
+            axis = convert_axis(
+                axis=axis,
+                tensor_rank=len(graph_node_input.shape),
+                before_op_output_shape_trans=before_op_output_shape_trans,
+            )
+    else:
+        axis = input_tensor_rank - 1
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -86,8 +90,20 @@ def make_node(
         cal_shape = (1, -1)
     elif axis >= input_tensor_rank:
         cal_shape = (-1, 1)
-    elif graph_node_output.shape is not None and len(graph_node_output.shape) == 2 and axis == input_tensor_rank - 1:
-        cal_shape = (1, -1)
+    elif graph_node_output.shape is not None \
+        and len(graph_node_output.shape) == 2 \
+        and axis == input_tensor_rank - 1 \
+        and not isinstance(graph_node_output.shape[0], str):
+        cal_shape = (graph_node_output.shape[0], -1)
+    elif graph_node_output.shape is not None \
+        and len(graph_node_output.shape) == 2 \
+        and axis == input_tensor_rank - 1 \
+        and isinstance(graph_node_output.shape[0], str):
+        try:
+            dim_prod = int(np.prod(graph_node_output.shape[1:]))
+            cal_shape = (-1, dim_prod)
+        except:
+            cal_shape = (1, -1)
     elif input_tensor_rank >= 2 \
         and input_tensor_shape[0] is None \
         and len([idx for idx in input_tensor_shape[1:] if idx is not None]) == input_tensor_rank - 1 \
@@ -97,6 +113,12 @@ def make_node(
         and input_tensor_shape[0] is None \
         and len([idx for idx in input_tensor_shape[1:] if idx is not None]) != input_tensor_rank - 1 \
         and axis == 1:
+        # Use Keras Flatten() if there are two or more undefined dimensions
+        cal_shape = None
+    elif input_tensor_rank >= 2 \
+        and input_tensor_shape[0] is None \
+        and len([idx for idx in input_tensor_shape[1:] if idx is not None]) != input_tensor_rank - 1 \
+        and axis == 2:
         # Use Keras Flatten() if there are two or more undefined dimensions
         cal_shape = None
     else:
@@ -151,7 +173,7 @@ def make_node(
             )
     else:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.keras.layers.Flatten()(input_tensor)
+            tf_keras.layers.Flatten()(input_tensor)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

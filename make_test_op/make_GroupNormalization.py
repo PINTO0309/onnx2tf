@@ -92,3 +92,7 @@ if __name__ == "__main__":
     model_onnx2 = onnx.load(onnx_file)
     model_simp, check = simplify(model_onnx2)
     onnx.save(model_simp, onnx_file)
+
+    onnx_file = f"{MODEL}_{OPSET}_dynamo.onnx"
+    onnx_program = torch.onnx.dynamo_export(model, x)
+    onnx_program.save(onnx_file)

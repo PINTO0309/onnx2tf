@@ -51,20 +51,24 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    replace_argmax_to_reducemax_and_indicies_is_int64 = \
-        kwargs['replace_argmax_to_reducemax_and_indicies_is_int64']
-    replace_argmax_to_reducemax_and_indicies_is_float32 = \
-        kwargs['replace_argmax_to_reducemax_and_indicies_is_float32']
-    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
-    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    replace_argmax_to_reducemax_and_indices_is_int64 = \
+        kwargs['replace_argmax_to_reducemax_and_indices_is_int64']
+    replace_argmax_to_reducemax_and_indices_is_float32 = \
+        kwargs['replace_argmax_to_reducemax_and_indices_is_float32']
+    replace_argmax_to_fused_argmax_and_indices_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_int64']
+    replace_argmax_to_fused_argmax_and_indices_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_float32']
+
+    # Generation of TF OP
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(graph_node_input.shape),
+        tensor_rank=len(graph_node_input.shape) if graph_node_input.shape is not None else len(input_tensor.shape),
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
@@ -83,10 +87,6 @@ def make_node(
             if isinstance(graph_node_input, gs.Variable) \
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
-
-    # Generation of TF OP
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-        if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -111,10 +111,10 @@ def make_node(
     ### 2. Replace ArgMax with a ReduceMax or no replace
     final_tensor = None
     tf_op_type = None
-    if not replace_argmax_to_reducemax_and_indicies_is_int64 \
-        and not replace_argmax_to_reducemax_and_indicies_is_float32 \
-        and not replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        and not replace_argmax_to_fused_argmax_and_indicies_is_float32:
+    if not replace_argmax_to_reducemax_and_indices_is_int64 \
+        and not replace_argmax_to_reducemax_and_indices_is_float32 \
+        and not replace_argmax_to_fused_argmax_and_indices_is_int64 \
+        and not replace_argmax_to_fused_argmax_and_indices_is_float32:
         argmaxed_tensor = tf.math.argmax(
             input=reversed_tensor,
             axis=axis,
@@ -132,20 +132,20 @@ def make_node(
         else:
             final_tensor = argmaxed_tensor
         tf_op_type = tf.math.argmax
-    elif replace_argmax_to_reducemax_and_indicies_is_int64 \
-        or replace_argmax_to_reducemax_and_indicies_is_float32:
+    elif replace_argmax_to_reducemax_and_indices_is_int64 \
+        or replace_argmax_to_reducemax_and_indices_is_float32:
         final_tensor = alternative_argmax(
             input_tensor=reversed_tensor,
             axis=axis,
             output_type=tf.float32,
             keepdims=keepdims,
-            replace_argmax_to_reducemax_and_indicies_is_int64=replace_argmax_to_reducemax_and_indicies_is_int64,
-            replace_argmax_to_reducemax_and_indicies_is_float32=replace_argmax_to_reducemax_and_indicies_is_float32,
+            replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
+            replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
         )
         tf_op_type = 'alternative_argmax'
     elif (
-            replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-            or replace_argmax_to_fused_argmax_and_indicies_is_float32
+            replace_argmax_to_fused_argmax_and_indices_is_int64 \
+            or replace_argmax_to_fused_argmax_and_indices_is_float32
         ) and graph_node.i().op == 'Resize':
         final_tensor = alternative_fused_argmax(
             input_tensor=reversed_tensor,
@@ -154,8 +154,8 @@ def make_node(
             output_type=NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
                 if isinstance(dtype, np.dtype) else dtype,
             keepdims=keepdims,
-            replace_argmax_to_fused_argmax_and_indicies_is_int64=replace_argmax_to_fused_argmax_and_indicies_is_int64,
-            replace_argmax_to_fused_argmax_and_indicies_is_float32=replace_argmax_to_fused_argmax_and_indicies_is_float32,
+            replace_argmax_to_fused_argmax_and_indices_is_int64=replace_argmax_to_fused_argmax_and_indices_is_int64,
+            replace_argmax_to_fused_argmax_and_indices_is_float32=replace_argmax_to_fused_argmax_and_indices_is_float32,
         )
         tf_op_type = 'alternative_fused_argmax'
     else:

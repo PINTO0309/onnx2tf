@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -134,10 +135,10 @@ def make_node(
     if kernel_type == 'triangle':
         kernel_type = 'bilinear'
 
-    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
-    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    replace_argmax_to_fused_argmax_and_indices_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_int64']
+    replace_argmax_to_fused_argmax_and_indices_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_float32']
     fused_argmax_scale_ratio = \
         kwargs['fused_argmax_scale_ratio']
 
@@ -168,7 +169,7 @@ def make_node(
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
             new_size = tf.cast(sizes, tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes):
+        elif tf_keras.backend.is_keras_tensor(sizes):
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
     elif scales is not None:
         # only scales is defined
@@ -211,8 +212,8 @@ def make_node(
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-(input_tensor_rank-1):-1]
 
-    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+    if (replace_argmax_to_fused_argmax_and_indices_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indices_is_float32) \
         and graph_node.o().op == 'ArgMax' \
         and input_tensor_rank == 4:
         new_size = tf.cast(

@@ -92,6 +92,10 @@ def make_node(
     input_tensor_2 = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
+    # issue: https://github.com/PINTO0309/onnx2tf/issues/698
+    if isinstance(input_tensor_1, np.ndarray) and not isinstance(input_tensor_2, np.ndarray):
+        input_tensor_1, input_tensor_2 = input_tensor_2, input_tensor_1
+
     disable_strict_mode: bool = kwargs['disable_strict_mode']
     gelu_replace_op_names: dict = kwargs['gelu_replace_op_names']
 
@@ -126,9 +130,9 @@ def make_node(
     )
 
     # Workaround for ConvInteger
-    if input_tensor_1.dtype == tf.float32 and input_tensor_2.dtype in [tf.int32, tf.int64]:
+    if input_tensor_1.dtype == tf.float32 and input_tensor_2.dtype in [tf.int32, tf.int64, tf.float16]:
         input_tensor_2 = tf.cast(input_tensor_2, dtype=tf.float32)
-    elif input_tensor_1.dtype in [tf.int32, tf.int64] and input_tensor_2.dtype == tf.float32:
+    elif input_tensor_1.dtype in [tf.int32, tf.int64, tf.float16] and input_tensor_2.dtype == tf.float32:
         input_tensor_1 = tf.cast(input_tensor_1, dtype=tf.float32)
 
     # Disable unnecessary Transpose
@@ -159,19 +163,74 @@ def make_node(
             **kwargs,
         )
 
-    input_tensor_1, input_tensor_2 = \
-        pre_explicit_broadcast(
-            input_tensor_1=input_tensor_1,
-            input_tensor_2=input_tensor_2,
-        )
+    try:
+        is_scalar_1 = False
+        is_scalar_2 = False
+        is_scalar_1_rank = tf.rank(input_tensor_1) == 0
+        if hasattr(is_scalar_1_rank, 'numpy'):
+            is_scalar_1 = is_scalar_1_rank.numpy()
+        is_scalar_2_rank = tf.rank(input_tensor_2) == 0
+        if hasattr(is_scalar_2_rank, 'numpy'):
+            is_scalar_2 = is_scalar_2_rank.numpy()
 
-    input_tensor_1, input_tensor_2 = \
-        explicit_broadcast(
-            const_or_var_1=input_tensor_1,
-            const_or_var_2=input_tensor_2,
-            graph_node=graph_node,
-            tf_layers_dict= tf_layers_dict,
-        )
+        if (is_scalar_1 or is_scalar_2) and graph_node.i().op == 'Gemm':
+            pass
+        elif (is_scalar_1 or is_scalar_2) and graph_node.i().op != 'Gemm':
+            first_tensor = None
+            second_tensor = None
+            if is_scalar_1:
+                first_tensor = input_tensor_2
+                second_tensor = input_tensor_1
+            elif is_scalar_2:
+                first_tensor = input_tensor_1
+                second_tensor = input_tensor_2
+            tmp_result = tf.math.add(first_tensor, second_tensor)
+            tmp_result_shape = tmp_result.shape
+            if first_tensor.shape == tmp_result_shape:
+                pass
+            else:
+                input_tensor_1, input_tensor_2 = \
+                    pre_explicit_broadcast(
+                        input_tensor_1=input_tensor_1,
+                        input_tensor_2=input_tensor_2,
+                    )
+
+                input_tensor_1, input_tensor_2 = \
+                    explicit_broadcast(
+                        const_or_var_1=input_tensor_1,
+                        const_or_var_2=input_tensor_2,
+                        graph_node=graph_node,
+                        tf_layers_dict= tf_layers_dict,
+                    )
+
+        else:
+            input_tensor_1, input_tensor_2 = \
+                pre_explicit_broadcast(
+                    input_tensor_1=input_tensor_1,
+                    input_tensor_2=input_tensor_2,
+                )
+
+            input_tensor_1, input_tensor_2 = \
+                explicit_broadcast(
+                    const_or_var_1=input_tensor_1,
+                    const_or_var_2=input_tensor_2,
+                    graph_node=graph_node,
+                    tf_layers_dict= tf_layers_dict,
+                )
+    except Exception as ex:
+        input_tensor_1, input_tensor_2 = \
+            pre_explicit_broadcast(
+                input_tensor_1=input_tensor_1,
+                input_tensor_2=input_tensor_2,
+            )
+
+        input_tensor_1, input_tensor_2 = \
+            explicit_broadcast(
+                const_or_var_1=input_tensor_1,
+                const_or_var_2=input_tensor_2,
+                graph_node=graph_node,
+                tf_layers_dict= tf_layers_dict,
+            )
 
     # Deterring shape corruption due to broadcast
     input_tensor_1, input_tensor_2 = \

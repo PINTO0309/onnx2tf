@@ -5,6 +5,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -64,6 +65,7 @@ def make_node(
     equation = graph_node.attrs['equation']
     onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     if onnx_tensor_infos_for_validation is not None \
+        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None \
         and graph_node_output.name in onnx_tensor_infos_for_validation:
         onnx_output_shape = list(onnx_tensor_infos_for_validation[graph_node_output.name].shape)
         graph_node_output.shape = onnx_output_shape
@@ -149,14 +151,14 @@ def make_node(
             for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                 try:
                     # Build TF dummy model
-                    input_1 = tf.keras.Input(
+                    input_1 = tf_keras.Input(
                         shape=validation_data_1.shape[1:],
                         batch_size=validation_data_1.shape[0] \
                             if isinstance(validation_data_1.shape[0], int) else None,
                         name='dummy_input_1',
                         dtype=validation_data_1.dtype,
                     )
-                    input_2 = tf.keras.Input(
+                    input_2 = tf_keras.Input(
                         shape=validation_data_2.shape[1:],
                         batch_size=validation_data_2.shape[0] \
                             if isinstance(validation_data_2.shape[0], int) else None,
@@ -189,7 +191,7 @@ def make_node(
                     if onnx_tensor_infos:
                         try:
                             # Search for the axis with the smallest error
-                            val_model = tf.keras.Model(
+                            val_model = tf_keras.Model(
                                 inputs=[
                                     input_1,
                                     input_2,

@@ -33,51 +33,160 @@ jobs:
         password: ${{ secrets.PYPI_API_TOKEN }}
 
   docker-deploy:
-    runs-on: ubuntu-latest
     needs: pypi-deploy
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false  # do not cancel even if any platform fails.
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Git checkout
         uses: actions/checkout@v3
       - name: Enable buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log in to the GitHub Container registry
-        uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Repository to lowercase
+        id: lower-repo-1
+        run: |
+          echo "repository=${GITHUB_REPOSITORY@L}" >> $GITHUB_OUTPUT
+
+      # For Github Container Registory
+      - name: Log in to GCR
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata (tags, labels) for GCR
         id: meta_gh
-        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      - name: Build and push Docker image
-        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+          images: ${{ env.REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }}
+      - name: Build and push by digest to GCR
+        id: build_gh
+        uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: ${{ matrix.platform }}
+          build-args: BUILD_ARCH=${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta_gh.outputs.tags }}
           labels: ${{ steps.meta_gh.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Log in to the Docker Container registry
-        uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+      # For Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ env.DOCKER_REGISTRY_USER }}
           password: ${{ secrets.DH_ACCESS_TOKEN }}
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata (tags, labels) for Docker Hub
         id: meta_dh
-        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
-      - name: Build and push Docker image
-        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+          images: ${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }}
+      - name: Build and push by digest to Docker Hub
+        id: build_dh
+        uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: ${{ matrix.platform }}
+          build-args: BUILD_ARCH=${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta_dh.outputs.tags }}
-          labels: ${{ steps.meta_dh.outputs.labels }}
+          labels: ${{ steps.meta_gh.outputs.labels }}
+          outputs: type=image,name=${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-1.outputs.repository }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests/gh
+          digest="${{ steps.build_gh.outputs.digest }}"
+          touch "/tmp/digests/gh/${digest#sha256:}"
+          mkdir -p /tmp/digests/dh
+          digest="${{ steps.build_dh.outputs.digest }}"
+          touch "/tmp/digests/dh/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - docker-deploy
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Repository to lowercase
+        id: lower-repo-2
+        run: |
+          echo "repository=${GITHUB_REPOSITORY@L}" >> $GITHUB_OUTPUT
+
+      # For Github Container Registory
+      - name: Log in to GCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata (tags, labels) for GCR
+        id: meta_gh
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}
+      - name: Create manifest list and push to GCR
+        working-directory: /tmp/digests/gh
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          $(printf '${{ env.REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}@sha256:%s ' *)
+      - name: Inspect image on GCR
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}:${{ steps.meta_gh.outputs.version }}
+
+      # For Docker Hub
+      - name: Log in to the Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_REGISTRY_USER }}
+          password: ${{ secrets.DH_ACCESS_TOKEN }}
+      - name: Extract metadata (tags, labels) for Docker Hub
+        id: meta_dh
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}
+      - name: Create manifest list and push to Docker Hub
+        working-directory: /tmp/digests/dh
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          $(printf '${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}@sha256:%s ' *)
+      - name: Inspect image on Docker Hub
+        run: |
+          docker buildx imagetools inspect ${{ env.DOCKER_REGISTRY }}/${{ steps.lower-repo-2.outputs.repository }}:${{ steps.meta_dh.outputs.version }}

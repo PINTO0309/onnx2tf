@@ -49,11 +49,15 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
+    # Generation of TF OP
+    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
+        if isinstance(graph_node_input, gs.Variable) else graph_node_input
+
     axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(graph_node_input.shape),
+        tensor_rank=len(graph_node_input.shape) if graph_node_input.shape is not None else len(input_tensor.shape),
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
@@ -72,10 +76,6 @@ def make_node(
             if isinstance(graph_node_input, gs.Variable) \
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
-
-    # Generation of TF OP
-    input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
-        if isinstance(graph_node_input, gs.Variable) else graph_node_input
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(

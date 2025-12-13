@@ -96,9 +96,15 @@ def make_node(
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Suppression of FlexCast generation
-    # Float32 -> Float64
+    # Float64 -> Float32
+    # Float16 -> Float32
     if input_tensor.dtype == tf.float32 \
         and to == tf.float64:
+        to = tf.float32
+    elif isinstance(graph_node.inputs[0], gs.Variable) \
+        and hasattr(graph_node.inputs[0], "dtype") \
+        and graph_node.inputs[0].dtype == np.float32 \
+        and to == tf.float16:
         to = tf.float32
 
     # Generation of TF OP

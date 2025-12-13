@@ -5,6 +5,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -24,6 +25,59 @@ from onnx2tf.utils.enums import (
 )
 from typing import Any, Dict, List
 
+def _matmul_output_shape(shape_a, shape_b):
+    """ _matmul_output_shape
+    Computes the shape of matrix M=np.matmul(A, B) given shapes of A and B.
+    
+    Parameters
+    ----------
+        shape_a: tuple with shape of matrix A.
+        shape_b: tuple with shape of matrix B.
+
+    Returns
+    -------
+        Shape of matrix M=np.matmul(A, B)
+    """
+    if len(shape_a) == 0 or len(shape_b) == 0 or \
+            None in shape_a or None in shape_b or \
+            any(dim <= 0 for dim in shape_a) or any(dim <= 0 for dim in shape_b):
+        # If there are no dimensions, any dimension is None or not positive, we cannot determine the output shape
+        return None
+    # Handle 1D cases as per numpy.matmul rules
+    if len(shape_a) == 1 and len(shape_b) == 1:
+        # Vector dot product -> scalar
+        if shape_a[0] != shape_b[0]:
+            return None  # Incompatible shapes for matmul
+        else:
+            return ()
+    elif len(shape_a) == 1:
+        # (K,) @ (..., K, N) -> (..., N)
+        if shape_a[0] != shape_b[-2]:
+            return None  # Incompatible shapes for matmul
+        batch_shape = shape_b[:-2]
+        return batch_shape + (shape_b[-1],)
+    elif len(shape_b) == 1:
+        # (..., M, K) @ (K,) -> (..., M)
+        if shape_a[-1] != shape_b[0]:
+            return None  # Incompatible shapes for matmul
+        batch_shape = shape_a[:-2]
+        return batch_shape + (shape_a[-2],)
+    else:
+        # (..., M, K) @ (..., K, N) -> broadcast(...), M, N
+        # prepend the shorter shape with 1s to match lengths
+        if len(shape_a) < len(shape_b):
+            shape_a = (1,) * (len(shape_b) - len(shape_a)) + shape_a
+        elif len(shape_b) < len(shape_a):
+            shape_b = (1,) * (len(shape_a) - len(shape_b)) + shape_b
+
+        if shape_a[-1] != shape_b[-2]:
+            return None  # Incompatible shapes for matmul
+
+        try:
+            batch_shape = np.broadcast_shapes(shape_a[:-2], shape_b[:-2])
+        except ValueError:
+            return None  # If broadcasting fails, it means the batch dimensions are incompatible
+        return batch_shape + (shape_a[-2], shape_b[-1])
 
 @print_node_info
 @inverted_operation_enable_disable
@@ -86,7 +140,7 @@ def make_node(
     input_tensor_2_is_one_d = False
     if input_tensor_1.shape is not None \
         and len(input_tensor_1.shape) == 1:
-        input_tensor_1 = tf.expand_dims(input_tensor_2, axis=0)
+        input_tensor_1 = tf.expand_dims(input_tensor_1, axis=0)
         input_tensor_1_is_one_d = True
     elif input_tensor_2.shape is not None \
             and len(input_tensor_2.shape) == 1:
@@ -99,7 +153,8 @@ def make_node(
     onnx_tensor_infos = None
     validation_data_1 = None
     validation_data_2 = None
-    if onnx_tensor_infos_for_validation is not None:
+    if onnx_tensor_infos_for_validation is not None \
+        and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         onnx_tensor_infos, validation_data_1, validation_data_2 = \
             acquisition_of_validation_data(
                 input_tensor_1=input_tensor_1,
@@ -125,6 +180,12 @@ def make_node(
 
     output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
         if isinstance(dtype, np.dtype) else dtype
+
+    # Workaround for Float16
+    if input_tensor_1.dtype == tf.float32 and output_dtype in [tf.int32, tf.int64, tf.float16]:
+        output_dtype = tf.float32
+    elif output_dtype and input_tensor_2.dtype == tf.float32:
+        output_dtype = tf.float32
 
     # Shape Unmatch Error Mitigation Measures
     # Search for and transpose shapes that do not cause shape unmatch errors
@@ -191,19 +252,24 @@ def make_node(
                         and sum([1 if isinstance(s, str) else 0 for s in target_onnx_output_shape]) == 0:
                         dummy_np_1 = np.ones(list(input_tensor_1.shape), dtype=np.float32).transpose(tensor_1_candidate_for_transposition)
                         dummy_np_2 = np.ones(list(input_tensor_2.shape), dtype=np.float32).transpose(tensor_2_candidate_for_transposition)
-                        dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
-                        if np.prod(dummy_np_result.shape) != np.prod(target_onnx_output_shape):
+
+                        actual_output_shape = _matmul_output_shape(dummy_np_1.shape, dummy_np_2.shape)
+                        if actual_output_shape is None:
+                            dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
+                            actual_output_shape = dummy_np_result.shape
+                            
+                        if np.prod(actual_output_shape) != np.prod(target_onnx_output_shape):
                             continue
 
                     # Build TF dummy model
-                    input_1 = tf.keras.Input(
+                    input_1 = tf_keras.Input(
                         shape=validation_data_1.shape[1:],
                         batch_size=validation_data_1.shape[0] \
                             if isinstance(validation_data_1.shape[0], int) else None,
                         name='dummy_input_1',
                         dtype=validation_data_1.dtype,
                     )
-                    input_2 = tf.keras.Input(
+                    input_2 = tf_keras.Input(
                         shape=validation_data_2.shape[1:],
                         batch_size=validation_data_2.shape[0] \
                             if isinstance(validation_data_2.shape[0], int) else None,
@@ -232,7 +298,7 @@ def make_node(
                     # Terminate when the error is less than 1e-3
                     try:
                         # Search for the axis with the smallest error
-                        val_model = tf.keras.Model(
+                        val_model = tf_keras.Model(
                             inputs=[
                                 input_1,
                                 input_2,
@@ -243,17 +309,18 @@ def make_node(
                         )
 
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                            model=val_model,
-                            inputs=[
-                                input_1,
-                                input_2,
-                            ],
-                            verification_datas=[
-                                validation_data_1,
-                                validation_data_2,
-                            ],
-                        )
+                        tf_tensor_infos: Dict[Any] = \
+                            dummy_tf_inference(
+                                model=val_model,
+                                inputs=[
+                                    input_1,
+                                    input_2,
+                                ],
+                                verification_datas=[
+                                    validation_data_1,
+                                    validation_data_2,
+                                ],
+                            )
                         del input_1
                         del input_2
                         del dummy_matmul

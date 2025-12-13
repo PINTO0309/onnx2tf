@@ -23,3 +23,5 @@ node_modules/
 
 .act.secrets
 .act.env
+
+*.sarif

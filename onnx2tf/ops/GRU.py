@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     replace_parameter,
@@ -94,7 +95,7 @@ class ThresholdedReLU(Layer):
             if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
 
     def call(self, x):
-        return tf.keras.layers.ThresholdedReLU(theta=self.alpha)(x)
+        return tf_keras.layers.ThresholdedReLU(theta=self.alpha)(x)
 
 class Affine(Layer):
     def __init__(self, alpha: float, beta: float):
@@ -144,7 +145,7 @@ ONNX_ACTIVATION_MAPPING: Dict[str, List] = {
 }
 
 
-class CustomGRUCell(tf.keras.layers.AbstractRNNCell):
+class CustomGRUCell(tf_keras.layers.AbstractRNNCell):
     def __init__(
         self,
         hidden_size,
@@ -352,7 +353,7 @@ class CustomGRU(Layer):
             self.is_bidirectional,
             self.go_backwards,
         )
-        self.rnn = tf.keras.layers.RNN(
+        self.rnn = tf_keras.layers.RNN(
             self.cell,
             return_sequences=self.return_sequences,
             go_backwards=self.go_backwards,
@@ -914,7 +915,7 @@ def make_node(
     tf_layers_dict[graph_node_output1.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.keras.layers.GRU,
+                'tf_op_type': tf_keras.layers.GRU,
                 'tf_inputs': {
                     'direction': direction,
                     'X': X,

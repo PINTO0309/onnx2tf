@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 from tensorflow.python.keras.layers import (
     Conv1D,
     Conv2D,
@@ -209,7 +210,7 @@ def make_node(
                 )
                 val_model = None
                 if not isinstance(input_tensor, np.ndarray):
-                    val_model = tf.keras.Model(
+                    val_model = tf_keras.Model(
                         inputs=tf_model_inputs,
                         outputs=[
                             input_tensor,
@@ -246,7 +247,8 @@ def make_node(
 
                 # Get ONNX inference results
                 onnx_tensor_infos = None
-                if onnx_tensor_infos_for_validation is not None:
+                if onnx_tensor_infos_for_validation is not None \
+                    and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                     onnx_tensor_infos = {
                         graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
                     }
@@ -350,7 +352,7 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                kernel_initializer=tf_keras.initializers.constant(input_weights),
                 name=graph_node.name,
             )(input_tensor)
 
@@ -364,7 +366,7 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf.keras.initializers.constant(input_weights),
+                kernel_initializer=tf_keras.initializers.constant(input_weights),
                 name=graph_node.name,
             )(input_tensor)
 
@@ -415,12 +417,6 @@ def make_node(
             error_check_tf_op_type = 'conv_nobias'
 
         else:
-            if kernel_size in (1, 2, 3) and not disable_group_convolution:
-                warn(
-                    f'This model contains GroupConvolution and is automatically optimized for TFLite, ' +
-                    f'but is not output because saved_model does not support GroupConvolution. ' +
-                    f'If saved_model is needed, specify --disable_group_convolution to retransform the model.'
-                )
             # GroupedConvolution - Conv1D, Conv2D, Conv3D - No Bias
             if kernel_size == 1 and not disable_group_convolution:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -462,7 +458,7 @@ def make_node(
             #             dilation_rate=dilations,
             #             groups=group,
             #             use_bias=False,
-            #             kernel_initializer=tf.keras.initializers.constant(input_weights),
+            #             kernel_initializer=tf_keras.initializers.constant(input_weights),
             #             name=graph_node.name,
             #         )(input_tensor)
             #     tf_op_type = 'GroupedConvolution3D'
@@ -511,7 +507,7 @@ def make_node(
                 try:
                     target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
                     # Build TF dummy model
-                    input = tf.keras.Input(
+                    input = tf_keras.Input(
                         shape=target_validation_data.shape[1:],
                         batch_size=target_validation_data.shape[0] \
                             if isinstance(target_validation_data.shape[0], int) else None,
@@ -570,7 +566,7 @@ def make_node(
                                 dilations,
                             )
                     # define model
-                    val_model = tf.keras.Model(
+                    val_model = tf_keras.Model(
                         inputs=[
                             input,
                         ],

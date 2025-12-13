@@ -5,6 +5,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -17,7 +18,7 @@ import importlib
 from onnx2tf.utils.logging import *
 
 
-class While_Loop_CustomLayer(tf.keras.layers.Layer):
+class While_Loop_CustomLayer(tf_keras.layers.Layer):
     def __init__(self):
         super(While_Loop_CustomLayer, self).__init__()
 

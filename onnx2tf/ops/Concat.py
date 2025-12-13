@@ -6,6 +6,7 @@ import numpy as np
 np.random.seed(0)
 import itertools
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
@@ -202,6 +203,7 @@ def make_node(
     # Pre-process transpose
     new_values = []
     simple_resize: bool = False
+    simple_resize2: bool = False
     for graph_node_input, value in zip(graph_node.inputs, values):
         value = pre_process_transpose(
             value_before_transpose=value,
@@ -218,6 +220,12 @@ def make_node(
             and 'simple_resize' in tf_layers_dict[graph_node_input.name] \
             and tf_layers_dict[graph_node_input.name]['simple_resize'] == True:
             simple_resize = simple_resize or True
+
+        if isinstance(graph_node_input, gs.Variable) \
+            and 'simple_resize2' in tf_layers_dict[graph_node_input.name] \
+            and tf_layers_dict[graph_node_input.name]['simple_resize2'] == True:
+            simple_resize2 = simple_resize2 or True
+
     values = new_values
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
@@ -243,6 +251,20 @@ def make_node(
                 size=tf.convert_to_tensor([int(tf_layers_dict[target_input.name]['simple_resize_shape_op'].shape[0] - 2)], dtype=tf.int32),
             )
         tf_type = tf.slice
+
+    elif simple_resize2 and len(values) >= 2:
+        target_input: np.ndarray = np.array([], dtype=np.int64)
+        target_spartial_size: int = 0
+        for cat_value in values:
+            if hasattr(cat_value, 'numpy'):
+                target_input = np.append(target_input, cat_value.numpy())
+            elif not hasattr(cat_value, 'numpy') and cat_value.shape is not None:
+                target_spartial_size = cat_value.shape[0] - 2
+        if target_spartial_size == len(target_input):
+            target_input = np.asarray([1] + [i for i in target_input] + [1])
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.convert_to_tensor(target_input)
+        tf_type = tf.constant
+
     else:
         try:
             # normal concat attempt
@@ -398,14 +420,14 @@ def make_node(
                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                     try:
                         # Build TF dummy model
-                        input_1 = tf.keras.Input(
+                        input_1 = tf_keras.Input(
                             shape=validation_data_1.shape[1:],
                             batch_size=validation_data_1.shape[0] \
                                 if isinstance(validation_data_1.shape[0], int) else None,
                             name='dummy_input_1',
                             dtype=validation_data_1.dtype,
                         )
-                        input_2 = tf.keras.Input(
+                        input_2 = tf_keras.Input(
                             shape=validation_data_2.shape[1:],
                             batch_size=validation_data_2.shape[0] \
                                 if isinstance(validation_data_2.shape[0], int) else None,
@@ -438,7 +460,7 @@ def make_node(
                         if onnx_tensor_infos:
                             try:
                                 # Search for the axis with the smallest error
-                                val_model = tf.keras.Model(
+                                val_model = tf_keras.Model(
                                     inputs=[
                                         input_1,
                                         input_2,
@@ -535,7 +557,7 @@ def make_node(
             if acc_proc_flag:
                 # Get the output tensor of one previous OP of TensorFlow only once
                 tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
-                val_model = tf.keras.Model(
+                val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
                     outputs=values,
                 )
@@ -558,7 +580,8 @@ def make_node(
 
                 # Get ONNX inference results
                 onnx_tensor_infos = None
-                if onnx_tensor_infos_for_validation is not None:
+                if onnx_tensor_infos_for_validation is not None \
+                    and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                     onnx_tensor_infos = {
                         graph_node_output.name:
                         onnx_tensor_infos_for_validation[graph_node_output.name]
@@ -573,7 +596,7 @@ def make_node(
                     # Search for the axis with the smallest error
                     # Build TF dummy model
                     inputs = [
-                        tf.keras.Input(
+                        tf_keras.Input(
                             shape=validation_data.shape[1:],
                             batch_size=validation_data.shape[0] \
                                 if isinstance(validation_data.shape[0], int) else None,
@@ -582,7 +605,7 @@ def make_node(
                         ) for idx, validation_data in enumerate(validation_datas)
                     ]
                     for check_axis in check_axes:
-                        val_model = tf.keras.Model(
+                        val_model = tf_keras.Model(
                             inputs=inputs,
                             outputs=[
                                 define_concat(

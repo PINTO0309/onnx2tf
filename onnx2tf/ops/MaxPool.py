@@ -3,6 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -64,6 +65,7 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
 
     output_integer_quantized_tflite = bool(kwargs['output_integer_quantized_tflite'])
 
@@ -160,7 +162,8 @@ def make_node(
     tf_pads = calc_tf_pooling_pads(
         input_shape=input_tensor_shape,
         kernel=dilated_kernel_shape,
-        strides=strides
+        strides=strides,
+        input_tensor=input_tensor,
     )
 
     # onnx padding value is ignored if auto_pad is not 'NOTSET'
@@ -254,7 +257,7 @@ def make_node(
 
     # Generation of TF OP
     tf_op_type = None
-    argmax_indicies = None
+    argmax_indices = None
 
     if not with_argmax:
         # tf.nn.dilation2d
@@ -329,8 +332,26 @@ def make_node(
             )
             tf_op_type = tf.nn.pool
     else:
+        # 1D MaxPoolWithArgmax workaround
+        # https://github.com/PINTO0309/onnx2tf/issues/579
+        poolwithargmax_one_d = False
+        if input_tensor_rank == 3:
+            # Reshape 4D N,W,C -> N,H,W,C
+            # H scale is fixed at 1x.
+            padded_tensor = tf.expand_dims(input=padded_tensor, axis=1)
+            input_tensor_rank = 4
+            poolwithargmax_one_d = True
+            if isinstance(kernel_shape, np.ndarray):
+                kernel_shape = np.insert(arr=kernel_shape, obj=1, values=1)
+            elif isinstance(kernel_shape, list):
+                kernel_shape.insert(0, 1)
+            elif kernel_shape is not None and kernel_shape.shape is not None and hasattr(kernel_shape, 'numpy'):
+                kernel_shape = np.insert(arr=kernel_shape.numpy(), obj=1, values=1)
+            elif kernel_shape is not None and kernel_shape.shape is not None and tf_keras.backend.is_keras_tensor(kernel_shape):
+                kernel_shape = tf.concat([kernel_shape[:1], [1], kernel_shape[1:]], axis=0)
+
         # MaxPoolWithArgmax
-        pooled_tensor, argmax_indicies = \
+        pooled_tensor, argmax_indices = \
             tf.nn.max_pool_with_argmax(
                 input=padded_tensor,
                 ksize=kernel_shape,
@@ -341,9 +362,16 @@ def make_node(
             )
         tf_op_type = tf.nn.max_pool_with_argmax
 
+        # 1D MaxPoolWithArgmax workaround
+        # https://github.com/PINTO0309/onnx2tf/issues/579
+        if poolwithargmax_one_d:
+            # Reshape 4D N,H,W,C -> N,W,C
+            pooled_tensor = tf.squeeze(input=pooled_tensor, axis=1)
+            argmax_indices = tf.squeeze(input=argmax_indices, axis=1)
+
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = pooled_tensor
     if with_argmax:
-        tf_layers_dict[graph_node_output_2.name]['tf_node'] = argmax_indicies
+        tf_layers_dict[graph_node_output_2.name]['tf_node'] = argmax_indices
 
     # Post-process transpose
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = post_process_transpose(
@@ -361,7 +389,7 @@ def make_node(
         )
 
     # Generation of Debug Info
-    tf_outputs = {f"output{idx}": value for idx, value in enumerate([pooled_tensor, argmax_indicies])}
+    tf_outputs = {f"output{idx}": value for idx, value in enumerate([pooled_tensor, argmax_indices])}
     tf_layers_dict[graph_node_output_1.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={

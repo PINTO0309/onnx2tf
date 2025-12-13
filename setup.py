@@ -27,7 +27,7 @@ setup(
     license="MIT License",
     packages=find_packages(exclude=['test*','json_samples']),
     platforms=["linux", "unix"],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     entry_points={
         'console_scripts': [
             "onnx2tf=onnx2tf:main"

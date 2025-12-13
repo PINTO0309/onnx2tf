@@ -4,6 +4,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
+import tf_keras
 from tensorflow.python.keras.layers import Lambda
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
@@ -163,10 +164,10 @@ def make_node(
     else:
         preserve_aspect_ratio = False
 
-    replace_argmax_to_fused_argmax_and_indicies_is_int64 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_int64']
-    replace_argmax_to_fused_argmax_and_indicies_is_float32 = \
-        kwargs['replace_argmax_to_fused_argmax_and_indicies_is_float32']
+    replace_argmax_to_fused_argmax_and_indices_is_int64 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_int64']
+    replace_argmax_to_fused_argmax_and_indices_is_float32 = \
+        kwargs['replace_argmax_to_fused_argmax_and_indices_is_float32']
     fused_argmax_scale_ratio = \
         kwargs['fused_argmax_scale_ratio']
 
@@ -192,14 +193,14 @@ def make_node(
             sizes = np.insert(arr=sizes, obj=1, values=1)
         elif sizes is not None and sizes.shape is not None and hasattr(sizes, 'numpy'):
             sizes = np.insert(arr=sizes.numpy(), obj=1, values=1)
-        elif sizes is not None and sizes.shape is not None and tf.keras.backend.is_keras_tensor(sizes):
+        elif sizes is not None and sizes.shape is not None and tf_keras.backend.is_keras_tensor(sizes):
             sizes = tf.concat([sizes[:1], [1], sizes[1:]], axis=0)
 
         if isinstance(scales, np.ndarray):
             scales = np.insert(arr=scales, obj=1, values=1)
         elif scales is not None and scales.shape is not None and hasattr(scales, 'numpy'):
             scales = np.insert(arr=scales.numpy(), obj=1, values=1)
-        elif scales is not None and scales.shape is not None and tf.keras.backend.is_keras_tensor(scales):
+        elif scales is not None and scales.shape is not None and tf_keras.backend.is_keras_tensor(scales):
             scales = tf.concat([scales[:1], [1], scales[1:]], axis=0)
 
     # Generation of TF OP
@@ -243,6 +244,7 @@ def make_node(
             )
             sys.exit(1)
 
+    new_size = None
     if sizes is not None:
         # sizes is defined
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
@@ -250,11 +252,16 @@ def make_node(
             sizes = sizes.set_shape(input_tensor_shape.shape)
             new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
         elif isinstance(sizes, np.ndarray):
-            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
+            new_size = tf.cast(tf.convert_to_tensor(sizes[1:input_tensor_rank-1]), tf.int32)
+        elif hasattr(sizes, 'numpy'):
+            new_size = tf.cast(tf.convert_to_tensor(sizes.numpy()[1:input_tensor_rank-1]), tf.int32)
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
-        elif tf.keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
             new_size = tf.cast(sizes, tf.int32)
+        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 4:
+            new_size = tf.cast(sizes[1:3], tf.int32)
+
     elif scales is not None:
         # only scales is defined
         if hasattr(graph_node_output, 'shape') \
@@ -287,18 +294,30 @@ def make_node(
         else:
             h_w_scale = scales[1:input_tensor_rank-1]
             h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
-            new_size = tf.cast(
-                h_w_scale * tf.cast(
-                    h_w_shape,
-                    NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                        if isinstance(scales.dtype, np.dtype) else scales.dtype,
-                ),
-                tf.int32,
-            )
+            if None not in h_w_shape:
+                new_size = tf.cast(
+                    h_w_scale * tf.cast(
+                        h_w_shape,
+                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                    ),
+                    tf.int32,
+                )
+            else:
+                h_w_shape = tf.shape(input_tensor)[1:input_tensor_rank-1]
+                new_size = tf.cast(
+                    h_w_scale * tf.cast(
+                        h_w_shape,
+                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
+                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                    ),
+                    tf.int32,
+                )
 
     if hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
+            and graph_node_output.shape is not None \
             and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:input_tensor_rank-1]]) == 0:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
@@ -307,8 +326,8 @@ def make_node(
                 new_values[new_idx] = graph_node_output.shape[idx]
             new_size = new_values[-(input_tensor_rank-1):-1]
 
-    if (replace_argmax_to_fused_argmax_and_indicies_is_int64 \
-        or replace_argmax_to_fused_argmax_and_indicies_is_float32) \
+    if (replace_argmax_to_fused_argmax_and_indices_is_int64 \
+        or replace_argmax_to_fused_argmax_and_indices_is_float32) \
         and graph_node.o().op == 'ArgMax' \
         and input_tensor_rank == 4:
         new_size = tf.cast(

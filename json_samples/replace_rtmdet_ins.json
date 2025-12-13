@@ -1,0 +1,269 @@
+{
+  "format_version": 1,
+  "operations": [
+    {
+      "op_name": "Concat_551",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
+    },
+    {
+      "op_name": "Gather_560",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
+    },
+    {
+      "op_name": "Gather_563",
+      "param_target": "inputs",
+      "param_name": "1986",
+      "values": 1
+    },
+    {
+      "op_name": "Unsqueeze_655",
+      "param_target": "attributes",
+      "param_name": "axes",
+      "values": [1]
+    },
+
+    {
+      "op_name": "Slice_657",
+      "param_target": "op",
+      "begin": [0,0,0,0],
+      "end": [0,0,0,2],
+      "end_mask": 7
+    },
+
+    {
+      "op_name": "Slice_660",
+      "param_target": "inputs",
+      "param_name": "2029",
+      "values": [2]
+    },
+    {
+      "op_name": "Slice_660",
+      "param_target": "inputs",
+      "param_name": "1538",
+      "values": [3]
+    },
+    {
+      "op_name": "Slice_660",
+      "param_target": "inputs",
+      "param_name": "1538",
+      "values": [3]
+    },
+    {
+      "op_name": "Slice_660",
+      "param_target": "inputs",
+      "param_name": "2015",
+      "values": [1]
+    },
+
+    {
+      "op_name": "Transpose_659",
+      "param_target": "attributes",
+      "param_name": "perm",
+      "values": [0,1,2,3]
+    },
+    {
+      "op_name": "Concat_674",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
+    },
+
+    {
+      "op_name": "Reshape_691",
+      "param_target": "inputs",
+      "param_name": "1582",
+      "pre_process_transpose_perm": [0,2,3,4,1]
+    },
+    {
+      "op_name": "Slice_687",
+      "param_target": "op",
+      "begin": [0],
+      "end": [1],
+      "end_mask": 0
+    },
+    {
+      "op_name": "Slice_689",
+      "param_target": "inputs",
+      "param_name": "2029",
+      "values": [2]
+    },
+    {
+      "op_name": "Slice_689",
+      "param_target": "inputs",
+      "param_name": "1626",
+      "values": [5]
+    },
+    {
+      "op_name": "Slice_689",
+      "param_target": "inputs",
+      "param_name": "2062",
+      "values": [0]
+    },
+
+    {
+      "op_name": "Reshape_695",
+      "param_target": "inputs",
+      "param_name": "1630",
+      "pre_process_transpose_perm": [0,2,3,4,1]
+    },
+    {
+      "op_name": "Slice_693",
+      "param_target": "op",
+      "begin": [0],
+      "end": [2],
+      "end_mask": 0
+    },
+
+    {
+      "op_name": "Split_678",
+      "param_target": "attributes",
+      "param_name": "axis",
+      "values": 2
+    },
+
+    {
+      "op_name": "Gather_676",
+      "param_target": "inputs",
+      "param_name": "1985",
+      "values": 0
+    },
+    {
+      "op_name": "Gather_677",
+      "param_target": "inputs",
+      "param_name": "1986",
+      "values": 1
+    },
+
+    {
+      "op_name": "Reshape_667",
+      "param_target": "inputs",
+      "param_name": "1552",
+      "pre_process_transpose_perm": [0,2,1,3]
+    },
+    {
+      "op_name": "Reshape_682",
+      "param_target": "inputs",
+      "param_name": "1589",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_683",
+      "param_target": "inputs",
+      "param_name": "1590",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Reshape_685",
+      "param_target": "inputs",
+      "param_name": "1591",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+
+    {
+      "op_name": "Slice_697",
+      "param_target": "op",
+      "begin": [0],
+      "end": [1],
+      "end_mask": 0
+    },
+    {
+      "op_name": "Slice_699",
+      "param_target": "op",
+      "begin": [2],
+      "end": [4],
+      "end_mask": 0
+    },
+
+    {
+      "op_name": "Slice_708",
+      "param_target": "op",
+      "begin": [0],
+      "end": [1],
+      "end_mask": 0
+    },
+    {
+      "op_name": "Slice_709",
+      "param_target": "op",
+      "begin": [2],
+      "end": [4],
+      "end_mask": 0
+    },
+
+    {
+      "op_name": "Slice_718",
+      "param_target": "op",
+      "begin": [0],
+      "end": [1],
+      "end_mask": 0
+    },
+    {
+      "op_name": "Slice_719",
+      "param_target": "op",
+      "begin": [2],
+      "end": [4],
+      "end_mask": 0
+    },
+
+    {
+      "op_name": "Add_725",
+      "param_target": "outputs",
+      "param_name": "1694",
+      "post_process_transpose_perm": [0,3,1,2]
+    },
+    {
+      "op_name": "Reshape_727",
+      "param_target": "inputs",
+      "param_name": "1699",
+      "values": [1,80,80,1]
+    },
+
+    {
+      "op_name": "Reshape_695",
+      "param_target": "outputs",
+      "param_name": "1561",
+      "post_process_transpose_perm": [0,4,3,1,2]
+    },
+
+    {
+      "op_name": "Reshape_701",
+      "param_target": "inputs",
+      "param_name": "1602",
+      "pre_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_711",
+      "param_target": "inputs",
+      "param_name": "1610",
+      "pre_process_transpose_perm": [0,2,3,1]
+    },
+    {
+      "op_name": "Reshape_721",
+      "param_target": "inputs",
+      "param_name": "1618",
+      "pre_process_transpose_perm": [0,2,3,1]
+    },
+
+    {
+      "op_name": "Flatten_702",
+      "param_target": "inputs",
+      "param_name": "1592",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Flatten_712",
+      "param_target": "inputs",
+      "param_name": "1593",
+      "pre_process_transpose_perm": [0,2,1]
+    },
+    {
+      "op_name": "Flatten_722",
+      "param_target": "inputs",
+      "param_name": "1594",
+      "pre_process_transpose_perm": [0,2,1]
+    }
+  ]
+}

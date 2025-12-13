@@ -84,8 +84,13 @@ def make_node(
     b_zero_point = tf_layers_dict[graph_node_input_4.name]['tf_node'] \
         if isinstance(graph_node_input_4, gs.Variable) else graph_node_input_4
 
-    casted_input_tensor_1 = tf.cast(input_tensor_1, tf.int32)
-    casted_input_tensor_2 = tf.cast(input_tensor_2, tf.int32)
+    if 'matmulinteger' in kwargs['replace_to_pseudo_operators']:
+        tf_matmul_dtype = tf.float32
+    else:
+        tf_matmul_dtype = tf.int32
+
+    casted_input_tensor_1 = tf.cast(input_tensor_1, tf_matmul_dtype)
+    casted_input_tensor_2 = tf.cast(input_tensor_2, tf_matmul_dtype)
 
     # Pre-process transpose
     input_tensor_1 = pre_process_transpose(
@@ -118,24 +123,39 @@ def make_node(
                 return a_zero_point
             a_zero_point = get_a_zero_point(a_zero_point)
 
-        a_zero_point = tf.cast(a_zero_point, tf.int32)
+        a_zero_point = tf.cast(a_zero_point, tf_matmul_dtype)
         casted_input_tensor_1 = tf.subtract(casted_input_tensor_1, a_zero_point)
 
     # apply b_zero_point to B
     if b_zero_point is not None:
-        b_zero_point = tf.cast(b_zero_point, tf.int32)
+        b_zero_point = tf.cast(b_zero_point, tf_matmul_dtype)
         casted_input_tensor_2 = tf.subtract(casted_input_tensor_2, b_zero_point)
-
-    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
-        if isinstance(dtype, np.dtype) else dtype
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
         tf.matmul(
             a=casted_input_tensor_1,
             b=casted_input_tensor_2,
-            output_type=output_dtype,
+            output_type=tf_matmul_dtype,
             name=graph_node.name,
         )
+
+    output_dtype = NUMPY_DTYPES_TO_TF_DTYPES[dtype] \
+        if isinstance(dtype, np.dtype) else dtype
+
+    if tf_matmul_dtype != output_dtype:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            x=tf.round(tf_layers_dict[graph_node_output.name]['tf_node'])
+        # MatMulInteger is commonly used in dynamically quantized ONNX models,
+        # in which case its output is directly casted to float32, making the
+        # cast here unnecessary
+        if not (len(graph_node_output.outputs) == 1 and \
+                graph_node_output.outputs[0].op == 'Cast' and \
+                graph_node_output.outputs[0].attrs['to'] == 1):
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                tf.cast(
+                    x=tf_layers_dict[graph_node_output.name]['tf_node'],
+                    dtype=output_dtype,
+                )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
