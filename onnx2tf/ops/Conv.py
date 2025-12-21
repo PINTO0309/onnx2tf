@@ -62,7 +62,7 @@ def make_node(
         before_op_output_shape_trans,
     )
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
-    kernel_size = len(kernel_shape)
+    kernel_size = len(kernel_shape) if kernel_shape != [] else len(graph_node.inputs[1].shape) - 2
     try:
         input_weights = get_weights_constant_or_variable(
             const_or_var=graph_node.inputs[1] \
