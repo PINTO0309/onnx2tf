@@ -74,6 +74,8 @@ def convert(
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
+    quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
+    quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
     quant_type: Optional[str] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
     input_quant_dtype: Optional[str] = 'int8',
@@ -171,6 +173,16 @@ def convert(
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
+
+    quant_norm_mean: Optional[str]
+        Normalized average value during quantization.\n
+        Only valid when the "-cind" option is not used.\n
+        Default: "[[[[0.485, 0.456, 0.406]]]]"
+
+    quant_norm_std: Optional[str]
+        Normalized standard deviation during quantization.\n
+        Only valid when the "-cind" option is not used.\n
+        Default: "[[[[0.229, 0.224, 0.225]]]]"
 
     quant_type: Optional[str]
         Selects whether "per-channel" or "per-tensor" quantization is used.\n
@@ -621,6 +633,19 @@ def convert(
         )
         sys.exit(1)
 
+    # Normalized average value during quantization
+    if quant_norm_mean:
+        quant_norm_mean_np = np.array(ast.literal_eval(quant_norm_mean), dtype=np.float32)
+    else:
+        quant_norm_mean_np = np.array(ast.literal_eval("[[[[0.000, 0.000, 0.000]]]]"), dtype=np.float32)
+
+    # Normalized standard deviation during quantization
+    if quant_norm_std:
+        quant_norm_std_np = np.array(ast.literal_eval(quant_norm_std), dtype=np.float32)
+    else:
+        quant_norm_std_np = np.array(ast.literal_eval("[[[[1.000, 1.000, 1.000]]]]"), dtype=np.float32)
+
+    # param replacement
     replacement_parameters = None
     if param_replacement_file:
         if not os.path.isfile(param_replacement_file):
@@ -1683,6 +1708,8 @@ def convert(
                     Color.BLUE(f'shape') + f': {output_shape} '+
                     Color.BLUE(f'dtype') + f': {output_dtype}'
                 )
+            info(Color.BLUE(f'quant_norm_mean') + f': {quant_norm_mean_np} ')
+            info(Color.BLUE(f'quant_norm_std') + f': {quant_norm_std_np} ')
             print('')
 
             # INT8 Converter
@@ -1720,18 +1747,20 @@ def convert(
 
                     if model_input.shape[-1] == 3:
                         # RGB
-                        mean = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-                        std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
+                        mean = quant_norm_mean_np
+                        std = quant_norm_std_np
                     elif model_input.shape[-1] == 4:
                         # RGBA
-                        mean = np.asarray([[[[0.485, 0.456, 0.406, 0.000]]]], dtype=np.float32)
-                        std = np.asarray([[[[0.229, 0.224, 0.225, 1.000]]]], dtype=np.float32)
+                        zero = np.zeros((*quant_norm_mean_np.shape[:-1], 1), dtype=quant_norm_mean_np.dtype)
+                        mean = np.concatenate([quant_norm_mean_np, zero], axis=-1)
+                        one = np.ones((*quant_norm_std_np.shape[:-1], 1), dtype=quant_norm_std_np.dtype)
+                        std = np.concatenate([quant_norm_std_np, zero], axis=-1)
                         new_element_array = np.full((*calib_data.shape[:-1], 1), 0.500, dtype=np.float32)
                         calib_data = np.concatenate((calib_data, new_element_array), axis=-1)
                     else:
                         # Others
-                        mean = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-                        std = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
+                        mean = quant_norm_mean_np
+                        std = quant_norm_std_np
 
                     calib_data_dict[model_input.name] = \
                         [
@@ -2476,6 +2505,24 @@ def main():
             'Default: "per-channel"'
     )
     parser.add_argument(
+        '-qnm',
+        '--quant_norm_mean',
+        type=str,
+        default='[[[[0.485, 0.456, 0.406]]]]',
+        help=\
+            'Normalized average value during quantization. \n' +
+            'Default: "[[[[0.485, 0.456, 0.406]]]]"'
+    )
+    parser.add_argument(
+        '-qns',
+        '--quant_norm_std',
+        type=str,
+        default='[[[[0.229, 0.224, 0.225]]]]',
+        help=\
+            'Normalized standard deviation during quantization. \n' +
+            'Default: "[[[[0.229, 0.224, 0.225]]]]"'
+    )
+    parser.add_argument(
         '-cind',
         '--custom_input_op_name_np_data_path',
         type=str,
@@ -3061,6 +3108,8 @@ def main():
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
+        quant_norm_mean=args.quant_norm_mean,
+        quant_norm_std=args.quant_norm_std,
         quant_type=args.quant_type,
         custom_input_op_name_np_data_path=custom_params,
         input_quant_dtype=args.input_quant_dtype,
