@@ -309,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.28.7
+  ghcr.io/pinto0309/onnx2tf:1.28.8
 
   or
 
@@ -317,7 +317,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.28.7
+  docker.io/pinto0309/onnx2tf:1.28.8
 
   or
 
@@ -1642,6 +1642,16 @@ optional arguments:
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
 
+  -qnm QUANT_NORM_MEAN, --quant_norm_mean QUANT_NORM_MEAN
+    Normalized average value during quantization.
+    Only valid when the "-cind" option is not used.
+    Default: "[[[[0.485, 0.456, 0.406]]]]"
+
+  -qns QUANT_NORM_STD, --quant_norm_std QUANT_NORM_STD
+    Normalized standard deviation during quantization.
+    Only valid when the "-cind" option is not used.
+    Default: "[[[[0.229, 0.224, 0.225]]]]"
+
   -cind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
     --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
     Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
@@ -2070,6 +2080,8 @@ convert(
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
+  quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
+  quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
   quant_type: Optional[str] = 'per-channel',
   custom_input_op_name_np_data_path: Optional[List] = None,
   input_quant_dtype: Optional[str] = 'int8',
@@ -2164,6 +2176,16 @@ convert(
 
     output_integer_quantized_tflite: Optional[bool]
       Output of integer quantized tflite.
+
+    quant_norm_mean: Optional[str]
+        Normalized average value during quantization.
+        Only valid when the "-cind" option is not used.
+        Default: "[[[[0.485, 0.456, 0.406]]]]"
+
+    quant_norm_std: Optional[str]
+        Normalized standard deviation during quantization.
+        Only valid when the "-cind" option is not used.
+        Default: "[[[[0.229, 0.224, 0.225]]]]"
 
     quant_type: Optional[str]
       Selects whether "per-channel" or "per-tensor" quantization is used.
