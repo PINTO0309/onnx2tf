@@ -99,6 +99,8 @@ def convert(
     enable_rnn_unroll: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
     disable_strict_mode: Optional[bool] = False,
+    onnxruntime_output_memmap: Optional[bool] = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
     number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
     disable_suppression_flexstridedslice: Optional[bool] = False,
     number_of_dimensions_after_flexstridedslice_compression: Optional[int] = 5,
@@ -371,6 +373,15 @@ def convert(
         If specified, the conversion speed is greatly accelerated because the strict accuracy\n
         correction process is skipped, but the frequency of transposition errors increases\n
         and accuracy errors are more likely to occur. Strict mode is enabled by default.
+
+    onnxruntime_output_memmap: Optional[bool]
+        Use onnxruntime IOBinding with np.memmap for dummy inference outputs when\n
+        the estimated output tensor size exceeds available RAM. This avoids OOM\n
+        but increases disk I/O and may slow down validation.
+
+    onnxruntime_output_memmap_dir: Optional[str]
+        Directory for memmap files used by onnxruntime_output_memmap.\n
+        If omitted, a temporary directory is created and removed on exit.
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
@@ -1118,6 +1129,8 @@ def convert(
                     tf_layers_dict=tf_layers_dict,
                     use_cuda=use_cuda,
                     disable_strict_mode=disable_strict_mode,
+                    enable_ort_output_memmap=onnxruntime_output_memmap,
+                    ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                     shape_hints=shape_hints if (check_onnx_tf_outputs_elementwise_close or check_onnx_tf_outputs_elementwise_close_full) else None,
                 )
             """
@@ -2041,6 +2054,8 @@ def convert(
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         tf_layers_dict=tf_layers_dict,
                         use_cuda=use_cuda,
+                        enable_ort_output_memmap=onnxruntime_output_memmap,
+                        ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                         shape_hints=shape_hints,
                     )
             except Exception as ex:
@@ -2304,6 +2319,8 @@ def convert(
                             custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                             tf_layers_dict=tf_layers_dict,
                             use_cuda=use_cuda,
+                            enable_ort_output_memmap=onnxruntime_output_memmap,
+                            ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                             shape_hints=shape_hints,
                         )
 
@@ -2837,6 +2854,28 @@ def main():
             'and accuracy errors are more likely to occur. Strict mode is enabled by default.'
     )
     parser.add_argument(
+        '-doem',
+        '--disable_onnxruntime_output_memmap',
+        dest='disable_onnxruntime_output_memmap',
+        action='store_true',
+        help=\
+            'Disable onnxruntime output memmap. \n' +
+            'By default, onnx2tf uses onnxruntime IOBinding with np.memmap for dummy inference \n' +
+            'outputs only when the estimated output tensor size exceeds available RAM. \n' +
+            'Use this flag to force the standard in-memory output path instead. \n' +
+            'Default: disabled (memmap enabled when needed).'
+    )
+    parser.set_defaults(disable_onnxruntime_output_memmap=False)
+    parser.add_argument(
+        '-oemd',
+        '--onnxruntime_output_memmap_dir',
+        type=str,
+        help=\
+            'Directory for memmap files used by onnxruntime output memmap. \n' +
+            'If omitted, a temporary directory is created and removed on exit. \n' +
+            'This setting is used only when memmap is actually enabled.'
+    )
+    parser.add_argument(
         '-nodafsc',
         '--number_of_dimensions_after_flexstridedslice_compression',
         type=int,
@@ -3133,6 +3172,8 @@ def main():
         enable_rnn_unroll=args.enable_rnn_unroll,
         disable_suppression_flextranspose=args.disable_suppression_flextranspose,
         disable_strict_mode=args.disable_strict_mode,
+        onnxruntime_output_memmap=not args.disable_onnxruntime_output_memmap,
+        onnxruntime_output_memmap_dir=args.onnxruntime_output_memmap_dir,
         number_of_dimensions_after_flextranspose_compression=args.number_of_dimensions_after_flextranspose_compression,
         disable_suppression_flexstridedslice=args.disable_suppression_flexstridedslice,
         number_of_dimensions_after_flexstridedslice_compression=args.number_of_dimensions_after_flexstridedslice_compression,
