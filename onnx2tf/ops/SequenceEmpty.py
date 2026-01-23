@@ -30,7 +30,7 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    sequence_dtype = ONNX_DTYPES_TO_TF_DTYPES(graph_node.attrs.get('dtype', 1)) # Float32
+    sequence_dtype = ONNX_DTYPES_TO_TF_DTYPES[graph_node.attrs.get('dtype', 1)] # Float32
 
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
