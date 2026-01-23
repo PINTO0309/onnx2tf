@@ -7,6 +7,9 @@ import copy
 import json
 import psutil
 import random
+import atexit
+import tempfile
+import shutil
 random.seed(0)
 import requests
 import flatbuffers
@@ -3634,6 +3637,8 @@ def dummy_onnx_inference(
     tf_layers_dict: Optional[Dict] = None,
     use_cuda: bool = False,
     disable_strict_mode: bool = False,
+    enable_ort_output_memmap: bool = False,
+    ort_output_memmap_dir: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
@@ -3662,6 +3667,14 @@ def dummy_onnx_inference(
 
     disable_strict_mode: Optional[bool]
         True to disable strict inference mode, False to enable it.
+
+    enable_ort_output_memmap: bool
+        True to use onnxruntime IOBinding with np.memmap for outputs when
+        output tensors are too large for available RAM.
+
+    ort_output_memmap_dir: Optional[str]
+        Directory to store memmap files. If not specified, a temporary
+        directory is created and removed on exit.
 
     Returns
     ----------
@@ -3880,7 +3893,7 @@ def dummy_onnx_inference(
         op_output_size: int = 1
         if gs_graph_output.shape is not None:
             for s in gs_graph_output.shape:
-                if isinstance(s, int):
+                if isinstance(s, (int, np.integer)):
                     op_output_size *= s
             # Total bytes
             total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
@@ -3888,7 +3901,8 @@ def dummy_onnx_inference(
     # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 80% of available RAM
     mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 //1024
     total_output_size_gb = (total_output_size // 1024 // 1024 //1024)
-    if (not disable_strict_mode and total_output_size_gb > mem_available):
+    use_memmap_outputs = enable_ort_output_memmap and total_output_size_gb > mem_available
+    if (not disable_strict_mode and total_output_size_gb > mem_available and not use_memmap_outputs):
         if tmp_onnx_path:
             os.remove(tmp_onnx_path)
             os.remove(tmp_onnx_external_weights_path)
@@ -3896,7 +3910,94 @@ def dummy_onnx_inference(
             f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB. (results: {total_output_size_gb} GB)'
         )
 
-    outputs = onnx_session.run(None, input_datas)
+    if use_memmap_outputs:
+        output_shapes = []
+        output_names_order = [out.name for out in gs_graph.outputs]
+        for out in gs_graph.outputs:
+            shape = out.shape
+            if shape is None or any(not isinstance(s, (int, np.integer)) for s in shape):
+                if tmp_onnx_path:
+                    os.remove(tmp_onnx_path)
+                    os.remove(tmp_onnx_external_weights_path)
+                raise Exception(
+                    'onnxruntime output memmap requires static output shapes. ' +
+                    'Provide --shape_hints or reduce validation outputs.'
+                )
+            output_shapes.append([int(s) for s in shape])
+
+        memmap_dir = ort_output_memmap_dir
+        cleanup_memmap_dir = False
+        if memmap_dir is None:
+            memmap_dir = tempfile.mkdtemp(prefix='onnx2tf_ort_mm_')
+            cleanup_memmap_dir = True
+        os.makedirs(memmap_dir, exist_ok=True)
+
+        try:
+            disk_free = psutil.disk_usage(memmap_dir).free
+            if total_output_size > disk_free:
+                raise Exception(
+                    f'Not enough disk space for memmap outputs. ' +
+                    f'Required: {total_output_size} bytes, Free: {disk_free} bytes.'
+                )
+        except Exception as ex:
+            if 'Not enough disk space' in str(ex):
+                if tmp_onnx_path:
+                    os.remove(tmp_onnx_path)
+                    os.remove(tmp_onnx_external_weights_path)
+                raise
+
+        if cleanup_memmap_dir:
+            atexit.register(shutil.rmtree, memmap_dir, ignore_errors=True)
+
+        info(
+            f'onnxruntime output memmap enabled. ' +
+            f'Outputs: {len(output_names_order)}, Path: {memmap_dir}'
+        )
+
+        io_binding = onnx_session.io_binding()
+
+        for input_name, input_data in input_datas.items():
+            if not input_data.flags['C_CONTIGUOUS']:
+                input_data = np.ascontiguousarray(input_data)
+                input_datas[input_name] = input_data
+            io_binding.bind_input(
+                input_name,
+                'cpu',
+                0,
+                input_data.dtype,
+                input_data.shape,
+                input_data.__array_interface__['data'][0],
+            )
+
+        memmap_outputs = {}
+        for idx, (output_name, output_shape) in enumerate(zip(output_names_order, output_shapes)):
+            safe_output_name = re.sub(r'[^0-9A-Za-z._-]+', '_', output_name)
+            memmap_path = os.path.join(memmap_dir, f'ort_output_{idx}_{safe_output_name}.mmap')
+            output_dtype = np.dtype(gs_graph.outputs[idx].dtype)
+            memmap_array = np.memmap(
+                memmap_path,
+                dtype=output_dtype,
+                mode='w+',
+                shape=tuple(output_shape),
+            )
+            memmap_outputs[output_name] = memmap_array
+            io_binding.bind_output(
+                output_name,
+                'cpu',
+                0,
+                output_dtype,
+                output_shape,
+                memmap_array.__array_interface__['data'][0],
+            )
+
+        onnx_session.run_with_iobinding(io_binding)
+        io_binding.synchronize_outputs()
+        for memmap_array in memmap_outputs.values():
+            memmap_array.flush()
+
+        outputs = [memmap_outputs[name] for name in output_names_order]
+    else:
+        outputs = onnx_session.run(None, input_datas)
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)
         os.remove(tmp_onnx_external_weights_path)
