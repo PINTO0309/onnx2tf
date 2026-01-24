@@ -93,7 +93,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |ConvTranspose|:heavy_check_mark:|
   |Cosh|:heavy_check_mark:|
   |Cos|:heavy_check_mark:|
-  |CumProd|**Help wanted**|
+  |CumProd|:heavy_check_mark:|
   |CumSum|:heavy_check_mark:|
   |DeformConv|**Help wanted**|
   |DepthToSpace|:heavy_check_mark:|
@@ -268,11 +268,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - Linux / Windows
-- onnx==1.17.0
-- onnxruntime==1.18.1
+- onnx==1.19.0
+- onnxruntime==1.23.0
 - onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
-- onnx_graphsurgeon
-- simple_onnx_processing_tools
+- onnx_graphsurgeon==0.5.8
+- simple_onnx_processing_tools==1.1.32
 - tensorflow==2.19.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
 - tf-keras==2.19.0
 - ai-edge-litert==1.2.0
@@ -321,7 +321,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.4
+  ghcr.io/pinto0309/onnx2tf:1.29.5
 
   or
 
@@ -329,15 +329,15 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.4
+  docker.io/pinto0309/onnx2tf:1.29.5
 
   or
 
-  pip install -U onnx==1.17.0 \
-  && pip install -U onnx-graphsurgeon \
-  && pip install -U onnxruntime==1.18.1 \
+  pip install -U onnx==1.19.0 \
+  && pip install -U onnx-graphsurgeon==0.5.8 \
+  && pip install -U onnxruntime==1.23.0 \
   && pip install -U onnxsim==0.4.33 \
-  && pip install -U simple_onnx_processing_tools \
+  && pip install -U simple_onnx_processing_tools==1.1.32 \
   && pip install -U sne4onnx>=1.0.13 \
   && pip install -U sng4onnx>=1.0.4 \
   && pip install -U ai_edge_litert==1.2.0 \
@@ -373,7 +373,7 @@ or
   !pip install -U pip \
     && pip install tensorflow==2.19.0 \
     && pip install ai_edge_litert==1.2.0 \
-    && pip install -U onnx==1.17.0 \
+    && pip install -U onnx==1.19.0 \
     && python -m pip install onnx_graphsurgeon \
           --index-url https://pypi.ngc.nvidia.com \
     && pip install -U onnxruntime==1.18.1 \
