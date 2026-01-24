@@ -1246,8 +1246,8 @@ def convert(
                 # Attach it to the exception for later use
                 ex.onnx_op_name = error_onnx_op_name
 
-            # If no replacement file was provided, try to generate one automatically
-            if not param_replacement_file and input_onnx_file_path:
+            # If no replacement file was provided, optionally try to generate one automatically
+            if not param_replacement_file and input_onnx_file_path and auto_generate_json_on_error:
                 info('')
                 info(Color.REVERSE(f'Attempting automatic JSON generation due to conversion error'), '=' * 30)
                 if error_onnx_op_name:
@@ -1313,6 +1313,11 @@ def convert(
                     warn(
                         f'Conversion failed and automatic JSON generation could not find a solution after {attempt} attempts.'
                     )
+            elif not param_replacement_file and input_onnx_file_path and not auto_generate_json_on_error:
+                warn(
+                    'Conversion failed. Automatic JSON generation on error is disabled by default.\n' +
+                    'Re-run with --auto_generate_json_on_error or provide a parameter replacement JSON file.'
+                )
             # Re-raise the original error
             raise ex
 

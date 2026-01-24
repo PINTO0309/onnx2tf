@@ -309,7 +309,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.2
+  ghcr.io/pinto0309/onnx2tf:1.29.3
 
   or
 
@@ -317,7 +317,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.2
+  docker.io/pinto0309/onnx2tf:1.29.3
 
   or
 
@@ -2041,9 +2041,9 @@ optional arguments:
     which can take a very long time depending on the model complexity.
 
   -agje, --auto_generate_json_on_error
-    Attempts to generate a parameter replacement JSON when accuracy validation finds errors
-    greater than 1e-2. Useful for quickly capturing fixes during -cotof runs.
-    Disabled by default to avoid unexpected file generation.
+    Attempts to generate a parameter replacement JSON when conversion fails or when accuracy
+    validation finds errors greater than 1e-2. Useful for quickly capturing fixes during
+    -cotof runs. Disabled by default to avoid unexpected file generation.
 
   -dms, --disable_model_save
     Does not save the converted model. For CIs RAM savings.
@@ -2482,8 +2482,8 @@ convert(
       Default: False
 
     auto_generate_json_on_error: Optional[bool]
-      When accuracy validation detects errors greater than 1e-2, attempts to generate
-      a parameter replacement JSON as a best-effort fix.
+      When conversion fails or accuracy validation detects errors greater than 1e-2,
+      attempts to generate a parameter replacement JSON as a best-effort fix.
       Default: False
 
     check_gpu_delegate_compatibility: Optional[bool]
