@@ -59,6 +59,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Acosh|:heavy_check_mark:|
   |Acos|:heavy_check_mark:|
   |Add|:heavy_check_mark:|
+  |AffineGrid|**Help wanted**|
   |And|:heavy_check_mark:|
   |ArgMax|:heavy_check_mark:|
   |ArgMin|:heavy_check_mark:|
@@ -66,6 +67,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Asin|:heavy_check_mark:|
   |Atanh|:heavy_check_mark:|
   |Atan|:heavy_check_mark:|
+  |Attention|**Help wanted**|
   |AveragePool|:heavy_check_mark:|
   |BatchNormalization|:heavy_check_mark:|
   |Bernoulli|:heavy_check_mark:|
@@ -74,6 +76,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |BitwiseNot|:heavy_check_mark:|
   |BitwiseOr|:heavy_check_mark:|
   |BitwiseXor|:heavy_check_mark:|
+  |BlackmanWindow|**Help wanted**|
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
   |Celu|:heavy_check_mark:|
@@ -90,6 +93,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |ConvTranspose|:heavy_check_mark:|
   |Cosh|:heavy_check_mark:|
   |Cos|:heavy_check_mark:|
+  |CumProd|**Help wanted**|
   |CumSum|:heavy_check_mark:|
   |DeformConv|**Help wanted**|
   |DepthToSpace|:heavy_check_mark:|
@@ -129,6 +133,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |HardSwish|:heavy_check_mark:|
   |Identity|:heavy_check_mark:|
   |If|:heavy_check_mark:|
+  |ImageDecoder|**Help wanted**|
   |Input|:heavy_check_mark:|
   |InstanceNormalization|:heavy_check_mark:|
   |Inverse|:heavy_check_mark:|
@@ -142,6 +147,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |LogSoftmax|:heavy_check_mark:|
   |Loop|**Help wanted**|
   |LpNormalization|:heavy_check_mark:|
+  |LpPool|**Help wanted**|
   |LRN|:heavy_check_mark:|
   |LSTM|:heavy_check_mark:|
   |MatMul|:heavy_check_mark:|
@@ -159,6 +165,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Mul|:heavy_check_mark:|
   |Multinomial|:heavy_check_mark:|
   |Neg|:heavy_check_mark:|
+  |NegativeLogLikelihoodLoss|**Help wanted**|
   |NonMaxSuppression|:heavy_check_mark:|
   |NonZero|:heavy_check_mark:|
   |Optional|**Help wanted**|
@@ -201,6 +208,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |ReverseSequence|:heavy_check_mark:|
   |RNN|:heavy_check_mark:|
   |RoiAlign|:heavy_check_mark:|
+  |RotaryEmbedding|**Help wanted**|
   |Round|:heavy_check_mark:|
   |ScaleAndTranslate|:heavy_check_mark:|
   |Scatter|:heavy_check_mark:|
@@ -223,6 +231,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Size|:heavy_check_mark:|
   |Slice|:heavy_check_mark:|
   |Softmax|:heavy_check_mark:|
+  |SoftmaxCrossEntropyLoss|**Help wanted**|
   |Softplus|:heavy_check_mark:|
   |Softsign|:heavy_check_mark:|
   |SpaceToDepth|:heavy_check_mark:|
@@ -231,11 +240,14 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Sqrt|:heavy_check_mark:|
   |Squeeze|:heavy_check_mark:|
   |STFT|:white_check_mark:|
+  |StringConcat|**Help wanted**|
   |StringNormalizer|:white_check_mark:|
+  |StringSplit|**Help wanted**|
   |Sub|:heavy_check_mark:|
   |Sum|:heavy_check_mark:|
-  |Tanh|:heavy_check_mark:|
   |Tan|:heavy_check_mark:|
+  |Tanh|:heavy_check_mark:|
+  |TensorScatter|**Help wanted**|
   |TfIdfVectorizer|**Help wanted**|
   |ThresholdedRelu|:heavy_check_mark:|
   |Tile|:heavy_check_mark:|
