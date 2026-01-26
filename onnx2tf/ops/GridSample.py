@@ -101,10 +101,12 @@ def make_node(
     )
 
     align_corners = bool(graph_node.attrs.get('align_corners', 0))
-    mode = graph_node.attrs.get('mode', 'bilinear')
+    mode = graph_node.attrs.get('mode', 'linear')
     padding_mode = graph_node.attrs.get('padding_mode', 'zeros')
 
-    ENABLE_MODES = ['bilinear']
+    if mode == 'bilinear':
+        mode = 'linear'
+    ENABLE_MODES = ['linear', 'nearest', 'cubic']
     if mode not in ENABLE_MODES:
         error(
             f'The current implementation of GridSample supports only mode={ENABLE_MODES}. '+
@@ -113,7 +115,7 @@ def make_node(
         )
         sys.exit(1)
 
-    ENABLE_PADDING_MODES = ['zeros']
+    ENABLE_PADDING_MODES = ['zeros', 'border', 'reflection']
     if padding_mode not in ENABLE_PADDING_MODES:
         error(
             f'The current implementation of GridSample supports only mode={ENABLE_PADDING_MODES}. '+
@@ -166,390 +168,485 @@ def make_node(
                 )
 
     # Generation of TF OP
+    use_linear_gather_2d = padding_mode in ['zeros', 'border', 'reflection'] \
+        and mode in ['linear', 'nearest', 'cubic']
+    use_linear_gather_3d = padding_mode in ['zeros', 'border', 'reflection'] \
+        and mode in ['linear', 'nearest', 'cubic']
     """
     image
         [N, H, W, C]
     grid
         [N, grid_H, grid_W, 2]
     """
-    def define_fast_gridsample(image, grid, align_corners, target_name):
-        _, h_in, w_in, _ = image.shape
-
+    def _reflect_coord(coord, size, align_corners):
+        size = tf.cast(size, coord.dtype)
         if align_corners:
-            pixs = tf.math.multiply(grid + 1.0, tf.convert_to_tensor([(w_in - 1) * 0.5, (h_in - 1) * 0.5], dtype=tf.float32))
+            size_minus_one = tf.maximum(size - 1.0, 1.0)
+            coord = (size - 1.0) - tf.abs(
+                tf.math.floormod(coord, 2.0 * size_minus_one) - (size - 1.0)
+            )
         else:
-            pixs = (tf.math.multiply(grid + 1.0, tf.convert_to_tensor([w_in, h_in], dtype=tf.float32)) - 1.0) * 0.5
+            coord = size - tf.abs(
+                tf.math.floormod(coord + 0.5, 2.0 * size) - size
+            ) - 0.5
+            coord = tf.clip_by_value(coord, 0.0, size - 1.0)
+        return coord
 
-        # x/y coordinate map dimension: [N, H, W, 1]
-        x, y = tf.split(pixs, num_or_size_splits=2, axis=-1)
+    def _normalize_grid(grid_coord, size, align_corners):
+        size = tf.cast(size, grid_coord.dtype)
+        if align_corners:
+            return (grid_coord + 1.0) * (size - 1.0) * 0.5
+        return (grid_coord + 1.0) * size * 0.5 - 0.5
 
-        x0 = tf.clip_by_value(tf.math.floor(x), clip_value_min=0, clip_value_max=w_in - 1)
-        y0 = tf.clip_by_value(tf.math.floor(y), clip_value_min=0, clip_value_max=h_in - 1)
+    def _cubic_kernel(x, a=-0.75):
+        absx = tf.abs(x)
+        absx2 = absx * absx
+        absx3 = absx2 * absx
+        f1 = (a + 2.0) * absx3 - (a + 3.0) * absx2 + 1.0
+        f2 = a * absx3 - 5.0 * a * absx2 + 8.0 * a * absx - 4.0 * a
+        return tf.where(
+            absx <= 1.0,
+            f1,
+            tf.where(absx < 2.0, f2, tf.zeros_like(x)),
+        )
 
-        x1 = tf.clip_by_value(x0 + 1, clip_value_min=0, clip_value_max=w_in - 1)
-        y1 = tf.clip_by_value(y0 + 1, clip_value_min=0, clip_value_max=h_in - 1)
+    def _prepare_linear_gather_2d(input_tensor):
+        shape = tf.shape(input_tensor)
+        h = shape[1]
+        w = shape[2]
+        c = shape[3]
+        input_flat = tf.reshape(input_tensor, tf.stack([shape[0], h * w, c]))
+        return input_flat, h, w
 
-        dx = tf.math.subtract(x, x0)
-        dy = tf.math.subtract(y, y0)
+    def _prepare_linear_gather_3d(input_tensor):
+        shape = tf.shape(input_tensor)
+        d = shape[1]
+        h = shape[2]
+        w = shape[3]
+        c = shape[4]
+        input_flat = tf.reshape(input_tensor, tf.stack([shape[0], d * h * w, c]))
+        return input_flat, d, h, w
 
-        # bilinear interpolation
-        #   image[x, y] = \
-        #       (1 - dy) * (1 - dx) * image[y0, x0] + \
-        #           dy   * (1 - dx) * image[y1, x0] + \
-        #           dy   *    dx    * image[y1, x1] + \
-        #       (1 - dy) *    dx    * image[y0, x1]
-        w_y0_x0 = tf.math.multiply(1.0 - dy, 1.0 - dx)
-        w_y1_x0 = tf.math.multiply(dy, 1.0 - dx)
-        w_y1_x1 = tf.math.multiply(dy, dx)
-        w_y0_x1 = tf.math.multiply(1.0 - dy, dx)
+    def _gather_1d(input_tensor, x_idx):
+        idx = tf.cast(x_idx, tf.int64)
+        return tf.gather_nd(input_tensor, idx, batch_dims=1)
 
-        # input - [N, H_in, W_in, C]
-        # grid - [N, H_out, W_out, 2]
-        # output - [N, H_out, W_out, C]
-        v_y0_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x0], axis=-1), dtype=tf.int64), batch_dims=1)
-        v_y1_x0 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y1, x0], axis=-1), dtype=tf.int64), batch_dims=1)
-        v_y1_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y1, x1], axis=-1), dtype=tf.int64), batch_dims=1)
-        v_y0_x1 = tf.gather_nd(params=image, indices=tf.cast(tf.concat([y0, x1], axis=-1), dtype=tf.int64), batch_dims=1)
+    def _gather_2d(input_tensor, y_idx, x_idx, linear_cache=None):
+        if use_linear_gather_2d:
+            if linear_cache is None:
+                input_flat, _, w = _prepare_linear_gather_2d(input_tensor)
+            else:
+                input_flat, _, w = linear_cache
+            w_f = tf.cast(w, y_idx.dtype)
+            linear = tf.cast(y_idx * w_f + x_idx, tf.int32)
+            linear = tf.squeeze(linear, axis=-1)
+            return tf.gather(params=input_flat, indices=linear, batch_dims=1)
+        idx = tf.cast(tf.concat([y_idx, x_idx], axis=-1), tf.int64)
+        return tf.gather_nd(input_tensor, idx, batch_dims=1)
+
+    def _gather_3d(input_tensor, z_idx, y_idx, x_idx, linear_cache=None):
+        if use_linear_gather_3d:
+            if linear_cache is None:
+                input_flat, d, h, w = _prepare_linear_gather_3d(input_tensor)
+            else:
+                input_flat, d, h, w = linear_cache
+            w_f = tf.cast(w, z_idx.dtype)
+            h_f = tf.cast(h, z_idx.dtype)
+            linear = z_idx * (h_f * w_f) + y_idx * w_f + x_idx
+            linear = tf.cast(linear, tf.int32)
+            linear = tf.squeeze(linear, axis=-1)
+            return tf.gather(params=input_flat, indices=linear, batch_dims=1)
+        idx = tf.cast(tf.concat([z_idx, y_idx, x_idx], axis=-1), tf.int64)
+        return tf.gather_nd(input_tensor, idx, batch_dims=1)
+
+    def _grid_sample_1d(image, grid, target_name):
+        w_in = tf.shape(image)[1]
+        w_in_f = tf.cast(w_in, grid.dtype)
+        x = _normalize_grid(grid, w_in_f, align_corners)
+
+        if padding_mode == 'border':
+            x = tf.clip_by_value(x, 0.0, w_in_f - 1.0)
+            max_x = w_in_f - 1.0
+        elif padding_mode == 'reflection':
+            x = _reflect_coord(x, w_in_f, align_corners)
+            max_x = w_in_f - 1.0
+        else:
+            pad = 2 if mode == 'cubic' else 1
+            x = tf.clip_by_value(x, -float(pad), w_in_f - 1.0 + float(pad)) + float(pad)
+            image = tf.pad(image, paddings=[[0,0],[pad,pad],[0,0]])
+            max_x = tf.cast(w_in + 2 * pad - 1, grid.dtype)
+
+        if mode == 'nearest':
+            x0 = tf.round(x)
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            output = _gather_1d(image, x0)
+            return tf.identity(output, name=target_name)
+
+        if mode == 'cubic':
+            x1 = tf.floor(x)
+            dx = x - x1
+            x0 = x1 - 1.0
+            x2 = x1 + 1.0
+            x3 = x1 + 2.0
+
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+                x1 = _reflect_coord(x1, w_in_f, align_corners)
+                x2 = _reflect_coord(x2, w_in_f, align_corners)
+                x3 = _reflect_coord(x3, w_in_f, align_corners)
+
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            x1 = tf.clip_by_value(x1, 0.0, max_x)
+            x2 = tf.clip_by_value(x2, 0.0, max_x)
+            x3 = tf.clip_by_value(x3, 0.0, max_x)
+
+            w0 = _cubic_kernel(dx + 1.0)
+            w1 = _cubic_kernel(dx)
+            w2 = _cubic_kernel(dx - 1.0)
+            w3 = _cubic_kernel(dx - 2.0)
+
+            v0 = _gather_1d(image, x0)
+            v1 = _gather_1d(image, x1)
+            v2 = _gather_1d(image, x2)
+            v3 = _gather_1d(image, x3)
+            output = w0 * v0 + w1 * v1 + w2 * v2 + w3 * v3
+            return tf.identity(output, name=target_name)
+
+        x0 = tf.floor(x)
+        x1 = x0 + 1.0
+        dx = x - x0
+
+        if padding_mode == 'reflection':
+            x0 = _reflect_coord(x0, w_in_f, align_corners)
+            x1 = _reflect_coord(x1, w_in_f, align_corners)
+
+        x0 = tf.clip_by_value(x0, 0.0, max_x)
+        x1 = tf.clip_by_value(x1, 0.0, max_x)
+
+        w0 = 1.0 - dx
+        w1 = dx
+        v0 = _gather_1d(image, x0)
+        v1 = _gather_1d(image, x1)
+        output = w0 * v0 + w1 * v1
+        return tf.identity(output, name=target_name)
+
+    def _grid_sample_2d(image, grid, target_name):
+        h_in = tf.shape(image)[1]
+        w_in = tf.shape(image)[2]
+        h_in_f = tf.cast(h_in, grid.dtype)
+        w_in_f = tf.cast(w_in, grid.dtype)
+        grid_x, grid_y = tf.split(grid, num_or_size_splits=2, axis=-1)
+        x = _normalize_grid(grid_x, w_in_f, align_corners)
+        y = _normalize_grid(grid_y, h_in_f, align_corners)
+
+        if padding_mode == 'border':
+            x = tf.clip_by_value(x, 0.0, w_in_f - 1.0)
+            y = tf.clip_by_value(y, 0.0, h_in_f - 1.0)
+            max_x = w_in_f - 1.0
+            max_y = h_in_f - 1.0
+        elif padding_mode == 'reflection':
+            x = _reflect_coord(x, w_in_f, align_corners)
+            y = _reflect_coord(y, h_in_f, align_corners)
+            max_x = w_in_f - 1.0
+            max_y = h_in_f - 1.0
+        else:
+            pad = 2 if mode == 'cubic' else 1
+            x = tf.clip_by_value(x, -float(pad), w_in_f - 1.0 + float(pad)) + float(pad)
+            y = tf.clip_by_value(y, -float(pad), h_in_f - 1.0 + float(pad)) + float(pad)
+            image = tf.pad(image, paddings=[[0,0],[pad,pad],[pad,pad],[0,0]])
+            max_x = tf.cast(w_in + 2 * pad - 1, grid.dtype)
+            max_y = tf.cast(h_in + 2 * pad - 1, grid.dtype)
+
+        linear_cache = _prepare_linear_gather_2d(image) if use_linear_gather_2d else None
+
+        if mode == 'nearest':
+            x0 = tf.round(x)
+            y0 = tf.round(y)
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+                y0 = _reflect_coord(y0, h_in_f, align_corners)
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            y0 = tf.clip_by_value(y0, 0.0, max_y)
+            output = _gather_2d(image, y0, x0, linear_cache)
+            return tf.identity(output, name=target_name)
+
+        if mode == 'cubic':
+            x1 = tf.floor(x)
+            y1 = tf.floor(y)
+            dx = x - x1
+            dy = y - y1
+            x0 = x1 - 1.0
+            x2 = x1 + 1.0
+            x3 = x1 + 2.0
+            y0 = y1 - 1.0
+            y2 = y1 + 1.0
+            y3 = y1 + 2.0
+
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+                x1 = _reflect_coord(x1, w_in_f, align_corners)
+                x2 = _reflect_coord(x2, w_in_f, align_corners)
+                x3 = _reflect_coord(x3, w_in_f, align_corners)
+                y0 = _reflect_coord(y0, h_in_f, align_corners)
+                y1 = _reflect_coord(y1, h_in_f, align_corners)
+                y2 = _reflect_coord(y2, h_in_f, align_corners)
+                y3 = _reflect_coord(y3, h_in_f, align_corners)
+
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            x1 = tf.clip_by_value(x1, 0.0, max_x)
+            x2 = tf.clip_by_value(x2, 0.0, max_x)
+            x3 = tf.clip_by_value(x3, 0.0, max_x)
+            y0 = tf.clip_by_value(y0, 0.0, max_y)
+            y1 = tf.clip_by_value(y1, 0.0, max_y)
+            y2 = tf.clip_by_value(y2, 0.0, max_y)
+            y3 = tf.clip_by_value(y3, 0.0, max_y)
+
+            wx0 = _cubic_kernel(dx + 1.0)
+            wx1 = _cubic_kernel(dx)
+            wx2 = _cubic_kernel(dx - 1.0)
+            wx3 = _cubic_kernel(dx - 2.0)
+            wy0 = _cubic_kernel(dy + 1.0)
+            wy1 = _cubic_kernel(dy)
+            wy2 = _cubic_kernel(dy - 1.0)
+            wy3 = _cubic_kernel(dy - 2.0)
+
+            out = 0.0
+            for x_idx, wx in [(x0, wx0), (x1, wx1), (x2, wx2), (x3, wx3)]:
+                for y_idx, wy in [(y0, wy0), (y1, wy1), (y2, wy2), (y3, wy3)]:
+                    out = out + _gather_2d(image, y_idx, x_idx, linear_cache) * wx * wy
+            return tf.identity(out, name=target_name)
+
+        x0 = tf.floor(x)
+        y0 = tf.floor(y)
+        x1 = x0 + 1.0
+        y1 = y0 + 1.0
+        dx = x - x0
+        dy = y - y0
+
+        if padding_mode == 'reflection':
+            x0 = _reflect_coord(x0, w_in_f, align_corners)
+            x1 = _reflect_coord(x1, w_in_f, align_corners)
+            y0 = _reflect_coord(y0, h_in_f, align_corners)
+            y1 = _reflect_coord(y1, h_in_f, align_corners)
+
+        x0 = tf.clip_by_value(x0, 0.0, max_x)
+        x1 = tf.clip_by_value(x1, 0.0, max_x)
+        y0 = tf.clip_by_value(y0, 0.0, max_y)
+        y1 = tf.clip_by_value(y1, 0.0, max_y)
+
+        w_y0_x0 = (1.0 - dy) * (1.0 - dx)
+        w_y1_x0 = dy * (1.0 - dx)
+        w_y1_x1 = dy * dx
+        w_y0_x1 = (1.0 - dy) * dx
+
+        v_y0_x0 = _gather_2d(image, y0, x0, linear_cache)
+        v_y1_x0 = _gather_2d(image, y1, x0, linear_cache)
+        v_y1_x1 = _gather_2d(image, y1, x1, linear_cache)
+        v_y0_x1 = _gather_2d(image, y0, x1, linear_cache)
 
         output = w_y0_x0 * v_y0_x0 + w_y1_x0 * v_y1_x0 + w_y1_x1 * v_y1_x1 + w_y0_x1 * v_y0_x1
+        return tf.identity(output, name=target_name)
 
-        x_invalid = tf.math.logical_or(
-            tf.math.less(x, tf.convert_to_tensor(0.0, dtype=tf.float32)),
-            tf.math.greater(x, tf.convert_to_tensor(w_in - 1.0, dtype=tf.float32))
-        )
-        y_invalid = tf.math.logical_or(
-            tf.math.less(y, tf.convert_to_tensor(0.0, dtype=tf.float32)),
-            tf.math.greater(y, tf.convert_to_tensor(h_in - 1.0, dtype=tf.float32))
-        )
-        invalid = tf.math.logical_or(x_invalid, y_invalid)
+    def _grid_sample_3d(image, grid, target_name):
+        d_in = tf.shape(image)[1]
+        h_in = tf.shape(image)[2]
+        w_in = tf.shape(image)[3]
+        d_in_f = tf.cast(d_in, grid.dtype)
+        h_in_f = tf.cast(h_in, grid.dtype)
+        w_in_f = tf.cast(w_in, grid.dtype)
+        grid_x, grid_y, grid_z = tf.split(grid, num_or_size_splits=3, axis=-1)
+        x = _normalize_grid(grid_x, w_in_f, align_corners)
+        y = _normalize_grid(grid_y, h_in_f, align_corners)
+        z = _normalize_grid(grid_z, d_in_f, align_corners)
 
-        output = tf.where(
-            condition=invalid,
-            x=tf.convert_to_tensor(0.0, dtype=tf.float32),
-            y=output,
-            name=target_name,
+        if padding_mode == 'border':
+            x = tf.clip_by_value(x, 0.0, w_in_f - 1.0)
+            y = tf.clip_by_value(y, 0.0, h_in_f - 1.0)
+            z = tf.clip_by_value(z, 0.0, d_in_f - 1.0)
+            max_x = w_in_f - 1.0
+            max_y = h_in_f - 1.0
+            max_z = d_in_f - 1.0
+        elif padding_mode == 'reflection':
+            x = _reflect_coord(x, w_in_f, align_corners)
+            y = _reflect_coord(y, h_in_f, align_corners)
+            z = _reflect_coord(z, d_in_f, align_corners)
+            max_x = w_in_f - 1.0
+            max_y = h_in_f - 1.0
+            max_z = d_in_f - 1.0
+        else:
+            pad = 2 if mode == 'cubic' else 1
+            x = tf.clip_by_value(x, -float(pad), w_in_f - 1.0 + float(pad)) + float(pad)
+            y = tf.clip_by_value(y, -float(pad), h_in_f - 1.0 + float(pad)) + float(pad)
+            z = tf.clip_by_value(z, -float(pad), d_in_f - 1.0 + float(pad)) + float(pad)
+            image = tf.pad(image, paddings=[[0,0],[pad,pad],[pad,pad],[pad,pad],[0,0]])
+            max_x = tf.cast(w_in + 2 * pad - 1, grid.dtype)
+            max_y = tf.cast(h_in + 2 * pad - 1, grid.dtype)
+            max_z = tf.cast(d_in + 2 * pad - 1, grid.dtype)
+
+        linear_cache = _prepare_linear_gather_3d(image) if use_linear_gather_3d else None
+
+        if mode == 'nearest':
+            x0 = tf.round(x)
+            y0 = tf.round(y)
+            z0 = tf.round(z)
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+                y0 = _reflect_coord(y0, h_in_f, align_corners)
+                z0 = _reflect_coord(z0, d_in_f, align_corners)
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            y0 = tf.clip_by_value(y0, 0.0, max_y)
+            z0 = tf.clip_by_value(z0, 0.0, max_z)
+            output = _gather_3d(image, z0, y0, x0, linear_cache)
+            return tf.identity(output, name=target_name)
+
+        if mode == 'cubic':
+            x1 = tf.floor(x)
+            y1 = tf.floor(y)
+            z1 = tf.floor(z)
+            dx = x - x1
+            dy = y - y1
+            dz = z - z1
+            x0 = x1 - 1.0
+            x2 = x1 + 1.0
+            x3 = x1 + 2.0
+            y0 = y1 - 1.0
+            y2 = y1 + 1.0
+            y3 = y1 + 2.0
+            z0 = z1 - 1.0
+            z2 = z1 + 1.0
+            z3 = z1 + 2.0
+
+            if padding_mode == 'reflection':
+                x0 = _reflect_coord(x0, w_in_f, align_corners)
+                x1 = _reflect_coord(x1, w_in_f, align_corners)
+                x2 = _reflect_coord(x2, w_in_f, align_corners)
+                x3 = _reflect_coord(x3, w_in_f, align_corners)
+                y0 = _reflect_coord(y0, h_in_f, align_corners)
+                y1 = _reflect_coord(y1, h_in_f, align_corners)
+                y2 = _reflect_coord(y2, h_in_f, align_corners)
+                y3 = _reflect_coord(y3, h_in_f, align_corners)
+                z0 = _reflect_coord(z0, d_in_f, align_corners)
+                z1 = _reflect_coord(z1, d_in_f, align_corners)
+                z2 = _reflect_coord(z2, d_in_f, align_corners)
+                z3 = _reflect_coord(z3, d_in_f, align_corners)
+
+            x0 = tf.clip_by_value(x0, 0.0, max_x)
+            x1 = tf.clip_by_value(x1, 0.0, max_x)
+            x2 = tf.clip_by_value(x2, 0.0, max_x)
+            x3 = tf.clip_by_value(x3, 0.0, max_x)
+            y0 = tf.clip_by_value(y0, 0.0, max_y)
+            y1 = tf.clip_by_value(y1, 0.0, max_y)
+            y2 = tf.clip_by_value(y2, 0.0, max_y)
+            y3 = tf.clip_by_value(y3, 0.0, max_y)
+            z0 = tf.clip_by_value(z0, 0.0, max_z)
+            z1 = tf.clip_by_value(z1, 0.0, max_z)
+            z2 = tf.clip_by_value(z2, 0.0, max_z)
+            z3 = tf.clip_by_value(z3, 0.0, max_z)
+
+            wx0 = _cubic_kernel(dx + 1.0)
+            wx1 = _cubic_kernel(dx)
+            wx2 = _cubic_kernel(dx - 1.0)
+            wx3 = _cubic_kernel(dx - 2.0)
+            wy0 = _cubic_kernel(dy + 1.0)
+            wy1 = _cubic_kernel(dy)
+            wy2 = _cubic_kernel(dy - 1.0)
+            wy3 = _cubic_kernel(dy - 2.0)
+            wz0 = _cubic_kernel(dz + 1.0)
+            wz1 = _cubic_kernel(dz)
+            wz2 = _cubic_kernel(dz - 1.0)
+            wz3 = _cubic_kernel(dz - 2.0)
+
+            out = 0.0
+            for x_idx, wx in [(x0, wx0), (x1, wx1), (x2, wx2), (x3, wx3)]:
+                for y_idx, wy in [(y0, wy0), (y1, wy1), (y2, wy2), (y3, wy3)]:
+                    for z_idx, wz in [(z0, wz0), (z1, wz1), (z2, wz2), (z3, wz3)]:
+                        out = out + _gather_3d(image, z_idx, y_idx, x_idx, linear_cache) * wx * wy * wz
+            return tf.identity(out, name=target_name)
+
+        x0 = tf.floor(x)
+        y0 = tf.floor(y)
+        z0 = tf.floor(z)
+        x1 = x0 + 1.0
+        y1 = y0 + 1.0
+        z1 = z0 + 1.0
+        dx = x - x0
+        dy = y - y0
+        dz = z - z0
+
+        if padding_mode == 'reflection':
+            x0 = _reflect_coord(x0, w_in_f, align_corners)
+            x1 = _reflect_coord(x1, w_in_f, align_corners)
+            y0 = _reflect_coord(y0, h_in_f, align_corners)
+            y1 = _reflect_coord(y1, h_in_f, align_corners)
+            z0 = _reflect_coord(z0, d_in_f, align_corners)
+            z1 = _reflect_coord(z1, d_in_f, align_corners)
+
+        x0 = tf.clip_by_value(x0, 0.0, max_x)
+        x1 = tf.clip_by_value(x1, 0.0, max_x)
+        y0 = tf.clip_by_value(y0, 0.0, max_y)
+        y1 = tf.clip_by_value(y1, 0.0, max_y)
+        z0 = tf.clip_by_value(z0, 0.0, max_z)
+        z1 = tf.clip_by_value(z1, 0.0, max_z)
+
+        w000 = (1.0 - dz) * (1.0 - dy) * (1.0 - dx)
+        w001 = (1.0 - dz) * (1.0 - dy) * dx
+        w010 = (1.0 - dz) * dy * (1.0 - dx)
+        w011 = (1.0 - dz) * dy * dx
+        w100 = dz * (1.0 - dy) * (1.0 - dx)
+        w101 = dz * (1.0 - dy) * dx
+        w110 = dz * dy * (1.0 - dx)
+        w111 = dz * dy * dx
+
+        v000 = _gather_3d(image, z0, y0, x0, linear_cache)
+        v001 = _gather_3d(image, z0, y0, x1, linear_cache)
+        v010 = _gather_3d(image, z0, y1, x0, linear_cache)
+        v011 = _gather_3d(image, z0, y1, x1, linear_cache)
+        v100 = _gather_3d(image, z1, y0, x0, linear_cache)
+        v101 = _gather_3d(image, z1, y0, x1, linear_cache)
+        v110 = _gather_3d(image, z1, y1, x0, linear_cache)
+        v111 = _gather_3d(image, z1, y1, x1, linear_cache)
+
+        output = (
+            w000 * v000 + w001 * v001 + w010 * v010 + w011 * v011 +
+            w100 * v100 + w101 * v101 + w110 * v110 + w111 * v111
         )
+        return tf.identity(output, name=target_name)
+
+    def define_fast_gridsample(image, grid, align_corners, target_name):
+        is_string = image.dtype == tf.string
+        if is_string and mode != 'nearest':
+            error('GridSample supports string input types only with nearest mode.')
+            sys.exit(1)
+
+        compute_dtype = tf.float64 \
+            if image.dtype == tf.float64 or grid.dtype == tf.float64 else tf.float32
+        image_compute = image if (is_string or image.dtype.is_complex) else tf.cast(image, compute_dtype)
+        grid_compute = tf.cast(grid, compute_dtype)
+
+        image_rank = len(image_compute.shape)
+        if image_rank == 3:
+            output = _grid_sample_1d(image_compute, grid_compute, target_name)
+        elif image_rank == 4:
+            output = _grid_sample_2d(image_compute, grid_compute, target_name)
+        elif image_rank == 5:
+            output = _grid_sample_3d(image_compute, grid_compute, target_name)
+        else:
+            error(f'GridSample supports only 1D/2D/3D inputs. Got rank={image_rank}.')
+            sys.exit(1)
+
+        if output.dtype != image.dtype:
+            output = tf.cast(output, image.dtype)
         return output
 
     def define_accurate_gridsample(image, grid, align_corners, target_name):
-        split11, split12 = tf.split(grid, num_or_size_splits=2, axis=3) # x, y
-
-        if align_corners:
-            add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
-            mul1 = tf.math.multiply(add1, tf.convert_to_tensor((image.shape[2]-1)*0.5, dtype=tf.float32)) # Mul_output_0
-        else:
-            add1 = tf.math.add(split11, tf.convert_to_tensor(1.0)) # Add_output_0
-            mul00 = tf.math.multiply(add1, tf.convert_to_tensor(image.shape[2], dtype=tf.float32)) # Mul_output_0
-            sub1 = tf.math.subtract(mul00, tf.convert_to_tensor(1, dtype=tf.float32)) # Sub_output_0
-            mul1 = tf.math.multiply(sub1, tf.convert_to_tensor(0.5, dtype=tf.float32)) # Div_output_0
-        reshape1 = tf.reshape(mul1, [tf.shape(mul1)[0], tf.reduce_prod(tf.shape(mul1)[1:])]) # Reshape_output_0
-
-        if align_corners:
-            add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_1_output_0
-            mul2 = tf.math.multiply(add2, tf.convert_to_tensor((image.shape[1]-1)*0.5, dtype=tf.float32)) # Mul_1_output_0
-        else:
-            add2 = tf.math.add(split12, tf.convert_to_tensor(1.0)) # Add_output_0
-            mul01 = tf.math.multiply(add2, tf.convert_to_tensor(image.shape[1], dtype=tf.float32)) # Mul_output_0
-            sub2 = tf.math.subtract(mul01, tf.convert_to_tensor(1, dtype=tf.float32)) # Sub_output_0
-            mul2 = tf.math.multiply(sub2, tf.convert_to_tensor(0.5, dtype=tf.float32)) # Div_output_0
-        reshape2 = tf.reshape(mul2, [tf.shape(mul2)[0], tf.reduce_prod(tf.shape(mul2)[1:])]) # Reshape_1_output_0
-
-        floor1 = tf.math.floor(reshape1) # Floor_output_0
-        sub11 = tf.math.subtract(reshape1, floor1) # Sub_3_output_0
-        add12 = tf.math.add(floor1, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_2_output_0
-        sub12 = tf.math.subtract(add12, reshape1) # Sub_output_0
-
-        floor2 = tf.math.floor(reshape2) # Floor_1_output_0
-        sub21 = tf.math.subtract(reshape2, floor2) # Sub_2_output_0
-        add22 = tf.math.add(floor2, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_3_output_0
-        sub22 = tf.math.subtract(add22, reshape2) # Sub_1_output_0
-
-
-        # Sub_output_0 Sub_1_output_0 -> Mul_2_output_0
-        mul11 = tf.math.multiply(sub12, sub22) # Mul_2_output_0
-        unsqueeze11 = tf.expand_dims(mul11, axis=1) # Unsqueeze_output_0
-
-        # Sub_output_0 Sub_2_output_0 -> Mul_3_output_0
-        mul12 = tf.math.multiply(sub12, sub21) # Mul_3_output_0
-        unsqueeze12 = tf.expand_dims(mul12, axis=1) # Unsqueeze_1_output_0
-
-        # Sub_3_output_0 Sub_2_output_0 -> Mul_5_output_0
-        mul21 = tf.math.multiply(sub11, sub21) # Mul_5_output_0
-        unsqueeze21 = tf.expand_dims(mul21, axis=1) # Unsqueeze_3_output_0
-
-        # Sub_3_output_0 Sub_1_output_0 -> Mul_4_output_0
-        mul22 = tf.math.multiply(sub11, sub22) # Mul_4_output_0
-        unsqueeze22 = tf.expand_dims(mul22, axis=1) # Unsqueeze_2_output_0
-
-
-        # Add_2_output_0 Constant_1_output_0 -> Add_4_output_0
-        add31 = tf.math.add(add12, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_4_output_0
-        # Add_4_output_0 -> Cast_2_output_0
-        cast31 = tf.cast(add31, dtype=tf.int64) # Cast_2_output_0
-        # Cast_2_output_0 Constant_26_output_0 -> Less_1_output_0
-        less31 = tf.less(cast31, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_1_output_0
-        # Less_1_output_0 Constant_26_output_0 Cast_2_output_0 -> Where_2_output_0
-        where311 = \
-            tf.where(
-                condition=less31,
-                x=tf.convert_to_tensor(0, dtype=tf.int64),
-                y=cast31,
-            )
-        # Where_2_output_0 Constant_27_output_0 -> Greater_1_output_0
-        greter31 = tf.greater(where311, tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64)) # Greater_1_output_0
-        # Greater_1_output_0 Constant_27_output_0 Where_2_output_0 -> Where_3_output_0
-        where312 = \
-            tf.where(
-                condition=greter31,
-                x=tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64),
-                y=where311,
-            )
-
-
-        # Add_2_output_0 -> Cast_1_output_0
-        cast32 = tf.cast(add12, dtype=tf.int64) # Cast_1_output_0
-        # Cast_1_output_0 Constant_26_output_0 -> Less_output_0
-        less32 = tf.less(cast32, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_output_0
-        # Less_output_0 Constant_26_output_0 Cast_1_output_0 -> Where_output_0
-        where321 = \
-            tf.where(
-                condition=less32,
-                x=tf.convert_to_tensor(0, dtype=tf.int64),
-                y=cast32,
-            )
-        # Where_output_0 Constant_27_output_0 -> Greater_output_0
-        greter32 = tf.greater(where321, tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64)) # Greater_output_0
-        # Greater_output_0 Constant_27_output_0 Where_output_0 -> Where_1_output_0
-        where322 = \
-            tf.where(
-                condition=greter32,
-                x=tf.convert_to_tensor(image.shape[2]+1, dtype=tf.int64),
-                y=where321,
-            )
-
-
-        # Add_3_output_0 Constant_1_output_0 -> Add_5_output_0
-        add33 = tf.math.add(add22, tf.convert_to_tensor(1, dtype=tf.float32)) # Add_5_output_0
-        # Add_5_output_0 -> Cast_4_output_0
-        cast33 = tf.cast(add33, dtype=tf.int64) # Cast_4_output_0
-        # Cast_4_output_0 Constant_26_output_0 -> Less_3_output_0
-        less33 = tf.less(cast33, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_3_output_0
-        # Less_3_output_0 Constant_26_output_0 Cast_4_output_0 -> Where_6_output_0
-        where331 = \
-            tf.where(
-                condition=less33,
-                x=tf.convert_to_tensor(0, dtype=tf.int64),
-                y=cast33,
-            )
-        # Where_6_output_0 Constant_32_output_0 -> Greater_3_output_0
-        greter33 = tf.greater(where331, tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64)) # Greater_3_output_0
-        # Greater_3_output_0 Constant_32_output_0 Where_6_output_0 -> Where_7_output_0
-        where332 = \
-            tf.where(
-                condition=greter33,
-                x=tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64),
-                y=where331,
-            )
-        # Where_7_output_0 Constant_37_output_0 -> Mul_8_output_0
-        mul33 = tf.math.multiply(where332, tf.convert_to_tensor(image.shape[2]+2, dtype=tf.int64)) # Mul_8_output_0
-
-
-        # Add_3_output_0 -> Cast_3_output_0
-        cast34 = tf.cast(add22, dtype=tf.int64) # Cast_3_output_0
-        # Cast_3_output_0 Constant_26_output_0 -> Less_2_output_0
-        less34 = tf.less(cast34, tf.convert_to_tensor(0, dtype=tf.int64)) # Less_2_output_0
-        # Less_2_output_0 Constant_26_output_0 Cast_3_output_0 -> Where_4_output_0
-        where341 = \
-            tf.where(
-                condition=less34,
-                x=tf.convert_to_tensor(0, dtype=tf.int64),
-                y=cast34,
-            )
-        # Where_4_output_0 Constant_32_output_0 -> Greater_2_output_0
-        greter34 = tf.greater(where341, tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64)) # Greater_2_output_0
-        # Greater_2_output_0 Constant_32_output_0 Where_4_output_0 -> Where_5_output_0
-        where342 = \
-            tf.where(
-                condition=greter34,
-                x=tf.convert_to_tensor(image.shape[1]+1, dtype=tf.int64),
-                y=where341,
-            )
-        # Where_5_output_0 Constant_37_output_0 -> Mul_6_output_0
-        mul34 = tf.math.multiply(where342, tf.convert_to_tensor(image.shape[2]+2, dtype=tf.int64)) # Mul_6_output_0
-
-
-        # Where_3_output_0 Mul_6_output_0 -> Add_8_output_0
-        add41 = tf.math.add(where312, mul34) # Add_8_output_0
-        # Add_8_output_0 Constant_11_output_0 -> Unsqueeze_6_output_0
-        unsqueeze41 = tf.expand_dims(add41, axis=1) # Unsqueeze_6_output_0
-        # Unsqueeze_6_output_0 Where_8_output_0 -> Expand_2_output_0
-        expand41_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-        expand41 = tf.math.multiply(unsqueeze41, expand41_ones) # Expand_2_output_0
-
-        # Where_1_output_0 Mul_6_output_0 -> Add_6_output_0
-        add42 = tf.math.add(where322, mul34) # Add_6_output_0
-        # Add_6_output_0 Constant_11_output_0 -> Unsqueeze_4_output_0
-        unsqueeze42 = tf.expand_dims(add42, axis=1) # Unsqueeze_4_output_0
-        # Unsqueeze_4_output_0 Where_8_output_0 -> Expand_output_0
-        expand42_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-        expand42 = tf.math.multiply(unsqueeze42, expand42_ones) # Expand_output_0
-
-        # Where_3_output_0 Mul_8_output_0 -> Add_9_output_0
-        add43 = tf.math.add(where312, mul33) # Add_9_output_0
-        # Add_9_output_0 Constant_11_output_0 -> Unsqueeze_7_output_0
-        unsqueeze43 = tf.expand_dims(add43, axis=1) # Unsqueeze_7_output_0
-        # Unsqueeze_7_output_0 Where_8_output_0 -> Expand_3_output_0
-        expand43_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-        expand43 = tf.math.multiply(unsqueeze43, expand43_ones) # Expand_3_output_0
-
-        # Where_1_output_0 Mul_8_output_0 -> Add_7_output_0
-        add44 = tf.math.add(where322, mul33) # Add_7_output_0
-        # Add_7_output_0 Constant_11_output_0 -> Unsqueeze_5_output_0
-        unsqueeze44 = tf.expand_dims(add44, axis=1) # Unsqueeze_5_output_0
-        # Unsqueeze_5_output_0 Where_8_output_0 -> Expand_1_output_0
-        expand44_ones = tf.ones([1] + [image.shape[3]] + [1], dtype=tf.int64)
-        expand44 = tf.math.multiply(unsqueeze44, expand44_ones) # Expand_1_output_0
-
-
-        ################################################## image
-        image_padded = tf.pad(image, paddings=[[0,0],[1,1],[1,1],[0,0]]) # Pad_output_0
-        # Pad_output_0 Constant_36_output_0 -> Reshape_4_output_0
-        image_reshape = tf.reshape(image_padded, shape=[image_padded.shape[0]] + [np.prod(image_padded.shape[1:3])] + [image_padded.shape[3]])
-        image_reshape_transpose = tf.transpose(image_reshape, perm=[0,2,1])
-
-
-        # Reshape_4_output_0 Expand_3_output_0 -> GatherElements_3_output_0
-        axis_perm1 = tf.tensor_scatter_nd_update(
-            tf.range(tf.rank(image_reshape_transpose)),
-            tf.constant([[0], [2]]),
-            tf.constant([2, 0])
+        return define_fast_gridsample(
+            image=image,
+            grid=grid,
+            align_corners=align_corners,
+            target_name=target_name,
         )
-        data_swaped1 = tf.transpose(image_reshape_transpose, perm=axis_perm1)
-        index_swaped1 = tf.transpose(expand43, perm=axis_perm1)
-        idx_tensors_per_axis1 = [
-            tf.range(tf.shape(index_swaped1, index_swaped1.dtype)[i]) \
-                for i in range(index_swaped1.shape.rank)
-        ]
-        idx_tensors_per_axis1 = tf.meshgrid(
-            *idx_tensors_per_axis1,
-            indexing='ij',
-        )
-        idx_tensors_per_axis1[0] = index_swaped1
-        dim_expanded_idx_tensors_per_axis1 = [
-            tf.expand_dims(idx_tensor, axis=-1)
-            for idx_tensor in idx_tensors_per_axis1
-        ]
-        index_expanded1 = tf.concat(dim_expanded_idx_tensors_per_axis1, axis=-1)
-        gathernd1 = tf.gather_nd(data_swaped1, index_expanded1)
-        gatherelements1 = tf.transpose(gathernd1, perm=[2,1,0]) # GatherElements_3_output_0
-
-
-        # Reshape_4_output_0 Expand_2_output_0 -> GatherElements_2_output_0
-        axis_perm2 = tf.tensor_scatter_nd_update(
-            tf.range(tf.rank(image_reshape_transpose)),
-            tf.constant([[0], [2]]),
-            tf.constant([2, 0])
-        )
-        data_swaped2 = tf.transpose(image_reshape_transpose, perm=axis_perm2)
-        index_swaped2 = tf.transpose(expand41, perm=axis_perm2)
-        idx_tensors_per_axis2 = [
-            tf.range(tf.shape(index_swaped2, index_swaped2.dtype)[i]) \
-                for i in range(index_swaped2.shape.rank)
-        ]
-        idx_tensors_per_axis2 = tf.meshgrid(
-            *idx_tensors_per_axis2,
-            indexing='ij',
-        )
-        idx_tensors_per_axis2[0] = index_swaped2
-        dim_expanded_idx_tensors_per_axis2 = [
-            tf.expand_dims(idx_tensor, axis=-1)
-            for idx_tensor in idx_tensors_per_axis2
-        ]
-        index_expanded2 = tf.concat(dim_expanded_idx_tensors_per_axis2, axis=-1)
-        gathernd2 = tf.gather_nd(data_swaped2, index_expanded2)
-        gatherelements2 = tf.transpose(gathernd2, perm=[2,1,0]) # GatherElements_2_output_0
-
-
-        # Reshape_4_output_0 Expand_1_output_0 -> GatherElements_1_output_0
-        axis_perm3 = tf.tensor_scatter_nd_update(
-            tf.range(tf.rank(image_reshape_transpose)),
-            tf.constant([[0], [2]]),
-            tf.constant([2, 0])
-        )
-        data_swaped3 = tf.transpose(image_reshape_transpose, perm=axis_perm3)
-        index_swaped3 = tf.transpose(expand44, perm=axis_perm3)
-        idx_tensors_per_axis3 = [
-            tf.range(tf.shape(index_swaped3, index_swaped3.dtype)[i]) \
-                for i in range(index_swaped3.shape.rank)
-        ]
-        idx_tensors_per_axis3 = tf.meshgrid(
-            *idx_tensors_per_axis3,
-            indexing='ij',
-        )
-        idx_tensors_per_axis3[0] = index_swaped3
-        dim_expanded_idx_tensors_per_axis3 = [
-            tf.expand_dims(idx_tensor, axis=-1)
-            for idx_tensor in idx_tensors_per_axis3
-        ]
-        index_expanded3 = tf.concat(dim_expanded_idx_tensors_per_axis3, axis=-1)
-        gathernd3 = tf.gather_nd(data_swaped3, index_expanded3)
-        gatherelements3 = tf.transpose(gathernd3, perm=[2,1,0]) # GatherElements_1_output_0
-
-
-        # Reshape_4_output_0 Expand_output_0 -> GatherElements_output_0
-        axis_perm4 = tf.tensor_scatter_nd_update(
-            tf.range(tf.rank(image_reshape_transpose)),
-            tf.constant([[0], [2]]),
-            tf.constant([2, 0])
-        )
-        data_swaped4 = tf.transpose(image_reshape_transpose, perm=axis_perm4)
-        index_swaped4 = tf.transpose(expand42, perm=axis_perm4)
-        idx_tensors_per_axis4 = [
-            tf.range(tf.shape(index_swaped4, index_swaped4.dtype)[i]) \
-                for i in range(index_swaped4.shape.rank)
-        ]
-        idx_tensors_per_axis4 = tf.meshgrid(
-            *idx_tensors_per_axis4,
-            indexing='ij',
-        )
-        idx_tensors_per_axis4[0] = index_swaped4
-        dim_expanded_idx_tensors_per_axis4 = [
-            tf.expand_dims(idx_tensor, axis=-1)
-            for idx_tensor in idx_tensors_per_axis4
-        ]
-        index_expanded4 = tf.concat(dim_expanded_idx_tensors_per_axis4, axis=-1)
-        gathernd4 = tf.gather_nd(data_swaped4, index_expanded4)
-        gatherelements4 = tf.transpose(gathernd4, perm=[2,1,0]) # GatherElements_output_0
-
-
-        # GatherElements_3_output_0 Unsqueeze_3_output_0 -> Mul_15_output_0
-        mul51 = tf.math.multiply(gatherelements1, unsqueeze21)
-        # GatherElements_2_output_0 Unsqueeze_2_output_0 -> Mul_14_output_0
-        mul52 = tf.math.multiply(gatherelements2, unsqueeze22)
-        # GatherElements_1_output_0 Unsqueeze_1_output_0 -> Mul_13_output_0
-        mul53 = tf.math.multiply(gatherelements3, unsqueeze12)
-        # GatherElements_output_0 Unsqueeze_output_0 -> Mul_12_output_0
-        mul54 = tf.math.multiply(gatherelements4, unsqueeze11)
-
-
-        # Mul_12_output_0 Mul_13_output_0 -> Add_10_output_0
-        add61 = tf.math.add(mul54, mul53)
-        # Add_10_output_0 Mul_14_output_0 -> Add_11_output_0
-        add62 = tf.math.add(add61, mul52)
-        # Add_11_output_0 Mul_15_output_0 -> Add_12_output_0
-        add63 = tf.math.add(add62, mul51)
-
-        # Add_12_output_0 Constant_55_output_0 -> output_tensor
-        output_shape = [
-            image.shape[0],
-            image.shape[3],
-            grid.shape[1],
-            grid.shape[2],
-        ]
-        final_reshape = tf.reshape(add63, shape=output_shape)
-        # NCHW -> NHWC
-        output = tf.transpose(final_reshape, perm=[0,2,3,1], name=target_name)
-        return output
 
     disable_strict_mode: bool = kwargs['disable_strict_mode']
     enable_fast_gridsample = True
