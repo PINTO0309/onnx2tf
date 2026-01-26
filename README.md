@@ -59,7 +59,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Acosh|:heavy_check_mark:|
   |Acos|:heavy_check_mark:|
   |Add|:heavy_check_mark:|
-  |AffineGrid|**Help wanted**|
+  |AffineGrid|:heavy_check_mark:|
   |And|:heavy_check_mark:|
   |ArgMax|:heavy_check_mark:|
   |ArgMin|:heavy_check_mark:|
@@ -67,7 +67,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Asin|:heavy_check_mark:|
   |Atanh|:heavy_check_mark:|
   |Atan|:heavy_check_mark:|
-  |Attention|**Help wanted**|
+  |Attention|:heavy_check_mark:|
   |AveragePool|:heavy_check_mark:|
   |BatchNormalization|:heavy_check_mark:|
   |Bernoulli|:heavy_check_mark:|
@@ -76,7 +76,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |BitwiseNot|:heavy_check_mark:|
   |BitwiseOr|:heavy_check_mark:|
   |BitwiseXor|:heavy_check_mark:|
-  |BlackmanWindow|**Help wanted**|
+  |BlackmanWindow|:heavy_check_mark:|
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
   |Celu|:heavy_check_mark:|
