@@ -69,52 +69,58 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) \
             and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
 
+    input_tensor_shape = None
+    tensor_rank = None
     if input_tensor.shape != tf.TensorShape(None):
         input_tensor_shape = list(input_tensor.shape)
-        tensor_rank = len(input_tensor_shape)
-    elif graph_node_output.shape is not None:
+    elif graph_node_output.shape is not None and axes is not None:
         input_tensor_shape = [
             dim for idx, dim in enumerate(graph_node_output.shape) if idx not in axes
         ]
         input_tensor_shape = [
             dim if not isinstance(dim, str) else None for dim in input_tensor_shape
         ]
+    if input_tensor_shape is not None:
         tensor_rank = len(input_tensor_shape)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
-        if nhwc:
-            axes = [
-                convert_axis(
-                    axis=idx,
-                    tensor_rank=tensor_rank+len(axes),
-                    before_op_output_shape_trans=True,
-                ) for idx in axes
-            ]
-        elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
-            axes = [
-                convert_axis(
-                    axis=idx,
-                    tensor_rank=tensor_rank+len(axes),
-                    before_op_output_shape_trans=before_op_output_shape_trans,
-                ) for idx in axes
-            ]
+        if tensor_rank is not None:
+            if nhwc:
+                axes = [
+                    convert_axis(
+                        axis=idx,
+                        tensor_rank=tensor_rank+len(axes),
+                        before_op_output_shape_trans=True,
+                    ) for idx in axes
+                ]
+            elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
+                axes = [
+                    convert_axis(
+                        axis=idx,
+                        tensor_rank=tensor_rank+len(axes),
+                        before_op_output_shape_trans=before_op_output_shape_trans,
+                    ) for idx in axes
+                ]
+            else:
+                axes = [idx for idx in axes]
         else:
-            axes = [idx for idx in axes]
+            axes = [int(idx) for idx in axes]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
-        if nhwc:
-            axes = convert_axis(
-                axis=axes,
-                tensor_rank=tensor_rank+1,
-                before_op_output_shape_trans=True,
-            )
-        elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
-            axes = [
-                convert_axis(
-                    axis=idx,
-                    tensor_rank=tensor_rank+len(axes),
-                    before_op_output_shape_trans=before_op_output_shape_trans,
-                ) for idx in axes
-            ]
+        if tensor_rank is not None:
+            if nhwc:
+                axes = convert_axis(
+                    axis=axes,
+                    tensor_rank=tensor_rank+1,
+                    before_op_output_shape_trans=True,
+                )
+            elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
+                axes = [
+                    convert_axis(
+                        axis=idx,
+                        tensor_rank=tensor_rank+len(axes),
+                        before_op_output_shape_trans=before_op_output_shape_trans,
+                    ) for idx in axes
+                ]
         axes = list(axes[np.newaxis])
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:
@@ -128,11 +134,13 @@ def make_node(
         **kwargs,
     )
 
-    new_shape = copy.deepcopy(input_tensor_shape)
-    for idx in axes:
-        new_shape.insert(idx, 1)
+    new_shape = None
+    if input_tensor_shape is not None and axes is not None:
+        new_shape = copy.deepcopy(input_tensor_shape)
+        for idx in axes:
+            new_shape.insert(idx, 1)
 
-    new_shape = [dim if dim is not None else -1 for dim in new_shape]
+        new_shape = [dim if dim is not None else -1 for dim in new_shape]
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -235,6 +243,29 @@ def make_node(
         tf_type = tf.identity
 
     elif not shape_replaced \
+        and new_shape is None:
+        axes_list = axes
+        if axes_list is None:
+            axes_list = []
+        elif isinstance(axes_list, np.ndarray):
+            axes_list = axes_list.tolist() if axes_list.shape != () else [int(axes_list)]
+        elif not isinstance(axes_list, list):
+            axes_list = [int(axes_list)]
+
+        unsqueeze_tensor = input_tensor
+        for axis_idx, axis in enumerate(axes_list):
+            axis_val = int(axis) if isinstance(axis, (np.integer, np.int64, np.int32)) else axis
+            if isinstance(axis_val, int) and axis_val < 0:
+                axis_val = tf.rank(unsqueeze_tensor) + axis_val + 1
+            unsqueeze_tensor = tf.expand_dims(
+                input=unsqueeze_tensor,
+                axis=axis_val,
+                name=graph_node.name if axis_idx == len(axes_list) - 1 else None,
+            )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = unsqueeze_tensor
+        tf_type = tf.expand_dims
+
+    elif not shape_replaced \
         and nhwc \
         and len(axes) == 1 \
         and not isinstance(axes, int):
@@ -247,6 +278,7 @@ def make_node(
         tf_type = tf.expand_dims
 
     elif not shape_replaced \
+        and new_shape is not None \
         and len(new_shape) >= 2 \
         and len([dim for dim in new_shape if dim is None or dim == -1]) >= 2 \
         and not isinstance(axes, int) \
