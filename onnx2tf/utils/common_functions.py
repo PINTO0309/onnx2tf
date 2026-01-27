@@ -276,6 +276,8 @@ def make_tf_node_info(**kwargs):
 def print_node_info(func):
     @wraps(func)
     def print_wrapper_func(*args, **kwargs):
+        if kwargs.get('suppress_log', False):
+            return func(*args, **kwargs)
         input_onnx_file_path: str = kwargs.get('input_onnx_file_path', None)
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
@@ -4051,6 +4053,7 @@ def dummy_tf_inference(
             for idx, dim in enumerate(input_size):
                 if idx == 0 and input_sizes[0][0] is not None \
                     and len(input_sizes[0]) == len(input_size) \
+                    and len(input_size) >= 2 \
                     and dim is None:
                     # Batch size assignment for input OPs
                     new_input_size.append(input_sizes[0][0])

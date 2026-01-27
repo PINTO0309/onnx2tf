@@ -1,6 +1,6 @@
 [project]
 name = "onnx2tf"
-version = "1.29.9"
+version = "1.29.10"
 description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC)."
 readme = "README.md"
 requires-python = "==3.11.12"

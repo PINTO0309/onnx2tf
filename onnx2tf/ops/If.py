@@ -54,6 +54,8 @@ def make_node(
     graph_node_outputs = [] + graph_node.outputs
 
     # Then branch
+    subgraph_kwargs = dict(kwargs)
+    subgraph_kwargs['suppress_log'] = True
     then_branch_graph: gs.Graph = graph_node.attrs['then_branch']
     then_branch_graph_outputs = then_branch_graph.outputs
     for then_branch_graph_node in then_branch_graph.nodes:
@@ -73,7 +75,7 @@ def make_node(
         op.make_node(
             graph_node=then_branch_graph_node,
             tf_layers_dict=tf_layers_dict,
-            **kwargs,
+            **subgraph_kwargs,
         )
     # Then branch - Resister constant
     for output in then_branch_graph_outputs:
@@ -115,7 +117,7 @@ def make_node(
         op.make_node(
             graph_node=else_branch_graph_node,
             tf_layers_dict=tf_layers_dict,
-            **kwargs,
+            **subgraph_kwargs,
         )
     # Else branch - Resister constant
     for output in else_branch_graph_outputs:

@@ -1467,82 +1467,89 @@ def convert(
         SIGNATURE_KEY = 'serving_default'
 
         # saved_model
+        saved_model_log_level = get_log_level()
         try:
-            # concrete_func
-            info(Color.REVERSE(f'saved_model output started'), '=' * 58)
-            if not output_signaturedefs and not output_integer_quantized_tflite:
-                tf.saved_model.save(model, output_folder_path)
-            else:
-                export_archive = tf_keras.export.ExportArchive()
-                export_archive.add_endpoint(
-                    name=SIGNATURE_KEY,
-                    fn=lambda *inputs : model(inputs),
-                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
-                )
-                export_archive.write_out(output_folder_path)
-            info(Color.GREEN(f'saved_model output complete!'))
-        except TypeError as e:
-            # Switch to .pb
-            info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
-        except (KeyError, AssertionError) as e:
-            msg_list = [s for s in e.args if isinstance(s, str)]
-            if len(msg_list) > 0:
-                try:
-                    for s in msg_list:
-                        if 'Failed to add concrete function' in s \
-                            or "Tried to export a function which references an 'untracked' resource" in s:
-                            export_archive = tf_keras.export.ExportArchive()
-                            export_archive.add_endpoint(
-                                name=SIGNATURE_KEY,
-                                fn=lambda *inputs : model(inputs),
-                                input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
-                            )
-                            export_archive.write_out(output_folder_path)
-                            break
-                except ValueError as e:
-                    msg_list = [s for s in e.args if isinstance(s, str)]
-                    if len(msg_list) > 0:
+            if saved_model_log_level <= LOG_LEVELS['debug']:
+                set_log_level('info')
+            try:
+                # concrete_func
+                info(Color.REVERSE(f'saved_model output started'), '=' * 58)
+                if not output_signaturedefs and not output_integer_quantized_tflite:
+                    tf.saved_model.save(model, output_folder_path)
+                else:
+                    export_archive = tf_keras.export.ExportArchive()
+                    export_archive.add_endpoint(
+                        name=SIGNATURE_KEY,
+                        fn=lambda *inputs : model(inputs),
+                        input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
+                    )
+                    export_archive.write_out(output_folder_path)
+                info(Color.GREEN(f'saved_model output complete!'))
+            except TypeError as e:
+                # Switch to .pb
+                info(Color.GREEN(f'Switch to the output of an optimized protocol buffer file (.pb).'))
+            except (KeyError, AssertionError) as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    try:
                         for s in msg_list:
-                            if 'A root scope name has to match the following pattern' in s:
-                                error(
-                                    f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                            if 'Failed to add concrete function' in s \
+                                or "Tried to export a function which references an 'untracked' resource" in s:
+                                export_archive = tf_keras.export.ExportArchive()
+                                export_archive.add_endpoint(
+                                    name=SIGNATURE_KEY,
+                                    fn=lambda *inputs : model(inputs),
+                                    input_signature=[tf.TensorSpec(tensor.shape, tensor.dtype, tensor.name) for tensor in model.inputs],
                                 )
-                                matches = re.findall(r"'([^']*)'", s)
-                                error(f'{matches[0]}')
-                                error(
-                                    f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                                )
-                                sys.exit(1)
-                    else:
-                        error(e)
-                        import traceback
-                        error(traceback.format_exc(), prefix=False)
-            else:
+                                export_archive.write_out(output_folder_path)
+                                break
+                    except ValueError as e:
+                        msg_list = [s for s in e.args if isinstance(s, str)]
+                        if len(msg_list) > 0:
+                            for s in msg_list:
+                                if 'A root scope name has to match the following pattern' in s:
+                                    error(
+                                        f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                                    )
+                                    matches = re.findall(r"'([^']*)'", s)
+                                    error(f'{matches[0]}')
+                                    error(
+                                        f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                                    )
+                                    sys.exit(1)
+                        else:
+                            error(e)
+                            import traceback
+                            error(traceback.format_exc(), prefix=False)
+                else:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
+            except ValueError as e:
+                msg_list = [s for s in e.args if isinstance(s, str)]
+                if len(msg_list) > 0:
+                    for s in msg_list:
+                        if 'A root scope name has to match the following pattern' in s:
+                            error(
+                                f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
+                            )
+                            matches = re.findall(r"'([^']*)'", s)
+                            error(f'{matches[0]}')
+                            error(
+                                f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
+                            )
+                            sys.exit(1)
+                else:
+                    error(e)
+                    import traceback
+                    error(traceback.format_exc(), prefix=False)
+            except Exception as e:
                 error(e)
                 import traceback
                 error(traceback.format_exc(), prefix=False)
-        except ValueError as e:
-            msg_list = [s for s in e.args if isinstance(s, str)]
-            if len(msg_list) > 0:
-                for s in msg_list:
-                    if 'A root scope name has to match the following pattern' in s:
-                        error(
-                            f'Generation of saved_model failed because the OP name does not match the following pattern. ^[A-Za-z0-9.][A-Za-z0-9_.\\\\/>-]*$'
-                        )
-                        matches = re.findall(r"'([^']*)'", s)
-                        error(f'{matches[0]}')
-                        error(
-                            f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
-                        )
-                        sys.exit(1)
-            else:
-                error(e)
-                import traceback
-                error(traceback.format_exc(), prefix=False)
-        except Exception as e:
-            error(e)
-            import traceback
-            error(traceback.format_exc(), prefix=False)
+        finally:
+            if get_log_level() != saved_model_log_level:
+                set_log_level(saved_model_log_level)
 
         # TFv1 .pb
         if output_tfv1_pb:
@@ -1581,9 +1588,12 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
-        converter = tf.lite.TFLiteConverter.from_concrete_functions(
-            [concrete_func]
-        )
+        try:
+            converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        except Exception as e:
+            converter = tf.lite.TFLiteConverter.from_concrete_functions(
+                [concrete_func]
+            )
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS,
             tf.lite.OpsSet.SELECT_TF_OPS,
