@@ -145,16 +145,16 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Less|:heavy_check_mark:|
   |Log|:heavy_check_mark:|
   |LogSoftmax|:heavy_check_mark:|
-  |Loop|**Help wanted**|
+  |Loop|:heavy_check_mark:|
   |LpNormalization|:heavy_check_mark:|
-  |LpPool|**Help wanted**|
+  |LpPool|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
   |LSTM|:heavy_check_mark:|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
   |Max|:heavy_check_mark:|
-  |MaxRoiPool|**Help wanted**|
+  |MaxRoiPool|:heavy_check_mark:|
   |MaxUnpool|:heavy_check_mark:|
   |Mean|:heavy_check_mark:|
   |MeanVarianceNormalization|:heavy_check_mark:|
@@ -322,7 +322,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.9
+  ghcr.io/pinto0309/onnx2tf:1.29.10
 
   or
 
@@ -330,7 +330,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.9
+  docker.io/pinto0309/onnx2tf:1.29.10
 
   or
 
