@@ -85,7 +85,7 @@ https://github.com/PINTO0309/onnx2tf/pulls
 │       ├── colors.py
 │       ├── common_functions.py
 │       └── enums.py
-└── setup.py
+└── pyproject.toml
 ```
 ### 3-2. Code block structure
 - `onnx2tf/ops/xxx.py`

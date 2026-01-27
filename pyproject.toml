@@ -1,9 +1,29 @@
+[build-system]
+requires = ["uv_build>=0.9.27,<0.10.0"]
+build-backend = "uv_build"
+
 [project]
 name = "onnx2tf"
 version = "1.29.10"
-description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC)."
+description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf)."
 readme = "README.md"
 requires-python = "==3.11.12"
+license = "MIT"
+authors = [
+    { name = "Katsuya Hyodo", email = "rmsdh122@yahoo.co.jp" }
+]
+keywords = ["onnx", "tensorflow", "tflite", "keras", "deep-learning", "machine-learning"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Unix",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "requests==2.32.5",
     "numpy==1.26.4",
@@ -23,8 +43,21 @@ dependencies = [
     "ml_dtypes==0.5.1",
     "flatbuffers==25.12.19",
 ]
+
+[project.scripts]
+onnx2tf = "onnx2tf:main"
+
+[project.urls]
+Homepage = "https://github.com/PINTO0309/onnx2tf"
+Repository = "https://github.com/PINTO0309/onnx2tf"
+Documentation = "https://github.com/PINTO0309/onnx2tf#readme"
+Issues = "https://github.com/PINTO0309/onnx2tf/issues"
+
 [tool.uv]
 override-dependencies = [
     "onnx==1.19.0",
     "onnxsim==0.4.30",
 ]
+
+[tool.uv.build-backend]
+module-root = ""
