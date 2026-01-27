@@ -147,14 +147,14 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |LogSoftmax|:heavy_check_mark:|
   |Loop|:heavy_check_mark:|
   |LpNormalization|:heavy_check_mark:|
-  |LpPool|**Help wanted**|
+  |LpPool|:heavy_check_mark:|
   |LRN|:heavy_check_mark:|
   |LSTM|:heavy_check_mark:|
   |MatMul|:heavy_check_mark:|
   |MatMulInteger|:heavy_check_mark:|
   |MaxPool|:heavy_check_mark:|
   |Max|:heavy_check_mark:|
-  |MaxRoiPool|**Help wanted**|
+  |MaxRoiPool|:heavy_check_mark:|
   |MaxUnpool|:heavy_check_mark:|
   |Mean|:heavy_check_mark:|
   |MeanVarianceNormalization|:heavy_check_mark:|
