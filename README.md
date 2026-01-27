@@ -270,10 +270,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - Linux / Windows
 - onnx==1.19.0
 - onnxruntime==1.23.0
-- onnx-simplifier==0.4.33 or 0.4.30 `(onnx.onnx_cpp2py_export.shape_inference.InferenceError: [ShapeInferenceError] (op_type:Slice, node name: /xxxx/Slice): [ShapeInferenceError] Inferred shape and existing shape differ in rank: (x) vs (y))`
+- onnxsim==0.4.36
+- onnxoptimizer==0.4.2
 - onnx_graphsurgeon==0.5.8
 - simple_onnx_processing_tools==1.1.32
-- tensorflow==2.19.0, Special bugs: [#436](https://github.com/PINTO0309/onnx2tf/issues/436)
+- tensorflow==2.19.0
 - tf-keras==2.19.0
 - ai-edge-litert==1.2.0
 - psutil==5.9.5
@@ -321,7 +322,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.7
+  ghcr.io/pinto0309/onnx2tf:1.29.8
 
   or
 
@@ -329,14 +330,15 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.7
+  docker.io/pinto0309/onnx2tf:1.29.8
 
   or
 
   pip install -U onnx==1.19.0 \
   && pip install -U onnx-graphsurgeon==0.5.8 \
   && pip install -U onnxruntime==1.23.0 \
-  && pip install -U onnxsim==0.4.33 \
+  && pip install -U onnxsim==0.4.36 \
+  && pip install -U onnxoptimizer==0.4.2 \
   && pip install -U simple_onnx_processing_tools==1.1.32 \
   && pip install -U sne4onnx>=1.0.13 \
   && pip install -U sng4onnx>=1.0.4 \
