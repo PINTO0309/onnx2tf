@@ -444,19 +444,68 @@ def make_node(
         onnx_output_shape = [
             dim if not isinstance(dim, str) else None for dim in onnx_output_shape
         ]
+
+        def _shape_match(a_shape, b_shape):
+            if len(a_shape) != len(b_shape):
+                return False
+            for a_dim, b_dim in zip(a_shape, b_shape):
+                if a_dim is None or b_dim is None:
+                    continue
+                if a_dim != b_dim:
+                    return False
+            return True
+
+        # Squeeze unit dims if ONNX output rank is smaller.
+        if len(post_matmul_shape) > len(onnx_output_shape):
+            squeeze_axes = []
+            tmp_shape = list(post_matmul_shape)
+            while len(tmp_shape) > len(onnx_output_shape) and tmp_shape[-1] == 1:
+                squeeze_axes.append(len(tmp_shape) - 1)
+                tmp_shape.pop()
+            if squeeze_axes and len(tmp_shape) == len(onnx_output_shape) \
+                and _shape_match(tmp_shape, onnx_output_shape):
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.squeeze(
+                        input=tf_layers_dict[graph_node_output.name]['tf_node'],
+                        axis=squeeze_axes,
+                    )
+                post_matmul_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
+                post_matmul_shape_none_count = sum(
+                    [1 if dim is None else 0 for dim in post_matmul_shape]
+                )
+            else:
+                leading_ones = 0
+                tmp_shape = list(post_matmul_shape)
+                while len(tmp_shape) > len(onnx_output_shape) and tmp_shape and tmp_shape[0] == 1:
+                    leading_ones += 1
+                    tmp_shape.pop(0)
+                if leading_ones and len(tmp_shape) == len(onnx_output_shape) \
+                    and _shape_match(tmp_shape, onnx_output_shape):
+                    tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        tf.squeeze(
+                            input=tf_layers_dict[graph_node_output.name]['tf_node'],
+                            axis=list(range(leading_ones)),
+                        )
+                    post_matmul_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape)
+                    post_matmul_shape_none_count = sum(
+                        [1 if dim is None else 0 for dim in post_matmul_shape]
+                    )
+
         onnx_output_shape_none_count = sum([1 if dim is None else 0 for dim in onnx_output_shape])
-        if post_matmul_shape_none_count == onnx_output_shape_none_count:
+        if post_matmul_shape_none_count == onnx_output_shape_none_count \
+            and post_matmul_shape != list(onnx_output_shape):
             post_transpose_perm = []
             for dim in onnx_output_shape:
                 idx = post_matmul_shape.index(dim)
                 post_transpose_perm.append(idx)
                 post_matmul_shape[idx] = -999
 
-            tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                tf.transpose(
-                    a=tf_layers_dict[graph_node_output.name]['tf_node'],
-                    perm=post_transpose_perm,
-                )
+            if len(post_transpose_perm) == len(post_matmul_shape):
+                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                    tf.transpose(
+                        a=tf_layers_dict[graph_node_output.name]['tf_node'],
+                        perm=post_transpose_perm,
+                    )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
