@@ -434,7 +434,23 @@ def make_node(
                 dtype=tf.int32,
             )
             if hasattr(begin_mask_, '_inferred_value') and begin_mask_._inferred_value == [None]:
-                begin_mask_ = 0
+                axes_list = None
+                if axes is not None:
+                    if isinstance(axes, (list, tuple)):
+                        axes_list = list(axes)
+                    elif isinstance(axes, np.ndarray):
+                        axes_list = axes.tolist() if axes.ndim > 0 else [int(axes)]
+                    elif tf.is_tensor(axes):
+                        if hasattr(axes, 'numpy'):
+                            axes_list = axes.numpy().tolist()
+                        elif hasattr(axes, '_inferred_value') and axes._inferred_value not in (None, [None]):
+                            axes_list = list(axes._inferred_value)
+                if axes_list is not None:
+                    begin_mask_ = sum(
+                        1 << axis for axis in range(input_tensor_rank) if axis not in axes_list
+                    )
+                else:
+                    begin_mask_ = 0
 
             ##### end_mask
             end_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
@@ -446,7 +462,23 @@ def make_node(
                 dtype=tf.int32,
             )
             if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
-                end_mask_ = 0
+                axes_list = None
+                if axes is not None:
+                    if isinstance(axes, (list, tuple)):
+                        axes_list = list(axes)
+                    elif isinstance(axes, np.ndarray):
+                        axes_list = axes.tolist() if axes.ndim > 0 else [int(axes)]
+                    elif tf.is_tensor(axes):
+                        if hasattr(axes, 'numpy'):
+                            axes_list = axes.numpy().tolist()
+                        elif hasattr(axes, '_inferred_value') and axes._inferred_value not in (None, [None]):
+                            axes_list = list(axes._inferred_value)
+                if axes_list is not None:
+                    end_mask_ = sum(
+                        1 << axis for axis in range(input_tensor_rank) if axis not in axes_list
+                    )
+                else:
+                    end_mask_ = 0
 
             # strided_slice
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
