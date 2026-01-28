@@ -43,6 +43,9 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
     graph_node_output_1: gs.Variable = graph_node.outputs[0]
     o1_shape = graph_node_output_1.shape
     o1_dtype = graph_node_output_1.dtype
@@ -58,6 +61,8 @@ def make_node(
         'optype': graph_node.op,
         'shape': o1_shape,
         'dtype': o1_dtype,
+        'is_dequantized': True,
+        'nhwc': input_nhwc,
     }
     tf_layers_dict[graph_node_output_2.name] = {
         'optype': graph_node.op,
@@ -82,35 +87,31 @@ def make_node(
     )
 
     # Generation of TF OP
-    dtype = tf.uint8
-    qmin = dtype.min
-    qmax = dtype.max
-    min_x = tf.math.minimum(0., tf.math.reduce_min(input_tensor_1))
-    max_x = tf.math.maximum(0., tf.math.reduce_max(input_tensor_1))
+    qmin = 0.0
+    qmax = 255.0
+    min_x = tf.math.minimum(0.0, tf.math.reduce_min(input_tensor_1))
+    max_x = tf.math.maximum(0.0, tf.math.reduce_max(input_tensor_1))
     y_scale = (max_x - min_x) / (qmax - qmin)
     intermediate_zero_point = qmin - (min_x / y_scale)
-    y_zero_point = tf.clip_by_value(
-        tf.round(
-            x=intermediate_zero_point
-        ),
+    clipped_zero_point = tf.clip_by_value(
+        intermediate_zero_point,
         clip_value_min=qmin,
         clip_value_max=qmax,
     )
-    y = tf.cast(
-        tf.clip_by_value(
-            (tf.round(input_tensor_1 / y_scale) + y_zero_point),
-            clip_value_min=qmin,
-            clip_value_max=qmax,
-        ),
-        dtype=dtype,
+    y_zero_point = tf.round(clipped_zero_point)
+    y_quant = tf.clip_by_value(
+        tf.round(input_tensor_1 / y_scale) + y_zero_point,
+        clip_value_min=qmin,
+        clip_value_max=qmax,
     )
+    y = (y_quant - y_zero_point) * y_scale
 
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = y
     tf_layers_dict[graph_node_output_2.name]['tf_node'] = y_scale
     tf_layers_dict[graph_node_output_3.name]['tf_node'] = \
         tf.cast(
             x=y_zero_point,
-            dtype=dtype,
+            dtype=tf.uint8,
         )
 
     # Post-process transpose

@@ -234,6 +234,31 @@ def make_node(
             and len(value.shape) > 0 else tf.reshape(value, [1]) for value in values
     ]
 
+    def _infer_concat_axis_runtime(values, fallback_axis):
+        if not values:
+            return fallback_axis
+        shapes = [tf.shape(v) for v in values]
+        shapes = tf.stack(shapes)
+        equal_mask = tf.reduce_all(tf.equal(shapes, shapes[0]), axis=0)
+        diff_mask = tf.cast(tf.logical_not(equal_mask), tf.int32)
+        candidate_count = tf.reduce_sum(diff_mask)
+        axis_from_diff = tf.argmax(diff_mask, axis=0, output_type=tf.int32)
+        fallback_axis_tensor = tf.cast(fallback_axis, tf.int32)
+        is_single = tf.cast(tf.equal(candidate_count, 1), tf.int32)
+        return axis_from_diff * is_single + fallback_axis_tensor * (1 - is_single)
+
+    axis_is_dynamic = False
+    if len(values) > 0:
+        all_none = True
+        for value in values:
+            if value.shape is not None and value.shape != tf.TensorShape(None):
+                if not all([s is None for s in value.shape]):
+                    all_none = False
+                    break
+        if all_none:
+            axis_is_dynamic = True
+    axis_for_concat = _infer_concat_axis_runtime(values, axis) if axis_is_dynamic else axis
+
     # Generation of TF OP
     tf_type = None
     if simple_resize:
@@ -271,7 +296,7 @@ def make_node(
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.concat(
                     values=values,
-                    axis=axis,
+                    axis=axis_for_concat,
                     name=graph_node.name,
                 )
         except:
@@ -311,51 +336,52 @@ def make_node(
         # This workaround is useful when automatic axis correction is practically difficult,
         # such as when all tensors to be combined originate from Transpose or Reshape.
         # https://github.com/PINTO0309/onnx2tf/issues/473
-        output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
-        if output_tensor_shape != tf.TensorShape(None):
-            output_tensor_rank = len(output_tensor_shape)
-            if graph_node.outputs[0].shape is not None \
-                and axis != 0 \
-                and output_tensor_rank >= 2 \
-                and before_axis == axis:
+        if not axis_is_dynamic:
+            output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+            if output_tensor_shape != tf.TensorShape(None):
+                output_tensor_rank = len(output_tensor_shape)
+                if graph_node.outputs[0].shape is not None \
+                    and axis != 0 \
+                    and output_tensor_rank >= 2 \
+                    and before_axis == axis:
 
-                # Search for valid Concat patterns
-                if not shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(output_tensor_shape)):
-                    matched_axes = []
-                    for dummy_axis in range(1, output_tensor_rank):
-                        try:
-                            dummy_concat_tensor = \
-                                tf.concat(
-                                    values=values,
-                                    axis=dummy_axis,
-                                    name=graph_node.name,
-                                )
-                            dummy_output_shape = dummy_concat_tensor.shape
-                            if shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
-                                matched_axes.append(dummy_axis)
-                        except:
-                            pass
-                    # Review Concat axes only if there is one valid join pattern
-                    if len(matched_axes) == 1:
-                        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                            tf.concat(
-                                values=values,
-                                axis=matched_axes[0],
-                                name=graph_node.name,
-                            )
-                        axis = matched_axes[0]
-                    elif not nhwc_judge:
-                        onnx_axis = int(graph_node.attrs.get('axis', 0))
-                        onnx_axis = output_tensor_rank - 1 if onnx_axis == -1 else onnx_axis
-                        if onnx_axis == output_tensor_rank - 1 \
-                            and onnx_axis in matched_axes:
+                    # Search for valid Concat patterns
+                    if not shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(output_tensor_shape)):
+                        matched_axes = []
+                        for dummy_axis in range(1, output_tensor_rank):
+                            try:
+                                dummy_concat_tensor = \
+                                    tf.concat(
+                                        values=values,
+                                        axis=dummy_axis,
+                                        name=graph_node.name,
+                                    )
+                                dummy_output_shape = dummy_concat_tensor.shape
+                                if shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
+                                    matched_axes.append(dummy_axis)
+                            except:
+                                pass
+                        # Review Concat axes only if there is one valid join pattern
+                        if len(matched_axes) == 1:
                             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                 tf.concat(
                                     values=values,
-                                    axis=onnx_axis,
+                                    axis=matched_axes[0],
                                     name=graph_node.name,
                                 )
-                            axis = onnx_axis
+                            axis = matched_axes[0]
+                        elif not nhwc_judge:
+                            onnx_axis = int(graph_node.attrs.get('axis', 0))
+                            onnx_axis = output_tensor_rank - 1 if onnx_axis == -1 else onnx_axis
+                            if onnx_axis == output_tensor_rank - 1 \
+                                and onnx_axis in matched_axes:
+                                tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                                    tf.concat(
+                                        values=values,
+                                        axis=onnx_axis,
+                                        name=graph_node.name,
+                                    )
+                                axis = onnx_axis
 
         # Workaround for post-concat accuracy degradation issues
         # Process only in the case of a Concat of two tensors because the process is too redundant.

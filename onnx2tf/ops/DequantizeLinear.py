@@ -15,6 +15,43 @@ from onnx2tf.utils.common_functions import (
     post_process_transpose,
 )
 
+def _expand_scale_or_zero_point(
+    *,
+    value,
+    input_tensor,
+    axis: int,
+    block_size: int,
+):
+    value_rank = len(value.shape)
+    input_rank = len(input_tensor.shape)
+
+    if value_rank == 0:
+        return value
+
+    if input_rank <= 0:
+        return value
+
+    if axis < 0 or axis >= input_rank:
+        axis = 0
+
+    # Blocked quantization: expand along axis then slice to input shape
+    if block_size > 0 and value_rank == input_rank:
+        if value.shape[axis] is None \
+            or input_tensor.shape[axis] is None \
+            or value.shape[axis] != input_tensor.shape[axis]:
+            expanded = tf.repeat(value, repeats=block_size, axis=axis)
+            expanded = tf.slice(expanded, [0] * input_rank, tf.shape(input_tensor))
+            return expanded
+        return value
+
+    # Per-axis quantization: reshape 1-D to broadcast
+    if value_rank == 1 and input_rank is not None:
+        shape = [1] * input_rank
+        shape[axis] = -1
+        return tf.reshape(value, shape)
+
+    return value
+
 
 @print_node_info
 @inverted_operation_enable_disable
@@ -63,6 +100,11 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_is_dequantized = False
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_is_dequantized = tf_layers_dict.get(graph_node_input_1.name, {}).get('is_dequantized', False)
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -72,12 +114,10 @@ def make_node(
         **kwargs,
     )
 
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
+    input_tensor_rank = len(input_tensor.shape)
+    input_tensor_dtype = input_tensor.dtype
     x_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    x_scale_shape = x_scale.shape
-    x_scale_rank = len(x_scale_shape)
     x_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
@@ -87,48 +127,50 @@ def make_node(
         tensor_rank=input_tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
+    if input_tensor_rank == 1:
+        axis = 0
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'is_dequantized': True,
+        'nhwc': input_nhwc,
     }
 
     # Generation of TF OP
 
     input_tensor = tf.cast(input_tensor, tf.float32)
+    x_scale = tf.cast(x_scale, tf.float32)
 
-    # Reshape process is needed for per-axis dequantization
-    # when scale is a 1-D tensor
-    if x_scale_rank == 1 and x_scale_shape[0] != 1:
-        shape_broadcast = list([1 for _ in range(axis)] + [input_tensor_shape[axis]] + [1 for _ in range(axis + 1, input_tensor_rank)])
-        x_scale = tf.reshape(
-            tensor=x_scale,
-            shape=shape_broadcast,
-        )
-    elif x_scale_rank == 1 and x_scale_shape[0] == 1:
-        shape_broadcast = [1 for i in range(input_tensor_rank)]
+    block_size = int(graph_node.attrs.get('block_size', 0))
+    x_scale = _expand_scale_or_zero_point(
+        value=x_scale,
+        input_tensor=input_tensor,
+        axis=axis,
+        block_size=block_size,
+    )
 
-    subed_tensor = input_tensor
-    if len(graph_node.inputs) >= 3 and input_tensor.dtype != tf.int32:
-        x_zero_point = tf.cast(
-            x=x_zero_point,
-            dtype=tf.float32,
-        )
-        x_zero_point = tf.reshape(
-            tensor=x_zero_point,
-            shape=shape_broadcast,
-        ) if x_scale_rank == 1 else x_zero_point
-        subed_tensor = tf.subtract(
-            x=input_tensor,
-            y=x_zero_point,
-        )
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.multiply(
-            x=subed_tensor,
-            y=x_scale,
-        )
+    if input_is_dequantized:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor
+    else:
+        if x_zero_point is None or input_tensor_dtype == tf.int32:
+            x_zero_point = tf.zeros_like(x_scale)
+        else:
+            x_zero_point = tf.cast(x_zero_point, tf.float32)
+            x_zero_point = _expand_scale_or_zero_point(
+                value=x_zero_point,
+                input_tensor=input_tensor,
+                axis=axis,
+                block_size=block_size,
+            )
+
+        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+            tf.multiply(
+                x=tf.subtract(input_tensor, x_zero_point),
+                y=x_scale,
+            )
 
     if hasattr(tf_layers_dict[graph_node_output.name]['tf_node'], 'numpy'):
         tf_layers_dict[graph_node_output.name]['tf_node'] = \

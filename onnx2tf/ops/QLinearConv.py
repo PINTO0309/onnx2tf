@@ -1,4 +1,3 @@
-import sys
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +24,24 @@ def _dequantize_tensor(
     # Do computation in float32
     base = tf.cast(base, tf.float32)
     zero_point = tf.cast(zero_point, tf.float32)
+    scale = tf.cast(scale, tf.float32)
     return (base - zero_point) * scale
+
+
+def _reshape_per_output_channel(
+    *,
+    value,
+    weights,
+):
+    value_rank = len(value.shape)
+    weights_rank = len(weights.shape)
+    if value_rank == 0:
+        return value
+    if value_rank == 1 and weights_rank is not None:
+        shape = [1] * weights_rank
+        shape[-1] = -1
+        return tf.reshape(value, shape)
+    return value
 
 
 def _dequantize_weights(
@@ -33,37 +49,32 @@ def _dequantize_weights(
     base,
     zero_point,
     scale,
-    is_bias=False,
-    scale_is_scalar=False,
 ):
     # Do computation in float32
     casted_base = tf.cast(base, tf.float32)
     casted_zero_point = tf.cast(zero_point, tf.float32)
-    spartial_shape_len = len(casted_base.shape) - 2
-    casted_zero_point_shape = casted_zero_point.shape[0]
-    if casted_zero_point_shape == base.shape[-2]:
-        reshaped_zero_point = tf.reshape(
-            tensor=casted_zero_point,
-            shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
-        )
-        if scale_is_scalar:
-            reshaped_scale = tf.reshape(
-                tensor=scale,
-                shape=[1 for _ in range(spartial_shape_len)] + [casted_zero_point_shape, 1],
-            )
-            tensor_list = [
-                (casted_base[..., i:i+1] - reshaped_zero_point) * reshaped_scale
-                for i in range(base.shape[-1])
-            ]
-            out_tensor = tf.concat(tensor_list, axis=-1)
-        else:
-            reshaped_scale = scale
-            out_tensor = (casted_base - reshaped_zero_point) * reshaped_scale
-        return tf.reshape(out_tensor, base.shape)
-    else:
-        reshaped_zero_point = casted_zero_point
-        reshaped_scale = scale
-        return (casted_base - reshaped_zero_point) * reshaped_scale
+    casted_scale = tf.cast(scale, tf.float32)
+    casted_zero_point = _reshape_per_output_channel(
+        value=casted_zero_point,
+        weights=casted_base,
+    )
+    casted_scale = _reshape_per_output_channel(
+        value=casted_scale,
+        weights=casted_base,
+    )
+    return (casted_base - casted_zero_point) * casted_scale
+
+
+def _get_qmin_qmax(dtype: tf.dtypes.DType):
+    if dtype == tf.uint8:
+        return 0.0, 255.0
+    if dtype == tf.int8:
+        return -128.0, 127.0
+    if dtype == tf.uint16:
+        return 0.0, 65535.0
+    if dtype == tf.int16:
+        return -32768.0, 32767.0
+    return None, None
 
 
 @print_node_info
@@ -139,6 +150,11 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_is_dequantized = False
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_is_dequantized = tf_layers_dict.get(graph_node_input_1.name, {}).get('is_dequantized', False)
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
     input_tensor_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     input_tensor_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -155,7 +171,7 @@ def make_node(
         if isinstance(graph_node_input_8, gs.Variable) else graph_node_input_8
     input_bias = tf_layers_dict[graph_node_input_9.name]['tf_node'] \
         if isinstance(graph_node_input_9, gs.Variable) else graph_node_input_9
-    output_dtype = input_tensor.dtype if input_tensor.dtype not in [tf.int8, tf.uint8] else tf.float32
+    output_quant_dtype = y_zero_point.dtype
 
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
@@ -172,48 +188,32 @@ def make_node(
         'optype': graph_node.op,
         'shape': output_tensor_shape,
         'dtype': dtype,
+        'is_dequantized': True,
+        'nhwc': input_nhwc,
     }
 
     # Generation of TF OP
 
-    # Convert w_zero_point and w_scale to 1-D if scalar
-    if len(input_weights_zero_point.shape) == 0:
-        input_weights_zero_point = tf.fill([input_tensor.shape[-1]//group], input_weights_zero_point)
-    elif len(input_weights_zero_point.shape) > 1:
-        error(
-            f'Unsupported zero point: {graph_node.name} {input_weights_zero_point}'
-        )
-        sys.exit(1)
-
-    weights_scale_is_scalar = False
-    if len(input_weights_scale.shape) == 0:
-        weights_scale_is_scalar = True
-        input_weights_scale = tf.fill([input_tensor.shape[-1]//group], input_weights_scale)
-    elif len(input_weights_scale.shape) > 1:
-        error(
-            f'Unsupported scalet: {graph_node.name} {input_weights_scale}'
-        )
-        sys.exit(1)
-
     # Dequantize variables to float32
-    input_tensor = _dequantize_tensor(
-        base=input_tensor,
-        zero_point=input_tensor_zero_point,
-        scale=input_tensor_scale,
-    )
+    if input_is_dequantized:
+        input_tensor = tf.cast(input_tensor, tf.float32)
+    else:
+        input_tensor = _dequantize_tensor(
+            base=input_tensor,
+            zero_point=input_tensor_zero_point,
+            scale=input_tensor_scale,
+        )
     input_weights = _dequantize_weights(
         base=input_weights,
         zero_point=input_weights_zero_point,
         scale=input_weights_scale,
-        scale_is_scalar=weights_scale_is_scalar,
     )
-    y_zero_point = tf.cast(y_zero_point, tf.float32)
 
     # if bias is defined save it here
     if input_bias is not None:
         input_bias = tf.cast(input_bias, tf.float32)
-        input_bias_scale = input_tensor_scale * input_weights_scale
-        input_bias = tf.round(input_bias / input_bias_scale)
+        input_bias_scale = tf.cast(input_tensor_scale, tf.float32) * tf.cast(input_weights_scale, tf.float32)
+        input_bias = input_bias * input_bias_scale
 
     """
     Conv1D
@@ -260,7 +260,7 @@ def make_node(
         depthwise = bool(group == input_tensor_shape[-1])
 
     if depthwise is True:
-        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
+        depthwise_filter_shape = list(input_weights_shape[0:2]) + [input_weights_shape[2], input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     # Conv
@@ -308,27 +308,23 @@ def make_node(
             )
         tf_op_type = tf.nn.depthwise_conv2d
 
-    # Process output
-    scaled_conv_node = tf.add(
-        x=tf.round(
-            tf.divide(
-                x=conv_node,
-                y=y_scale,
-            ),
-        ),
-        y=y_zero_point,
-    )
-
-    # Add bias to the convolution
+    # Add bias to the convolution (float)
     if input_bias is not None:
-        scaled_conv_node = tf.add(
-            x=scaled_conv_node,
+        conv_node = tf.add(
+            x=conv_node,
             y=input_bias,
         )
 
-    casted_conv_node = tf.cast(scaled_conv_node, output_dtype)
+    # quantize then dequantize to float32
+    y_scale = tf.cast(y_scale, tf.float32)
+    y_zero_point = tf.cast(y_zero_point, tf.float32)
+    quantized = tf.round(tf.divide(conv_node, y_scale)) + y_zero_point
+    qmin, qmax = _get_qmin_qmax(output_quant_dtype)
+    if qmin is not None and qmax is not None:
+        quantized = tf.clip_by_value(quantized, qmin, qmax)
+    dequantized = tf.multiply(tf.subtract(quantized, y_zero_point), y_scale)
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = casted_conv_node
+    tf_layers_dict[graph_node_output.name]['tf_node'] = dequantized
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
@@ -349,4 +345,3 @@ def make_node(
                 },
             }
         )
-

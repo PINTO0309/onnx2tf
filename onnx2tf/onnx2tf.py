@@ -62,6 +62,146 @@ from onnx2tf.utils.enums import (
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
+def fuse_expanded_qdq_to_qdq(
+    *,
+    graph: gs.Graph,
+):
+    def _get_const_value(tensor):
+        if isinstance(tensor, gs.Constant):
+            return tensor.values
+        if isinstance(tensor, gs.Variable) and len(tensor.inputs) == 1:
+            producer = tensor.inputs[0]
+            if producer.op == 'Constant' and 'value' in producer.attrs:
+                return producer.attrs['value'].values
+        return None
+
+    def _split_const_and_var(inputs):
+        if len(inputs) != 2:
+            return None, None
+        const_val = _get_const_value(inputs[0])
+        if const_val is not None:
+            return const_val, inputs[1]
+        const_val = _get_const_value(inputs[1])
+        if const_val is not None:
+            return const_val, inputs[0]
+        return None, None
+
+    nodes_to_remove = []
+    nodes_to_add = []
+
+    for round_node in list(graph.nodes):
+        if round_node.op != 'Round' or len(round_node.inputs) < 1:
+            continue
+
+        round_in = round_node.inputs[0]
+        if len(round_in.inputs) != 1:
+            continue
+        mul1_node = round_in.inputs[0]
+        if mul1_node.op != 'Mul':
+            continue
+        if len(mul1_node.outputs) != 1 or len(mul1_node.outputs[0].outputs) != 1:
+            continue
+
+        inv_scale, x = _split_const_and_var(mul1_node.inputs)
+        if inv_scale is None or x is None:
+            continue
+
+        relu_node = round_node.outputs[0].outputs[0] if round_node.outputs else None
+        if relu_node is None:
+            continue
+        if relu_node.op == 'Relu':
+            relu_out = relu_node.outputs[0]
+        elif relu_node.op in ['Max', 'Maximum']:
+            max_const, max_var = _split_const_and_var(relu_node.inputs)
+            if max_const is None or max_var != round_node.outputs[0]:
+                continue
+            if np.asarray(max_const).size != 1 or float(np.asarray(max_const).item()) != 0.0:
+                continue
+            relu_out = relu_node.outputs[0]
+        else:
+            continue
+
+        if len(relu_out.outputs) != 1:
+            continue
+        min_node = relu_out.outputs[0]
+        if min_node.op not in ['Min', 'Minimum']:
+            continue
+
+        qmax, min_var = _split_const_and_var(min_node.inputs)
+        if qmax is None or min_var != relu_out:
+            continue
+        if np.asarray(qmax).size != 1:
+            continue
+
+        if len(min_node.outputs) != 1 or len(min_node.outputs[0].outputs) != 1:
+            continue
+        mul2_node = min_node.outputs[0].outputs[0]
+        if mul2_node.op != 'Mul':
+            continue
+
+        scale, min_out = _split_const_and_var(mul2_node.inputs)
+        if scale is None or min_out != min_node.outputs[0]:
+            continue
+        if np.asarray(scale).size != 1:
+            continue
+
+        scale_val = float(np.asarray(scale).item())
+        inv_scale_val = float(np.asarray(inv_scale).item())
+        if scale_val == 0.0 or not np.isfinite(scale_val) or not np.isfinite(inv_scale_val):
+            continue
+        if not np.isclose(scale_val * inv_scale_val, 1.0, rtol=1e-3, atol=1e-6):
+            continue
+
+        if len(mul2_node.outputs) != 1:
+            continue
+        output_var = mul2_node.outputs[0]
+
+        # Require linear chain
+        chain_nodes = [mul1_node, round_node, relu_node, min_node, mul2_node]
+        if any(len(n.outputs) == 0 for n in chain_nodes):
+            continue
+        if len(round_node.outputs[0].outputs) != 1 or len(relu_out.outputs) != 1 or len(min_node.outputs[0].outputs) != 1:
+            continue
+
+        # Build QDQ
+        scale_const = gs.Constant(
+            name=f"{mul2_node.name}_scale",
+            values=np.asarray(scale_val, dtype=np.float32),
+        )
+        zero_const = gs.Constant(
+            name=f"{mul2_node.name}_zero_point",
+            values=np.asarray(0, dtype=np.uint8),
+        )
+        quant_out = gs.Variable(
+            name=f"{output_var.name}_quant",
+            dtype=np.uint8,
+            shape=output_var.shape,
+        )
+        q_node = gs.Node(
+            op="QuantizeLinear",
+            name=f"{mul2_node.name}_QuantizeLinear",
+            inputs=[x, scale_const, zero_const],
+            outputs=[quant_out],
+        )
+        dq_node = gs.Node(
+            op="DequantizeLinear",
+            name=f"{mul2_node.name}_DequantizeLinear",
+            inputs=[quant_out, scale_const, zero_const],
+            outputs=[output_var],
+        )
+        output_var.inputs = [dq_node]
+
+        nodes_to_add.extend([q_node, dq_node])
+        nodes_to_remove.extend(chain_nodes)
+
+    if nodes_to_add:
+        graph.nodes.extend(nodes_to_add)
+    if nodes_to_remove:
+        for n in nodes_to_remove:
+            if n in graph.nodes:
+                graph.nodes.remove(n)
+        graph.cleanup().toposort()
+
 def apply_nonzero_passthrough(
     *,
     graph: gs.Graph,
@@ -848,6 +988,7 @@ def convert(
     if hasattr(onnx_graph, 'metadata_props'):
         metadata_props = onnx_graph.metadata_props
     graph = gs.import_onnx(onnx_graph)
+    fuse_expanded_qdq_to_qdq(graph=graph)
 
     # Cut the ONNX graph when an input name is specified that interrupts the conversion
     if not input_names_to_interrupt_model_conversion:
