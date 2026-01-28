@@ -133,6 +133,42 @@ def make_node(
         x=input_tensor,
         dtype=tf.float32,
     )
+
+    # If QuantizeLinear is immediately followed by Cast -> DequantizeLinear
+    # or DequantizeLinear only, bypass fake-quant to avoid generating
+    # Mul/Round/Min/Relu/Mul chains in TF/TFLite.
+    bypass_fake_quant = False
+    if graph_node.outputs and len(graph_node.outputs) > 0:
+        consumers = graph_node.outputs[0].outputs
+        if consumers:
+            bypass_fake_quant = True
+            for consumer in consumers:
+                if consumer.op == 'DequantizeLinear':
+                    continue
+                if consumer.op == 'Cast':
+                    cast_outs = consumer.outputs[0].outputs if consumer.outputs else []
+                    if not cast_outs or any(grand.op != 'DequantizeLinear' for grand in cast_outs):
+                        bypass_fake_quant = False
+                        break
+                else:
+                    bypass_fake_quant = False
+                    break
+
+    if bypass_fake_quant:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor
+        tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+            make_tf_node_info(
+                node_info={
+                    'tf_op_type': 'QuantizeLinear',
+                    'tf_inputs': {
+                        'x': input_tensor,
+                    },
+                    'tf_outputs': {
+                        'output': tf_layers_dict[graph_node_output.name]['tf_node'],
+                    },
+                }
+            )
+        return
     y_scale = tf.cast(y_scale, tf.float32)
 
     block_size = int(graph_node.attrs.get('block_size', 0))
