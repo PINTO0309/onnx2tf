@@ -124,6 +124,32 @@ def make_node(
         **kwargs,
     )
 
+    def _infer_split_axis_runtime(input_tensor, sum_split, fallback_axis):
+        if sum_split is None:
+            return tf.cast(fallback_axis, tf.int32)
+        shape = tf.shape(input_tensor)
+        eq = tf.equal(shape, tf.cast(sum_split, tf.int32))
+        mask = tf.cast(eq, tf.int32)
+        count = tf.reduce_sum(mask)
+        axis_from = tf.argmax(mask, axis=0, output_type=tf.int32)
+        fallback_axis_tensor = tf.cast(fallback_axis, tf.int32)
+        is_single = tf.cast(tf.equal(count, 1), tf.int32)
+        return axis_from * is_single + fallback_axis_tensor * (1 - is_single)
+
+    axis_for_split = axis
+    sum_split = None
+    split_list = None
+    if isinstance(split, np.ndarray):
+        split_list = list(split)
+    elif isinstance(split, (list, tuple)):
+        split_list = list(split)
+    if split_list is not None and len(split_list) > 1:
+        if len(split_list) == sum([1 for dim in split_list if isinstance(dim, (np.int64, int))]):
+            sum_split = int(np.sum(split_list))
+            axis_dim = input_tensor_shape[axis] if axis < len(input_tensor_shape) else None
+            if axis_dim is None or (isinstance(axis_dim, int) and axis_dim != sum_split):
+                axis_for_split = _infer_split_axis_runtime(input_tensor, sum_split, axis)
+
     # Generation of TF OP
     splited_tensors = None
     if (
@@ -225,18 +251,17 @@ def make_node(
                 num=None,
                 name=graph_node.name,
             )
-    elif isinstance(split, np.ndarray) \
+    elif isinstance(split, (list, tuple, np.ndarray)) \
         and len(list(split)) > 1 \
-        and np.prod(split) != 1 \
-        and isinstance(input_tensor_shape[axis], int) \
-        and len(split) == sum([1 for dim in split if isinstance(dim, np.int64) or isinstance(dim, int)]) \
-        and len(split) != sum([1 for dim in split if split[0] == dim]) \
-        and np.sum(split) == input_tensor_shape[axis]:
+        and (np.prod(split) != 1 if isinstance(split, np.ndarray) else True) \
+        and len(list(split)) == sum([1 for dim in list(split) if isinstance(dim, (np.int64, int))]) \
+        and len(list(split)) != sum([1 for dim in list(split) if list(split)[0] == dim]) \
+        and (not isinstance(input_tensor_shape[axis], int) or np.sum(list(split)) == input_tensor_shape[axis]):
         # Suppression of FlexSplitV generation
         # SplitV -> Strided_Slice
         splited_tensors = []
         begin_stock = []
-        for split_idx, split_dim in enumerate(split):
+        for split_idx, split_dim in enumerate(list(split)):
             begin_ = []
             end_ = []
             begin_mask_ = 0
@@ -269,7 +294,7 @@ def make_node(
             tf.split(
                 value=input_tensor,
                 num_or_size_splits=split,
-                axis=axis,
+                axis=axis_for_split,
                 num=num_outputs,
                 name=graph_node.name,
             )

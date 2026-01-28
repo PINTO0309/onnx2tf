@@ -11,6 +11,49 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     convert_axis,
 )
+from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
+
+
+def _get_qmin_qmax(dtype: tf.dtypes.DType):
+    if dtype == tf.uint8:
+        return 0.0, 255.0
+    if dtype == tf.int8:
+        return -128.0, 127.0
+    if dtype == tf.uint16:
+        return 0.0, 65535.0
+    if dtype == tf.int16:
+        return -32768.0, 32767.0
+    return None, None
+
+
+def _expand_scale_or_zero_point(
+    *,
+    value,
+    input_tensor,
+    axis: int,
+    block_size: int,
+):
+    value_rank = len(value.shape)
+    input_rank = len(input_tensor.shape)
+
+    if value_rank == 0:
+        return value
+
+    if block_size > 0 and value_rank == input_rank:
+        if value.shape[axis] is None \
+            or input_tensor.shape[axis] is None \
+            or value.shape[axis] != input_tensor.shape[axis]:
+            expanded = tf.repeat(value, repeats=block_size, axis=axis)
+            expanded = tf.slice(expanded, [0] * input_rank, tf.shape(input_tensor))
+            return expanded
+        return value
+
+    if value_rank == 1 and input_rank is not None:
+        shape = [1] * input_rank
+        shape[axis] = -1
+        return tf.reshape(value, shape)
+
+    return value
 
 
 @print_node_info
@@ -60,12 +103,12 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
+    input_tensor_rank = len(input_tensor.shape)
     y_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
-    y_scale_shape = y_scale.shape
-    y_scale_rank = len(y_scale_shape)
     y_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
@@ -81,6 +124,8 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'is_dequantized': True,
+        'nhwc': input_nhwc,
     }
 
     # Generation of TF OP
@@ -88,51 +133,43 @@ def make_node(
         x=input_tensor,
         dtype=tf.float32,
     )
-    x_shape = input_tensor_shape
-    x_rank = input_tensor_rank
-    y_scale_shape = y_scale_shape
+    y_scale = tf.cast(y_scale, tf.float32)
 
-    # Reshape process is needed for per-axis quantization
-    # when scale is a 1-D tensor
-    if y_scale_rank == 1:
-        shape_broadcast = list(
-            [1 for _ in range(axis)] \
-            + [x_shape[axis]] \
-            + [1 for _ in range(axis + 1, x_rank)]
-        )
-        y_scale = tf.reshape(
-            tensor=y_scale,
-            shape=shape_broadcast,
-        )
-    y = tf.divide(
-        x=input_tensor,
-        y=y_scale,
+    block_size = int(graph_node.attrs.get('block_size', 0))
+    y_scale = _expand_scale_or_zero_point(
+        value=y_scale,
+        input_tensor=input_tensor,
+        axis=axis,
+        block_size=block_size,
     )
-    y = tf.round(y)
 
-    if y_zero_point is not None:
-        y_dtype = y_zero_point.dtype if y_zero_point.dtype not in [tf.int8, tf.uint8] else tf.float32
-        y_zero_point = tf.cast(
-            x=y_zero_point,
-            dtype=tf.float32,
+    output_dtype_attr = int(graph_node.attrs.get('output_dtype', 0))
+    if y_zero_point is None:
+        output_dtype = ONNX_DTYPES_TO_TF_DTYPES.get(output_dtype_attr, tf.uint8) \
+            if output_dtype_attr != 0 else tf.uint8
+        y_zero_point = tf.zeros_like(y_scale)
+    else:
+        output_dtype = y_zero_point.dtype
+        y_zero_point = tf.cast(y_zero_point, tf.float32)
+        y_zero_point = _expand_scale_or_zero_point(
+            value=y_zero_point,
+            input_tensor=input_tensor,
+            axis=axis,
+            block_size=block_size,
         )
-        y_zero_point = tf.reshape(
-            tensor=y_zero_point,
-            shape=shape_broadcast,
-        ) if y_scale_rank == 1 else y_zero_point
-        y = tf.add(
-            x=y,
-            y=y_zero_point,
-        )
-    else:  # y_zero_point default dtype = uint8
-        y_dtype = tf.uint8
 
-    # Generation of TF OP
+    y = tf.round(tf.divide(input_tensor, y_scale))
+    y = tf.add(y, y_zero_point)
+
+    qmin, qmax = _get_qmin_qmax(output_dtype)
+    if qmin is not None and qmax is not None:
+        y = tf.clip_by_value(y, qmin, qmax)
+
+    # dequantize to float32 output
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.saturate_cast(
-            value=y,
-            dtype=y_dtype,
-            name=graph_node.name,
+        tf.multiply(
+            x=tf.subtract(y, y_zero_point),
+            y=y_scale,
         )
 
     # Generation of Debug Info
