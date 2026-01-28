@@ -48,6 +48,7 @@ def make_node(
         tf_layers_dict.get(graph_node.inputs[0].name, {}).get('before_op_output_shape_trans', True)
     before_op_output_shape_trans_2 = \
         tf_layers_dict.get(graph_node.inputs[1].name, {}).get('before_op_output_shape_trans', True)
+    # Data layout follows input[0]; shape vector (input[1]) should align to it.
     before_op_output_shape_trans = \
         before_op_output_shape_trans_1 \
         and before_op_output_shape_trans_2
@@ -58,7 +59,7 @@ def make_node(
     )
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        before_op_output_shape_trans_1,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -105,6 +106,16 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
+
+    # If shape is dynamic (Tensor) and input was transposed to NHWC/NWC/NDHWC,
+    # align the shape vector order to TensorFlow's layout.
+    if before_op_output_shape_trans_1 \
+        and tf.is_tensor(input_tensor_shape) \
+        and input_tensor_rank > 2:
+        shape_rank = input_tensor_shape.shape.rank
+        if shape_rank == 1 or shape_rank is None:
+            perm = [0] + list(range(2, input_tensor_rank)) + [1]
+            input_tensor_shape = tf.gather(input_tensor_shape, perm)
 
     tf_type = None
     if \

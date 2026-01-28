@@ -370,6 +370,12 @@ def make_node(
                 paddings=tf_pads,
                 mode='CONSTANT',
             )
+            if input_tensor_shape is not None and len(input_tensor_shape) == spatial_size + 2:
+                # Preserve known batch/channel dims since dynamic paddings erase shape info.
+                padded_tensor = tf.ensure_shape(
+                    padded_tensor,
+                    [input_tensor_shape[0]] + [None] * spatial_size + [input_tensor_shape[-1]],
+                )
         else:
             if auto_pad == 'SAME_LOWER':
                 # switch the order of pads
@@ -467,6 +473,49 @@ def make_node(
             f'opname: {graph_node.name} Type: AveragePool{len(kernel_shape)}D'
         print(error_msg)
         raise AssertionError(error_msg)
+
+    # Dynamic shape compensation for count_include_pad=False with explicit padding.
+    # Use pooled mask to compute valid element counts per window.
+    if not is_known_shape and is_explicit_padding and not count_include_pad:
+        mask = tf.ones_like(input_tensor, dtype=pooled_tensor.dtype)
+        if tf_pads is not None:
+            if tf.is_tensor(tf_pads):
+                mask = tf.pad(
+                    tensor=mask,
+                    paddings=tf_pads,
+                    mode='CONSTANT',
+                )
+            elif tf_pads != [0] * spatial_size * 2:
+                mask = tf.pad(
+                    tensor=mask,
+                    paddings=tf_pads,
+                    mode='CONSTANT',
+                )
+        if len(kernel_shape) == 1:
+            mask_pooled = AveragePooling1D(
+                pool_size=kernel_shape,
+                strides=strides,
+                padding=tf_pad_mode.upper(),
+            )(mask)
+        elif len(kernel_shape) == 2:
+            mask_pooled = AveragePooling2D(
+                pool_size=kernel_shape,
+                strides=strides,
+                padding=tf_pad_mode.upper(),
+            )(mask)
+        else:
+            mask_pooled = AveragePooling3D(
+                pool_size=kernel_shape,
+                strides=strides,
+                padding=tf_pad_mode.upper(),
+            )(mask)
+        kernel_volume = float(np.prod(kernel_shape))
+        count_valid = mask_pooled * tf.cast(kernel_volume, dtype=mask_pooled.dtype)
+        multiplier = tf.math.divide_no_nan(
+            tf.cast(kernel_volume, dtype=mask_pooled.dtype),
+            count_valid,
+        )
+        pooled_tensor = pooled_tensor * multiplier
 
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124

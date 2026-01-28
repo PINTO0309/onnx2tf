@@ -2403,6 +2403,179 @@ def shape_unmatched_special_avoidance_workaround(
             return input_tensor_1, input_tensor_2
     except:
         pass
+
+    def _normalize_shape(shape):
+        if shape is None:
+            return None
+        return [dim if isinstance(dim, int) else None for dim in shape]
+
+    def _broadcastable(shape_a, shape_b):
+        if shape_a is None or shape_b is None:
+            return False
+        if len(shape_a) != len(shape_b):
+            return False
+        for dim_a, dim_b in zip(shape_a[::-1], shape_b[::-1]):
+            if dim_a is None or dim_b is None:
+                continue
+            if dim_a != dim_b and dim_a != 1 and dim_b != 1:
+                return False
+        return True
+
+    def _match_score(shape_a, shape_b):
+        score = 0
+        for dim_a, dim_b in zip(shape_a, shape_b):
+            if dim_a is None or dim_b is None:
+                continue
+            if dim_a == dim_b:
+                score += 1
+        return score
+
+    def _shape_matches(shape_a, shape_b):
+        if shape_a is None or shape_b is None:
+            return False
+        if len(shape_a) != len(shape_b):
+            return False
+        for dim_a, dim_b in zip(shape_a, shape_b):
+            if dim_a is None or dim_b is None:
+                continue
+            if dim_a != dim_b:
+                return False
+        return True
+
+    # Generic layout-alignment for channel-first/last in 3D/4D/5D.
+    # Try a small set of canonical perms and apply the best one if it makes broadcasting possible.
+    try:
+        if hasattr(input_tensor_1, "shape") and hasattr(input_tensor_2, "shape"):
+            input_shape_1 = _normalize_shape(input_tensor_1.shape)
+            input_shape_2 = _normalize_shape(input_tensor_2.shape)
+            if input_shape_1 is not None and input_shape_2 is not None \
+                and len(input_shape_1) == len(input_shape_2) \
+                and len(input_shape_1) in (3, 4, 5):
+                if not _broadcastable(input_shape_1, input_shape_2):
+                    rank = len(input_shape_1)
+                    perm_cf2cl = [0] + list(range(2, rank)) + [1]
+                    perm_cl2cf = [0, rank - 1] + list(range(1, rank - 1))
+                    perms = []
+                    if perm_cf2cl != list(range(rank)):
+                        perms.append(perm_cf2cl)
+                    if perm_cl2cf != list(range(rank)) and perm_cl2cf != perm_cf2cl:
+                        perms.append(perm_cl2cf)
+
+                    onnx_shape_1 = _normalize_shape(
+                        graph_node_input_1.shape if hasattr(graph_node_input_1, "shape") else None
+                    )
+                    onnx_shape_2 = _normalize_shape(
+                        graph_node_input_2.shape if hasattr(graph_node_input_2, "shape") else None
+                    )
+
+                    candidates = []
+                    for idx, (shape, other_shape) in enumerate(
+                        [(input_shape_1, input_shape_2), (input_shape_2, input_shape_1)]
+                    ):
+                        for perm in perms:
+                            permuted = [shape[p] for p in perm]
+                            if _broadcastable(permuted, other_shape):
+                                score = _match_score(permuted, other_shape)
+                                # Prefer transposing the input whose ONNX shape matches current layout.
+                                if idx == 0 and _shape_matches(onnx_shape_1, shape):
+                                    score += 2
+                                if idx == 1 and _shape_matches(onnx_shape_2, shape):
+                                    score += 2
+                                candidates.append((score, idx, perm))
+
+                    if candidates:
+                        candidates.sort(reverse=True)
+                        best_score, best_idx, best_perm = candidates[0]
+                        # Avoid ambiguous ties.
+                        if len(candidates) == 1 or best_score > candidates[1][0]:
+                            if best_idx == 0:
+                                input_tensor_1 = \
+                                    transpose_with_flexing_deterrence(
+                                        input_tensor=input_tensor_1,
+                                        perm=best_perm,
+                                        **kwargs,
+                                    )
+                            else:
+                                input_tensor_2 = \
+                                    transpose_with_flexing_deterrence(
+                                        input_tensor=input_tensor_2,
+                                        perm=best_perm,
+                                        **kwargs,
+                                    )
+    except Exception:
+        pass
+
+    # Heuristic for 3D tensors where one input is (N,1,C) and the other is (N,C,W).
+    # Align by transposing the (N,C,W) tensor to (N,W,C).
+    try:
+        if hasattr(input_tensor_1, "shape") and hasattr(input_tensor_2, "shape"):
+            s1 = list(input_tensor_1.shape)
+            s2 = list(input_tensor_2.shape)
+            if len(s1) == len(s2) == 3:
+                # Normalize unknown dims to None
+                s1 = [dim if isinstance(dim, int) else None for dim in s1]
+                s2 = [dim if isinstance(dim, int) else None for dim in s2]
+                if s1[1] == 1 and s1[2] is not None and s2[1] == s1[2]:
+                    input_tensor_2 = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor_2,
+                            perm=[0, 2, 1],
+                            **kwargs,
+                        )
+                elif s2[1] == 1 and s2[2] is not None and s1[1] == s2[2]:
+                    input_tensor_1 = \
+                        transpose_with_flexing_deterrence(
+                            input_tensor=input_tensor_1,
+                            perm=[0, 2, 1],
+                            **kwargs,
+                        )
+    except Exception:
+        pass
+
+    # Layout mismatch mitigation based on ONNX shapes:
+    # If one input matches ONNX layout and the other matches the transposed layout,
+    # transpose the ONNX-layout input to align with the transposed one.
+    try:
+        if hasattr(input_tensor_1, "shape") and hasattr(input_tensor_2, "shape"):
+            input_shape_1 = list(input_tensor_1.shape)
+            input_shape_2 = list(input_tensor_2.shape)
+            if len(input_shape_1) == len(input_shape_2) and len(input_shape_1) in (3, 4, 5):
+                onnx_shape_1 = None
+                onnx_shape_2 = None
+                if hasattr(graph_node_input_1, "shape") and graph_node_input_1.shape is not None:
+                    onnx_shape_1 = [
+                        dim if not isinstance(dim, str) else None for dim in graph_node_input_1.shape
+                    ]
+                if hasattr(graph_node_input_2, "shape") and graph_node_input_2.shape is not None:
+                    onnx_shape_2 = [
+                        dim if not isinstance(dim, str) else None for dim in graph_node_input_2.shape
+                    ]
+                if onnx_shape_1 is not None and onnx_shape_2 is not None:
+                    perm = [0] + list(range(2, len(input_shape_1))) + [1]
+                    permuted_onnx_shape_1 = [onnx_shape_1[p] for p in perm]
+                    permuted_onnx_shape_2 = [onnx_shape_2[p] for p in perm]
+
+                    in1_matches_onnx = _shape_matches(input_shape_1, onnx_shape_1)
+                    in1_matches_perm = _shape_matches(input_shape_1, permuted_onnx_shape_1)
+                    in2_matches_onnx = _shape_matches(input_shape_2, onnx_shape_2)
+                    in2_matches_perm = _shape_matches(input_shape_2, permuted_onnx_shape_2)
+
+                    if in1_matches_perm and in2_matches_onnx and not in2_matches_perm:
+                        input_tensor_2 = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_2,
+                                perm=perm,
+                                **kwargs,
+                            )
+                    elif in2_matches_perm and in1_matches_onnx and not in1_matches_perm:
+                        input_tensor_1 = \
+                            transpose_with_flexing_deterrence(
+                                input_tensor=input_tensor_1,
+                                perm=perm,
+                                **kwargs,
+                            )
+    except Exception:
+        pass
     # At least one True value for same_input_shape_as_onnx
     # At least one True value in nhwc_flags
     # same_input_shape_as_onnx == True and nhwc_flags == False and 3D or 4D or 5D tensor is NHWC transposed
