@@ -896,6 +896,19 @@ def explicit_broadcast(
     const_or_var_2: Any
         gs.Variable or np.ndarray
     """
+    def _tf_broadcastable(shape_a, shape_b):
+        if shape_a is None or shape_b is None:
+            return False
+        if len(shape_a) != len(shape_b):
+            return False
+        for dim_a, dim_b in zip(shape_a, shape_b):
+            if dim_a is None or dim_b is None:
+                continue
+            if dim_a == dim_b or dim_a == 1 or dim_b == 1:
+                continue
+            return False
+        return True
+
     graph_node_input_name1 = None
     graph_node_input_name2 = None
     graph_node_input_shape1 = []
@@ -927,6 +940,29 @@ def explicit_broadcast(
     # If the input shape of ONNX is None, return without doing anything.
     if graph_node_input_shape1 is None or graph_node_input_shape2 is None:
         return const_or_var_1, const_or_var_2
+
+    # If one operand is 1D and matches the last dimension of the other operand,
+    # align it to the last axis to avoid unintended transpose.
+    if len(const_or_var_1.shape) == 1 and len(const_or_var_2.shape) > 1:
+        dim_1 = const_or_var_1.shape[0]
+        dim_2_last = const_or_var_2.shape[-1]
+        if isinstance(dim_1, int) and isinstance(dim_2_last, int) and dim_1 == dim_2_last:
+            target_shape = [1] * (len(const_or_var_2.shape) - 1) + [dim_1]
+            if isinstance(const_or_var_1, np.ndarray):
+                const_or_var_1 = const_or_var_1.reshape(target_shape)
+            else:
+                const_or_var_1 = tf.reshape(const_or_var_1, target_shape)
+            return const_or_var_1, const_or_var_2
+    if len(const_or_var_2.shape) == 1 and len(const_or_var_1.shape) > 1:
+        dim_2 = const_or_var_2.shape[0]
+        dim_1_last = const_or_var_1.shape[-1]
+        if isinstance(dim_2, int) and isinstance(dim_1_last, int) and dim_2 == dim_1_last:
+            target_shape = [1] * (len(const_or_var_1.shape) - 1) + [dim_2]
+            if isinstance(const_or_var_2, np.ndarray):
+                const_or_var_2 = const_or_var_2.reshape(target_shape)
+            else:
+                const_or_var_2 = tf.reshape(const_or_var_2, target_shape)
+            return const_or_var_1, const_or_var_2
 
     # If either operand have shape of all 1's, do not broadcast and return as is
     shape_for_judging_skip_processing_1 = [
@@ -3815,6 +3851,7 @@ def dummy_onnx_inference(
     enable_ort_output_memmap: bool = False,
     ort_output_memmap_dir: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
+    input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
 
@@ -3850,6 +3887,9 @@ def dummy_onnx_inference(
     ort_output_memmap_dir: Optional[str]
         Directory to store memmap files. If not specified, a temporary
         directory is created and removed on exit.
+
+    input_datas_for_validation: Optional[Dict[str, np.ndarray]]
+        Optional dict to be filled with the input tensors used for inference.
 
     Returns
     ----------
@@ -4046,6 +4086,9 @@ def dummy_onnx_inference(
                         perm=[0,3,1,2],
                     ).numpy().astype(input_dtype)
 
+    if input_datas_for_validation is not None:
+        input_datas_for_validation.update(input_datas)
+
     dtype_sizes = {
         np.dtype('float16'): 2,
         np.dtype('float32'): 4,
@@ -4187,6 +4230,7 @@ def dummy_tf_inference(
     verification_datas: Optional[List[np.ndarray]] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
+    input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
@@ -4209,6 +4253,8 @@ def dummy_tf_inference(
 
     custom_input_op_name_np_data_path
         Path to Numpy file for custom data used for dummy inference
+    input_datas_for_validation: Optional[Dict[str, np.ndarray]]
+        Optional dict to be filled with the input tensors used for inference.
 
     Returns
     ----------
@@ -4347,6 +4393,10 @@ def dummy_tf_inference(
                         input_size,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
+
+    if input_datas_for_validation is not None:
+        input_datas_for_validation.update(input_datas)
+
     outputs = model(
         inputs={
             input.name: input_datas[input.name] for input in inputs

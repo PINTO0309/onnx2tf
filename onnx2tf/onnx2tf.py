@@ -62,6 +62,73 @@ from onnx2tf.utils.enums import (
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
+def apply_nonzero_passthrough(
+    *,
+    graph: gs.Graph,
+    onnx_tensor_infos: Optional[Dict[str, np.ndarray]],
+    onnx_input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
+    update_graph_shape: bool = False,
+) -> None:
+    if onnx_tensor_infos is None:
+        return
+    for graph_node in graph.nodes:
+        if graph_node.op != 'NonZero':
+            continue
+        if len(graph_node.inputs) == 0 or len(graph_node.outputs) == 0:
+            continue
+        nonzero_input = graph_node.inputs[0]
+        nonzero_output = graph_node.outputs[0]
+        passthrough_tensor = None
+        input_name = nonzero_input.name
+
+        if input_name in onnx_tensor_infos:
+            passthrough_tensor = onnx_tensor_infos[input_name]
+        elif onnx_input_datas_for_validation and input_name in onnx_input_datas_for_validation:
+            passthrough_tensor = onnx_input_datas_for_validation[input_name]
+        elif hasattr(nonzero_input, 'values'):
+            passthrough_tensor = nonzero_input.values
+
+        if passthrough_tensor is not None:
+            onnx_tensor_infos[nonzero_output.name] = passthrough_tensor
+            if update_graph_shape and hasattr(passthrough_tensor, 'shape'):
+                nonzero_output.shape = list(passthrough_tensor.shape)
+
+def apply_nonzero_passthrough_tf(
+    *,
+    graph: gs.Graph,
+    tf_layers_dict: Dict[str, Any],
+    tf_tensor_infos: Optional[Dict[str, np.ndarray]],
+    tf_input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
+) -> None:
+    if tf_tensor_infos is None:
+        return
+    for graph_node in graph.nodes:
+        if graph_node.op != 'NonZero':
+            continue
+        if len(graph_node.inputs) == 0 or len(graph_node.outputs) == 0:
+            continue
+        input_name = graph_node.inputs[0].name
+        output_name = graph_node.outputs[0].name
+        input_info = tf_layers_dict.get(input_name)
+        output_info = tf_layers_dict.get(output_name)
+        if input_info is None or output_info is None:
+            continue
+        input_tf_node = input_info.get('tf_node')
+        output_tf_node = output_info.get('tf_node')
+        if input_tf_node is None or output_tf_node is None:
+            continue
+        input_tf_name = input_tf_node.name
+        output_tf_name = output_tf_node.name
+        passthrough_tensor = None
+
+        if input_tf_name in tf_tensor_infos:
+            passthrough_tensor = tf_tensor_infos[input_tf_name]
+        elif tf_input_datas_for_validation and input_tf_name in tf_input_datas_for_validation:
+            passthrough_tensor = tf_input_datas_for_validation[input_tf_name]
+
+        if passthrough_tensor is not None:
+            tf_tensor_infos[output_tf_name] = passthrough_tensor
+
 def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
@@ -1113,6 +1180,7 @@ def convert(
         # Used to verify the output error of each OP in the TensorFlow model.
         full_ops_output_names = []
         onnx_tensor_infos_for_validation = None
+        onnx_input_datas_for_validation = {}
         for graph_node in graph.nodes:
             full_ops_output_names_sub = []
             for graph_node_output in graph_node.outputs:
@@ -1132,6 +1200,7 @@ def convert(
                     enable_ort_output_memmap=onnxruntime_output_memmap,
                     ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                     shape_hints=shape_hints if (check_onnx_tf_outputs_elementwise_close or check_onnx_tf_outputs_elementwise_close_full) else None,
+                    input_datas_for_validation=onnx_input_datas_for_validation,
                 )
             """
             onnx_tensor_infos_for_validation:
@@ -1148,12 +1217,20 @@ def convert(
                         in zip(full_ops_output_names, onnx_outputs_for_validation)
             }
             del onnx_outputs_for_validation
+
+            apply_nonzero_passthrough(
+                graph=graph,
+                onnx_tensor_infos=onnx_tensor_infos_for_validation,
+                onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+                update_graph_shape=True,
+            )
         except Exception as ex:
             warn(
                 f'The optimization process for shape estimation is skipped ' +
                 f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
             )
             warn(f'{ex}')
+            onnx_input_datas_for_validation = None
         additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
@@ -2061,6 +2138,7 @@ def convert(
             dummy_onnx_outputs = None
             try:
                 # ONNX dummy inference
+                onnx_input_datas_for_validation = {}
                 dummy_onnx_outputs: List[np.ndarray] = \
                     dummy_onnx_inference(
                         onnx_graph=onnx_graph,
@@ -2072,6 +2150,7 @@ def convert(
                         enable_ort_output_memmap=onnxruntime_output_memmap,
                         ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                         shape_hints=shape_hints,
+                        input_datas_for_validation=onnx_input_datas_for_validation,
                     )
             except Exception as ex:
                 warn(
@@ -2081,6 +2160,7 @@ def convert(
                 warn(f'{ex}')
             else:
                 # TF dummy inference
+                tf_input_datas_for_validation = {}
                 tf_tensor_infos: Dict[Any] = \
                     dummy_tf_inference(
                         model=model,
@@ -2088,6 +2168,7 @@ def convert(
                         test_data_nhwc=test_data_nhwc,
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         shape_hints=shape_hints,
+                        input_datas_for_validation=tf_input_datas_for_validation,
                         keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                         keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                         keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
@@ -2097,6 +2178,17 @@ def convert(
                     output_name: dummy_onnx_output \
                         for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
                 }
+                apply_nonzero_passthrough(
+                    graph=graph,
+                    onnx_tensor_infos=onnx_tensor_infos,
+                    onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+                )
+                apply_nonzero_passthrough_tf(
+                    graph=graph,
+                    tf_layers_dict=tf_layers_dict,
+                    tf_tensor_infos=tf_tensor_infos,
+                    tf_input_datas_for_validation=tf_input_datas_for_validation,
+                )
                 """
                 np.allclose(
                     dummy_onnx_outputs,
@@ -2326,6 +2418,7 @@ def convert(
                 # Initial accuracy check
                 try:
                     # ONNX dummy inference
+                    onnx_input_datas_for_validation = {}
                     dummy_onnx_outputs: List[np.ndarray] = \
                         dummy_onnx_inference(
                             onnx_graph=onnx_graph,
@@ -2337,9 +2430,11 @@ def convert(
                             enable_ort_output_memmap=onnxruntime_output_memmap,
                             ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                             shape_hints=shape_hints,
+                            input_datas_for_validation=onnx_input_datas_for_validation,
                         )
 
                     # TF dummy inference
+                    tf_input_datas_for_validation = {}
                     tf_tensor_infos: Dict[Any] = \
                         dummy_tf_inference(
                             model=validation_model,
@@ -2347,6 +2442,7 @@ def convert(
                             test_data_nhwc=test_data_nhwc,
                             custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                             shape_hints=shape_hints,
+                            input_datas_for_validation=tf_input_datas_for_validation,
                             keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                             keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
@@ -2357,6 +2453,17 @@ def convert(
                         output_name: dummy_onnx_output \
                             for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
                     }
+                    apply_nonzero_passthrough(
+                        graph=graph,
+                        onnx_tensor_infos=onnx_tensor_infos,
+                        onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+                    )
+                    apply_nonzero_passthrough_tf(
+                        graph=graph,
+                        tf_layers_dict=tf_layers_dict,
+                        tf_tensor_infos=tf_tensor_infos,
+                        tf_input_datas_for_validation=tf_input_datas_for_validation,
+                    )
 
                     input_names = [k.name for k in inputs]
                     for k, v in tf_layers_dict.items():
