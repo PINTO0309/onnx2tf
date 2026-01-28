@@ -21,6 +21,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: Unix",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -57,6 +58,8 @@ Issues = "https://github.com/PINTO0309/onnx2tf/issues"
 override-dependencies = [
     "onnx==1.19.0",
     "onnxsim==0.4.36",
+    "ml-dtypes==0.5.1",
+    "numpy==1.26.4",
 ]
 
 [tool.uv.build-backend]
