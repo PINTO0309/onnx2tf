@@ -21,6 +21,7 @@ from onnx2tf.utils.common_functions import (
     disable_unnecessary_transpose,
     shape_unmatched_special_avoidance_workaround,
     merge_two_consecutive_identical_ops_into_one,
+    transpose_with_flexing_deterrence,
     deterring_shape_corruption_due_to_broadcast,
     acquisition_of_validation_data,
     onnx_tf_tensor_validation,
@@ -296,6 +297,117 @@ def make_node(
                 name=graph_node.name,
             )
         tf_type = tf.identity
+
+    def _normalize_dim(dim):
+        return int(dim) if isinstance(dim, (int, np.integer)) else None
+
+    def _get_static_shape(tensor):
+        shape = getattr(tensor, 'shape', None)
+        if shape is None or shape == tf.TensorShape(None):
+            return None
+        return [_normalize_dim(dim) for dim in list(shape)]
+
+    def _shape_match_with_none(expected, actual):
+        if expected is None or actual is None:
+            return False
+        if len(expected) != len(actual):
+            return False
+        for e_dim, a_dim in zip(expected, actual):
+            e_dim = _normalize_dim(e_dim)
+            a_dim = _normalize_dim(a_dim)
+            if e_dim is None or a_dim is None:
+                continue
+            if e_dim != a_dim:
+                return False
+        return True
+
+    def _perm_shape(shape, perm):
+        return [shape[i] for i in perm] if shape is not None else None
+
+    def _limited_perms(rank):
+        identity = list(range(rank))
+        perms = [identity]
+        if rank == 3:
+            perms.append([0, 2, 1])
+        elif rank == 4:
+            perms.extend([[0, 2, 3, 1], [0, 3, 1, 2]])
+        elif rank == 5:
+            perms.extend([[0, 2, 3, 4, 1], [0, 4, 1, 2, 3]])
+        return perms
+
+    def _ranked_perms(perms, input_shape, onnx_shape):
+        if input_shape is None or onnx_shape is None:
+            return perms
+        scored = []
+        for perm in perms:
+            score = 0
+            for out_idx, in_idx in enumerate(perm):
+                if out_idx >= len(onnx_shape) or in_idx >= len(input_shape):
+                    continue
+                o_dim = _normalize_dim(onnx_shape[out_idx])
+                i_dim = input_shape[in_idx]
+                if isinstance(o_dim, int) and isinstance(i_dim, int) and o_dim == i_dim:
+                    score += o_dim
+            scored.append((score, 1 if perm == list(range(len(perm))) else 0, perm))
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [p for _, _, p in scored]
+
+    # Rescue guard for unexpected broadcasted shapes
+    if not enable_gelu:
+        expected_shape = None
+        if graph_node_output_shape is not None:
+            expected_shape = [_normalize_dim(dim) for dim in list(graph_node_output_shape)]
+        output_shape = _get_static_shape(tf_layers_dict[graph_node_output.name]['tf_node'])
+        input_shape_1 = _get_static_shape(input_tensor_1)
+        input_shape_2 = _get_static_shape(input_tensor_2)
+        if expected_shape is not None \
+            and output_shape is not None \
+            and not _shape_match_with_none(expected_shape, output_shape) \
+            and input_shape_1 is not None \
+            and input_shape_2 is not None \
+            and len(input_shape_1) == len(expected_shape) \
+            and len(input_shape_2) == len(expected_shape):
+
+            rank = len(expected_shape)
+            perms = _limited_perms(rank)
+            perm_list_1 = _ranked_perms(perms, input_shape_1, expected_shape)
+            perm_list_2 = _ranked_perms(perms, input_shape_2, expected_shape)
+            rescue_done = False
+            for perm_1 in perm_list_1:
+                for perm_2 in perm_list_2:
+                    try_input_1 = transpose_with_flexing_deterrence(
+                        input_tensor=input_tensor_1,
+                        perm=perm_1,
+                        **kwargs,
+                    )
+                    try_input_2 = transpose_with_flexing_deterrence(
+                        input_tensor=input_tensor_2,
+                        perm=perm_2,
+                        **kwargs,
+                    )
+                    try:
+                        rescue_tensor = tf.math.add(
+                            x=try_input_1 \
+                                if not isinstance(try_input_1, np.ndarray) \
+                                    else tf.convert_to_tensor(try_input_1),
+                            y=try_input_2 \
+                                if not isinstance(try_input_2, np.ndarray) \
+                                    else tf.convert_to_tensor(try_input_2),
+                            name=graph_node.name,
+                        )
+                    except Exception as ex:
+                        continue
+
+                    rescue_shape = _get_static_shape(rescue_tensor)
+                    if _shape_match_with_none(expected_shape, rescue_shape):
+                        input_tensor_1 = try_input_1
+                        input_tensor_2 = try_input_2
+                        tf_layers_dict[graph_node_output.name]['tf_node'] = rescue_tensor
+                        tf_type = tf.math.add
+                        rescue_done = True
+                        break
+                if rescue_done:
+                    break
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
