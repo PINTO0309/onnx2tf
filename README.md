@@ -202,6 +202,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |ReduceProd|:heavy_check_mark:|
   |ReduceSum|:heavy_check_mark:|
   |ReduceSumSquare|:heavy_check_mark:|
+  |RegexFullMatch|:heavy_check_mark:|
   |Relu|:heavy_check_mark:|
   |Reshape|:heavy_check_mark:|
   |Resize|:heavy_check_mark:|
@@ -241,7 +242,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Squeeze|:heavy_check_mark:|
   |STFT|:white_check_mark:|
   |StringConcat|:heavy_check_mark:|
-  |StringNormalizer|:white_check_mark:|
+  |StringNormalizer|:heavy_check_mark:|
   |StringSplit|:heavy_check_mark:|
   |Sub|:heavy_check_mark:|
   |Sum|:heavy_check_mark:|
