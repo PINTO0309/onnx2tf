@@ -31,49 +31,64 @@ class StringNormalizer(tf_keras.layers.Layer):
         self.case_change_action = case_change_action
         self.is_case_sensitive = is_case_sensitive
         self.locale = locale
-        self.stopwords = set(stopwords)
+        self.stopwords = list(stopwords) if stopwords is not None else []
+
+    def _apply_case_action(self, inputs):
+        if self.case_change_action == "LOWER":
+            return tf.strings.lower(inputs)
+        if self.case_change_action == "UPPER":
+            return tf.strings.upper(inputs)
+        return inputs
+
+    def _stopword_mask(self, inputs):
+        if len(self.stopwords) == 0:
+            return tf.ones_like(inputs, dtype=tf.bool)
+        stopwords = tf.constant(self.stopwords, dtype=tf.string)
+        compare_inputs = inputs
+        compare_stopwords = stopwords
+        if not self.is_case_sensitive:
+            compare_inputs = tf.strings.lower(inputs)
+            compare_stopwords = tf.strings.lower(stopwords)
+        matches = tf.reduce_any(
+            tf.equal(
+                tf.expand_dims(compare_inputs, axis=-1),
+                compare_stopwords,
+            ),
+            axis=-1,
+        )
+        return tf.logical_not(matches)
 
     def call(self, inputs):
-        if not self.is_case_sensitive:
-            # if self.locale:
-            #     inputs = text.case_fold_utf8(inputs)
-            # else:
-            #     inputs = tf.strings.lower(inputs)
-            inputs = tf.strings.lower(inputs)
-        elif self.case_change_action == "LOWER":
-            inputs = tf.strings.lower(inputs)
-        elif self.case_change_action == "UPPER":
-            inputs = tf.strings.upper(inputs)
-
-        # if self.tokenizer:
-        #     tokenized = self.tokenizer.tokenize(inputs)
-        # else:
-        #     tokenized = tf.strings.split(inputs)
-        tokenized = tf.strings.split(inputs)
-
-        if not self.is_case_sensitive:
-            # stopwords = [
-            #     tf.strings.lower(word) \
-            #         if self.locale is None else text.case_fold_utf8(word) \
-            #             for word in self.stopwords
-            # ]
-            stopwords = [
-                tf.strings.lower(word) for word in self.stopwords
-            ]
-        else:
-            stopwords = self.stopwords
-
-        return \
-            tf.ragged.boolean_mask(
-                tokenized,
-                ~tf.reduce_any(
-                    tf.equal(
-                        tf.expand_dims(tokenized, axis=-1),
-                        stopwords,
-                    ),
-                    axis=-1,
-                )
+        def process_1d():
+            mask = self._stopword_mask(inputs)
+            filtered = tf.boolean_mask(inputs, mask)
+            filtered = self._apply_case_action(filtered)
+            return tf.cond(
+                tf.equal(tf.size(filtered), 0),
+                lambda: tf.constant([""], dtype=tf.string),
+                lambda: filtered,
             )
+
+        def process_2d():
+            row = inputs[0]
+            mask = self._stopword_mask(row)
+            filtered = tf.boolean_mask(row, mask)
+            filtered = self._apply_case_action(filtered)
+            filtered = tf.expand_dims(filtered, axis=0)
+            return tf.cond(
+                tf.equal(tf.size(filtered), 0),
+                lambda: tf.constant([[""]], dtype=tf.string),
+                lambda: filtered,
+            )
+
+        input_rank = inputs.shape.rank
+        if input_rank is None:
+            input_rank = tf.rank(inputs)
+        if isinstance(input_rank, int):
+            if input_rank == 1:
+                return process_1d()
+            return process_2d()
+        return tf.cond(tf.equal(input_rank, 1), process_1d, process_2d)
 
 
 @print_node_info

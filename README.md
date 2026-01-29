@@ -133,7 +133,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |HardSwish|:heavy_check_mark:|
   |Identity|:heavy_check_mark:|
   |If|:heavy_check_mark:|
-  |ImageDecoder|**Help wanted**|
+  |ImageDecoder|:white_check_mark:|
   |Input|:heavy_check_mark:|
   |InstanceNormalization|:heavy_check_mark:|
   |Inverse|:heavy_check_mark:|
@@ -165,7 +165,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Mul|:heavy_check_mark:|
   |Multinomial|:heavy_check_mark:|
   |Neg|:heavy_check_mark:|
-  |NegativeLogLikelihoodLoss|**Help wanted**|
+  |NegativeLogLikelihoodLoss|:heavy_check_mark:|
   |NonMaxSuppression|:heavy_check_mark:|
   |NonZero|:heavy_check_mark:|
   |Optional|**Help wanted**|
@@ -202,19 +202,20 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |ReduceProd|:heavy_check_mark:|
   |ReduceSum|:heavy_check_mark:|
   |ReduceSumSquare|:heavy_check_mark:|
+  |RegexFullMatch|:heavy_check_mark:|
   |Relu|:heavy_check_mark:|
   |Reshape|:heavy_check_mark:|
   |Resize|:heavy_check_mark:|
   |ReverseSequence|:heavy_check_mark:|
   |RNN|:heavy_check_mark:|
   |RoiAlign|:heavy_check_mark:|
-  |RotaryEmbedding|**Help wanted**|
+  |RotaryEmbedding|:heavy_check_mark:|
   |Round|:heavy_check_mark:|
   |ScaleAndTranslate|:heavy_check_mark:|
   |Scatter|:heavy_check_mark:|
   |ScatterElements|:heavy_check_mark:|
   |ScatterND|:heavy_check_mark:|
-  |Scan|**Help wanted**|
+  |Scan|:heavy_check_mark:|
   |Selu|:heavy_check_mark:|
   |SequenceAt|:heavy_check_mark:|
   |SequenceConstruct|:heavy_check_mark:|
@@ -231,7 +232,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Size|:heavy_check_mark:|
   |Slice|:heavy_check_mark:|
   |Softmax|:heavy_check_mark:|
-  |SoftmaxCrossEntropyLoss|**Help wanted**|
+  |SoftmaxCrossEntropyLoss|:heavy_check_mark:|
   |Softplus|:heavy_check_mark:|
   |Softsign|:heavy_check_mark:|
   |SpaceToDepth|:heavy_check_mark:|
@@ -240,14 +241,14 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Sqrt|:heavy_check_mark:|
   |Squeeze|:heavy_check_mark:|
   |STFT|:white_check_mark:|
-  |StringConcat|**Help wanted**|
-  |StringNormalizer|:white_check_mark:|
-  |StringSplit|**Help wanted**|
+  |StringConcat|:heavy_check_mark:|
+  |StringNormalizer|:heavy_check_mark:|
+  |StringSplit|:heavy_check_mark:|
   |Sub|:heavy_check_mark:|
   |Sum|:heavy_check_mark:|
   |Tan|:heavy_check_mark:|
   |Tanh|:heavy_check_mark:|
-  |TensorScatter|**Help wanted**|
+  |TensorScatter|:heavy_check_mark:|
   |TfIdfVectorizer|**Help wanted**|
   |ThresholdedRelu|:heavy_check_mark:|
   |Tile|:heavy_check_mark:|
@@ -322,7 +323,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.17
+  ghcr.io/pinto0309/onnx2tf:1.29.18
 
   or
 
@@ -330,7 +331,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.17
+  docker.io/pinto0309/onnx2tf:1.29.18
 
   or
 
