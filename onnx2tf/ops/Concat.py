@@ -291,6 +291,78 @@ def make_node(
         tf_type = tf.constant
 
     else:
+        def _normalize_dim(dim):
+            return int(dim) if isinstance(dim, (int, np.integer)) else None
+
+        def _get_static_shape(tensor):
+            shape = getattr(tensor, 'shape', None)
+            if shape is None or shape == tf.TensorShape(None):
+                return None
+            return [_normalize_dim(dim) for dim in list(shape)]
+
+        def _shape_match_with_none(onnx_shape, tf_shape):
+            if onnx_shape is None or tf_shape is None:
+                return False
+            if len(onnx_shape) != len(tf_shape):
+                return False
+            for o_dim, t_dim in zip(onnx_shape, tf_shape):
+                o_dim = _normalize_dim(o_dim)
+                t_dim = _normalize_dim(t_dim)
+                if o_dim is None or t_dim is None:
+                    continue
+                if o_dim != t_dim:
+                    return False
+            return True
+
+        def _can_concat_shapes(shapes, axis):
+            if shapes is None or any(s is None for s in shapes):
+                return True
+            rank = len(shapes[0])
+            for idx in range(rank):
+                if idx == axis:
+                    continue
+                dims = [s[idx] for s in shapes]
+                known = [d for d in dims if isinstance(d, int)]
+                if len(known) >= 2 and len(set(known)) != 1:
+                    return False
+            return True
+
+        def _perm_shape(shape, perm):
+            return [shape[i] for i in perm] if shape is not None else None
+
+        def _limited_perms(rank):
+            identity = list(range(rank))
+            perms = [identity]
+            if rank == 3:
+                perms.append([0, 2, 1])
+            elif rank == 4:
+                perms.extend([[0, 2, 3, 1], [0, 3, 1, 2]])
+            elif rank == 5:
+                perms.extend([[0, 2, 3, 4, 1], [0, 4, 1, 2, 3]])
+            return perms
+
+        def _base_perms(rank):
+            if rank <= 1:
+                return [list(range(rank))]
+            return [list(p) for p in itertools.permutations(range(rank))]
+
+        def _ranked_perms(perms, input_shape, axis, onnx_shape):
+            identity = list(range(len(perms[0]))) if perms else []
+            scored = []
+            for perm in perms:
+                score = 0
+                if input_shape is not None and onnx_shape is not None:
+                    for out_idx, in_idx in enumerate(perm):
+                        if out_idx == axis:
+                            continue
+                        o_dim = _normalize_dim(onnx_shape[out_idx]) if out_idx < len(onnx_shape) else None
+                        i_dim = input_shape[in_idx] if in_idx < len(input_shape) else None
+                        if isinstance(o_dim, int) and isinstance(i_dim, int) and o_dim == i_dim:
+                            score += o_dim
+                scored.append((score, 1 if perm == identity else 0, perm))
+            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            return [p for _, _, p in scored]
+
         try:
             # normal concat attempt
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -301,35 +373,109 @@ def make_node(
                 )
         except:
             # Workaround to reduce error rate when merging tensors with undefined dimensions
-            try:
-                # Attempts to bind with the axis specified in ONNX
-                tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                    tf.concat(
-                        values=values,
-                        axis=int(graph_node.attrs.get('axis', 0)),
-                        name=graph_node.name,
-                    )
-                axis = int(graph_node.attrs.get('axis', 0))
-            except:
-                # If not successful with the same axis as ONNX, try to combine by other axes
-                # Trial in reverse order from the axis at the end
-                value_rank = len(values[0].shape)
-                succeed = False
-                for idx in reversed(range(value_rank)):
+            original_values = values
+            original_shapes = [_get_static_shape(v) for v in original_values]
+            value_rank = getattr(original_values[0].shape, 'rank', None)
+            if value_rank is None:
+                value_rank = len(original_values[0].shape)
+
+            onnx_shape_list = None
+            if onnx_output_shape is not None:
+                onnx_shape_list = [_normalize_dim(dim) for dim in list(onnx_output_shape)]
+
+            onnx_axis = int(graph_node.attrs.get('axis', 0))
+            onnx_axis = onnx_axis + value_rank if onnx_axis < 0 else onnx_axis
+
+            def _axis_score(axis_idx):
+                if onnx_shape_list is not None and axis_idx < len(onnx_shape_list):
+                    onnx_dim = onnx_shape_list[axis_idx]
+                    if isinstance(onnx_dim, int):
+                        return onnx_dim
+                score = 0
+                for shape in original_shapes:
+                    if shape is None or axis_idx >= len(shape):
+                        continue
+                    dim = shape[axis_idx]
+                    if isinstance(dim, int):
+                        score += dim
+                return score
+
+            axis_candidates = list(range(value_rank))
+            axis_candidates.sort(
+                key=lambda a: (_axis_score(a), 1 if a == onnx_axis else 0),
+                reverse=True,
+            )
+
+            base_perms = _base_perms(value_rank)
+            max_combo = 20000
+            if len(base_perms) ** len(original_values) > max_combo:
+                base_perms = _limited_perms(value_rank)
+
+            succeed = False
+            matched = False
+            chosen_axis = None
+            chosen_values = None
+            chosen_tensor = None
+
+            for axis_idx in axis_candidates:
+                perm_lists = [
+                    _ranked_perms(base_perms, shape, axis_idx, onnx_shape_list)
+                    for shape in original_shapes
+                ]
+                for perm_combo in itertools.product(*perm_lists):
+                    permuted_shapes = [
+                        _perm_shape(shape, perm) for shape, perm in zip(original_shapes, perm_combo)
+                    ]
+                    if not _can_concat_shapes(permuted_shapes, axis_idx):
+                        continue
+                    try_values = [
+                        value if perm == list(range(value_rank)) else
+                        transpose_with_flexing_deterrence(
+                            input_tensor=value,
+                            perm=perm,
+                            **kwargs,
+                        )
+                        for value, perm in zip(original_values, perm_combo)
+                    ]
                     try:
-                        tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                        concat_tensor = \
                             tf.concat(
-                                values=values,
-                                axis=idx,
+                                values=try_values,
+                                axis=axis_idx,
                                 name=graph_node.name,
                             )
-                        axis = idx
-                        succeed = True
-                        break
                     except:
-                        pass
-                if not succeed:
-                    raise
+                        continue
+
+                    if not succeed:
+                        succeed = True
+                        chosen_axis = axis_idx
+                        chosen_values = try_values
+                        chosen_tensor = concat_tensor
+
+                    if onnx_shape_list is None:
+                        matched = True
+                        chosen_axis = axis_idx
+                        chosen_values = try_values
+                        chosen_tensor = concat_tensor
+                        break
+
+                    output_shape = _get_static_shape(concat_tensor)
+                    if _shape_match_with_none(onnx_shape_list, output_shape):
+                        matched = True
+                        chosen_axis = axis_idx
+                        chosen_values = try_values
+                        chosen_tensor = concat_tensor
+                        break
+                if matched:
+                    break
+
+            if succeed:
+                tf_layers_dict[graph_node_output.name]['tf_node'] = chosen_tensor
+                axis = chosen_axis
+                values = chosen_values
+            else:
+                raise
 
         # Attempts to force axis correction when the number of axes in the combined tensor do not exactly match.
         # However, if more than 2 patterns of correct answers exist, give up the correction.
