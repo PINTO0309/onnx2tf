@@ -1,9 +1,9 @@
+import sys
 import random
 random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-import tf_keras
 import onnx_graphsurgeon as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
@@ -14,57 +14,32 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.logging import *
 
 
-class Col2ImLayer(tf_keras.layers.Layer):
-    def __init__(self):
-        super(Col2ImLayer, self).__init__()
+def _build_col2im_kernel(
+    *,
+    k_h,
+    k_w,
+    dilation_h,
+    dilation_w,
+    dtype,
+):
+    k_h = tf.cast(k_h, tf.int32)
+    k_w = tf.cast(k_w, tf.int32)
+    eff_k_h = (k_h - 1) * dilation_h + 1
+    eff_k_w = (k_w - 1) * dilation_w + 1
 
-    def call(
-        self,
-        input_tensor,
-        input_block_shape,
-        strides,
-        input_image_shape,
-        pads,
-        dilations,
-        output_shape = None,
-    ):
-        N, _, L = input_tensor.shape
-        if output_shape is not None:
-            C = tf.convert_to_tensor(output_shape[1])
-            output_shape = tf.convert_to_tensor([output_shape[0]] + [s for s in output_shape[2:]] + [output_shape[1]])
-        else:
-            C = tf.convert_to_tensor(input_tensor.shape[1] // (input_block_shape[0] * input_block_shape[1]))
-            output_shape = tf.convert_to_tensor([N] + input_image_shape + [C])
-        im = tf.TensorArray(input_tensor.dtype, size=N, dynamic_size=True)
+    ky = tf.reshape(tf.repeat(tf.range(k_h), k_w), tf.stack([k_h, k_w]))
+    kx = tf.reshape(tf.tile(tf.range(k_w), [k_h]), tf.stack([k_h, k_w]))
 
-        def loop_over_l(n, im_n, l):
-            row_idx = tf.convert_to_tensor((l // ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[0])
-            col_idx = tf.convert_to_tensor((l % ((input_image_shape[1] - (input_block_shape[1] - 1) * dilations[1] - 1 + strides[1]) // strides[1])) * strides[1])
-
-            def loop_over_c(c, im_n):
-                patch_idx = tf.convert_to_tensor(c * input_block_shape[0] * input_block_shape[1])
-                patch = tf.reshape(input_tensor[n, patch_idx:patch_idx + input_block_shape[0] * input_block_shape[1], l], input_block_shape)
-                if dilations[0] > 1 or dilations[1] > 1:
-                    dilated_patch = tf.zeros([(input_block_shape[0] - 1) * dilations[0] + 1, (input_block_shape[1] - 1) * dilations[1] + 1], dtype=patch.dtype)
-                    for i in tf.range(input_block_shape[0]):
-                        for j in tf.range(input_block_shape[1]):
-                            dilated_patch = tf.tensor_scatter_nd_update(dilated_patch, [[i * dilations[0], j * dilations[1]]], [patch[i, j]])
-                    patch = dilated_patch
-                patch_shape = tf.shape(patch)
-                indices = tf.reshape(tf.stack(tf.meshgrid(row_idx + tf.range(patch_shape[0]), col_idx + tf.range(patch_shape[1]), c, indexing='ij'), axis=-1), [-1, 3])
-                updates = tf.reshape(patch, [-1])
-                return tf.tensor_scatter_nd_add(im_n, indices, updates)
-            return tf.reduce_sum(tf.map_fn(lambda c: loop_over_c(c, im_n), tf.range(C), dtype=im_n.dtype), axis=0)
-
-        def loop_over_n(n):
-            im_n = tf.zeros(output_shape[1:], dtype=input_tensor.dtype)
-            return tf.reduce_sum(tf.map_fn(lambda l: loop_over_l(n, im_n, l), tf.range(L), dtype=im_n.dtype), axis=0)
-
-        im = tf.map_fn(loop_over_n, tf.range(N), dtype=input_tensor.dtype)
-
-        return im[:, pads[0]:input_image_shape[0]-pads[2], pads[1]:input_image_shape[1]-pads[3], :]
+    positions = ky * dilation_h * eff_k_w + kx * dilation_w
+    positions = tf.reshape(positions, [-1])
+    one_hot = tf.one_hot(positions, depth=eff_k_h * eff_k_w, dtype=dtype)
+    kernel = tf.reshape(one_hot, tf.stack([k_h * k_w, eff_k_h, eff_k_w]))
+    kernel = tf.transpose(kernel, [1, 2, 0])
+    kernel = tf.expand_dims(kernel, axis=2)
+    return kernel, eff_k_h, eff_k_w
 
 
 @print_node_info
@@ -114,10 +89,9 @@ def make_node(
     input_block_shape = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
-    spatial_size = len(input_image_shape)
-    dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    pads = graph_node.attrs.get('pads', [0, 0] * spatial_size)
-    strides = graph_node.attrs.get('strides', [1] * spatial_size)
+    dilations = graph_node.attrs.get('dilations', [1, 1])
+    pads = graph_node.attrs.get('pads', [0, 0, 0, 0])
+    strides = graph_node.attrs.get('strides', [1, 1])
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -142,17 +116,87 @@ def make_node(
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Generation of TF OP
-    col2im = Col2ImLayer()
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        col2im(
-            input_tensor=input_tensor,
-            input_block_shape=input_block_shape,
-            strides=strides,
-            input_image_shape=input_image_shape,
-            pads=pads,
-            dilations=dilations,
-            output_shape=shape,
-        )
+    original_dtype = input_tensor.dtype
+    compute_dtype = original_dtype
+    if original_dtype not in (tf.float16, tf.float32, tf.float64, tf.bfloat16):
+        if original_dtype in (tf.complex64, tf.complex128):
+            error('Col2Im does not support complex types in non-Flex implementation.')
+            sys.exit(1)
+        compute_dtype = tf.float32
+        input_tensor = tf.cast(input_tensor, compute_dtype)
+
+    input_image_shape = tf.cast(input_image_shape, tf.int32)
+    input_block_shape = tf.cast(input_block_shape, tf.int32)
+
+    if input_image_shape.shape is not None \
+        and input_image_shape.shape.rank is not None \
+        and input_image_shape.shape.rank != 1:
+        error('Col2Im supports only 2D image_shape input.')
+        sys.exit(1)
+
+    if input_block_shape.shape is not None \
+        and input_block_shape.shape.rank is not None \
+        and input_block_shape.shape.rank != 1:
+        error('Col2Im supports only 2D block_shape input.')
+        sys.exit(1)
+
+    k_h = input_block_shape[0]
+    k_w = input_block_shape[1]
+    h_img = input_image_shape[0]
+    w_img = input_image_shape[1]
+
+    stride_h, stride_w = strides
+    dilation_h, dilation_w = dilations
+    pad_top, pad_left, pad_bottom, pad_right = pads
+
+    kernel, eff_k_h, eff_k_w = _build_col2im_kernel(
+        k_h=k_h,
+        k_w=k_w,
+        dilation_h=dilation_h,
+        dilation_w=dilation_w,
+        dtype=compute_dtype,
+    )
+
+    h_pad = h_img + pad_top + pad_bottom
+    w_pad = w_img + pad_left + pad_right
+
+    out_h = tf.math.floordiv(h_pad - eff_k_h, stride_h) + 1
+    out_w = tf.math.floordiv(w_pad - eff_k_w, stride_w) + 1
+
+    input_shape = tf.shape(input_tensor)
+    n = input_shape[0]
+    ck = input_shape[1]
+    c = tf.math.floordiv(ck, k_h * k_w)
+
+    cols = tf.reshape(
+        input_tensor,
+        tf.stack([n, c, k_h * k_w, out_h, out_w]),
+    )
+    cols = tf.transpose(cols, [0, 1, 3, 4, 2])
+    cols = tf.reshape(cols, tf.stack([n * c, out_h, out_w, k_h * k_w]))
+
+    output_shape = tf.stack([n * c, h_pad, w_pad, 1])
+    output = tf.nn.conv2d_transpose(
+        cols,
+        kernel,
+        output_shape=output_shape,
+        strides=[1, stride_h, stride_w, 1],
+        padding='VALID',
+    )
+
+    output = tf.reshape(output, tf.stack([n, c, h_pad, w_pad]))
+    output = tf.transpose(output, [0, 2, 3, 1])
+
+    output = tf.slice(
+        output,
+        tf.stack([0, pad_top, pad_left, 0]),
+        tf.stack([-1, h_img, w_img, -1]),
+    )
+
+    if output.dtype != original_dtype:
+        output = tf.cast(output, original_dtype)
+
+    tf_layers_dict[graph_node_output.name]['tf_node'] = output
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
