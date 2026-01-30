@@ -95,11 +95,11 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Cos|:heavy_check_mark:|
   |CumProd|:heavy_check_mark:|
   |CumSum|:heavy_check_mark:|
-  |DeformConv|**Help wanted**|
+  |DeformConv|:white_check_mark:|
   |DepthToSpace|:heavy_check_mark:|
   |Det|:heavy_check_mark:|
   |DequantizeLinear|:heavy_check_mark:|
-  |DFT|**Help wanted**|
+  |DFT|:white_check_mark:|
   |Div|:heavy_check_mark:|
   |Dropout|:heavy_check_mark:|
   |DynamicQuantizeLinear|:heavy_check_mark:|
@@ -323,7 +323,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.18
+  ghcr.io/pinto0309/onnx2tf:1.29.19
 
   or
 
@@ -331,7 +331,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.18
+  docker.io/pinto0309/onnx2tf:1.29.19
 
   or
 
