@@ -2,6 +2,8 @@
 
 import os
 import re
+import shutil
+import tempfile
 __path__ = (os.path.dirname(__file__), )
 with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
@@ -51,6 +53,7 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_outputs,
     rewrite_tflite_inout_opname,
     check_cuda_enabled,
+    check_has_external_data,
 )
 from onnx2tf.utils.json_auto_generator import (
     generate_auto_replacement_json,
@@ -61,6 +64,349 @@ from onnx2tf.utils.enums import (
 )
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
+
+def _sanitize_split_input_name(name: str) -> str:
+    if not name:
+        return 'tensor'
+    return re.sub(r'[^0-9A-Za-z._-]+', '_', name)
+
+def _write_memmap_array(path: str, array: np.ndarray) -> str:
+    mm = np.lib.format.open_memmap(
+        path,
+        mode='w+',
+        dtype=array.dtype,
+        shape=array.shape,
+    )
+    mm[...] = array
+    mm.flush()
+    return path
+
+
+def _tensorproto_nbytes(tensor: onnx.TensorProto) -> int:
+    if tensor is None:
+        return 0
+    if tensor.HasField('raw_data'):
+        return len(tensor.raw_data)
+    try:
+        np_dtype = onnx.helper.tensor_dtype_to_np_dtype(tensor.data_type)
+    except Exception:
+        np_dtype = None
+    if np_dtype is None:
+        return 0
+    elem_size = np.dtype(np_dtype).itemsize
+    num_elems = int(np.prod(tensor.dims)) if len(tensor.dims) > 0 else 0
+    if num_elems == 0:
+        try:
+            field_name = onnx.helper.tensor_dtype_to_field(tensor.data_type)
+            if hasattr(tensor, field_name):
+                num_elems = len(getattr(tensor, field_name))
+        except Exception:
+            num_elems = 0
+    return num_elems * elem_size
+
+def _collect_initializer_sizes(onnx_graph: onnx.ModelProto) -> Dict[str, int]:
+    initializer_sizes: Dict[str, int] = {}
+    if onnx_graph is None:
+        return initializer_sizes
+    for initializer in onnx_graph.graph.initializer:
+        if not initializer.name:
+            continue
+        try:
+            initializer_sizes[initializer.name] = _tensorproto_nbytes(initializer)
+        except Exception:
+            initializer_sizes[initializer.name] = 0
+    return initializer_sizes
+
+def _collect_node_weight_keys(
+    *,
+    graph: gs.Graph,
+    initializer_sizes: Dict[str, int],
+) -> tuple[List[List[str]], Dict[str, int]]:
+    weight_sizes = dict(initializer_sizes)
+    node_weight_keys: List[List[str]] = []
+    for node in graph.nodes:
+        keys: List[str] = []
+        for inp in node.inputs:
+            if isinstance(inp, gs.Constant):
+                if isinstance(getattr(inp, 'values', None), np.ndarray):
+                    key = f'const:{id(inp)}'
+                    if key not in weight_sizes:
+                        weight_sizes[key] = int(inp.values.nbytes)
+                    keys.append(key)
+                continue
+            name = getattr(inp, 'name', '')
+            if name and name in initializer_sizes:
+                keys.append(name)
+        node_weight_keys.append(keys)
+    return node_weight_keys, weight_sizes
+
+def _auto_partition_ranges(
+    *,
+    node_weight_keys: List[List[str]],
+    weight_sizes: Dict[str, int],
+    max_size_bytes: int,
+    reachable_node_indices: Optional[set] = None,
+) -> List[tuple]:
+    ranges: List[tuple] = []
+    if max_size_bytes <= 0 or not node_weight_keys:
+        return ranges
+    current_keys: set = set()
+    current_bytes = 0
+    start_idx = 0
+    for idx, keys in enumerate(node_weight_keys):
+        new_bytes = 0
+        for key in keys:
+            if key not in current_keys:
+                new_bytes += weight_sizes.get(key, 0)
+                current_keys.add(key)
+        current_bytes += new_bytes
+        if current_bytes >= max_size_bytes and idx > start_idx:
+            if reachable_node_indices is not None and idx not in reachable_node_indices:
+                continue
+            ranges.append((start_idx, idx))
+            start_idx = idx + 1
+            current_keys = set()
+            current_bytes = 0
+    if start_idx <= len(node_weight_keys) - 1:
+        ranges.append((start_idx, len(node_weight_keys) - 1))
+    return ranges
+
+def _collect_reachable_node_indices(
+    graph: gs.Graph,
+    initializer_names: Optional[set] = None,
+) -> set:
+    reachable_nodes: set = set()
+    reachable_vars: set = set()
+    initializer_names = initializer_names or set()
+    for graph_input in graph.inputs:
+        name = getattr(graph_input, 'name', '')
+        if name and name not in initializer_names:
+            reachable_vars.add(name)
+    for idx, node in enumerate(graph.nodes):
+        is_reachable = False
+        for inp in node.inputs:
+            if isinstance(inp, gs.Variable):
+                name = getattr(inp, 'name', '')
+                if name in reachable_vars and name not in initializer_names:
+                    is_reachable = True
+                    break
+        if is_reachable:
+            reachable_nodes.add(idx)
+            for out in node.outputs:
+                name = getattr(out, 'name', '')
+                if name:
+                    reachable_vars.add(name)
+    return reachable_nodes
+
+def _collect_constant_only_node_indices(
+    graph: gs.Graph,
+    initializer_names: Optional[set] = None,
+) -> set:
+    initializer_names = initializer_names or set()
+    const_only_nodes: set = set()
+    for idx, node in enumerate(graph.nodes):
+        has_variable_input = False
+        for inp in node.inputs:
+            if isinstance(inp, gs.Constant):
+                continue
+            name = getattr(inp, 'name', '')
+            if name and name not in initializer_names:
+                has_variable_input = True
+                break
+        if not has_variable_input:
+            const_only_nodes.add(idx)
+    return const_only_nodes
+
+def _complete_custom_inputs_for_graph(
+    *,
+    onnx_graph: onnx.ModelProto,
+    custom_inputs: List[List[Any]],
+    output_dir: str,
+    file_prefix: str,
+    shape_hints: Optional[List[str]] = None,
+    require_mean_std: bool = False,
+) -> List[List[Any]]:
+    gs_graph = gs.import_onnx(onnx_graph)
+    input_names: List[str] = [inp.name for inp in gs_graph.inputs]
+    input_sizes: List[List[Any]] = [inp.shape for inp in gs_graph.inputs]
+    input_dtypes: List[Any] = [inp.dtype for inp in gs_graph.inputs]
+
+    if shape_hints is None:
+        new_input_sizes = []
+        for input_size in input_sizes:
+            new_input_size = []
+            for idx, dim in enumerate(input_size):
+                if idx == 0 and input_sizes and input_sizes[0][0] is not None \
+                    and not isinstance(input_sizes[0][0], str) \
+                    and len(input_sizes[0]) == len(input_size) \
+                    and (dim is None or isinstance(dim, str)):
+                    new_input_size.append(input_sizes[0][0])
+                elif dim is None or isinstance(dim, str):
+                    new_input_size.append(1)
+                else:
+                    new_input_size.append(dim)
+            new_input_sizes.append(new_input_size)
+        input_sizes = new_input_sizes
+    else:
+        shape_hints_dict = {}
+        for hint in shape_hints:
+            parts = hint.split(':')
+            if len(parts) == 2:
+                input_name = parts[0]
+                shape_values = [int(val) for val in parts[1].split(',')]
+                shape_hints_dict[input_name] = shape_values
+        for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):
+            if input_name in shape_hints_dict:
+                updated_shape = shape_hints_dict[input_name]
+                for j, (orig_dim, hint_dim) in enumerate(zip(original_shape, updated_shape)):
+                    if orig_dim is not None and not isinstance(orig_dim, str):
+                        updated_shape[j] = orig_dim
+                    else:
+                        updated_shape[j] = hint_dim
+                input_sizes[i] = updated_shape
+
+    custom_map = {}
+    for item in custom_inputs or []:
+        if len(item) >= 2:
+            custom_map[item[0]] = item
+
+    results: List[List[Any]] = []
+    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+        if input_name in custom_map:
+            item = list(custom_map[input_name])
+            if require_mean_std and len(item) == 2:
+                item = [item[0], item[1], 0.0, 1.0]
+            results.append(item)
+            continue
+        dtype = input_dtype if input_dtype is not None else np.float32
+        file_name = f'{file_prefix}_{_sanitize_split_input_name(input_name)}.npy'
+        file_path = os.path.join(output_dir, file_name)
+        mm = np.lib.format.open_memmap(
+            file_path,
+            mode='w+',
+            dtype=dtype,
+            shape=tuple(input_size),
+        )
+        mm[...] = 1
+        mm.flush()
+        if require_mean_std:
+            results.append([input_name, file_path, 0.0, 1.0])
+        else:
+            results.append([input_name, file_path])
+    return results
+
+def _estimate_partition_weight_bytes(
+    *,
+    ranges: List[tuple],
+    node_weight_keys: List[List[str]],
+    weight_sizes: Dict[str, int],
+) -> List[int]:
+    partition_sizes: List[int] = []
+    for start_idx, end_idx in ranges:
+        seen: set = set()
+        total_bytes = 0
+        for idx in range(start_idx, end_idx + 1):
+            for key in node_weight_keys[idx]:
+                if key not in seen:
+                    total_bytes += weight_sizes.get(key, 0)
+                    seen.add(key)
+        partition_sizes.append(total_bytes)
+    return partition_sizes
+
+def _build_partition_io(
+    *,
+    graph: gs.Graph,
+    ranges: List[tuple],
+    const_only_nodes: Optional[set] = None,
+) -> List[Dict[str, Any]]:
+    if not ranges:
+        return []
+    const_only_nodes = const_only_nodes or set()
+    producer_by_tensor: Dict[str, int] = {}
+    consumers_by_tensor: Dict[str, set] = {}
+    graph_output_names = [o.name for o in graph.outputs if o.name]
+    for idx, node in enumerate(graph.nodes):
+        for out in node.outputs:
+            name = getattr(out, 'name', '')
+            if name:
+                producer_by_tensor[name] = idx
+        for inp in node.inputs:
+            if isinstance(inp, gs.Constant):
+                continue
+            name = getattr(inp, 'name', '')
+            if not name:
+                continue
+            consumers_by_tensor.setdefault(name, set()).add(idx)
+
+    partitions: List[Dict[str, Any]] = []
+    for start_idx, end_idx in ranges:
+        node_idx_set = set(range(start_idx, end_idx + 1))
+        part_inputs: set = set()
+        part_outputs: set = set()
+        for idx in node_idx_set:
+            node = graph.nodes[idx]
+            for inp in node.inputs:
+                if isinstance(inp, gs.Constant):
+                    continue
+                name = getattr(inp, 'name', '')
+                if not name:
+                    continue
+                producer_idx = producer_by_tensor.get(name)
+                if producer_idx is None or producer_idx not in node_idx_set:
+                    if producer_idx is not None and producer_idx in const_only_nodes:
+                        continue
+                    part_inputs.add(name)
+            for out in node.outputs:
+                name = getattr(out, 'name', '')
+                if not name:
+                    continue
+                consumers = consumers_by_tensor.get(name, set())
+                if name in graph_output_names or any(c not in node_idx_set for c in consumers):
+                    if idx in const_only_nodes and name not in graph_output_names:
+                        continue
+                    part_outputs.add(name)
+        partitions.append({
+            'inputs': sorted(part_inputs),
+            'outputs': sorted(part_outputs),
+            'node_count': end_idx - start_idx + 1,
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+        })
+    return partitions
+
+def _merge_ranges_with_missing_io(
+    *,
+    graph: gs.Graph,
+    ranges: List[tuple],
+    const_only_nodes: Optional[set] = None,
+) -> tuple[List[tuple], List[Dict[str, Any]]]:
+    if not ranges:
+        return ranges, []
+    ranges = list(ranges)
+    const_only_nodes = const_only_nodes or set()
+    while True:
+        partitions = _build_partition_io(
+            graph=graph,
+            ranges=ranges,
+            const_only_nodes=const_only_nodes,
+        ) or []
+        if all(part['inputs'] and part['outputs'] for part in partitions):
+            return ranges, partitions
+        if len(ranges) <= 1:
+            return ranges, partitions
+        merged = False
+        for idx, part in enumerate(partitions):
+            if not part['inputs'] or not part['outputs']:
+                if idx > 0:
+                    ranges[idx - 1] = (ranges[idx - 1][0], ranges[idx][1])
+                    del ranges[idx]
+                else:
+                    ranges[idx] = (ranges[idx][0], ranges[idx + 1][1])
+                    del ranges[idx + 1]
+                merged = True
+                break
+        if not merged:
+            return ranges, partitions
 
 def fuse_expanded_qdq_to_qdq(
     *,
@@ -321,6 +667,7 @@ def convert(
     param_replacement_file: Optional[str] = '',
     auto_generate_json: Optional[bool] = False,
     auto_generate_json_on_error: Optional[bool] = False,
+    auto_split_max_size_mb: Optional[int] = 1024,
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
@@ -682,6 +1029,10 @@ def convert(
         This is now opt-in and requires explicitly enabling the feature.\n
         Default: False
 
+    auto_split_max_size_mb: Optional[int]
+        Target maximum size per partition in MB based on ONNX initializer sizes.\n
+        Default: 1024
+
     check_gpu_delegate_compatibility: Optional[bool]
         Run TFLite ModelAnalyzer on the generated Float16 tflite model\n
         to check if the model can be supported by GPU Delegate.
@@ -771,6 +1122,18 @@ def convert(
             f'input_onnx_file_path: {input_onnx_file_path}'
         )
         sys.exit(1)
+    auto_split_model = False
+    if onnx_graph is None and input_onnx_file_path and os.path.exists(input_onnx_file_path):
+        try:
+            onnx_file_size = os.path.getsize(input_onnx_file_path)
+            if onnx_file_size > 2 * 1024 * 1024 * 1024:
+                info(
+                    Color.GREEN('ONNX file exceeds 2GB; switching to auto-split mode. ') +
+                    f'size={onnx_file_size / (1024 * 1024 * 1024):.2f} GB'
+                )
+                auto_split_model = True
+        except Exception:
+            pass
 
     # Extracting onnx filenames
     output_file_name = ''
@@ -917,9 +1280,8 @@ def convert(
                         exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
                         if metadata_props is not None:
                             exported_onnx_graph.metadata_props.extend(metadata_props)
-                        estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
-                        onnx.save(estimated_graph, f=input_onnx_file_path)
-                        del estimated_graph
+                        onnx.save(exported_onnx_graph, f=input_onnx_file_path)
+                        del exported_onnx_graph
                 except:
                     if tmp_graph is not None:
                         del tmp_graph
@@ -978,8 +1340,22 @@ def convert(
 
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
+    has_external_data = False
     if not onnx_graph:
         onnx_graph = onnx.load(input_onnx_file_path)
+        has_external_data = check_has_external_data(input_onnx_file_path)
+    if not auto_split_model and onnx_graph is not None:
+        try:
+            initializer_sizes = _collect_initializer_sizes(onnx_graph)
+            total_init_bytes = sum(initializer_sizes.values())
+            if total_init_bytes > 2 * 1024 * 1024 * 1024:
+                info(
+                    Color.GREEN('ONNX graph estimated initializer size exceeds 2GB; ') +
+                    f'switching to auto-split mode. size={total_init_bytes / (1024 * 1024 * 1024):.2f} GB'
+                )
+                auto_split_model = True
+        except Exception:
+            pass
 
     domain: str = onnx_graph.domain
     ir_version: int = onnx_graph.ir_version
@@ -989,6 +1365,301 @@ def convert(
         metadata_props = onnx_graph.metadata_props
     graph = gs.import_onnx(onnx_graph)
     fuse_expanded_qdq_to_qdq(graph=graph)
+
+    # Auto split model by estimated weight size
+    if auto_split_model:
+        if input_names_to_interrupt_model_conversion or output_names_to_interrupt_model_conversion:
+            error(
+                'Auto split cannot be used together with input_names_to_interrupt_model_conversion '
+                'or output_names_to_interrupt_model_conversion.'
+            )
+            sys.exit(1)
+        if auto_split_max_size_mb is None or auto_split_max_size_mb <= 0:
+            error(
+                f'auto_split_max_size_mb must be greater than 0. auto_split_max_size_mb: {auto_split_max_size_mb}'
+            )
+            sys.exit(1)
+        try:
+            import sne4onnx
+        except Exception:
+            error(
+                f'If --auto_split_model is specified, you must install sne4onnx. pip install sne4onnx'
+            )
+            sys.exit(1)
+        try:
+            graph.toposort()
+        except Exception:
+            pass
+
+        onnx_graph_for_split = onnx_graph
+        try:
+            onnx_graph_for_split = gs.export_onnx(
+                graph=graph,
+                do_type_check=False,
+                **meta_data,
+            )
+            if metadata_props is not None:
+                onnx_graph_for_split.metadata_props.extend(metadata_props)
+        except Exception:
+            onnx_graph_for_split = onnx_graph
+
+        initializer_sizes = _collect_initializer_sizes(onnx_graph_for_split)
+        node_weight_keys, weight_sizes = _collect_node_weight_keys(
+            graph=graph,
+            initializer_sizes=initializer_sizes,
+        )
+        const_only_nodes = _collect_constant_only_node_indices(
+            graph,
+            initializer_names=set(initializer_sizes.keys()),
+        )
+        reachable_node_indices = _collect_reachable_node_indices(
+            graph,
+            initializer_names=set(initializer_sizes.keys()),
+        )
+        max_size_bytes = int(auto_split_max_size_mb) * 1024 * 1024
+        ranges = _auto_partition_ranges(
+            node_weight_keys=node_weight_keys,
+            weight_sizes=weight_sizes,
+            max_size_bytes=max_size_bytes,
+            reachable_node_indices=reachable_node_indices,
+        )
+        if len(ranges) > 1:
+            ranges, partitions = _merge_ranges_with_missing_io(
+                graph=graph,
+                ranges=ranges,
+                const_only_nodes=const_only_nodes,
+            )
+            if not partitions:
+                warn(
+                    'Auto split failed to determine partition boundaries. Proceeding without split.'
+                )
+            else:
+                if any([not p['inputs'] or not p['outputs'] for p in partitions]):
+                    warn(
+                        'Auto split produced partitions with missing inputs or outputs. '
+                        'Some partitions may not be inferable.'
+                    )
+                partition_sizes = _estimate_partition_weight_bytes(
+                    ranges=ranges,
+                    node_weight_keys=node_weight_keys,
+                    weight_sizes=weight_sizes,
+                )
+                try:
+                    op_type_list = list(set([node.op for node in graph.nodes]))
+                    local_use_cuda = sum(
+                        [1 if op_type in CUDA_ONLY_OPS else 0 for op_type in op_type_list]
+                    ) > 0
+                except Exception:
+                    local_use_cuda = False
+                info('')
+                info(Color.REVERSE(f'Auto model partitioning enabled'), '=' * 44)
+                info(
+                    Color.GREEN(f'Target partition size (estimated weights): ') +
+                    f'{auto_split_max_size_mb} MB'
+                )
+                for idx, part in enumerate(partitions):
+                    size_mb = partition_sizes[idx] / (1024 * 1024)
+                    info(
+                        f'  part {idx+1}: nodes={part["node_count"]}, '
+                        f'est_weights={size_mb:.2f} MB, '
+                        f'inputs={len(part["inputs"])}, outputs={len(part["outputs"])}'
+                    )
+                    info(
+                        f'    inputs: {", ".join(part["inputs"]) if part["inputs"] else "(none)"}'
+                    )
+                    info(
+                        f'    outputs: {", ".join(part["outputs"]) if part["outputs"] else "(none)"}'
+                    )
+
+                split_input_cache: Dict[str, str] = {}
+                split_input_dir = tempfile.mkdtemp(prefix='onnx2tf_split_')
+
+                def _merge_custom_inputs(user_inputs, auto_inputs):
+                    merged = []
+                    seen = set()
+                    if user_inputs:
+                        for item in user_inputs:
+                            if len(item) >= 2:
+                                merged.append(item)
+                                seen.add(item[0])
+                    for item in auto_inputs:
+                        if len(item) >= 2 and item[0] not in seen:
+                            merged.append(item)
+                            seen.add(item[0])
+                    return merged
+
+                base_kwargs = {
+                    'input_onnx_file_path': input_onnx_file_path if input_onnx_file_path is not None else None,
+                    'onnx_graph': onnx_graph,
+                    'output_folder_path': output_folder_path,
+                    'output_signaturedefs': output_signaturedefs,
+                    'output_h5': output_h5,
+                    'output_keras_v3': output_keras_v3,
+                    'output_tfv1_pb': output_tfv1_pb,
+                    'output_weights': output_weights,
+                    'copy_onnx_input_output_names_to_tflite': copy_onnx_input_output_names_to_tflite,
+                    'output_dynamic_range_quantized_tflite': output_dynamic_range_quantized_tflite,
+                    'output_integer_quantized_tflite': output_integer_quantized_tflite,
+                    'quant_norm_mean': quant_norm_mean,
+                    'quant_norm_std': quant_norm_std,
+                    'quant_type': quant_type,
+                    'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
+                    'input_quant_dtype': input_quant_dtype,
+                    'output_quant_dtype': output_quant_dtype,
+                    'not_use_onnxsim': not_use_onnxsim,
+                    'not_use_opname_auto_generate': not_use_opname_auto_generate,
+                    'batch_size': batch_size,
+                    'overwrite_input_shape': overwrite_input_shape,
+                    'shape_hints': shape_hints,
+                    'no_large_tensor': no_large_tensor,
+                    'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+                    'switch_nms_version': switch_nms_version,
+                    'keep_ncw_or_nchw_or_ncdhw_input_names': keep_ncw_or_nchw_or_ncdhw_input_names,
+                    'keep_nwc_or_nhwc_or_ndhwc_input_names': keep_nwc_or_nhwc_or_ndhwc_input_names,
+                    'keep_shape_absolutely_input_names': keep_shape_absolutely_input_names,
+                    'input_names_to_interrupt_model_conversion': None,
+                    'output_names_to_interrupt_model_conversion': None,
+                    'disable_group_convolution': disable_group_convolution,
+                    'enable_accumulation_type_float16': enable_accumulation_type_float16,
+                    'enable_batchmatmul_unfold': enable_batchmatmul_unfold,
+                    'enable_rnn_unroll': enable_rnn_unroll,
+                    'disable_suppression_flextranspose': disable_suppression_flextranspose,
+                    'disable_strict_mode': disable_strict_mode,
+                    'onnxruntime_output_memmap': onnxruntime_output_memmap,
+                    'onnxruntime_output_memmap_dir': onnxruntime_output_memmap_dir,
+                    'number_of_dimensions_after_flextranspose_compression': number_of_dimensions_after_flextranspose_compression,
+                    'disable_suppression_flexstridedslice': disable_suppression_flexstridedslice,
+                    'number_of_dimensions_after_flexstridedslice_compression': number_of_dimensions_after_flexstridedslice_compression,
+                    'optimization_for_gpu_delegate': optimization_for_gpu_delegate,
+                    'replace_argmax_to_reducemax_and_indices_is_int64': replace_argmax_to_reducemax_and_indices_is_int64,
+                    'replace_argmax_to_reducemax_and_indices_is_float32': replace_argmax_to_reducemax_and_indices_is_float32,
+                    'replace_argmax_to_fused_argmax_and_indices_is_int64': replace_argmax_to_fused_argmax_and_indices_is_int64,
+                    'replace_argmax_to_fused_argmax_and_indices_is_float32': replace_argmax_to_fused_argmax_and_indices_is_float32,
+                    'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
+                    'replace_to_pseudo_operators': replace_to_pseudo_operators,
+                    'param_replacement_file': param_replacement_file,
+                    'auto_generate_json': auto_generate_json,
+                    'auto_generate_json_on_error': auto_generate_json_on_error,
+                    'auto_split_max_size_mb': auto_split_max_size_mb,
+                    'check_gpu_delegate_compatibility': check_gpu_delegate_compatibility,
+                    'check_onnx_tf_outputs_elementwise_close': False,
+                    'check_onnx_tf_outputs_elementwise_close_full': False,
+                    'check_onnx_tf_outputs_sample_data_normalization': check_onnx_tf_outputs_sample_data_normalization,
+                    'check_onnx_tf_outputs_elementwise_close_rtol': check_onnx_tf_outputs_elementwise_close_rtol,
+                    'check_onnx_tf_outputs_elementwise_close_atol': check_onnx_tf_outputs_elementwise_close_atol,
+                    'mvn_epsilon': mvn_epsilon,
+                    'disable_model_save': disable_model_save,
+                    'non_verbose': non_verbose,
+                    'verbosity': verbosity,
+                }
+                base_kwargs['input_names_to_interrupt_model_conversion'] = None
+                base_kwargs['output_names_to_interrupt_model_conversion'] = None
+                base_kwargs['check_onnx_tf_outputs_elementwise_close'] = False
+                base_kwargs['check_onnx_tf_outputs_elementwise_close_full'] = False
+
+                model_ret = None
+                try:
+                    for idx, part in enumerate(partitions):
+                        part_output_folder = os.path.join(
+                            output_folder_path,
+                            f'part_{idx+1:02d}',
+                        )
+                        base_name = os.path.splitext(os.path.basename(input_onnx_file_path))[0] \
+                            if input_onnx_file_path else 'model'
+                        os.makedirs(part_output_folder, exist_ok=True)
+                        split_onnx_path = os.path.join(
+                            part_output_folder,
+                            f'{base_name}_part_{idx+1:03d}.onnx'
+                        )
+                        part_graph = sne4onnx.extraction(
+                            input_op_names=part['inputs'],
+                            output_op_names=part['outputs'],
+                            onnx_graph=onnx_graph_for_split,
+                            output_onnx_file_path=split_onnx_path,
+                            has_external_data=has_external_data,
+                        )
+                        auto_custom_inputs = []
+                        if split_input_cache:
+                            for input_name in part['inputs']:
+                                if input_name in split_input_cache:
+                                    auto_custom_inputs.append([
+                                        input_name,
+                                        split_input_cache[input_name],
+                                    ])
+                        merged_custom_inputs = _merge_custom_inputs(
+                            custom_input_op_name_np_data_path,
+                            auto_custom_inputs,
+                        )
+                        require_mean_std = bool(output_integer_quantized_tflite)
+                        merged_custom_inputs = _complete_custom_inputs_for_graph(
+                            onnx_graph=part_graph,
+                            custom_inputs=merged_custom_inputs,
+                            output_dir=split_input_dir,
+                            file_prefix=f'part_{idx+1:02d}',
+                            shape_hints=shape_hints,
+                            require_mean_std=require_mean_std,
+                        )
+
+                        # Propagate dummy outputs to next partitions
+                        try:
+                            has_inputs = len(part_graph.graph.input) > 0
+                            has_outputs = len(part_graph.graph.output) > 0
+                            if has_inputs and has_outputs:
+                                part_input_datas = {}
+                                part_outputs = dummy_onnx_inference(
+                                    onnx_graph=part_graph,
+                                    output_names=part['outputs'],
+                                    test_data_nhwc=None,
+                                    custom_input_op_name_np_data_path=merged_custom_inputs,
+                                    tf_layers_dict={},
+                                    use_cuda=local_use_cuda,
+                                    disable_strict_mode=disable_strict_mode,
+                                    enable_ort_output_memmap=False,
+                                    ort_output_memmap_dir=None,
+                                    shape_hints=shape_hints,
+                                    input_datas_for_validation=part_input_datas,
+                                )
+                                for input_name, input_value in part_input_datas.items():
+                                    file_name = (
+                                        f'part_{idx+1:02d}_' +
+                                        f'{_sanitize_split_input_name(input_name)}.npy'
+                                    )
+                                    file_path = os.path.join(split_input_dir, file_name)
+                                    split_input_cache[input_name] = _write_memmap_array(
+                                        file_path,
+                                        input_value,
+                                    )
+                                for output_name, output_value in zip(part['outputs'], part_outputs):
+                                    file_name = (
+                                        f'part_{idx+1:02d}_' +
+                                        f'{_sanitize_split_input_name(output_name)}.npy'
+                                    )
+                                    file_path = os.path.join(split_input_dir, file_name)
+                                    split_input_cache[output_name] = _write_memmap_array(
+                                        file_path,
+                                        output_value,
+                                    )
+                            else:
+                                warn(
+                                    'Auto split input propagation skipped for this partition '
+                                    'because it has no inputs or outputs.'
+                                )
+                        except Exception as ex:
+                            warn(
+                                'Auto split input propagation failed for this partition. '
+                                'Subsequent partitions may use default dummy inputs.'
+                            )
+                            warn(f'{ex}')
+
+                        part_kwargs = dict(base_kwargs)
+                        part_kwargs['onnx_graph'] = part_graph
+                        part_kwargs['output_folder_path'] = part_output_folder
+                        if merged_custom_inputs:
+                            part_kwargs['custom_input_op_name_np_data_path'] = merged_custom_inputs
+                        model_ret = convert(**part_kwargs)
+                finally:
+                    shutil.rmtree(split_input_dir, ignore_errors=True)
+                return model_ret
 
     # Cut the ONNX graph when an input name is specified that interrupts the conversion
     if not input_names_to_interrupt_model_conversion:
@@ -1291,30 +1962,29 @@ def convert(
         )
 
         # download test data
-        all_four_dim = sum(
-            [
-                1 for input in inputs \
-                    if len(input.shape) == 4 \
-                        and input.shape[0] is not None \
-                        and input.shape[0] <= 20 \
-                        and input.shape[-1] == 3 \
-                        and input.shape[1] is not None \
-                        and input.shape[2] is not None
-            ]
-        ) == len(inputs)
-        same_batch_dim = False
-        if all_four_dim:
-            batch_size = inputs[0].shape[0]
-            for input in inputs:
-                same_batch_dim = batch_size == input.shape[0]
         test_data_nhwc = None
-        if all_four_dim and same_batch_dim:
-            test_data: np.ndarray = download_test_image_data()
-            test_data_nhwc = test_data[:inputs[0].shape[0], ...]
-            if check_onnx_tf_outputs_sample_data_normalization == "norm":
-                pass
-            elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
-                test_data_nhwc = test_data_nhwc * 255.0
+        if inputs:
+            all_four_dim = sum(
+                [
+                    1 for input in inputs \
+                        if len(input.shape) == 4 \
+                            and input.shape[0] is not None \
+                            and input.shape[0] <= 20 \
+                            and input.shape[-1] == 3 \
+                            and input.shape[1] is not None \
+                            and input.shape[2] is not None
+                ]
+            ) == len(inputs)
+            same_batch_dim = False
+            if all_four_dim:
+                batch_size = inputs[0].shape[0]
+                for input in inputs:
+                    same_batch_dim = batch_size == input.shape[0]
+            if all_four_dim and same_batch_dim:
+                test_data: np.ndarray = download_test_image_data()
+                test_data_nhwc = test_data[:inputs[0].shape[0], ...]
+                if check_onnx_tf_outputs_sample_data_normalization == "denorm":
+                    test_data_nhwc = test_data_nhwc * 255.0
 
         # ONNX dummy inference
         # Generate output for all OPs.
@@ -1400,7 +2070,10 @@ def convert(
                     exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
                     if metadata_props is not None:
                         exported_onnx_graph.metadata_props.extend(metadata_props)
-                    estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
+                    if not has_external_data:
+                        estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
+                    else:
+                        estimated_graph = exported_onnx_graph
                     if input_onnx_file_path is not None:
                         onnx.save(estimated_graph, input_onnx_file_path)
                         if not not_use_onnxsim:

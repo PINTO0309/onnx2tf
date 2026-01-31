@@ -26,6 +26,7 @@ from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.utils import conv_utils
 import onnx
 from onnx.serialization import ProtoSerializer
+from onnx.external_data_helper import uses_external_data
 import onnx_graphsurgeon as gs
 try:
     import onnxruntime as ort
@@ -43,6 +44,8 @@ from onnx2tf.utils.enums import (
 
 INF_INDEX_VALUE: int = 4294967296
 ONNX_INF_INDEX_VALUE = sys.maxsize # 9223372036854775807
+
+
 
 
 def get_replacement_parameter(func):
@@ -4046,6 +4049,9 @@ def dummy_onnx_inference(
                 input_sizes[i] = updated_shape
 
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
+    input_size_map = {
+        name: tuple(size) for name, size in zip(input_names, input_sizes)
+    }
     input_datas = {}
 
     # -cid
@@ -4059,7 +4065,16 @@ def dummy_onnx_inference(
             if input_op_info is not None:
                 ncw_nchw_ncdhw_perm: List = input_op_info.get('ncw_nchw_ncdhw_perm', None)
                 if ncw_nchw_ncdhw_perm is not None:
-                    custom_input_data = custom_input_data.transpose(ncw_nchw_ncdhw_perm)
+                    expected_shape = input_size_map.get(
+                        input_op_name,
+                        tuple(custom_input_data.shape),
+                    )
+                    if tuple(custom_input_data.shape) != expected_shape:
+                        permuted_shape = tuple(
+                            custom_input_data.shape[i] for i in ncw_nchw_ncdhw_perm
+                        )
+                        if permuted_shape == expected_shape:
+                            custom_input_data = custom_input_data.transpose(ncw_nchw_ncdhw_perm)
                 onnx_batch_size = input_op_info['shape'][0]
                 cdata_batch_size = custom_input_data.shape[0]
                 if isinstance(onnx_batch_size, int) and onnx_batch_size != cdata_batch_size and cdata_batch_size > 1:
@@ -6526,3 +6541,24 @@ def define_reduceXXX(
             keepdims=target_keepdims,
         )
     return reduced_tensor
+
+def check_has_external_data(input_onnx_file_path: str) -> bool:
+    model = onnx.load(input_onnx_file_path, load_external_data=False)
+    def iter_tensors_in_graph(g):
+        for t in g.initializer:
+            yield t
+        for t in g.sparse_initializer:
+            yield t
+        for n in g.node:
+            for a in n.attribute:
+                if a.type == onnx.AttributeProto.TENSOR:
+                    yield a.t
+                elif a.type == onnx.AttributeProto.TENSORS:
+                    for t in a.tensors:
+                        yield t
+                elif a.type == onnx.AttributeProto.GRAPH:
+                    yield from iter_tensors_in_graph(a.g)
+                elif a.type == onnx.AttributeProto.GRAPHS:
+                    for sg in a.graphs:
+                        yield from iter_tensors_in_graph(sg)
+    return any(uses_external_data(t) for t in iter_tensors_in_graph(model.graph))
