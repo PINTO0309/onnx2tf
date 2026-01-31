@@ -341,8 +341,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U onnxsim==0.4.36 \
   && pip install -U onnxoptimizer==0.4.2 \
   && pip install -U simple_onnx_processing_tools==1.1.32 \
-  && pip install -U sne4onnx>=1.0.13 \
-  && pip install -U sng4onnx>=1.0.4 \
+  && pip install -U sne4onnx==1.0.15 \
+  && pip install -U sng4onnx==1.0.5 \
   && pip install -U ai_edge_litert==1.2.0 \
   && pip install -U tensorflow==2.19.0 \
   && pip install -U protobuf==3.20.3 \
