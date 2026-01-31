@@ -4246,6 +4246,7 @@ def dummy_tf_inference(
     custom_input_op_name_np_data_path: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
+    prefilled_input_datas: Optional[Dict[str, np.ndarray]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
@@ -4279,6 +4280,8 @@ def dummy_tf_inference(
     """
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
+    input_size_map = {name: size for name, size in zip(input_names, input_sizes)}
+    input_index_map = {name: i for i, name in enumerate(input_names)}
 
     if shape_hints is None:
         new_input_sizes = []
@@ -4353,10 +4356,20 @@ def dummy_tf_inference(
 
     # -cid
     if custom_input_op_name_np_data_path:
-        for idx, param in enumerate(custom_input_op_name_np_data_path):
+        for param in custom_input_op_name_np_data_path:
+            if len(param) < 2:
+                continue
+            input_name = str(param[0])
             numpy_file_path = str(param[1])
+            if input_name not in input_index_map:
+                continue
+            idx = input_index_map[input_name]
+            tf_input_name = input_names[idx]
+            if prefilled_input_datas and tf_input_name in prefilled_input_datas:
+                continue
             custom_input_data = np.load(numpy_file_path)
             input_size = input_sizes[idx]
+            input_dtype = input_dtypes[idx] if idx < len(input_dtypes) else np.float32
 
             tf_batch_size = input_size[0]
             cdata_batch_size = custom_input_data.shape[0]
@@ -4366,6 +4379,24 @@ def dummy_tf_inference(
                 custom_input_data = custom_input_data[0:1, ...]
 
             if list(custom_input_data.shape) != input_size:
+                auto_split_input = (
+                    'onnx2tf_split_' in numpy_file_path
+                    or os.path.basename(numpy_file_path).startswith('part_')
+                )
+                if auto_split_input:
+                    warn(
+                        'Auto-split custom input shape does not match TF input shape. '
+                        f'input_name={input_name} '
+                        f'tf_shape={input_size} '
+                        f'numpy_shape={list(custom_input_data.shape)} '
+                        f'path={numpy_file_path} '
+                        'Fallback to dummy input for this tensor.'
+                    )
+                    input_datas[input_names[idx]] = np.ones(
+                        input_size,
+                        dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                    )
+                    continue
                 error_msg = f'' + \
                     Color.RED(f'ERROR:') + ' ' + \
                     f"The format of custom input data is different from Tensorflow's format. " + \
@@ -4411,6 +4442,33 @@ def dummy_tf_inference(
 
     if input_datas_for_validation is not None:
         input_datas_for_validation.update(input_datas)
+
+    if prefilled_input_datas:
+        for input_name, input_data in prefilled_input_datas.items():
+            expected = None
+            if input_name in input_datas:
+                expected = input_datas[input_name].shape
+            elif input_name in input_size_map:
+                expected = input_size_map[input_name]
+            else:
+                continue
+            data = input_data
+            try:
+                if expected is not None and tuple(data.shape) != tuple(expected):
+                    if data.size == np.prod(expected):
+                        data = data.reshape(expected)
+                    else:
+                        continue
+                target_dtype = None
+                if input_name in input_datas:
+                    target_dtype = input_datas[input_name].dtype
+                elif input_name in input_index_map:
+                    target_dtype = input_dtypes[input_index_map[input_name]]
+                if target_dtype is not None and data.dtype != target_dtype:
+                    data = data.astype(target_dtype)
+                input_datas[input_name] = data
+            except Exception:
+                continue
 
     outputs = model(
         inputs={
@@ -6072,6 +6130,8 @@ def acquisition_of_validation_data(
         kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = \
         kwargs['custom_input_op_name_np_data_path']
+    tf_input_cache: Optional[Dict[str, np.ndarray]] = \
+        kwargs.get('tf_input_cache', None)
 
     # Get the output tensor of one previous OP of TensorFlow only once
     tf_model_inputs = get_tf_model_inputs(
@@ -6123,6 +6183,7 @@ def acquisition_of_validation_data(
             inputs=tf_model_inputs,
             test_data_nhwc=test_data_nhwc,
             custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            prefilled_input_datas=tf_input_cache,
         )
     except Exception as ex:
         pass

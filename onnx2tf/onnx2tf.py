@@ -631,6 +631,7 @@ def convert(
     quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
     quant_type: Optional[str] = 'per-channel',
     custom_input_op_name_np_data_path: Optional[List] = None,
+    tf_input_cache: Optional[Dict[str, np.ndarray]] = None,
     input_quant_dtype: Optional[str] = 'int8',
     output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
@@ -667,6 +668,7 @@ def convert(
     param_replacement_file: Optional[str] = '',
     auto_generate_json: Optional[bool] = False,
     auto_generate_json_on_error: Optional[bool] = False,
+    enable_auto_split_model: Optional[bool] = False,
     auto_split_max_size_mb: Optional[int] = 1024,
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
@@ -797,6 +799,10 @@ def convert(
             ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
             ["input2","input2.npy",[0.3],[0.07]],\n
         ]
+
+    tf_input_cache: Optional[Dict[str, np.ndarray]]
+        Cache of TF dummy inference inputs keyed by TF input tensor name.\n
+        Used to propagate TF outputs between auto-split partitions.\n
 
     input_quant_dtype: Optional[str]
         Input dtypes when doing Full INT8 Quantization.\n
@@ -1029,6 +1035,11 @@ def convert(
         This is now opt-in and requires explicitly enabling the feature.\n
         Default: False
 
+    enable_auto_split_model: Optional[bool]
+        Force auto split regardless of the ONNX file size.\n
+        The target size is controlled by auto_split_max_size_mb.\n
+        Default: False
+
     auto_split_max_size_mb: Optional[int]
         Target maximum size per partition in MB based on ONNX initializer sizes.\n
         Default: 1024
@@ -1122,11 +1133,16 @@ def convert(
             f'input_onnx_file_path: {input_onnx_file_path}'
         )
         sys.exit(1)
-    auto_split_model = False
+    auto_split_model = bool(enable_auto_split_model)
+    if auto_split_model:
+        info(
+            Color.GREEN('Auto split forced by --enable_auto_split_model. ') +
+            f'target={auto_split_max_size_mb} MB'
+        )
     if onnx_graph is None and input_onnx_file_path and os.path.exists(input_onnx_file_path):
         try:
             onnx_file_size = os.path.getsize(input_onnx_file_path)
-            if onnx_file_size > 2 * 1024 * 1024 * 1024:
+            if not auto_split_model and onnx_file_size > 2 * 1024 * 1024 * 1024:
                 info(
                     Color.GREEN('ONNX file exceeds 2GB; switching to auto-split mode. ') +
                     f'size={onnx_file_size / (1024 * 1024 * 1024):.2f} GB'
@@ -1319,6 +1335,7 @@ def convert(
                 input_onnx_file_path=f'{input_onnx_file_path}',
                 onnx_graph=onnx_graph,
                 output_onnx_file_path=f'{input_onnx_file_path}',
+                has_external_data=has_external_data,
                 non_verbose=True,
             )
             info(Color.GREEN(f'Automatic generation of each OP name complete!'))
@@ -1342,8 +1359,9 @@ def convert(
     # onnx_graph If specified, onnx_graph is processed first
     has_external_data = False
     if not onnx_graph:
-        onnx_graph = onnx.load(input_onnx_file_path)
         has_external_data = check_has_external_data(input_onnx_file_path)
+        onnx_graph = onnx.load(input_onnx_file_path)
+
     if not auto_split_model and onnx_graph is not None:
         try:
             initializer_sizes = _collect_initializer_sizes(onnx_graph)
@@ -1383,7 +1401,7 @@ def convert(
             import sne4onnx
         except Exception:
             error(
-                f'If --auto_split_model is specified, you must install sne4onnx. pip install sne4onnx'
+                'Auto split requires sne4onnx. pip install sne4onnx'
             )
             sys.exit(1)
         try:
@@ -1473,6 +1491,162 @@ def convert(
 
                 split_input_cache: Dict[str, str] = {}
                 split_input_dir = tempfile.mkdtemp(prefix='onnx2tf_split_')
+                split_tf_input_cache: Dict[str, np.ndarray] = {}
+                split_output_layouts: Dict[str, bool] = {}
+
+                def _sanitize_tf_input_name(name: str) -> str:
+                    if name is None:
+                        return ''
+                    sanitized = name.replace(':', '__')
+                    if output_signaturedefs or output_integer_quantized_tflite:
+                        sanitized = re.sub('^/', 'wa/', sanitized)
+                    return f'{sanitized}:0'
+
+                def _normalize_onnx_output_name(name: str) -> str:
+                    if name is None:
+                        return ''
+                    normalized = name.replace(':', '__')
+                    if output_signaturedefs or output_integer_quantized_tflite:
+                        normalized = re.sub('^/', '', normalized)
+                    return normalized
+
+                def _common_layout_perms(rank: int) -> List[tuple]:
+                    if rank == 3:
+                        return [(0, 1, 2), (0, 2, 1)]
+                    if rank == 4:
+                        return [(0, 1, 2, 3), (0, 2, 3, 1), (0, 3, 1, 2)]
+                    if rank == 5:
+                        return [(0, 1, 2, 3, 4), (0, 2, 3, 4, 1), (0, 4, 1, 2, 3)]
+                    return [tuple(range(rank))]
+
+                def _build_onnx_tf_output_map(
+                    *,
+                    onnx_output_names: List[str],
+                    tf_output_tensors: List[tf.Tensor],
+                    onnx_output_values: Optional[Dict[str, np.ndarray]] = None,
+                    tf_output_values: Optional[Dict[str, np.ndarray]] = None,
+                ) -> Dict[str, tf.Tensor]:
+                    tf_by_base = {t.name.split(':')[0]: t for t in tf_output_tensors}
+                    tf_by_full = {t.name: t for t in tf_output_tensors}
+                    mapping: Dict[str, tf.Tensor] = {}
+                    used_tf: set = set()
+                    missing: List[str] = []
+                    for onnx_name in onnx_output_names:
+                        normalized = _normalize_onnx_output_name(onnx_name)
+                        candidates = [
+                            normalized,
+                            f'wa/{normalized}',
+                        ]
+                        tf_tensor = None
+                        for cand in candidates:
+                            if cand in tf_by_base:
+                                tf_tensor = tf_by_base[cand]
+                                break
+                            full_name = f'{cand}:0'
+                            if full_name in tf_by_full:
+                                tf_tensor = tf_by_full[full_name]
+                                break
+                        if tf_tensor is None:
+                            if onnx_name in tf_by_base:
+                                tf_tensor = tf_by_base[onnx_name]
+                            else:
+                                full_name = f'{onnx_name}:0'
+                                if full_name in tf_by_full:
+                                    tf_tensor = tf_by_full[full_name]
+                        if tf_tensor is not None:
+                            mapping[onnx_name] = tf_tensor
+                            used_tf.add(tf_tensor.name)
+                        else:
+                            missing.append(onnx_name)
+
+                    if onnx_output_values and tf_output_values and missing:
+                        tf_candidates = []
+                        for tf_tensor in tf_output_tensors:
+                            tf_val = tf_output_values.get(tf_tensor.name)
+                            if tf_val is None:
+                                tf_val = tf_output_values.get(tf_tensor.name.split(':')[0])
+                            if tf_val is not None:
+                                tf_candidates.append((tf_tensor, tf_val))
+                        still_missing = []
+                        for onnx_name in list(missing):
+                            onnx_val = onnx_output_values.get(onnx_name)
+                            if onnx_val is None:
+                                still_missing.append(onnx_name)
+                                continue
+                            best = None
+                            best_err = None
+                            for tf_tensor, tf_val in tf_candidates:
+                                if tf_tensor.name in used_tf:
+                                    continue
+                                if tf_val.shape != onnx_val.shape:
+                                    continue
+                                err = np.max(np.abs(onnx_val - tf_val))
+                                if best is None or err < best_err:
+                                    best = tf_tensor
+                                    best_err = err
+                            if best is None:
+                                for tf_tensor, tf_val in tf_candidates:
+                                    if tf_tensor.name in used_tf:
+                                        continue
+                                    if tf_val.ndim != onnx_val.ndim:
+                                        continue
+                                    for perm in _common_layout_perms(tf_val.ndim):
+                                        if tf_val.transpose(perm).shape != onnx_val.shape:
+                                            continue
+                                        err = np.max(np.abs(onnx_val - tf_val.transpose(perm)))
+                                        if best is None or err < best_err:
+                                            best = tf_tensor
+                                            best_err = err
+                            if best is not None and best_err is not None and best_err <= 1e-3:
+                                mapping[onnx_name] = best
+                                used_tf.add(best.name)
+                            else:
+                                still_missing.append(onnx_name)
+                        missing = still_missing
+                    if missing:
+                        warn(
+                            'Auto split output mapping failed for: ' +
+                            ', '.join(missing) +
+                            '. Output cache/layout may be incomplete.'
+                        )
+                    return mapping
+
+                def _onnx_output_shape_map(onnx_model: onnx.ModelProto) -> Dict[str, List[Optional[int]]]:
+                    shape_map: Dict[str, List[Optional[int]]] = {}
+                    try:
+                        for out in onnx_model.graph.output:
+                            dims: List[Optional[int]] = []
+                            t = out.type.tensor_type
+                            if t.HasField('shape'):
+                                for d in t.shape.dim:
+                                    if d.dim_value > 0:
+                                        dims.append(int(d.dim_value))
+                                    elif d.dim_param:
+                                        dims.append(None)
+                                    else:
+                                        dims.append(None)
+                            if dims:
+                                shape_map[out.name] = dims
+                    except Exception:
+                        pass
+                    return shape_map
+
+                def _infer_keep_shape(onnx_shape: List[Optional[int]], tf_shape: List[int]) -> Optional[bool]:
+                    if not onnx_shape or any(d is None for d in onnx_shape):
+                        return None
+                    if list(onnx_shape) == list(tf_shape):
+                        return True
+                    rank = len(onnx_shape)
+                    if rank == 3:
+                        if list(tf_shape) == [onnx_shape[0], onnx_shape[2], onnx_shape[1]]:
+                            return False
+                    elif rank == 4:
+                        if list(tf_shape) == [onnx_shape[0], onnx_shape[2], onnx_shape[3], onnx_shape[1]]:
+                            return False
+                    elif rank == 5:
+                        if list(tf_shape) == [onnx_shape[0], onnx_shape[2], onnx_shape[3], onnx_shape[4], onnx_shape[1]]:
+                            return False
+                    return None
 
                 def _merge_custom_inputs(user_inputs, auto_inputs):
                     merged = []
@@ -1504,6 +1678,7 @@ def convert(
                     'quant_norm_std': quant_norm_std,
                     'quant_type': quant_type,
                     'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
+                    'tf_input_cache': split_tf_input_cache,
                     'input_quant_dtype': input_quant_dtype,
                     'output_quant_dtype': output_quant_dtype,
                     'not_use_onnxsim': not_use_onnxsim,
@@ -1540,10 +1715,11 @@ def convert(
                     'param_replacement_file': param_replacement_file,
                     'auto_generate_json': auto_generate_json,
                     'auto_generate_json_on_error': auto_generate_json_on_error,
+                    'enable_auto_split_model': False,
                     'auto_split_max_size_mb': auto_split_max_size_mb,
                     'check_gpu_delegate_compatibility': check_gpu_delegate_compatibility,
-                    'check_onnx_tf_outputs_elementwise_close': False,
-                    'check_onnx_tf_outputs_elementwise_close_full': False,
+                    'check_onnx_tf_outputs_elementwise_close': check_onnx_tf_outputs_elementwise_close,
+                    'check_onnx_tf_outputs_elementwise_close_full': check_onnx_tf_outputs_elementwise_close_full,
                     'check_onnx_tf_outputs_sample_data_normalization': check_onnx_tf_outputs_sample_data_normalization,
                     'check_onnx_tf_outputs_elementwise_close_rtol': check_onnx_tf_outputs_elementwise_close_rtol,
                     'check_onnx_tf_outputs_elementwise_close_atol': check_onnx_tf_outputs_elementwise_close_atol,
@@ -1554,22 +1730,21 @@ def convert(
                 }
                 base_kwargs['input_names_to_interrupt_model_conversion'] = None
                 base_kwargs['output_names_to_interrupt_model_conversion'] = None
-                base_kwargs['check_onnx_tf_outputs_elementwise_close'] = False
-                base_kwargs['check_onnx_tf_outputs_elementwise_close_full'] = False
 
                 model_ret = None
                 try:
                     for idx, part in enumerate(partitions):
+                        part_output_values: Optional[Dict[str, np.ndarray]] = None
                         part_output_folder = os.path.join(
                             output_folder_path,
-                            f'part_{idx+1:02d}',
+                            f'part_{idx+1:04d}',
                         )
                         base_name = os.path.splitext(os.path.basename(input_onnx_file_path))[0] \
                             if input_onnx_file_path else 'model'
                         os.makedirs(part_output_folder, exist_ok=True)
                         split_onnx_path = os.path.join(
                             part_output_folder,
-                            f'{base_name}_part_{idx+1:03d}.onnx'
+                            f'{base_name}_part_{idx+1:04d}.onnx'
                         )
                         part_graph = sne4onnx.extraction(
                             input_op_names=part['inputs'],
@@ -1590,15 +1765,20 @@ def convert(
                             custom_input_op_name_np_data_path,
                             auto_custom_inputs,
                         )
-                        require_mean_std = bool(output_integer_quantized_tflite)
-                        merged_custom_inputs = _complete_custom_inputs_for_graph(
-                            onnx_graph=part_graph,
-                            custom_inputs=merged_custom_inputs,
-                            output_dir=split_input_dir,
-                            file_prefix=f'part_{idx+1:02d}',
-                            shape_hints=shape_hints,
-                            require_mean_std=require_mean_std,
-                        )
+                        # For the first partition, keep the same behavior as non-split conversion.
+                        # Only user-provided custom inputs are used.
+                        if idx == 0 and not auto_custom_inputs:
+                            custom_inputs_for_part = merged_custom_inputs
+                        else:
+                            require_mean_std = bool(output_integer_quantized_tflite)
+                            custom_inputs_for_part = _complete_custom_inputs_for_graph(
+                                onnx_graph=part_graph,
+                                custom_inputs=merged_custom_inputs,
+                                output_dir=split_input_dir,
+                                file_prefix=f'part_{idx+1:04d}',
+                                shape_hints=shape_hints,
+                                require_mean_std=require_mean_std,
+                            )
 
                         # Propagate dummy outputs to next partitions
                         try:
@@ -1610,7 +1790,7 @@ def convert(
                                     onnx_graph=part_graph,
                                     output_names=part['outputs'],
                                     test_data_nhwc=None,
-                                    custom_input_op_name_np_data_path=merged_custom_inputs,
+                                    custom_input_op_name_np_data_path=custom_inputs_for_part,
                                     tf_layers_dict={},
                                     use_cuda=local_use_cuda,
                                     disable_strict_mode=disable_strict_mode,
@@ -1621,7 +1801,7 @@ def convert(
                                 )
                                 for input_name, input_value in part_input_datas.items():
                                     file_name = (
-                                        f'part_{idx+1:02d}_' +
+                                        f'part_{idx+1:04d}_' +
                                         f'{_sanitize_split_input_name(input_name)}.npy'
                                     )
                                     file_path = os.path.join(split_input_dir, file_name)
@@ -1629,9 +1809,12 @@ def convert(
                                         file_path,
                                         input_value,
                                     )
+                                part_output_values = {
+                                    name: value for name, value in zip(part['outputs'], part_outputs)
+                                }
                                 for output_name, output_value in zip(part['outputs'], part_outputs):
                                     file_name = (
-                                        f'part_{idx+1:02d}_' +
+                                        f'part_{idx+1:04d}_' +
                                         f'{_sanitize_split_input_name(output_name)}.npy'
                                     )
                                     file_path = os.path.join(split_input_dir, file_name)
@@ -1652,11 +1835,67 @@ def convert(
                             warn(f'{ex}')
 
                         part_kwargs = dict(base_kwargs)
+                        if split_output_layouts:
+                            part_keep_shape_abs = set(keep_shape_absolutely_input_names or [])
+                            for input_name in part['inputs']:
+                                if split_output_layouts.get(input_name, False):
+                                    part_keep_shape_abs.add(input_name)
+                            part_kwargs['keep_shape_absolutely_input_names'] = \
+                                list(part_keep_shape_abs) if part_keep_shape_abs else None
+                        part_kwargs['input_onnx_file_path'] = split_onnx_path
                         part_kwargs['onnx_graph'] = part_graph
                         part_kwargs['output_folder_path'] = part_output_folder
-                        if merged_custom_inputs:
-                            part_kwargs['custom_input_op_name_np_data_path'] = merged_custom_inputs
+                        if custom_inputs_for_part:
+                            part_kwargs['custom_input_op_name_np_data_path'] = custom_inputs_for_part
                         model_ret = convert(**part_kwargs)
+
+                        if hasattr(model_ret, 'onnx_output_layouts') \
+                            and isinstance(model_ret.onnx_output_layouts, dict):
+                            for out_name in part['outputs']:
+                                if out_name in model_ret.onnx_output_layouts:
+                                    split_output_layouts[out_name] = \
+                                        bool(model_ret.onnx_output_layouts[out_name])
+
+                        # Cache TF outputs for the next partition's TF dummy inference.
+                        try:
+                            tf_outputs = dummy_tf_inference(
+                                model=model_ret,
+                                inputs=model_ret.inputs,
+                                test_data_nhwc=None,
+                                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                                prefilled_input_datas=split_tf_input_cache,
+                                shape_hints=shape_hints,
+                                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                            )
+                            onnx_output_shapes = _onnx_output_shape_map(part_graph)
+                            if model_ret.outputs and part['outputs']:
+                                tf_output_map = _build_onnx_tf_output_map(
+                                    onnx_output_names=part['outputs'],
+                                    tf_output_tensors=model_ret.outputs,
+                                    onnx_output_values=part_output_values,
+                                    tf_output_values=tf_outputs,
+                                )
+                                for onnx_out, tf_tensor in tf_output_map.items():
+                                    tf_val = tf_outputs.get(tf_tensor.name)
+                                    if tf_val is None:
+                                        continue
+                                    # Store both full and base TF names to maximize cache hits.
+                                    split_tf_input_cache[tf_tensor.name] = tf_val
+                                    split_tf_input_cache[tf_tensor.name.split(':')[0]] = tf_val
+                                    # Keep legacy key for compatibility with existing lookups.
+                                    sanitized = _sanitize_tf_input_name(onnx_out)
+                                    split_tf_input_cache[sanitized] = tf_val
+                                    split_tf_input_cache[sanitized.split(':')[0]] = tf_val
+                                    keep_shape = _infer_keep_shape(
+                                        onnx_output_shapes.get(onnx_out),
+                                        list(tf_val.shape),
+                                    )
+                                    if keep_shape is not None:
+                                        split_output_layouts[onnx_out] = keep_shape
+                        except Exception:
+                            pass
                 finally:
                     shutil.rmtree(split_input_dir, ignore_errors=True)
                 return model_ret
@@ -1889,6 +2128,7 @@ def convert(
         'relu_relu6_merge_op_names': {},
         'mul_div_replace_op_names': {},
         'use_cuda': use_cuda,
+        'tf_input_cache': tf_input_cache,
     }
 
     tf_layers_dict = {}
@@ -2253,6 +2493,14 @@ def convert(
                     outputs[oidx] = tf_keras.layers.Lambda(lambda x: tf.constant(y))(x)
 
         model = tf_keras.Model(inputs=inputs, outputs=outputs)
+        try:
+            onnx_output_layouts = {
+                name: tf_layers_dict.get(name, {}).get('nhwc', False)
+                for name in onnx_graph_output_names
+            }
+            model.onnx_output_layouts = onnx_output_layouts
+        except Exception:
+            pass
         debug('')
 
         # The process ends normally without saving the model.
@@ -3724,6 +3972,23 @@ def main():
             '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
     )
     parser.add_argument(
+        '-easm',
+        '--enable_auto_split_model',
+        action='store_true',
+        help=\
+            'Force auto split regardless of the ONNX file size. \n' +
+            'Uses --auto_split_max_size_mb as the target partition size.'
+    )
+    parser.add_argument(
+        '-asmsm',
+        '--auto_split_max_size_mb',
+        type=int,
+        default=1024,
+        help=\
+            'Target maximum size per partition in MB based on ONNX initializer sizes. \n' +
+            'Used when auto-split is triggered or forced.'
+    )
+    parser.add_argument(
         '-dgc',
         '--disable_group_convolution',
         action='store_true',
@@ -4123,6 +4388,8 @@ def main():
         param_replacement_file=args.param_replacement_file,
         auto_generate_json=args.auto_generate_json,
         auto_generate_json_on_error=args.auto_generate_json_on_error,
+        enable_auto_split_model=args.enable_auto_split_model,
+        auto_split_max_size_mb=args.auto_split_max_size_mb,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
         check_onnx_tf_outputs_elementwise_close_full=args.check_onnx_tf_outputs_elementwise_close_full,

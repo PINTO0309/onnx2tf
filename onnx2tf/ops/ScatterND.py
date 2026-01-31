@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 
 
@@ -79,6 +80,32 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
 
+    op_rep_params = kwargs.get('op_rep_params', [])
+    params_perm = None
+    indices_perm = None
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == 'inputs' \
+            and op_rep_param['param_name'] == graph_node.inputs[0].name:
+            params_perm = op_rep_param.get('pre_process_transpose_perm', None)
+        if op_rep_param['param_target'] == 'inputs' \
+            and op_rep_param['param_name'] == graph_node.inputs[1].name:
+            indices_perm = op_rep_param.get('pre_process_transpose_perm', None)
+
+    def reorder_indices_last_dim(target_indices, perm):
+        if perm is None:
+            return target_indices
+        try:
+            if isinstance(target_indices, np.ndarray):
+                if target_indices.shape and target_indices.shape[-1] == len(perm):
+                    return target_indices[..., perm]
+            else:
+                idx_last = target_indices.shape[-1] if target_indices.shape is not None else None
+                if idx_last is None or idx_last == len(perm):
+                    return tf.gather(target_indices, perm, axis=-1)
+        except Exception:
+            pass
+        return target_indices
+
     # Pre-process transpose
     input_tensor = pre_process_transpose(
         value_before_transpose=input_tensor,
@@ -86,18 +113,26 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
-    indices_tensor = pre_process_transpose(
-        value_before_transpose=indices_tensor,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
-        **kwargs,
-    )
+    # Indices must not be layout-transposed; apply explicit perm only if specified.
+    if indices_perm is not None:
+        try:
+            rank = len(indices_tensor.shape) if hasattr(indices_tensor, "shape") else None
+            if rank is None or rank == len(indices_perm):
+                indices_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=indices_tensor,
+                    perm=indices_perm,
+                    **kwargs,
+                )
+        except Exception:
+            pass
     updates_tensor = pre_process_transpose(
         value_before_transpose=updates_tensor,
         param_target='inputs',
         param_name=graph_node.inputs[2].name,
         **kwargs,
     )
+    if params_perm is not None and indices_perm is None:
+        indices_tensor = reorder_indices_last_dim(indices_tensor, params_perm)
 
     # When NHWC is fixed, return to NCHW format before processing.
     data_nhwc = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
@@ -119,6 +154,8 @@ def make_node(
         and len(input_tensor.shape) >= 3:
         perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
         input_tensor = tf.transpose(a=input_tensor, perm=perm)
+        if indices_perm is None:
+            indices_tensor = reorder_indices_last_dim(indices_tensor, perm)
         nchw = True
     elif not data_nhwc \
         and len(input_tensor.shape) >= 3 \
@@ -126,6 +163,8 @@ def make_node(
         and input_tensor.shape != graph_node.inputs[0].shape:
         perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
         input_tensor = tf.transpose(a=input_tensor, perm=perm)
+        if indices_perm is None:
+            indices_tensor = reorder_indices_last_dim(indices_tensor, perm)
         nchw = True
     ## indices
     if indices_nhwc \

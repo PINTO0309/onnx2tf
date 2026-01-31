@@ -1845,6 +1845,15 @@ optional arguments:
     model partitioned into subgraphs.
     e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
 
+  -easm, --enable_auto_split_model
+    Force auto split regardless of the ONNX file size.
+    Uses --auto_split_max_size_mb as the target partition size.
+
+  -asmsm AUTO_SPLIT_MAX_SIZE_MB, --auto_split_max_size_mb AUTO_SPLIT_MAX_SIZE_MB
+    Target maximum size per partition in MB based on ONNX initializer sizes.
+    Used when auto-split is triggered or forced.
+    Default: 1024
+
   -dgc, --disable_group_convolution
     Disable GroupConvolution and replace it with SeparableConvolution for
     output to saved_model format.
@@ -2114,6 +2123,8 @@ convert(
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
   input_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
+  enable_auto_split_model: Optional[bool] = False,
+  auto_split_max_size_mb: Optional[int] = 1024,
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
   enable_rnn_unroll: Optional[bool] = False,
@@ -2381,6 +2392,17 @@ convert(
       and outputs the model partitioned into subgraphs.
       e.g.
       output_names_to_interrupt_model_conversion=['output0','output1','output2']
+
+    enable_auto_split_model: Optional[bool]
+      Force auto split regardless of the ONNX file size.
+      Uses auto_split_max_size_mb as the target partition size.
+      Short option: -easm
+      Default: False
+
+    auto_split_max_size_mb: Optional[int]
+      Target maximum size per partition in MB based on ONNX initializer sizes.
+      Used when auto-split is triggered or forced.
+      Default: 1024
 
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for

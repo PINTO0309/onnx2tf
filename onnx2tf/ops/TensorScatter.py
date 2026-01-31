@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.logging import *
@@ -112,12 +113,25 @@ def make_node(
         **kwargs,
     )
     if write_indices is not None:
-        write_indices = pre_process_transpose(
-            value_before_transpose=write_indices,
-            param_target='inputs',
-            param_name=graph_node.inputs[2].name,
-            **kwargs,
-        )
+        # Indices must not be layout-transposed; apply explicit perm only if specified.
+        op_rep_params = kwargs.get('op_rep_params', [])
+        indices_perm = None
+        for op_rep_param in op_rep_params:
+            if op_rep_param['param_target'] == 'inputs' \
+                and op_rep_param['param_name'] == graph_node.inputs[2].name:
+                indices_perm = op_rep_param.get('pre_process_transpose_perm', None)
+                break
+        if indices_perm is not None:
+            try:
+                rank = len(write_indices.shape) if hasattr(write_indices, "shape") else None
+                if rank is None or rank == len(indices_perm):
+                    write_indices = transpose_with_flexing_deterrence(
+                        input_tensor=write_indices,
+                        perm=indices_perm,
+                        **kwargs,
+                    )
+            except Exception:
+                pass
 
     # Generation of TF OP
     past_cache = _as_tensor(past_cache)

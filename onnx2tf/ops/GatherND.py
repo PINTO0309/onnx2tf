@@ -51,9 +51,10 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    # Indices must not be layout-transposed.
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        False,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -88,6 +89,32 @@ def make_node(
     )
 
     replace_gathernd_to_pseudo_gathernd = "gathernd" in kwargs['replace_to_pseudo_operators']
+
+    # If params is transposed, adjust indices to match the transposed layout.
+    op_rep_params = kwargs.get('op_rep_params', [])
+    params_perm = None
+    indices_perm_specified = False
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == 'inputs' and op_rep_param['param_name'] == graph_node.inputs[0].name:
+            params_perm = op_rep_param.get('pre_process_transpose_perm', None)
+        if op_rep_param['param_target'] == 'inputs' and op_rep_param['param_name'] == graph_node.inputs[1].name:
+            if op_rep_param.get('pre_process_transpose_perm', None) is not None:
+                indices_perm_specified = True
+    if params_perm is not None and not indices_perm_specified:
+        # Only handle standard layout swaps that keep batch dims at the front.
+        if batch_dims <= len(params_perm) \
+            and list(params_perm[:batch_dims]) == list(range(batch_dims)):
+            perm_tail = [p - batch_dims for p in params_perm if p >= batch_dims]
+            try:
+                if isinstance(indices_tensor, np.ndarray):
+                    if indices_tensor.shape and indices_tensor.shape[-1] == len(perm_tail):
+                        indices_tensor = indices_tensor[..., perm_tail]
+                else:
+                    idx_last = indices_tensor.shape[-1] if indices_tensor.shape is not None else None
+                    if idx_last is None or idx_last == len(perm_tail):
+                        indices_tensor = tf.gather(indices_tensor, perm_tail, axis=-1)
+            except Exception:
+                pass
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
