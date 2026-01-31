@@ -57,9 +57,10 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+    # Indices must not be layout-transposed.
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
-        before_op_output_shape_trans,
+        False,
     )
     graph_node_output: gs.Variable = graph_node.outputs[0]
     shape = graph_node_output.shape
@@ -77,12 +78,29 @@ def make_node(
         param_name=graph_node.inputs[0].name,
         **kwargs,
     )
-    indices_tensor = pre_process_transpose(
-        value_before_transpose=indices_tensor,
-        param_target='inputs',
-        param_name=graph_node.inputs[1].name,
-        **kwargs,
-    )
+    # If input is transposed by replacement params, align indices tensor shape.
+    op_rep_params = kwargs.get('op_rep_params', [])
+    params_perm = None
+    indices_perm = None
+    for op_rep_param in op_rep_params:
+        if op_rep_param['param_target'] == 'inputs' \
+            and op_rep_param['param_name'] == graph_node.inputs[0].name:
+            params_perm = op_rep_param.get('pre_process_transpose_perm', None)
+        if op_rep_param['param_target'] == 'inputs' \
+            and op_rep_param['param_name'] == graph_node.inputs[1].name:
+            indices_perm = op_rep_param.get('pre_process_transpose_perm', None)
+    target_perm = indices_perm if indices_perm is not None else params_perm
+    if target_perm is not None:
+        try:
+            rank = len(indices_tensor.shape) if hasattr(indices_tensor, "shape") else None
+            if rank is None or rank == len(target_perm):
+                indices_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=indices_tensor,
+                    perm=target_perm,
+                    **kwargs,
+                )
+        except Exception:
+            pass
 
     tensor_rank = len(input_tensor.shape)
 

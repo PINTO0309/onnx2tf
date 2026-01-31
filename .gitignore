@@ -25,3 +25,4 @@ node_modules/
 .act.env
 
 *.sarif
+*.data
