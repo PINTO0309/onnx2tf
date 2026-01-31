@@ -2990,6 +2990,7 @@ The above differences often cannot be dealt with by simply converting the model 
 14. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
 15. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
 16. [ai-edge-torch](https://github.com/google-ai-edge/ai-edge-torch)
+17. [LiteRT.js](https://ai.google.dev/edge/litert/web)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
