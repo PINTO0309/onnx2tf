@@ -43,6 +43,7 @@ from typing import Optional, List, Any, Dict
 from argparse import ArgumentParser
 
 import importlib
+import onnx2tf.utils.common_functions as common_functions
 from onnx2tf.utils.common_functions import (
     dummy_onnx_inference,
     dummy_tf_inference,
@@ -639,6 +640,7 @@ def convert(
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
     shape_hints: Optional[List[str]] = None,
+    value_hints: Optional[List[str]] = None,
     no_large_tensor: Optional[bool] = False,
     output_nms_with_dynamic_tensor: Optional[bool] = False,
     switch_nms_version: Optional[str] = 'v4',
@@ -849,6 +851,15 @@ def convert(
         ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.
+
+    value_hints: Optional[List[str]]
+        Value hints for dummy inference input tensors.\n
+        The format is\n
+        ["input_name_1:value","input_name_2:value","*:default_value"].\n
+        "*" applies to all inputs not explicitly specified.\n
+        Values are scalar only.\n
+        e.g.\n
+        ['input0:0.5','mask:0','*:1.0']\n
 
     no_large_tensor: Optional[bool]
         Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
@@ -1110,6 +1121,8 @@ def convert(
     if verbosity is None:
         verbosity = 'debug'
     set_log_level('error' if non_verbose else verbosity)
+    common_functions.set_dummy_shape_hints(shape_hints)
+    common_functions.set_dummy_value_hints(value_hints)
 
     # Either designation required
     if not input_onnx_file_path and not onnx_graph:
@@ -1326,6 +1339,10 @@ def convert(
                 'Failed to optimize the onnx file.'
             )
 
+    has_external_data = False
+    if input_onnx_file_path and os.path.exists(input_onnx_file_path):
+        has_external_data = check_has_external_data(input_onnx_file_path)
+
     # Automatic generation of each OP name - sng4onnx
     if not not_use_opname_auto_generate:
         info('')
@@ -1357,9 +1374,7 @@ def convert(
 
     # Loading Graphs
     # onnx_graph If specified, onnx_graph is processed first
-    has_external_data = False
     if not onnx_graph:
-        has_external_data = check_has_external_data(input_onnx_file_path)
         onnx_graph = onnx.load(input_onnx_file_path)
 
     if not auto_split_model and onnx_graph is not None:
@@ -1686,6 +1701,7 @@ def convert(
                     'batch_size': batch_size,
                     'overwrite_input_shape': overwrite_input_shape,
                     'shape_hints': shape_hints,
+                    'value_hints': value_hints,
                     'no_large_tensor': no_large_tensor,
                     'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
                     'switch_nms_version': switch_nms_version,
@@ -3875,6 +3891,18 @@ def main():
             'Only used when -cotof or -coto are specified.'
     )
     parser.add_argument(
+        '-vh',
+        '--value_hints',
+        type=str,
+        nargs='+',
+        help=\
+            'Value hints for dummy inference input tensors. \n' +
+            'The format is\n' +
+            '"input_name_1:value" "input_name_2:value" "*:default_value". \n' +
+            '"*" applies to all inputs not explicitly specified. \n' +
+            'Values are scalar only.'
+    )
+    parser.add_argument(
         '-nlt',
         '--no_large_tensor',
         action='store_true',
@@ -4359,6 +4387,7 @@ def main():
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
         shape_hints=args.shape_hints,
+        value_hints=args.value_hints,
         no_large_tensor=args.no_large_tensor,
         output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
         switch_nms_version=args.switch_nms_version,
