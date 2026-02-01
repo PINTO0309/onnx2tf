@@ -1,4 +1,5 @@
 import math
+import ast
 import os
 import io
 import re
@@ -44,6 +45,59 @@ from onnx2tf.utils.enums import (
 
 INF_INDEX_VALUE: int = 4294967296
 ONNX_INF_INDEX_VALUE = sys.maxsize # 9223372036854775807
+
+_DEFAULT_DUMMY_SHAPE_HINTS: Optional[List[str]] = None
+_DEFAULT_DUMMY_VALUE_HINTS: Optional[List[str]] = None
+
+
+def set_dummy_shape_hints(shape_hints: Optional[List[str]]) -> None:
+    global _DEFAULT_DUMMY_SHAPE_HINTS
+    _DEFAULT_DUMMY_SHAPE_HINTS = shape_hints
+
+
+def set_dummy_value_hints(value_hints: Optional[List[str]]) -> None:
+    global _DEFAULT_DUMMY_VALUE_HINTS
+    _DEFAULT_DUMMY_VALUE_HINTS = value_hints
+
+
+def _parse_value_hint_scalar(value: str) -> Optional[Any]:
+    try:
+        parsed = ast.literal_eval(value)
+    except Exception:
+        try:
+            parsed = float(value)
+        except Exception:
+            return None
+    if isinstance(parsed, (list, tuple, dict, set, np.ndarray)):
+        return None
+    if isinstance(parsed, (int, float, bool, np.number)):
+        return parsed
+    return None
+
+
+def _parse_value_hints(
+    value_hints: Optional[List[str]]
+) -> Tuple[Dict[str, Any], Optional[Any], bool]:
+    if not value_hints:
+        return {}, None, False
+    hints: Dict[str, Any] = {}
+    default_value: Optional[Any] = None
+    for hint in value_hints:
+        if not isinstance(hint, str):
+            continue
+        parts = hint.split(':', 1)
+        if len(parts) != 2:
+            continue
+        input_name, value_str = parts[0], parts[1]
+        parsed_value = _parse_value_hint_scalar(value_str)
+        if parsed_value is None:
+            warn(f'Invalid --value_hints entry ignored: {hint}')
+            continue
+        if input_name == '*':
+            default_value = parsed_value
+        else:
+            hints[input_name] = parsed_value
+    return hints, default_value, default_value is not None
 
 
 
@@ -3854,6 +3908,7 @@ def dummy_onnx_inference(
     enable_ort_output_memmap: bool = False,
     ort_output_memmap_dir: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
+    value_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
 ) -> List[np.ndarray]:
     """Perform inference on ONNX subgraphs with an all-1 dummy tensor.
@@ -3891,6 +3946,10 @@ def dummy_onnx_inference(
         Directory to store memmap files. If not specified, a temporary
         directory is created and removed on exit.
 
+    value_hints: Optional[List[str]]
+        Value hints for dummy inference input tensors.
+        Format: ["input_name:value", "*:default_value"].
+
     input_datas_for_validation: Optional[Dict[str, np.ndarray]]
         Optional dict to be filled with the input tensors used for inference.
 
@@ -3899,6 +3958,11 @@ def dummy_onnx_inference(
     outputs: List[np.ndarray]
         Results of inference using dummy tensor
     """
+    if shape_hints is None:
+        shape_hints = _DEFAULT_DUMMY_SHAPE_HINTS
+    if value_hints is None:
+        value_hints = _DEFAULT_DUMMY_VALUE_HINTS
+
     # Separate onnx at specified output_names position
     domain: str = onnx_graph.domain
     ir_version: int = onnx_graph.ir_version
@@ -4053,6 +4117,7 @@ def dummy_onnx_inference(
         name: tuple(size) for name, size in zip(input_names, input_sizes)
     }
     input_datas = {}
+    value_hints_dict, default_value, has_default = _parse_value_hints(value_hints)
 
     # -cid
     if custom_input_op_name_np_data_path:
@@ -4086,7 +4151,17 @@ def dummy_onnx_inference(
 
     else:
         for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-            if test_data_nhwc is None:
+            hint_value = value_hints_dict.get(
+                input_name,
+                default_value if has_default else None,
+            )
+            if hint_value is not None:
+                input_datas[input_name] = np.full(
+                    input_size,
+                    hint_value,
+                    dtype=input_dtype,
+                )
+            elif test_data_nhwc is None:
                 input_datas[input_name] = np.ones(
                     input_size,
                     dtype=input_dtype,
@@ -4245,6 +4320,7 @@ def dummy_tf_inference(
     verification_datas: Optional[List[np.ndarray]] = None,
     custom_input_op_name_np_data_path: Optional[str] = None,
     shape_hints: Optional[List[str]] = None,
+    value_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
     prefilled_input_datas: Optional[Dict[str, np.ndarray]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -4269,6 +4345,11 @@ def dummy_tf_inference(
 
     custom_input_op_name_np_data_path
         Path to Numpy file for custom data used for dummy inference
+
+    value_hints: Optional[List[str]]
+        Value hints for dummy inference input tensors.
+        Format: ["input_name:value", "*:default_value"].
+
     input_datas_for_validation: Optional[Dict[str, np.ndarray]]
         Optional dict to be filled with the input tensors used for inference.
 
@@ -4278,6 +4359,11 @@ def dummy_tf_inference(
         Results of inference using dummy tensor.
         Dict of tensorflow node and corresponding ndarray output.
     """
+    if shape_hints is None:
+        shape_hints = _DEFAULT_DUMMY_SHAPE_HINTS
+    if value_hints is None:
+        value_hints = _DEFAULT_DUMMY_VALUE_HINTS
+
     input_names: List[str] = [inp.name for inp in inputs]
     input_sizes: List[int] = [inp.shape for inp in inputs]
     input_size_map = {name: size for name, size in zip(input_names, input_sizes)}
@@ -4353,6 +4439,7 @@ def dummy_tf_inference(
 
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
+    value_hints_dict, default_value, has_default = _parse_value_hints(value_hints)
 
     # -cid
     if custom_input_op_name_np_data_path:
@@ -4409,7 +4496,17 @@ def dummy_tf_inference(
     else:
         if verification_datas is None:
             for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-                if test_data_nhwc is None:
+                hint_value = value_hints_dict.get(
+                    input_name,
+                    default_value if has_default else None,
+                )
+                if hint_value is not None:
+                    input_datas[input_name] = np.full(
+                        input_size,
+                        hint_value,
+                        dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                    )
+                elif test_data_nhwc is None:
                     input_datas[input_name] = np.ones(
                         input_size,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],

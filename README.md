@@ -323,7 +323,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.20
+  ghcr.io/pinto0309/onnx2tf:1.29.21
 
   or
 
@@ -331,11 +331,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.20
+  docker.io/pinto0309/onnx2tf:1.29.21
 
   or
 
-  pip install -U onnx==1.19.0 \
+  pip install -U onnx==1.19.1 \
   && pip install -U onnx-graphsurgeon==0.5.8 \
   && pip install -U onnxruntime==1.23.0 \
   && pip install -U onnxsim==0.4.36 \
@@ -588,7 +588,7 @@ After many upgrades, the need for JSON parameter correction has become much less
 
 `-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
 
-Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. For more information about the `-cind` option, please refer to [here](#cli-parameter).
+Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter).
 
 The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
 
@@ -602,6 +602,10 @@ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 or
 
 onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.npy"
+
+or
+
+onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 --value_hints "input:0.5" "*:1.0"
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
@@ -1784,6 +1788,14 @@ optional arguments:
     A value of 1 or more must be specified.
     Numerical values other than dynamic dimensions are ignored.
 
+  -vh VALUE_HINTS [VALUE_HINTS ...], \
+      --value_hints VALUE_HINTS [VALUE_HINTS ...]
+    Value hints for dummy inference input tensors.
+    The format is
+    "input_name_1:value" "input_name_2:value" "*:default_value"
+    "*" applies to all inputs not explicitly specified.
+    Values are scalar only.
+
   -nlt, --no_large_tensor
     Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
     See: https://github.com/daquexian/onnx-simplifier/issues/178
@@ -2115,6 +2127,7 @@ convert(
   batch_size: Union[int, NoneType] = None,
   overwrite_input_shape: Union[List[str], NoneType] = None,
   shape_hints: Union[List[str], NoneType] = None,
+  value_hints: Union[List[str], NoneType] = None,
   no_large_tensor: Optional[bool] = False,
   output_nms_with_dynamic_tensor: Optional[bool] = False,
   switch_nms_version: Optional[str] = 'v4',
@@ -2334,6 +2347,13 @@ convert(
       ['data1:1,3,224,224', 'data2:1,3,112', 'data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
+
+    value_hints: Optional[List[str]]
+      Value hints for dummy inference input tensors.
+      The format is
+      ['input_name_1:value', 'input_name_2:value', '*:default_value']
+      "*" applies to all inputs not explicitly specified.
+      Values are scalar only.
 
     no_large_tensor: Optional[bool]
       Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.
