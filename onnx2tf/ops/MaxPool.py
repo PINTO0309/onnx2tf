@@ -1,6 +1,7 @@
 import random
 random.seed(0)
 import numpy as np
+import itertools
 np.random.seed(0)
 import tensorflow as tf
 import tf_keras
@@ -118,6 +119,59 @@ def make_node(
                     perm=[0,2,3,4,1],
                     **kwargs,
                 )
+
+    # Guard: brute-force axis alignment between NCHW and NHWC when batch dim mismatches.
+    # Only trigger when shapes are fully known to avoid destabilizing existing behavior.
+    def _shape_matches(shape_a, shape_b):
+        if shape_a is None or shape_b is None or len(shape_a) != len(shape_b):
+            return False
+        for dim_a, dim_b in zip(shape_a, shape_b):
+            if dim_a is None or dim_b is None:
+                continue
+            if dim_a != dim_b:
+                return False
+        return True
+
+    def _best_perm_to_match(cur_shape, target_shape):
+        rank = len(cur_shape)
+        best_perm = None
+        best_cost = None
+        for perm in itertools.permutations(range(rank)):
+            permuted = [cur_shape[i] for i in perm]
+            if not _shape_matches(permuted, target_shape):
+                continue
+            cost = sum(abs(i - perm[i]) for i in range(rank))
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_perm = perm
+        return best_perm
+
+    try:
+        current_shape = input_tensor.shape.as_list()
+    except Exception:
+        current_shape = None
+
+    if onnx_input_shape is not None and current_shape is not None:
+        onnx_shape = [
+            dim if isinstance(dim, int) else None for dim in onnx_input_shape
+        ]
+        cur_shape = [
+            dim if isinstance(dim, int) else None for dim in current_shape
+        ]
+        if len(onnx_shape) in (3, 4, 5) \
+            and len(cur_shape) == len(onnx_shape) \
+            and None not in onnx_shape \
+            and None not in cur_shape:
+            expected_shape = [onnx_shape[0]] + onnx_shape[2:] + [onnx_shape[1]]
+            if cur_shape[0] != onnx_shape[0] \
+                and not _shape_matches(cur_shape, expected_shape):
+                perm = _best_perm_to_match(cur_shape, expected_shape)
+                if perm is not None:
+                    input_tensor = transpose_with_flexing_deterrence(
+                        input_tensor=input_tensor,
+                        perm=list(perm),
+                        **kwargs,
+                    )
 
     filter = None
 

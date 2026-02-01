@@ -14,6 +14,7 @@ from onnx2tf.utils.common_functions import (
     make_tf_node_info,
     get_replacement_parameter,
     pre_process_transpose,
+    convert_axis,
 )
 from onnx2tf.utils.logging import Color
 
@@ -69,8 +70,20 @@ def make_node(
         **kwargs,
     )
 
+    input_tensor_shape = input_tensor.shape
+    tensor_rank = len(input_tensor_shape) \
+        if input_tensor_shape != tf.TensorShape(None) else 1
+
     axis = graph_node.attrs.get('axis', None)
     sorted = graph_node.attrs.get('sorted', 1)
+    if axis is not None:
+        if isinstance(axis, np.ndarray) and axis.shape == ():
+            axis = int(axis)
+        axis = convert_axis(
+            axis=int(axis),
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
 
     # Preserving Graph Structure (Dict)
     for graph_node_output in graph_node_outputs:
@@ -101,17 +114,64 @@ def make_node(
 
     # tf unique returns unsorted tensor, need to sort if option is enabled
     if sorted:
-        # TODO: implement sort
-        error_msg = f'' + \
-                    Color.RED(f'WARNING:') + ' ' + \
-                    f'Sort option in Unique ops is not implemented yet.'
-        print(error_msg)
-        assert False, error_msg
+        # Sort unique outputs to match ONNX sorted behavior.
+        def _argsort_supported(dtype):
+            return dtype.is_floating or dtype.is_integer or dtype == tf.bool
 
-    tf_layers_dict[graph_node_outputs[0].name]['tf_node'] = y
-    tf_layers_dict[graph_node_outputs[1].name]['tf_node'] = indices
-    tf_layers_dict[graph_node_outputs[2].name]['tf_node'] = inverse_indices
-    tf_layers_dict[graph_node_outputs[3].name]['tf_node'] = count
+        y_rank = y.shape.rank
+        axis_ = axis
+        if axis_ is None:
+            axis_ = 0
+        if axis_ < 0 and y_rank is not None:
+            axis_ = axis_ + y_rank
+
+        def _lexsort_perm(flat_2d):
+            if not _argsort_supported(flat_2d.dtype):
+                return None
+            cols = flat_2d.shape[1]
+            if cols is None:
+                return None
+            order = tf.range(tf.shape(flat_2d)[0])
+            for col in reversed(range(cols)):
+                col_vals = tf.gather(flat_2d, order)[:, col]
+                if col_vals.dtype == tf.bool:
+                    col_vals = tf.cast(col_vals, tf.int32)
+                order = tf.gather(order, tf.argsort(col_vals, stable=True))
+            return order
+
+        order = None
+        if y_rank is not None and y_rank == 1:
+            if _argsort_supported(y.dtype):
+                sort_vals = y
+                if sort_vals.dtype == tf.bool:
+                    sort_vals = tf.cast(sort_vals, tf.int32)
+                order = tf.argsort(sort_vals, stable=True)
+        elif y_rank is not None and axis_ is not None and 0 <= axis_ < y_rank:
+            perm = [axis_] + [i for i in range(y_rank) if i != axis_]
+            y_t = tf.transpose(y, perm)
+            flat = tf.reshape(y_t, [tf.shape(y_t)[0], -1])
+            order = _lexsort_perm(flat)
+
+        if order is None:
+            warn_msg = f'' + \
+                       Color.YELLOW(f'WARNING:') + ' ' + \
+                       f'Unique sort fallback to unsorted due to dynamic shape or unsupported dtype.'
+            print(warn_msg)
+        else:
+            y = tf.gather(y, order, axis=axis_)
+            count = tf.gather(count, order)
+            indices = tf.gather(indices, order)
+            inv_order = tf.argsort(order)
+            inverse_indices = tf.gather(inv_order, inverse_indices)
+
+    if len(graph_node_outputs) >= 1:
+        tf_layers_dict[graph_node_outputs[0].name]['tf_node'] = y
+    if len(graph_node_outputs) >= 2:
+        tf_layers_dict[graph_node_outputs[1].name]['tf_node'] = indices
+    if len(graph_node_outputs) >= 3:
+        tf_layers_dict[graph_node_outputs[2].name]['tf_node'] = inverse_indices
+    if len(graph_node_outputs) >= 4:
+        tf_layers_dict[graph_node_outputs[3].name]['tf_node'] = count
 
     # Generation of Debug Info
     tf_outputs = {f"output{idx}": value for idx, value in enumerate([y, indices, inverse_indices, count])}

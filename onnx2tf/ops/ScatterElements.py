@@ -146,6 +146,48 @@ def make_node(
         axis=axis,
         indices=indices_tensor,
     )
+    indices_rank = None
+    if hasattr(indices_tensor, "shape") and indices_tensor.shape is not None:
+        try:
+            indices_rank = len(indices_tensor.shape)
+        except TypeError:
+            indices_rank = indices_tensor.shape.rank
+    updates_rank = updates_tensor_rank
+    broadcast_shape = None
+    pad_rank = 0
+
+    def _pad_and_broadcast(target_tensor, pad_rank, target_shape):
+        tensor = target_tensor
+        if isinstance(tensor, np.ndarray):
+            tensor = tf.convert_to_tensor(tensor)
+        if pad_rank <= 0:
+            return tf.broadcast_to(tensor, target_shape)
+        tensor_shape = tf.shape(tensor)
+        new_shape = tf.concat(
+            [tf.ones([pad_rank], dtype=tf.int32), tensor_shape],
+            axis=0,
+        )
+        tensor = tf.reshape(tensor, new_shape)
+        return tf.broadcast_to(tensor, target_shape)
+
+    updates_tensor_for_scatter = updates_tensor
+    if indices_rank is not None and updates_rank is not None and indices_rank != updates_rank:
+        if indices_rank > updates_rank:
+            broadcast_shape = tf.shape(indices_tensor)
+            pad_rank = indices_rank - updates_rank
+            updates_tensor_for_scatter = _pad_and_broadcast(
+                updates_tensor,
+                pad_rank,
+                broadcast_shape,
+            )
+        else:
+            broadcast_shape = tf.shape(updates_tensor)
+            pad_rank = updates_rank - indices_rank
+            indices_tensor = _pad_and_broadcast(
+                indices_tensor,
+                pad_rank,
+                broadcast_shape,
+            )
     sparsified_dense_idx_shape = updates_tensor_shape
 
     if None not in sparsified_dense_idx_shape:
@@ -160,6 +202,13 @@ def make_node(
         ]
 
     idx_tensors_per_axis = tf.meshgrid(*idx_tensors_per_axis, indexing='ij')
+    if indices_rank is not None \
+        and updates_rank is not None \
+        and indices_rank > updates_rank:
+        idx_tensors_per_axis = [
+            _pad_and_broadcast(idx_tensor, pad_rank, broadcast_shape)
+            for idx_tensor in idx_tensors_per_axis
+        ]
     idx_tensors_per_axis[axis] = indices_tensor
     dim_expanded_idx_tensors_per_axis = [
         tf.expand_dims(idx_tensor, axis=-1)
@@ -194,7 +243,7 @@ def make_node(
     )
 
     indices = tf.reshape(coordinate, [-1, input_tensor_rank])
-    updates = tf.reshape(updates_tensor, [-1])
+    updates = tf.reshape(updates_tensor_for_scatter, [-1])
     output = tf.tensor_scatter_nd_update(
         tensor=input_tensor,
         indices=indices,
