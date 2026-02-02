@@ -124,22 +124,55 @@ def make_node(
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
     # Generation of TF OP
-    if replace_prelu_to_pseudo_prelu:
-        pos = tf.nn.relu(input_tensor)
-        neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
-        tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
-    else:
+    shared_axes = None
+    input_shape = input_tensor.shape
+    slope_shape = slope.shape if hasattr(slope, 'shape') else None
+    if input_shape is not None and slope_shape is not None:
+        input_rank = len(input_shape)
+        if len(slope_shape) == input_rank - 1:
+            shared_axes = [
+                i + 1 for i, dim in enumerate(slope_shape)
+                if dim is not None and dim == 1
+            ]
+        elif len(slope_shape) == 1 and input_rank >= 3:
+            slope_dim = slope_shape[0]
+            channel_axis = None
+            if isinstance(slope_dim, int):
+                if input_shape[1] == slope_dim:
+                    channel_axis = 1
+                elif input_shape[-1] == slope_dim:
+                    channel_axis = input_rank - 1
+            if channel_axis is not None:
+                shared_axes = [ax for ax in range(1, input_rank) if ax != channel_axis]
+
+    if shared_axes is None:
         if slope.shape is not None \
             and len(slope.shape) > 0 \
             and sum([1 if dim is not None and dim == 1 else 0 for dim in slope.shape]) == len(slope.shape):
             shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 1)]
         else:
-            shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            PReLU(
-                weights=slope,
-                shared_axes=shared_axes,
-            )(input_tensor)
+            input_nhwc = tf_layers_dict.get(graph_node_output.name, {}).get('nhwc', False)
+            if input_nhwc:
+                shared_axes = [val + 1 for val in range(len(input_tensor.shape) - 2)]
+            else:
+                shared_axes = [val + 2 for val in range(len(input_tensor.shape) - 2)]
+
+    use_native_prelu = not replace_prelu_to_pseudo_prelu
+    if not use_native_prelu:
+        pos = tf.nn.relu(input_tensor)
+        neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
+        tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+    else:
+        try:
+            tf_layers_dict[graph_node_output.name]['tf_node'] = \
+                PReLU(
+                    weights=slope,
+                    shared_axes=shared_axes,
+                )(input_tensor)
+        except Exception:
+            pos = tf.nn.relu(input_tensor)
+            neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
+            tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
