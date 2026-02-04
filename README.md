@@ -80,7 +80,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Cast|:heavy_check_mark:|
   |Ceil|:heavy_check_mark:|
   |Celu|:heavy_check_mark:|
-  |CenterCropPad|**Help wanted**|
+  |CenterCropPad|:heavy_check_mark:|
   |Clip|:heavy_check_mark:|
   |Col2Im|:white_check_mark:|
   |Compress|:heavy_check_mark:|
@@ -124,7 +124,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |GreaterOrEqual|:heavy_check_mark:|
   |Greater|:heavy_check_mark:|
   |GridSample|:white_check_mark:|
-  |GroupNormalization|**Help wanted**|
+  |GroupNormalization|:heavy_check_mark:|
   |GRU|:heavy_check_mark:|
   |HammingWindow|:white_check_mark:|
   |HannWindow|:white_check_mark:|
@@ -168,7 +168,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |NegativeLogLikelihoodLoss|:heavy_check_mark:|
   |NonMaxSuppression|:heavy_check_mark:|
   |NonZero|:heavy_check_mark:|
-  |Optional|**Help wanted**|
+  |Optional|:heavy_check_mark:|
   |OptionalGetElement|:heavy_check_mark:|
   |OptionalHasElement|:heavy_check_mark:|
   |Not|:heavy_check_mark:|
@@ -249,7 +249,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Tan|:heavy_check_mark:|
   |Tanh|:heavy_check_mark:|
   |TensorScatter|:heavy_check_mark:|
-  |TfIdfVectorizer|**Help wanted**|
+  |TfIdfVectorizer|:white_check_mark:|
   |ThresholdedRelu|:heavy_check_mark:|
   |Tile|:heavy_check_mark:|
   |TopK|:heavy_check_mark:|
@@ -323,7 +323,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.23
+  ghcr.io/pinto0309/onnx2tf:1.29.24
 
   or
 
@@ -331,7 +331,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.23
+  docker.io/pinto0309/onnx2tf:1.29.24
 
   or
 

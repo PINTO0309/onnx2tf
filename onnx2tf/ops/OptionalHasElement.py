@@ -63,23 +63,13 @@ def make_node(
     )
 
     # Generation of TF OP
-    if isinstance(input_tensor, np.ndarray):
+    if isinstance(input_tensor, tf.experimental.Optional):
+        optional = input_tensor
+    else:
         optional = \
             tf.experimental.Optional.from_value(
                 value=tf.convert_to_tensor(input_tensor),
                 name=graph_node.name,
-            )
-    else:
-        converted_tenosr = tf.convert_to_tensor(input_tensor)
-        spec = None
-        if tf_keras.backend.is_keras_tensor(converted_tenosr):
-            spec = converted_tenosr.type_spec
-        else:
-            spec = tf.TensorSpec.from_tensor(converted_tenosr)
-
-        optional = \
-            tf.experimental.Optional.empty(
-                element_spec=spec,
             )
     tf_layers_dict[graph_node_output.name]['tf_node'] = optional.has_value()
 
