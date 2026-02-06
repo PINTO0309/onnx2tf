@@ -341,6 +341,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  uv python install 3.12.12
+  uv venv -p 3.12.12 .venv
+  source .venv/bin/activate
+  uv sync
+
+  or
+
   pip install -e .
   ```
 
