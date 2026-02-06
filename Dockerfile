@@ -12,8 +12,7 @@ RUN apt-get update \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m pip install --break-system-packages -U pip \
- && python -m pip install --break-system-packages \
+RUN python -m pip install --break-system-packages \
     onnx==1.20.1 \
     onnxsim-prebuilt==0.4.39.post2 \
     onnxoptimizer==0.4.2 \
