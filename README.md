@@ -269,12 +269,12 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - Linux / Windows
-- onnx==1.19.0
-- onnxruntime==1.23.0
-- onnxsim==0.4.36
+- onnx==1.20.1
+- onnxruntime==1.24.1
+- onnxsim-prebuilt==0.4.39.post2
 - onnxoptimizer==0.4.2
-- onnx_graphsurgeon==0.5.8
-- simple_onnx_processing_tools==1.1.32
+- sne4onnx>=2.0.0
+- sng4onnx>=2.0.0
 - tensorflow==2.19.0
 - tf-keras==2.19.0
 - ai-edge-litert==1.2.0
@@ -306,6 +306,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 **2. The latest onnx2tf implementation is based on Keras API 3 and will not work properly if you install TensorFlow v2.15.0 or earlier.**
 
+**3. Starting with onnx2tf v2.0.0, due to onnxruntime issues, onnx2tf will no longer support environments older than Python 3.10. Accordingly, the Docker Image has been upgraded to Ubuntu 24.04. The dependency on onnx-graphsurgeon has also been completely removed. onnxruntime v1.24.1: https://github.com/microsoft/onnxruntime/releases/tag/v1.24.1**
+
 - HostPC
   <details><summary>Click to expand</summary><div>
 
@@ -323,7 +325,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.29.24
+  ghcr.io/pinto0309/onnx2tf:2.0.0
 
   or
 
@@ -331,18 +333,16 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:1.29.24
+  docker.io/pinto0309/onnx2tf:2.0.0
 
   or
 
-  pip install -U onnx==1.19.1 \
-  && pip install -U onnx-graphsurgeon==0.5.8 \
-  && pip install -U onnxruntime==1.23.0 \
-  && pip install -U onnxsim==0.4.36 \
+  pip install -U onnx==1.20.1 \
+  && pip install -U onnxruntime==1.24.1 \
+  && pip install -U onnxsim-prebuilt==0.4.39.post2 \
   && pip install -U onnxoptimizer==0.4.2 \
-  && pip install -U simple_onnx_processing_tools==1.1.32 \
-  && pip install -U sne4onnx==1.0.15 \
-  && pip install -U sng4onnx==1.0.5 \
+  && pip install -U sne4onnx==2.0.0 \
+  && pip install -U sng4onnx==2.0.0 \
   && pip install -U ai_edge_litert==1.2.0 \
   && pip install -U tensorflow==2.19.0 \
   && pip install -U protobuf==3.20.3 \
@@ -356,39 +356,6 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   or
 
   pip install -e .
-  ```
-
-  </div></details>
-
-or
-
-- Google Colaboratory Python3.10
-  <details><summary>Click to expand</summary><div>
-
-  ```
-  !sudo apt-get -y update
-  !sudo apt-get -y install python3-pip
-  !sudo apt-get -y install python-is-python3
-  !wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
-    && tar -zxvf flatc.tar.gz \
-    && sudo chmod +x flatc \
-    && sudo mv flatc /usr/bin/
-  !pip install -U pip \
-    && pip install tensorflow==2.19.0 \
-    && pip install ai_edge_litert==1.2.0 \
-    && pip install -U onnx==1.19.0 \
-    && python -m pip install onnx_graphsurgeon \
-          --index-url https://pypi.ngc.nvidia.com \
-    && pip install -U onnxruntime==1.18.1 \
-    && pip install -U onnxsim==0.4.33 \
-    && pip install -U simple_onnx_processing_tools \
-    && pip install -U onnx2tf \
-    && pip install -U protobuf==3.20.3 \
-    && pip install -U h5py==3.11.0 \
-    && pip install -U psutil==5.9.5 \
-    && pip install -U ml_dtypes==0.5.1 \
-    && pip install -U tf-keras==2.19.0 \
-    && pip install flatbuffers>=23.5.26
   ```
 
   </div></details>

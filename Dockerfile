@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_ARCH="linux/amd64"
@@ -13,19 +13,19 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install pip -U \
-    && pip install onnx==1.19.0 \
-    && pip install onnxsim==0.4.36 \
+    && pip install onnx==1.20.1 \
+    && pip install onnxsim-prebuilt==0.4.39.post2 \
     && pip install onnxoptimizer==0.4.2 \
-    && pip install onnx_graphsurgeon==0.5.8 \
+    && pip install sne4onnx \
+    && pip install sng4onnx \
     && pip install onnx2tf \
     && pip install onnx2tf \
-    && pip install simple_onnx_processing_tools==1.1.32 \
     && pip install tensorflow==2.19.0 \
     && pip install ai_edge_litert==1.2.0 \
     && pip install protobuf==4.25.5 \
     && pip install h5py==3.11.0 \
     && pip install psutil==5.9.5 \
-    && pip install onnxruntime==1.23.0 \
+    && pip install onnxruntime==1.24.1 \
     && pip install ml_dtypes==0.5.1 \
     && pip install tf-keras==2.19.0 \
     && pip install flatbuffers>=23.5.26
