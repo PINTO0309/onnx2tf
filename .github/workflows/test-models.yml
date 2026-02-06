@@ -95,7 +95,7 @@ jobs:
         pip install tensorflow==2.19.0
         pip install ai_edge_litert==1.2.0
         pip install protobuf==4.25.5
-        pip install onnxsim==0.4.36
+        pip install onnxsim-prebuilt==0.4.39.post2
         pip install sng4onnx
         pip install onnxruntime==1.24.1
         pip install ml_dtypes==0.5.1

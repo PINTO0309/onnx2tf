@@ -14,7 +14,7 @@ RUN apt-get update \
 
 RUN pip install pip -U \
     && pip install onnx==1.20.1 \
-    && pip install onnxsim==0.4.36 \
+    && pip install onnxsim-prebuilt==0.4.39.post2 \
     && pip install onnxoptimizer==0.4.2 \
     && pip install onnx2tf \
     && pip install onnx2tf \
