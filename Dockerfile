@@ -16,9 +16,10 @@ RUN pip install pip -U \
     && pip install onnx==1.20.1 \
     && pip install onnxsim-prebuilt==0.4.39.post2 \
     && pip install onnxoptimizer==0.4.2 \
+    && pip install sne4onnx \
+    && pip install sng4onnx \
     && pip install onnx2tf \
     && pip install onnx2tf \
-    && pip install simple_onnx_processing_tools==1.1.32 \
     && pip install tensorflow==2.19.0 \
     && pip install ai_edge_litert==1.2.0 \
     && pip install protobuf==4.25.5 \
