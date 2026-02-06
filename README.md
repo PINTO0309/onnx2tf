@@ -337,21 +337,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
-  pip install -U onnx==1.20.1 \
-  && pip install -U onnxruntime==1.24.1 \
-  && pip install -U onnxsim-prebuilt==0.4.39.post2 \
-  && pip install -U onnxoptimizer==0.4.2 \
-  && pip install -U sne4onnx==2.0.0 \
-  && pip install -U sng4onnx==2.0.0 \
-  && pip install -U ai_edge_litert==1.2.0 \
-  && pip install -U tensorflow==2.19.0 \
-  && pip install -U protobuf==3.20.3 \
-  && pip install -U onnx2tf \
-  && pip install -U h5py==3.11.0 \
-  && pip install -U psutil==5.9.5 \
-  && pip install -U ml_dtypes==0.5.1 \
-  && pip install -U tf-keras==2.19.0 \
-  && pip install flatbuffers>=23.5.26
+  pip install -U onnx2tf
 
   or
 
