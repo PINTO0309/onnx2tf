@@ -70,6 +70,41 @@ def make_node(
     updates_tensor = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
         if isinstance(graph_node_input_3, gs.Variable) else graph_node_input_3
 
+    def _normalize_shape_for_compare(shape):
+        if shape is None:
+            return None
+        if hasattr(shape, 'as_list'):
+            try:
+                shape = shape.as_list()
+            except Exception:
+                pass
+        if isinstance(shape, np.ndarray):
+            shape = shape.tolist()
+        if isinstance(shape, tuple):
+            shape = list(shape)
+        if not isinstance(shape, list):
+            return None
+        normalized_shape = []
+        for dim in shape:
+            if isinstance(dim, (int, np.integer)):
+                normalized_shape.append(int(dim))
+            elif isinstance(dim, str):
+                normalized_shape.append(dim)
+            elif dim is None:
+                normalized_shape.append(None)
+            elif hasattr(dim, 'value'):
+                normalized_shape.append(dim.value if dim.value is not None else None)
+            else:
+                normalized_shape.append(None)
+        return normalized_shape
+
+    def _is_same_shape(shape_1, shape_2):
+        normalized_shape_1 = _normalize_shape_for_compare(shape_1)
+        normalized_shape_2 = _normalize_shape_for_compare(shape_2)
+        if normalized_shape_1 is None or normalized_shape_2 is None:
+            return False
+        return normalized_shape_1 == normalized_shape_2
+
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
@@ -160,7 +195,7 @@ def make_node(
     elif not data_nhwc \
         and len(input_tensor.shape) >= 3 \
         and graph_node.inputs[0].shape is not None \
-        and input_tensor.shape != graph_node.inputs[0].shape:
+        and not _is_same_shape(input_tensor.shape, graph_node.inputs[0].shape):
         perm = [0, len(input_tensor.shape)-1] + [i for i in range(1, len(input_tensor.shape)-1)]
         input_tensor = tf.transpose(a=input_tensor, perm=perm)
         if indices_perm is None:
@@ -175,7 +210,7 @@ def make_node(
     elif not indices_nhwc \
         and len(indices_tensor.shape) >= 4 \
         and graph_node.inputs[1].shape is not None \
-        and indices_tensor.shape != graph_node.inputs[1].shape:
+        and not _is_same_shape(indices_tensor.shape, graph_node.inputs[1].shape):
         perm = [0, len(indices_tensor.shape)-2] + [i for i in range(1, len(indices_tensor.shape)-2)] + [len(indices_tensor.shape)-1]
         indices_tensor = tf.transpose(a=indices_tensor, perm=perm)
         nchw = True
@@ -188,7 +223,7 @@ def make_node(
     elif not updates_nhwc \
         and len(updates_tensor.shape) >= 3 \
         and graph_node.inputs[2].shape is not None \
-        and updates_tensor.shape != graph_node.inputs[2].shape:
+        and not _is_same_shape(updates_tensor.shape, graph_node.inputs[2].shape):
         perm = [0, len(updates_tensor.shape)-1] + [i for i in range(1, len(updates_tensor.shape)-1)]
         updates_tensor = tf.transpose(a=updates_tensor, perm=perm)
         nchw = True
