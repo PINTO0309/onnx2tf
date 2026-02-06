@@ -60,8 +60,15 @@ def make_node(
     constant_tensor = None
     if "value" in graph_node.attrs:
         attr_value = graph_node.attrs['value']
-        value = attr_value.values
-        constant_tensor = value[0]
+        if hasattr(attr_value, 'values'):
+            value = attr_value.values
+        elif isinstance(attr_value, np.ndarray):
+            value = attr_value
+        else:
+            # onnx2tf.gs may keep ConstantOfShape attrs['value'] as TensorProto
+            value = numpy_helper.to_array(attr_value)
+        value = np.asarray(value)
+        constant_tensor = value.flatten()[0] if value.size > 0 else 0.0
     else:
         constant_tensor = 0.0
 

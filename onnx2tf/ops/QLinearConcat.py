@@ -54,6 +54,41 @@ def make_node(
     input_is_dequantized_list = []
     got_y_scale_list = []
     got_y_zero_point_list = []
+
+    def normalize_shape(shape):
+        if shape is None:
+            return None
+        if isinstance(shape, tf.TensorShape):
+            shape = shape.as_list()
+        elif hasattr(shape, 'as_list'):
+            try:
+                shape = shape.as_list()
+            except Exception:
+                pass
+        if shape is None:
+            return None
+        if not isinstance(shape, (list, tuple)):
+            try:
+                shape = list(shape)
+            except TypeError:
+                return None
+        normalized_shape = []
+        for dim in shape:
+            if hasattr(dim, 'value'):
+                dim = dim.value
+            if isinstance(dim, np.generic):
+                dim = dim.item()
+            normalized_shape.append(dim)
+        return normalized_shape
+
+    def is_same_shape(shape_1, shape_2):
+        normalized_shape_1 = normalize_shape(shape_1)
+        normalized_shape_2 = normalize_shape(shape_2)
+        return normalized_shape_1 is not None \
+            and normalized_shape_2 is not None \
+            and len(normalized_shape_1) > 0 \
+            and normalized_shape_1 == normalized_shape_2
+
     for input, y_scale, y_zero_point  in zip(input_list, y_scale_list, y_zero_point_list):
         const_or_var = get_constant_or_variable(
             input,
@@ -65,8 +100,10 @@ def make_node(
                 tf_layers_dict[const_or_var.name].get('nhwc', False)
             )
             same_input_shape_as_onnxs.append(
-                True if input.shape is not None and len(input.shape) > 0 \
-                    and input.shape == tf_layers_dict[const_or_var.name]['tf_node'].shape else False
+                is_same_shape(
+                    input.shape,
+                    tf_layers_dict[const_or_var.name]['tf_node'].shape,
+                )
             )
             input_is_dequantized_list.append(
                 tf_layers_dict[const_or_var.name].get('is_dequantized', False)
@@ -75,8 +112,10 @@ def make_node(
             got_values.append(const_or_var)
             nhwc_flags.append(False)
             same_input_shape_as_onnxs.append(
-                True if input.shape is not None and len(input.shape) > 0 \
-                    and input.shape == const_or_var.shape else False
+                is_same_shape(
+                    input.shape,
+                    const_or_var.shape,
+                )
             )
             input_is_dequantized_list.append(False)
 

@@ -12,7 +12,10 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    transpose_with_flexing_deterrence,
 )
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 @print_node_info
@@ -44,6 +47,61 @@ def make_node(
         graph_node.inputs[0],
         before_op_output_shape_trans,
     )
+
+    graph_node_output: gs.Variable = graph_node.outputs[0]
+    shape = graph_node_output.shape
+    dtype = graph_node_output.dtype
+
+    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
+        if isinstance(input_tensor, gs.Variable) else input_tensor
+
+    # Workaround to avoid as many Upsample failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to the NWC or NHWC or NDHWC format.
+    # However, if all dimensions of CW or CHW or CDHW have the same value,
+    # the forced transposition process is skipped because it may destroy the structure of the model.
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ] if graph_node.inputs[0].shape is not None else None
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor.shape
+    ]
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+                before_op_output_shape_trans = True
+
+            elif len(onnx_input_shape) == 4:
+                # 2D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,1],
+                    **kwargs,
+                )
+                before_op_output_shape_trans = True
+
+            elif len(onnx_input_shape) == 5:
+                # 3D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,4,1],
+                    **kwargs,
+                )
+                before_op_output_shape_trans = True
+
     scales = None
     if len(graph_node.inputs) >= 2:
         scales = get_constant_or_variable(
@@ -55,13 +113,6 @@ def make_node(
             graph_node.attrs.get('scales', scales),
             before_op_output_shape_trans,
         )
-
-    graph_node_output: gs.Variable = graph_node.outputs[0]
-    shape = graph_node_output.shape
-    dtype = graph_node_output.dtype
-
-    input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
-        if isinstance(input_tensor, gs.Variable) else input_tensor
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
