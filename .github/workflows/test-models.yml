@@ -2,7 +2,7 @@ name: Model Convert Test
 
 on:
   pull_request:
-    branches: [ main, v2 ]
+    branches: [ main ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
