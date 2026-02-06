@@ -12,7 +12,7 @@ from tensorflow.python.keras.layers import (
     Conv2D,
     Conv3D,
 )
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     get_constant_or_variable,
