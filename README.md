@@ -278,6 +278,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - tensorflow==2.19.0
 - tf-keras==2.19.0
 - ai-edge-litert==1.2.0
+- h5py==3.12.1
 - psutil==5.9.5
 - ml_dtypes==0.5.1
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
@@ -325,7 +326,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.2
+  ghcr.io/pinto0309/onnx2tf:2.0.3
 
   or
 
@@ -333,7 +334,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.2
+  docker.io/pinto0309/onnx2tf:2.0.3
 
   or
 
@@ -349,6 +350,26 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   or
 
   pip install -e .
+
+  or
+
+  docker buildx build \
+  --platform linux/amd64 \
+  --build-arg BUILD_ARCH=linux/amd64 \
+  --progress=plain \
+  -t onnx2tf:amd64 \
+  --load \
+  .
+
+  or
+
+  docker buildx build \
+  --platform linux/arm64 \
+  --build-arg BUILD_ARCH=linux/arm64 \
+  --progress=plain \
+  -t onnx2tf:arm64 \
+  --load \
+  .
   ```
 
   </div></details>

@@ -39,7 +39,7 @@ dependencies = [
     "sng4onnx==2.0.0",
     "psutil==5.9.5",
     "protobuf==4.25.5",
-    "h5py==3.11.0",
+    "h5py==3.12.1",
     "ml_dtypes==0.5.1",
     "flatbuffers==25.12.19",
 ]
