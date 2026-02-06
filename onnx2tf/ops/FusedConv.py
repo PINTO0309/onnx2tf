@@ -5,7 +5,7 @@ import numpy as np
 np.random.seed(0)
 import importlib
 import tensorflow as tf
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,

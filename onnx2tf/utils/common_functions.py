@@ -28,7 +28,7 @@ from tensorflow.python.keras.utils import conv_utils
 import onnx
 from onnx.serialization import ProtoSerializer
 from onnx.external_data_helper import uses_external_data
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 try:
     import onnxruntime as ort
 except Exception as ex:
@@ -429,7 +429,7 @@ def print_node_info(func):
             )
             error(
                 f'Alternatively, if the input OP has a dynamic dimension, ' +
-                f'use the -b or -ois option to rewrite it to a static shape and try again.'
+                f'use the -sh or -b or -ois option to rewrite it to a static shape and try again.'
             )
             error(
                 f'If the input OP of ONNX before conversion is NHWC or ' +
@@ -2683,8 +2683,10 @@ def shape_unmatched_special_avoidance_workaround(
             ]
         else:
             graph_node_input_1_shape = []
+        input_tensor_1_shape = _normalize_shape(input_tensor_1.shape) \
+            if hasattr(input_tensor_1, "shape") else None
         same_input_shape_as_onnx_1 = True if len(graph_node_input_1_shape) > 0 \
-            and graph_node_input_1_shape == input_tensor_1.shape else False
+            and _shape_matches(graph_node_input_1_shape, input_tensor_1_shape) else False
     else:
         nhwc_flag_1 = False
         if graph_node_input_1.shape is not None:
@@ -2693,8 +2695,10 @@ def shape_unmatched_special_avoidance_workaround(
             ]
         else:
             graph_node_input_1_shape = []
+        input_tensor_1_shape = _normalize_shape(input_tensor_1.shape) \
+            if hasattr(input_tensor_1, "shape") else None
         same_input_shape_as_onnx_1 = True if len(graph_node_input_1_shape) > 0 \
-            and graph_node_input_1_shape == input_tensor_1.shape else False
+            and _shape_matches(graph_node_input_1_shape, input_tensor_1_shape) else False
     nhwc_flag_2 = False
     same_input_shape_as_onnx_2 = False
     if isinstance(graph_node_input_2, gs.Variable):
@@ -2706,8 +2710,10 @@ def shape_unmatched_special_avoidance_workaround(
             ]
         else:
             graph_node_input_2_shape = []
+        input_tensor_2_shape = _normalize_shape(input_tensor_2.shape) \
+            if hasattr(input_tensor_2, "shape") else None
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
-            and graph_node_input_2_shape == input_tensor_2.shape else False
+            and _shape_matches(graph_node_input_2_shape, input_tensor_2_shape) else False
     else:
         nhwc_flag_2 = False
         if graph_node_input_2.shape is not None:
@@ -2716,8 +2722,10 @@ def shape_unmatched_special_avoidance_workaround(
             ]
         else:
             graph_node_input_2_shape = []
+        input_tensor_2_shape = _normalize_shape(input_tensor_2.shape) \
+            if hasattr(input_tensor_2, "shape") else None
         same_input_shape_as_onnx_2 = True if len(graph_node_input_2_shape) > 0 \
-            and graph_node_input_2_shape == input_tensor_2.shape else False
+            and _shape_matches(graph_node_input_2_shape, input_tensor_2_shape) else False
 
     same_input_shape_as_onnxs = [same_input_shape_as_onnx_1, same_input_shape_as_onnx_2]
     nhwc_flags = [nhwc_flag_1, nhwc_flag_2]

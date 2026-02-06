@@ -4,7 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 from onnx import TensorProto
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 from onnx2tf.utils.common_functions import (
     replace_parameter,
