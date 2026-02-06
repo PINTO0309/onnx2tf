@@ -325,7 +325,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.0
+  ghcr.io/pinto0309/onnx2tf:2.0.1
 
   or
 
@@ -333,7 +333,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.0
+  docker.io/pinto0309/onnx2tf:2.0.1
 
   or
 

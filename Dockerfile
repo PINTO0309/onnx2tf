@@ -12,23 +12,24 @@ RUN apt-get update \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install pip -U \
-    && pip install onnx==1.20.1 \
-    && pip install onnxsim-prebuilt==0.4.39.post2 \
-    && pip install onnxoptimizer==0.4.2 \
-    && pip install sne4onnx \
-    && pip install sng4onnx \
-    && pip install onnx2tf \
-    && pip install onnx2tf \
-    && pip install tensorflow==2.19.0 \
-    && pip install ai_edge_litert==1.2.0 \
-    && pip install protobuf==4.25.5 \
-    && pip install h5py==3.11.0 \
-    && pip install psutil==5.9.5 \
-    && pip install onnxruntime==1.24.1 \
-    && pip install ml_dtypes==0.5.1 \
-    && pip install tf-keras==2.19.0 \
-    && pip install flatbuffers>=23.5.26
+RUN python -m pip install --break-system-packages -U pip \
+ && python -m pip install --break-system-packages \
+    onnx==1.20.1 \
+    onnxsim-prebuilt==0.4.39.post2 \
+    onnxoptimizer==0.4.2 \
+    sne4onnx \
+    sng4onnx \
+    onnx2tf \
+    onnx2tf \
+    tensorflow==2.19.0 \
+    ai_edge_litert==1.2.0 \
+    protobuf==4.25.5 \
+    h5py==3.11.0 \
+    psutil==5.9.5 \
+    onnxruntime==1.24.1 \
+    ml_dtypes==0.5.1 \
+    tf-keras==2.19.0 \
+    'flatbuffers>=23.5.26'
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
