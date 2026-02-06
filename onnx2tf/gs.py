@@ -87,7 +87,7 @@ def _parse_tensor_shape(value_info: onnx.ValueInfoProto) -> Optional[List[int | 
 
 
 @dataclass(eq=False)
-class Variable:
+class Tensor:
     name: str = ""
     dtype: Any = None
     shape: Optional[List[int | str | None]] = None
@@ -109,7 +109,12 @@ class Variable:
 
 
 @dataclass(eq=False)
-class Constant(Variable):
+class Variable(Tensor):
+    pass
+
+
+@dataclass(eq=False)
+class Constant(Tensor):
     values: np.ndarray = field(default_factory=lambda: np.asarray(0, dtype=np.float32))
 
     def __init__(
@@ -551,11 +556,35 @@ def _export_graph_proto(graph: Graph) -> onnx.GraphProto:
             )
         )
 
+    serialized_value_info = []
+    input_names = {inp.name for inp in graph.inputs if getattr(inp, "name", "")}
+    output_names = {out.name for out in graph.outputs if getattr(out, "name", "")}
+    for tensor in graph._iter_tensors():
+        name = getattr(tensor, "name", "")
+        if not name:
+            continue
+        if name in input_names or name in output_names:
+            continue
+        if name in initializer_names:
+            continue
+        dtype = getattr(tensor, "dtype", None)
+        if dtype is None:
+            continue
+        shape = getattr(tensor, "shape", None)
+        serialized_value_info.append(
+            helper.make_tensor_value_info(
+                name,
+                _numpy_dtype_to_onnx(dtype),
+                _normalize_shape(shape),
+            )
+        )
+
     return helper.make_graph(
         nodes=serialized_nodes,
         name=graph.name or "graph",
         inputs=serialized_inputs,
         outputs=serialized_outputs,
+        value_info=serialized_value_info,
         initializer=list(initializers.values()),
     )
 
