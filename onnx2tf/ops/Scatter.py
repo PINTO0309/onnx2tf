@@ -3,7 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import importlib
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     get_replacement_parameter,

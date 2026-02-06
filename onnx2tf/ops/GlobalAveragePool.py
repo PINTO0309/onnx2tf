@@ -3,7 +3,7 @@ random.seed(0)
 import numpy as np
 np.random.seed(0)
 import tensorflow as tf
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from tensorflow.python.keras.layers import (
     GlobalAveragePooling1D,
     GlobalAveragePooling2D,

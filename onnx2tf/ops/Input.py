@@ -4,7 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import tf_keras
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from typing import List
 from onnx2tf.utils.logging import *
 from onnx2tf.utils.common_functions import (

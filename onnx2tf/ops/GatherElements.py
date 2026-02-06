@@ -7,7 +7,7 @@ np.random.seed(0)
 import itertools
 import tensorflow as tf
 import tf_keras
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     convert_axis,

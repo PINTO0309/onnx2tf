@@ -11,7 +11,7 @@ import sys
 from typing import Dict, List, Any, Tuple, Optional
 import numpy as np
 from onnx2tf.utils.logging import *
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 
 
 class IterativeJSONOptimizer:

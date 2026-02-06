@@ -28,7 +28,7 @@ from tensorflow.python.keras.utils import conv_utils
 import onnx
 from onnx.serialization import ProtoSerializer
 from onnx.external_data_helper import uses_external_data
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 try:
     import onnxruntime as ort
 except Exception as ex:

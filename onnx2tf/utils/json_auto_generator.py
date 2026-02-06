@@ -11,7 +11,7 @@ import numpy as np
 from typing import Dict, List, Any, Tuple, Optional, Set
 from onnx2tf.utils.logging import *
 import onnx
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 import re
 import tempfile
 import subprocess

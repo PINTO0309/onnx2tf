@@ -38,7 +38,7 @@ from absl import logging as absl_logging
 absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
-import onnx_graphsurgeon as gs
+import onnx2tf.gs as gs
 from typing import Optional, List, Any, Dict
 from argparse import ArgumentParser
 
