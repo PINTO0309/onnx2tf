@@ -7,7 +7,7 @@ name = "onnx2tf"
 version = "1.29.24"
 description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf)."
 readme = "README.md"
-requires-python = ">=3.10.12"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "Katsuya Hyodo", email = "rmsdh122@yahoo.co.jp" }
@@ -21,15 +21,14 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: Unix",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "requests==2.32.5",
     "numpy==1.26.4",
-    "onnx==1.19.1",
-    "onnxruntime==1.23.0",
+    "onnx==1.20.1",
+    "onnxruntime==1.24.1",
     "opencv-python==4.11.0.86",
     "onnxsim==0.4.36",
     "onnxoptimizer==0.4.2",
@@ -60,7 +59,7 @@ Issues = "https://github.com/PINTO0309/onnx2tf/issues"
 
 [tool.uv]
 override-dependencies = [
-    "onnx==1.19.1",
+    "onnx==1.20.1",
     "onnxsim==0.4.36",
     "ml-dtypes==0.5.1",
     "numpy==1.26.4",
