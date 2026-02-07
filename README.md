@@ -374,8 +374,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   --build-arg BUILD_ARCH=linux/amd64 \
   --progress=plain \
   -t onnx2tf:amd64 \
-  --load \
-  .
+  --load .
 
   or
 
@@ -384,8 +383,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   --build-arg BUILD_ARCH=linux/arm64 \
   --progress=plain \
   -t onnx2tf:arm64 \
-  --load \
-  .
+  --load .
   ```
 
   </div></details>
