@@ -2030,7 +2030,7 @@ optional arguments:
     * Buffers of TFLite model are mostly used for constant tensors.
       And zero value buffers are buffers filled with zeros.
       Non-data buffers area are used to store operators, subgraphs and etc.
-      You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+      You can find more details from https://github.com/google-ai-edge/LiteRT/blob/v2.1.2/tflite/converter/schema/schema.fbs
     """
 
   -coto, --check_onnx_tf_outputs_elementwise_close
@@ -2613,7 +2613,7 @@ convert(
       * Buffers of TFLite model are mostly used for constant tensors.
         And zero value buffers are buffers filled with zeros.
         Non-data buffers area are used to store operators, subgraphs and etc.
-        You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+        You can find more details from https://github.com/google-ai-edge/LiteRT/blob/v2.1.2/tflite/converter/schema/schema.fbs
       """
 
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
