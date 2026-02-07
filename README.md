@@ -277,7 +277,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - sng4onnx>=2.0.0
 - tensorflow==2.19.0
 - tf-keras==2.19.0
-- ai-edge-litert==1.2.0
+- ai-edge-litert==2.1.2
 - h5py==3.12.1
 - psutil==5.9.5
 - ml_dtypes==0.5.1
@@ -326,7 +326,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.4
+  ghcr.io/pinto0309/onnx2tf:2.0.5
 
   or
 
@@ -334,7 +334,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.4
+  docker.io/pinto0309/onnx2tf:2.0.5
 
   or
 

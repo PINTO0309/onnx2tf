@@ -16,16 +16,16 @@ RUN python -m pip install --break-system-packages --prefer-binary \
     onnx==1.20.1 \
     onnxsim-prebuilt==0.4.39.post2 \
     onnxoptimizer==0.4.2 \
+    onnxruntime==1.24.1 \
     sne4onnx \
     sng4onnx \
     onnx2tf \
     onnx2tf \
     tensorflow==2.19.0 \
-    ai_edge_litert==1.2.0 \
+    ai_edge_litert==2.1.2 \
     protobuf==4.25.5 \
     h5py==3.12.1 \
     psutil==5.9.5 \
-    onnxruntime==1.24.1 \
     ml_dtypes==0.5.1 \
     tf-keras==2.19.0 \
     'flatbuffers>=23.5.26'
