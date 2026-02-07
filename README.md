@@ -338,6 +338,17 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  # Direct execution in Docker
+  # The model conversion is performed within Docker,
+  # but the model is output to the host PC's storage.
+  docker run --rm \
+  --user $(id -u):$(id -g) \
+  -v $(pwd):/work \
+  docker.io/pinto0309/onnx2tf:2.0.5 \
+  onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
+
+  or
+
   pip install -U onnx2tf
 
   or
