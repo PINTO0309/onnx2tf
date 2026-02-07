@@ -21,6 +21,22 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 4. M4: FP32/FP16 の実運用化
 5. M5: 量子化対応の段階拡張
 
+## 進捗状況（2026-02-07）
+1. 完了:
+- `update-builder.md` を `flat-b01` と `flatbuffer` の両ブランチに反映済み
+- `flat-b01`: `a9d1451`
+- `flatbuffer`: `608653c`
+- Step 1 実装（`tflite_backend` 導入、CLI追加、`flatbuffer_direct` スタブ分岐）を実装完了
+
+2. 検証済み:
+- `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
+- `python -m onnx2tf.onnx2tf -h` に `--tflite_backend` が表示されること
+- `tflite_backend='flatbuffer_direct'` で `NotImplementedError` が返ること
+- `tflite_backend='tf_converter'` で従来どおり `Functional` が返ること
+
+3. 未着手:
+- Step 2 以降（Builder基盤、IR、主要OP対応、テスト拡張）
+
 ## 作業ステップ
 
 ### Step 0: 仕様固定と前提整理
@@ -172,12 +188,13 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 対策: 変換テストだけでなく `Interpreter.allocate_tensors()` を必須化。
 
 ## 進捗トラッキング（運用テンプレ）
-1. `[ ] Step 1 完了`
-2. `[ ] Step 2 完了`
-3. `[ ] Step 3 完了`
-4. `[ ] Step 4 完了`
-5. `[ ] Step 5 完了`
-6. `[ ] Step 6 完了`
-7. `[ ] Step 7 完了`
-8. `[ ] Step 8 完了`
-9. `[ ] Step 9 完了`
+1. `[x] Step 0 完了`
+2. `[x] Step 1 完了`
+3. `[ ] Step 2 完了`
+4. `[ ] Step 3 完了`
+5. `[ ] Step 4 完了`
+6. `[ ] Step 5 完了`
+7. `[ ] Step 6 完了`
+8. `[ ] Step 7 完了`
+9. `[ ] Step 8 完了`
+10. `[ ] Step 9 完了`
