@@ -628,6 +628,7 @@ def convert(
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
+    tflite_backend: Optional[str] = 'tf_converter',
     quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
     quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
     quant_type: Optional[str] = 'per-channel',
@@ -733,6 +734,12 @@ def convert(
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
+
+    tflite_backend: Optional[str]
+        TFLite generation backend.\n
+        "tf_converter"(default): Use TensorFlow Lite Converter.\n
+        "flatbuffer_direct": Use direct FlatBuffer builder path.\n
+        Note: "flatbuffer_direct" is staged and may be unavailable.\n
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.\n
@@ -1138,6 +1145,15 @@ def convert(
     # Escape
     input_onnx_file_path = fr'{input_onnx_file_path}'
     output_folder_path = fr'{output_folder_path}'
+
+    # TFLite backend
+    tflite_backend = str(tflite_backend).lower() if tflite_backend is not None else 'tf_converter'
+    if tflite_backend not in ['tf_converter', 'flatbuffer_direct']:
+        error(
+            f'tflite_backend must be one of ["tf_converter", "flatbuffer_direct"]. ' +
+            f'tflite_backend: {tflite_backend}'
+        )
+        sys.exit(1)
 
     # Input file existence check
     if not os.path.exists(input_onnx_file_path) and not onnx_graph:
@@ -1689,6 +1705,7 @@ def convert(
                     'copy_onnx_input_output_names_to_tflite': copy_onnx_input_output_names_to_tflite,
                     'output_dynamic_range_quantized_tflite': output_dynamic_range_quantized_tflite,
                     'output_integer_quantized_tflite': output_integer_quantized_tflite,
+                    'tflite_backend': tflite_backend,
                     'quant_norm_mean': quant_norm_mean,
                     'quant_norm_std': quant_norm_std,
                     'quant_type': quant_type,
@@ -2743,6 +2760,16 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
+        if tflite_backend == 'flatbuffer_direct':
+            from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
+            export_tflite_model_flatbuffer_direct(
+                output_folder_path=output_folder_path,
+                output_file_name=output_file_name,
+                copy_onnx_input_output_names_to_tflite=copy_onnx_input_output_names_to_tflite,
+                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                output_integer_quantized_tflite=output_integer_quantized_tflite,
+            )
+
         try:
             converter = tf.lite.TFLiteConverter.from_keras_model(model)
         except Exception as e:
@@ -3712,6 +3739,17 @@ def main():
             'Output of integer quantized tflite.'
     )
     parser.add_argument(
+        '-tb',
+        '--tflite_backend',
+        type=str,
+        choices=['tf_converter', 'flatbuffer_direct'],
+        default='tf_converter',
+        help=\
+            'TFLite generation backend. \n' +
+            '"tf_converter"(default): Use TensorFlow Lite Converter. \n' +
+            '"flatbuffer_direct": Use direct FlatBuffer builder path (staged).'
+    )
+    parser.add_argument(
         '-qt',
         '--quant_type',
         type=str,
@@ -4376,6 +4414,7 @@ def main():
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
+        tflite_backend=args.tflite_backend,
         quant_norm_mean=args.quant_norm_mean,
         quant_norm_std=args.quant_norm_std,
         quant_type=args.quant_type,

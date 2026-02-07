@@ -1659,6 +1659,12 @@ optional arguments:
   -oiqt, --output_integer_quantized_tflite
     Output of integer quantized tflite.
 
+  -tb {tf_converter,flatbuffer_direct}, \
+    --tflite_backend {tf_converter,flatbuffer_direct}
+    TFLite generation backend.
+    "tf_converter"(default): Use TensorFlow Lite Converter.
+    "flatbuffer_direct": Use direct FlatBuffer builder path (staged).
+
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
@@ -2118,6 +2124,7 @@ convert(
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
+  tflite_backend: Optional[str] = 'tf_converter',
   quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
   quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
   quant_type: Optional[str] = 'per-channel',
@@ -2217,6 +2224,12 @@ convert(
 
     output_integer_quantized_tflite: Optional[bool]
       Output of integer quantized tflite.
+
+    tflite_backend: Optional[str]
+      TFLite generation backend.
+      "tf_converter"(default): Use TensorFlow Lite Converter.
+      "flatbuffer_direct": Use direct FlatBuffer builder path.
+      Note: "flatbuffer_direct" is staged and may be unavailable.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.
