@@ -1,7 +1,7 @@
 # onnx2tf
 Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). 
 
-Use LiteRT Torch. https://github.com/google-ai-edge/litert-torch
+You should use LiteRT Torch rather than onnx2tf. https://github.com/google-ai-edge/litert-torch
 
 <p align="center">
   <img src="https://user-images.githubusercontent.com/33194443/193840307-fa69eace-05a9-4d93-9c5d-999cf88af28e.png" />
