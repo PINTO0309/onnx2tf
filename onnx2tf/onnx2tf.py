@@ -739,7 +739,7 @@ def convert(
         TFLite generation backend.\n
         "tf_converter"(default): Use TensorFlow Lite Converter.\n
         "flatbuffer_direct": Use direct FlatBuffer builder path.\n
-        Note: "flatbuffer_direct" is staged and may be unavailable.\n
+        Note: "flatbuffer_direct" supports a limited builtin OP set and FP32/FP16 only.\n
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.\n
@@ -2762,13 +2762,21 @@ def convert(
         """
         if tflite_backend == 'flatbuffer_direct':
             from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
-            export_tflite_model_flatbuffer_direct(
+            direct_outputs = export_tflite_model_flatbuffer_direct(
+                onnx_graph=onnx_graph,
                 output_folder_path=output_folder_path,
                 output_file_name=output_file_name,
-                copy_onnx_input_output_names_to_tflite=copy_onnx_input_output_names_to_tflite,
+                output_weights=output_weights,
                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
             )
+            info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
+            info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+            if copy_onnx_input_output_names_to_tflite:
+                info(
+                    'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
+                )
+            return model
 
         try:
             converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -3747,7 +3755,7 @@ def main():
         help=\
             'TFLite generation backend. \n' +
             '"tf_converter"(default): Use TensorFlow Lite Converter. \n' +
-            '"flatbuffer_direct": Use direct FlatBuffer builder path (staged).'
+            '"flatbuffer_direct": Use direct FlatBuffer builder path (limited OP/quantization support).'
     )
     parser.add_argument(
         '-qt',

@@ -39,15 +39,26 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `flat-b01`: `a9d1451`
 - `flatbuffer`: `608653c`
 - Step 1 実装（`tflite_backend` 導入、CLI追加、`flatbuffer_direct` スタブ分岐）を実装完了
+- Step 2 実装（`onnx2tf/tflite_builder/` 基盤作成、schema loader / model writer 実装）
+- Step 3 実装（`GraphIR` 最小構成の導入、ONNX から IR への lowering 実装）
+- Step 4 実装（OperatorCode 重複排除、Tensor/Buffer 構築、index整合チェック、`shape_signature` 出力）
+- Step 5 実装（第1バッチ Builtin OP: `ADD` `SUB` `MUL` `DIV` `RESHAPE` `TRANSPOSE` `CONCATENATION` `LOGISTIC` `SOFTMAX`）
+- Step 6 実装（第2バッチ Builtin OP: `CONV_2D` `DEPTHWISE_CONV_2D` `AVERAGE_POOL_2D` `MAX_POOL_2D` `FULLY_CONNECTED`）
+- Step 7 実装（ONNX I/O 名を生成時に直接反映、SignatureDef を生成）
+- Step 8 実装（`tests/test_tflite_builder_direct.py` 追加、backend matrix/Interpreter 実行テスト追加）
+- Step 9 実装（README に backend 制約・対応OP・schemaタグ固定運用を追記）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
 - `python -m onnx2tf.onnx2tf -h` に `--tflite_backend` が表示されること
-- `tflite_backend='flatbuffer_direct'` で `NotImplementedError` が返ること
-- `tflite_backend='tf_converter'` で従来どおり `Functional` が返ること
+- `tflite_backend='flatbuffer_direct'` で `.tflite`（float32/float16）が生成されること
+- `tflite_backend='tf_converter'` で従来どおり変換可能なこと
+- `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
+- 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（4 passed）
 
 3. 未着手:
-- Step 2 以降（Builder基盤、IR、主要OP対応、テスト拡張）
+- 量子化対応（M5 の段階拡張）
 
 ## 作業ステップ
 
@@ -202,11 +213,11 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 ## 進捗トラッキング（運用テンプレ）
 1. `[x] Step 0 完了`
 2. `[x] Step 1 完了`
-3. `[ ] Step 2 完了`
-4. `[ ] Step 3 完了`
-5. `[ ] Step 4 完了`
-6. `[ ] Step 5 完了`
-7. `[ ] Step 6 完了`
-8. `[ ] Step 7 完了`
-9. `[ ] Step 8 完了`
-10. `[ ] Step 9 完了`
+3. `[x] Step 2 完了`
+4. `[x] Step 3 完了`
+5. `[x] Step 4 完了`
+6. `[x] Step 5 完了`
+7. `[x] Step 6 完了`
+8. `[x] Step 7 完了`
+9. `[x] Step 8 完了`
+10. `[x] Step 9 完了`
