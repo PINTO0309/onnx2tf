@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -11,6 +12,7 @@ from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 
 Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
+pytest.importorskip("onnxruntime")
 
 
 def _save_model(tmpdir: str, name: str, model: onnx.ModelProto) -> str:
@@ -28,6 +30,8 @@ def _convert(
     quant_type: str = "per-channel",
     input_quant_dtype: str = "int8",
     output_quant_dtype: str = "int8",
+    eval_with_onnx: bool = False,
+    eval_num_samples: int = 10,
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -40,6 +44,8 @@ def _convert(
         quant_type=quant_type,
         input_quant_dtype=input_quant_dtype,
         output_quant_dtype=output_quant_dtype,
+        eval_with_onnx=eval_with_onnx,
+        eval_num_samples=eval_num_samples,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -422,3 +428,33 @@ def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
                     "flatbuffer_direct",
                     output_dynamic_range_quantized_tflite=True,
                 )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_accuracy_report_generation() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_model()
+        model_path = _save_model(tmpdir, "add_eval", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            eval_with_onnx=True,
+            eval_num_samples=3,
+        )
+
+        report_path = os.path.join(out_dir, "add_eval_accuracy_report.json")
+        assert os.path.isfile(report_path)
+
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+
+        assert report["schema_version"] == 1
+        assert report["num_samples"] == 3
+        assert report["seed"] == 0
+        assert report["inputs_source"] == "seeded_random"
+        assert "overall_metrics" in report
+        assert "per_output_metrics" in report
+        assert "z" in report["per_output_metrics"]
+        assert report["overall_metrics"]["max_abs"] <= 1e-6

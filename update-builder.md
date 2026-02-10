@@ -34,7 +34,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 4. M4: FP32/FP16 の実運用化
 5. M5: 量子化対応の段階拡張
 
-## 進捗状況（2026-02-07）
+## 進捗状況（2026-02-10）
 1. 完了:
 - `update-builder.md` を `flat-b01` と `flatbuffer` の両ブランチに反映済み
 - `flat-b01`: `a9d1451`
@@ -55,6 +55,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 16 実装（dynamic range quantization 精度強化: per-channel 対象を定数演算へ拡張、しきい値制御を追加、percentile校正戦略を追加）
 - Step 17 実装（`integer_quant_with_int16_act` / `full_integer_quant_with_int16_act` の direct builder 対応を追加）
 - Step 18 実装（追加要件の仕様固定: 精度評価・1GB分割・全OP本格実装の境界条件とCLI方針を明文化）
+- Step 19 実装（ONNX Runtime/TFLite 共通推論ラッパーと指標算出を追加し、`*_accuracy_report.json` を生成）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -63,7 +64,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `tflite_backend='tf_converter'` で従来どおり変換可能なこと
 - `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
 - 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
-- `pytest -q tests/test_tflite_builder_direct.py` が通過（11 passed）
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（12 passed）
 - `-odrqt` 指定で `*_dynamic_range_quant.tflite` が生成され、Gemm小規模モデルで `Interpreter.allocate_tensors()` および `invoke()` が通ること
 - `-odrqt` 指定で Add(constant) 小規模モデルも `Interpreter.invoke()` まで通ること
 - `-odrqt` + `--quant_type per-channel/per-tensor` でFCモデルの量子化 scale 形状が切り替わること（テストで検証）
@@ -71,9 +72,10 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `-oiqt` 指定で `*_integer_quant_with_int16_act.tflite` と `*_full_integer_quant_with_int16_act.tflite` が生成され、両方 `Interpreter.invoke()` まで通ること
 - `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD=percentile` 指定時でも `-odrqt` 変換が通ること
 - `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX` による量子化しきい値制御で非量子化ケースが明示失敗すること
+- `eval_with_onnx=True` 指定で `*_accuracy_report.json` が生成され、`max_abs/mean_abs/rmse/cosine_similarity` が出力されること
 
 3. 未着手:
-- 追加要件 Step 19-28（精度評価機能、1GB近傍自動分割、全OP本格実装）
+- 追加要件 Step 20-28（精度評価機能運用化、1GB近傍自動分割、全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
