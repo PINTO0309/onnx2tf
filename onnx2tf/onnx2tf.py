@@ -639,6 +639,7 @@ def convert(
     eval_split_reference: Optional[str] = 'unsplit_tflite',
     eval_split_fail_on_threshold: Optional[bool] = False,
     auto_split_tflite_by_size: Optional[bool] = False,
+    report_op_coverage: Optional[bool] = False,
     tflite_split_max_bytes: Optional[int] = 1073741824,
     tflite_split_target_bytes: Optional[int] = 1060000000,
     tflite_backend: Optional[str] = 'tf_converter',
@@ -801,6 +802,10 @@ def convert(
     auto_split_tflite_by_size: Optional[bool]
         Estimate flatbuffer size and generate split planning report
         (`*_split_plan.json`) for flatbuffer_direct backend.
+
+    report_op_coverage: Optional[bool]
+        Generate ONNX OP coverage report (`*_op_coverage_report.json`) with
+        machine-readable unsupported reasons for flatbuffer_direct backend.
 
     tflite_split_max_bytes: Optional[int]
         Hard upper bound for split planning.
@@ -1242,6 +1247,7 @@ def convert(
     eval_split_reference = str(eval_split_reference).lower() if eval_split_reference is not None else 'unsplit_tflite'
     eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
     auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
+    report_op_coverage = bool(report_op_coverage)
     tflite_split_max_bytes = int(tflite_split_max_bytes)
     tflite_split_target_bytes = int(tflite_split_target_bytes)
     if eval_num_samples <= 0:
@@ -1321,6 +1327,11 @@ def convert(
     if auto_split_tflite_by_size and tflite_backend != 'flatbuffer_direct':
         error(
             'auto_split_tflite_by_size currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if report_op_coverage and tflite_backend != 'flatbuffer_direct':
+        error(
+            'report_op_coverage currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
 
@@ -1885,6 +1896,7 @@ def convert(
                     'eval_split_reference': eval_split_reference,
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'auto_split_tflite_by_size': auto_split_tflite_by_size,
+                    'report_op_coverage': report_op_coverage,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
                     'tflite_split_target_bytes': tflite_split_target_bytes,
                     'tflite_backend': tflite_backend,
@@ -2956,6 +2968,7 @@ def convert(
                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
                 auto_split_tflite_by_size=auto_split_tflite_by_size,
+                report_op_coverage=report_op_coverage,
                 tflite_split_max_bytes=tflite_split_max_bytes,
                 tflite_split_target_bytes=tflite_split_target_bytes,
             )
@@ -2993,6 +3006,17 @@ def convert(
                             f'target={tflite_split_target_bytes}'
                         )
                     )
+            if report_op_coverage:
+                if 'op_coverage_report_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct OP coverage report was requested but no report was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'OP coverage report output complete! '
+                        f'({direct_outputs["op_coverage_report_path"]})'
+                    )
+                )
             if output_dynamic_range_quantized_tflite:
                 if 'dynamic_range_quant_tflite_path' not in direct_outputs:
                     raise RuntimeError(
@@ -4207,6 +4231,13 @@ def main():
             'Currently available only with --tflite_backend flatbuffer_direct.'
     )
     parser.add_argument(
+        '--report_op_coverage',
+        action='store_true',
+        help=\
+            'Generate *_op_coverage_report.json with machine-readable unsupported OP reasons. \n' +
+            'Currently available only with --tflite_backend flatbuffer_direct.'
+    )
+    parser.add_argument(
         '--tflite_split_max_bytes',
         type=int,
         default=1073741824,
@@ -4898,6 +4929,7 @@ def main():
         eval_split_reference=args.eval_split_reference,
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         auto_split_tflite_by_size=args.auto_split_tflite_by_size,
+        report_op_coverage=args.report_op_coverage,
         tflite_split_max_bytes=args.tflite_split_max_bytes,
         tflite_split_target_bytes=args.tflite_split_target_bytes,
         tflite_backend=args.tflite_backend,

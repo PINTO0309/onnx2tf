@@ -60,6 +60,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 21 実装（IR/Tensor/Bufferベースのサイズ見積りと依存関係を壊さない分割候補探索、1GB近傍収束ロジックを追加）
 - Step 22 実装（`*_0001.tflite` 形式の分割出力、`*_split_manifest.json` 出力、各分割の `Interpreter.allocate_tensors()` 検証を追加）
 - Step 23 実装（manifestに従う分割モデル逐次実行評価器を追加し、`*_split_accuracy_report.json` を出力。`unsplit_tflite` / `onnx` 比較と閾値失敗制御を追加）
+- Step 24 実装（OPディスパッチを登録テーブル化し、共通検証フックと機械可読な未対応理由レポートを追加。ONNX schema 13-18 と対応状況の突合を自動化し、`--report_op_coverage` で `*_op_coverage_report.json` を出力）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -86,9 +87,11 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - 分割出力された全 `*_nnnn.tflite` が `Interpreter.allocate_tensors()` を通過すること
 - `eval_split_models=True` 指定で `*_split_accuracy_report.json` が生成され、分割モデルと参照（`unsplit_tflite`/`onnx`）の差分が定量化されること
 - `eval_split_fail_on_threshold=True` または split評価器の `fail_on_threshold=True` 指定で閾値超過時に失敗終了できること
+- `--report_op_coverage` 指定で `*_op_coverage_report.json` が生成され、`graph_node_reports` / `unsupported_reason_counts` / `conversion_error` が出力されること
+- 未対応 OP を含むモデルでも失敗時に OP カバレッジレポートが出力されること（`unsupported_onnx_op` などの reason_code を確認）
 
 3. 未着手:
-- 追加要件 Step 24-28（全OP本格実装）
+- 追加要件 Step 25-28（全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -468,7 +471,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 22. `[x] Step 21 完了`
 23. `[x] Step 22 完了`
 24. `[x] Step 23 完了`
-25. `[ ] Step 24 完了`
+25. `[x] Step 24 完了`
 26. `[ ] Step 25 完了`
 27. `[ ] Step 26 完了`
 28. `[ ] Step 27 完了`
