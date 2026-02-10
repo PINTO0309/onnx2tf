@@ -630,6 +630,11 @@ def convert(
     output_integer_quantized_tflite: Optional[bool] = False,
     eval_with_onnx: Optional[bool] = False,
     eval_num_samples: Optional[int] = 10,
+    eval_rtol: Optional[float] = 0.0,
+    eval_atol: Optional[float] = 1e-4,
+    eval_fail_on_threshold: Optional[bool] = False,
+    eval_target_tflite: Optional[str] = 'float32',
+    eval_compare_mode: Optional[str] = 'auto',
     tflite_backend: Optional[str] = 'tf_converter',
     quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
     quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -746,6 +751,35 @@ def convert(
         Number of samples for ONNX/TFLite accuracy evaluation.\n
         Only used when `eval_with_onnx=True`.\n
         Default: 10
+
+    eval_rtol: Optional[float]
+        Relative tolerance for ONNX/TFLite `np.allclose` check.\n
+        Only used when `eval_with_onnx=True`.\n
+        Default: 0.0
+
+    eval_atol: Optional[float]
+        Absolute tolerance for ONNX/TFLite `np.allclose` check.\n
+        Only used when `eval_with_onnx=True`.\n
+        Default: 1e-4
+
+    eval_fail_on_threshold: Optional[bool]
+        Fail conversion when evaluation thresholds are not satisfied.\n
+        Only used when `eval_with_onnx=True`.\n
+        Default: False
+
+    eval_target_tflite: Optional[str]
+        Target tflite variant to evaluate.\n
+        One of "float32", "float16", "dynamic_range_quant",\n
+        "integer_quant", "full_integer_quant",\n
+        "integer_quant_with_int16_act", "full_integer_quant_with_int16_act".\n
+        Default: "float32"
+
+    eval_compare_mode: Optional[str]
+        Output comparison mode for ONNX vs TFLite.\n
+        "auto": dequant for quantized outputs, raw otherwise.\n
+        "dequant": dequantize TFLite outputs before comparison.\n
+        "raw": compare raw TFLite output tensors.\n
+        Default: "auto"
 
     tflite_backend: Optional[str]
         TFLite generation backend.\n
@@ -1170,9 +1204,45 @@ def convert(
         sys.exit(1)
     eval_with_onnx = bool(eval_with_onnx)
     eval_num_samples = int(eval_num_samples)
+    eval_rtol = float(eval_rtol)
+    eval_atol = float(eval_atol)
+    eval_fail_on_threshold = bool(eval_fail_on_threshold)
+    eval_target_tflite = str(eval_target_tflite).lower() if eval_target_tflite is not None else 'float32'
+    eval_compare_mode = str(eval_compare_mode).lower() if eval_compare_mode is not None else 'auto'
     if eval_num_samples <= 0:
         error(
             f'eval_num_samples must be > 0. eval_num_samples: {eval_num_samples}'
+        )
+        sys.exit(1)
+    if eval_rtol < 0.0:
+        error(
+            f'eval_rtol must be >= 0.0. eval_rtol: {eval_rtol}'
+        )
+        sys.exit(1)
+    if eval_atol < 0.0:
+        error(
+            f'eval_atol must be >= 0.0. eval_atol: {eval_atol}'
+        )
+        sys.exit(1)
+    eval_target_candidates = [
+        'float32',
+        'float16',
+        'dynamic_range_quant',
+        'integer_quant',
+        'full_integer_quant',
+        'integer_quant_with_int16_act',
+        'full_integer_quant_with_int16_act',
+    ]
+    if eval_target_tflite not in eval_target_candidates:
+        error(
+            f'eval_target_tflite must be one of {eval_target_candidates}. ' +
+            f'eval_target_tflite: {eval_target_tflite}'
+        )
+        sys.exit(1)
+    if eval_compare_mode not in ['auto', 'dequant', 'raw']:
+        error(
+            f'eval_compare_mode must be one of ["auto", "dequant", "raw"]. ' +
+            f'eval_compare_mode: {eval_compare_mode}'
         )
         sys.exit(1)
     if eval_with_onnx and tflite_backend != 'flatbuffer_direct':
@@ -1733,6 +1803,11 @@ def convert(
                     'output_integer_quantized_tflite': output_integer_quantized_tflite,
                     'eval_with_onnx': eval_with_onnx,
                     'eval_num_samples': eval_num_samples,
+                    'eval_rtol': eval_rtol,
+                    'eval_atol': eval_atol,
+                    'eval_fail_on_threshold': eval_fail_on_threshold,
+                    'eval_target_tflite': eval_target_tflite,
+                    'eval_compare_mode': eval_compare_mode,
                     'tflite_backend': tflite_backend,
                     'quant_norm_mean': quant_norm_mean,
                     'quant_norm_std': quant_norm_std,
@@ -2862,17 +2937,37 @@ def convert(
                 )
             if eval_with_onnx:
                 from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
+                eval_target_map = {
+                    'float32': 'float32_tflite_path',
+                    'float16': 'float16_tflite_path',
+                    'dynamic_range_quant': 'dynamic_range_quant_tflite_path',
+                    'integer_quant': 'integer_quant_tflite_path',
+                    'full_integer_quant': 'full_integer_quant_tflite_path',
+                    'integer_quant_with_int16_act': 'integer_quant_with_int16_act_tflite_path',
+                    'full_integer_quant_with_int16_act': 'full_integer_quant_with_int16_act_tflite_path',
+                }
+                eval_output_key = eval_target_map[eval_target_tflite]
+                if eval_output_key not in direct_outputs:
+                    raise RuntimeError(
+                        f'eval_target_tflite="{eval_target_tflite}" was requested, '
+                        f'but output "{eval_output_key}" is not available in this conversion. '
+                        'Enable the corresponding quantization output option first.'
+                    )
                 accuracy_report_path = os.path.join(
                     output_folder_path,
                     f'{output_file_name}_accuracy_report.json',
                 )
                 report = evaluate_onnx_tflite_outputs(
                     onnx_graph=onnx_graph,
-                    tflite_path=direct_outputs['float32_tflite_path'],
+                    tflite_path=direct_outputs[eval_output_key],
                     output_report_path=accuracy_report_path,
                     num_samples=eval_num_samples,
                     seed=0,
                     custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    rtol=eval_rtol,
+                    atol=eval_atol,
+                    compare_mode=eval_compare_mode,
+                    fail_on_threshold=eval_fail_on_threshold,
                 )
                 info(
                     Color.GREEN(
@@ -2880,7 +2975,8 @@ def convert(
                         f'({accuracy_report_path}) '
                         f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
                         f'rmse={report["overall_metrics"]["rmse"]:.6g} '
-                        f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g}'
+                        f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g} '
+                        f'pass={report["evaluation_pass"]}'
                     )
                 )
             return model
@@ -3865,6 +3961,72 @@ def main():
             '"flatbuffer_direct": Use direct FlatBuffer builder path (limited OP/quantization support).'
     )
     parser.add_argument(
+        '--eval_with_onnx',
+        action='store_true',
+        help=\
+            'Evaluate generated TFLite against ONNX outputs and generate *_accuracy_report.json. \n' +
+            'Currently available only with --tflite_backend flatbuffer_direct.'
+    )
+    parser.add_argument(
+        '--eval_num_samples',
+        type=int,
+        default=10,
+        help=\
+            'Number of samples used for ONNX/TFLite evaluation. \n' +
+            'Default: 10'
+    )
+    parser.add_argument(
+        '--eval_rtol',
+        type=float,
+        default=0.0,
+        help=\
+            'Relative tolerance for ONNX/TFLite allclose judgement. \n' +
+            'Default: 0.0'
+    )
+    parser.add_argument(
+        '--eval_atol',
+        type=float,
+        default=1e-4,
+        help=\
+            'Absolute tolerance for ONNX/TFLite allclose judgement. \n' +
+            'Default: 1e-4'
+    )
+    parser.add_argument(
+        '--eval_fail_on_threshold',
+        action='store_true',
+        help=\
+            'Return failure when evaluation thresholds are not satisfied.'
+    )
+    parser.add_argument(
+        '--eval_target_tflite',
+        type=str,
+        choices=[
+            'float32',
+            'float16',
+            'dynamic_range_quant',
+            'integer_quant',
+            'full_integer_quant',
+            'integer_quant_with_int16_act',
+            'full_integer_quant_with_int16_act',
+        ],
+        default='float32',
+        help=\
+            'Target tflite variant to evaluate. \n' +
+            'Default: float32'
+    )
+    parser.add_argument(
+        '--eval_compare_mode',
+        type=str,
+        choices=['auto', 'dequant', 'raw'],
+        default='auto',
+        help=\
+            'Comparison mode for ONNX vs TFLite outputs. \n' +
+            '"auto": dequant for quantized outputs, raw for float outputs. \n' +
+            '"dequant": compare after dequantization. \n' +
+            '"raw": compare raw output tensors. \n' +
+            'Default: auto'
+    )
+    parser.add_argument(
         '-qt',
         '--quant_type',
         type=str,
@@ -4529,6 +4691,13 @@ def main():
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_dynamic_range_quantized_tflite=args.output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
+        eval_with_onnx=args.eval_with_onnx,
+        eval_num_samples=args.eval_num_samples,
+        eval_rtol=args.eval_rtol,
+        eval_atol=args.eval_atol,
+        eval_fail_on_threshold=args.eval_fail_on_threshold,
+        eval_target_tflite=args.eval_target_tflite,
+        eval_compare_mode=args.eval_compare_mode,
         tflite_backend=args.tflite_backend,
         quant_norm_mean=args.quant_norm_mean,
         quant_norm_std=args.quant_norm_std,
