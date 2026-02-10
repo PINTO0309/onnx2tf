@@ -70,14 +70,89 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
     return clone
 
 
-def _symmetric_int8_quantize(data: np.ndarray) -> Tuple[np.ndarray, float]:
+def _normalize_quant_type(quant_type: str) -> str:
+    quant_type = str(quant_type).strip().lower()
+    if quant_type not in ["per-channel", "per-tensor"]:
+        raise ValueError(
+            "flatbuffer_direct quant_type must be one of [\"per-channel\", \"per-tensor\"]. "
+            f"got: {quant_type}"
+        )
+    return quant_type
+
+
+def _normalize_calibration_method(calibration_method: str) -> str:
+    m = str(calibration_method).strip().lower()
+    if m not in ["max", "percentile"]:
+        raise ValueError(
+            "flatbuffer_direct calibration_method must be one of [\"max\", \"percentile\"]. "
+            f"got: {calibration_method}"
+        )
+    return m
+
+
+def _normalize_calibration_percentile(calibration_percentile: float) -> float:
+    p = float(calibration_percentile)
+    if p <= 0.0 or p > 100.0:
+        raise ValueError(
+            "flatbuffer_direct calibration_percentile must be in (0.0, 100.0]. "
+            f"got: {calibration_percentile}"
+        )
+    return p
+
+
+def _normalize_positive_int(v: int, *, name: str) -> int:
+    iv = int(v)
+    if iv <= 0:
+        raise ValueError(f"flatbuffer_direct {name} must be > 0. got: {v}")
+    return iv
+
+
+def _normalize_non_negative_float(v: float, *, name: str) -> float:
+    fv = float(v)
+    if fv < 0.0:
+        raise ValueError(f"flatbuffer_direct {name} must be >= 0.0. got: {v}")
+    return fv
+
+
+def _compute_abs_limit(
+    data: np.ndarray,
+    *,
+    calibration_method: str,
+    calibration_percentile: float,
+    axis: Optional[Tuple[int, ...]] = None,
+    keepdims: bool = False,
+) -> np.ndarray:
+    abs_data = np.abs(np.asarray(data, dtype=np.float32))
+    if calibration_method == "max":
+        return np.max(abs_data, axis=axis, keepdims=keepdims)
+    return np.percentile(
+        abs_data,
+        q=calibration_percentile,
+        axis=axis,
+        keepdims=keepdims,
+    ).astype(np.float32)
+
+
+def _symmetric_int8_quantize(
+    data: np.ndarray,
+    *,
+    calibration_method: str,
+    calibration_percentile: float,
+    scale_floor: float,
+) -> Tuple[np.ndarray, float]:
     data = np.asarray(data, dtype=np.float32)
-    max_abs = float(np.max(np.abs(data))) if data.size > 0 else 0.0
-    if max_abs == 0.0:
-        scale = 1.0
+    abs_limit = float(
+        _compute_abs_limit(
+            data,
+            calibration_method=calibration_method,
+            calibration_percentile=calibration_percentile,
+        )
+    )
+    if abs_limit == 0.0:
+        scale = max(scale_floor, 1.0)
         q = np.zeros_like(data, dtype=np.int8)
         return q, scale
-    scale = max_abs / 127.0
+    scale = max(abs_limit / 127.0, scale_floor)
     q = np.round(data / scale)
     q = np.clip(q, -127, 127).astype(np.int8)
     return q, float(scale)
@@ -85,7 +160,11 @@ def _symmetric_int8_quantize(data: np.ndarray) -> Tuple[np.ndarray, float]:
 
 def _symmetric_int8_quantize_per_channel(
     data: np.ndarray,
+    *,
     axis: int,
+    calibration_method: str,
+    calibration_percentile: float,
+    scale_floor: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
     data = np.asarray(data, dtype=np.float32)
     if axis < 0:
@@ -94,9 +173,14 @@ def _symmetric_int8_quantize_per_channel(
         raise ValueError(f"Invalid quantization axis {axis} for data rank {data.ndim}")
 
     reduce_axes = tuple(i for i in range(data.ndim) if i != axis)
-    max_abs = np.max(np.abs(data), axis=reduce_axes, keepdims=True)
-    scales = max_abs / 127.0
-    scales = np.where(scales == 0.0, 1.0, scales).astype(np.float32)
+    abs_limit = _compute_abs_limit(
+        data,
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        axis=reduce_axes,
+        keepdims=True,
+    )
+    scales = np.maximum(abs_limit / 127.0, scale_floor).astype(np.float32)
     q = np.round(data / scales)
     q = np.clip(q, -127, 127).astype(np.int8)
     scales_1d = np.squeeze(scales, axis=reduce_axes).astype(np.float32)
@@ -124,6 +208,11 @@ def _quantize_tensor_inplace(
     tensor: TensorIR,
     quant_mode: str = "per-tensor",
     quantized_dimension: int = 0,
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
 ) -> bool:
     if tensor.dtype == "INT8" and isinstance(tensor.quantization, QuantParamIR):
         return True
@@ -132,21 +221,37 @@ def _quantize_tensor_inplace(
     if not isinstance(tensor.data, np.ndarray):
         return False
 
+    data = np.asarray(tensor.data, dtype=np.float32)
+    if int(data.size) < min_numel:
+        return False
+
+    raw_abs_max = float(np.max(np.abs(data))) if data.size > 0 else 0.0
+    if raw_abs_max < min_abs_max:
+        return False
+
     if quant_mode == "per-tensor":
-        q_data, scale = _symmetric_int8_quantize(tensor.data)
+        q_data, scale = _symmetric_int8_quantize(
+            data,
+            calibration_method=calibration_method,
+            calibration_percentile=calibration_percentile,
+            scale_floor=scale_floor,
+        )
         tensor.dtype = "INT8"
         tensor.data = q_data
         tensor.quantization = QuantParamIR(
             scale=[float(scale)],
             zero_point=[0],
-            min=[float(np.min(tensor.data.astype(np.float32) * scale))],
-            max=[float(np.max(tensor.data.astype(np.float32) * scale))],
+            min=[float(np.min(q_data.astype(np.float32) * scale))],
+            max=[float(np.max(q_data.astype(np.float32) * scale))],
             quantized_dimension=0,
         )
     elif quant_mode == "per-channel":
         q_data, scales = _symmetric_int8_quantize_per_channel(
-            tensor.data,
+            data,
             axis=quantized_dimension,
+            calibration_method=calibration_method,
+            calibration_percentile=calibration_percentile,
+            scale_floor=scale_floor,
         )
         tensor.dtype = "INT8"
         tensor.data = q_data
@@ -179,23 +284,52 @@ def _kernel_weight_quant_axis(op_type: str, tensor: TensorIR) -> int:
     return 0
 
 
-def _normalize_quant_type(quant_type: str) -> str:
-    quant_type = str(quant_type).strip().lower()
-    if quant_type not in ["per-channel", "per-tensor"]:
-        raise ValueError(
-            "flatbuffer_direct quant_type must be one of [\"per-channel\", \"per-tensor\"]. "
-            f"got: {quant_type}"
-        )
-    return quant_type
+def _const_quant_mode_and_axis(
+    *,
+    quant_type: str,
+    tensor: TensorIR,
+) -> Tuple[str, int]:
+    if quant_type == "per-channel" and len(tensor.shape) >= 2 and int(tensor.shape[-1]) > 1:
+        return "per-channel", len(tensor.shape) - 1
+    return "per-tensor", 0
+
+
+def _normalize_quantization_controls(
+    *,
+    calibration_method: str,
+    calibration_percentile: float,
+    min_numel: int,
+    min_abs_max: float,
+    scale_floor: float,
+) -> Dict[str, object]:
+    return {
+        "calibration_method": _normalize_calibration_method(calibration_method),
+        "calibration_percentile": _normalize_calibration_percentile(calibration_percentile),
+        "min_numel": _normalize_positive_int(min_numel, name="quant_min_numel"),
+        "min_abs_max": _normalize_non_negative_float(min_abs_max, name="quant_min_abs_max"),
+        "scale_floor": _normalize_non_negative_float(scale_floor, name="quant_scale_floor"),
+    }
 
 
 def build_dynamic_range_quantized_model_ir(
     model_ir: ModelIR,
     quant_type: str = "per-channel",
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
 ) -> ModelIR:
     clone = _clone_model_ir(model_ir)
     graph_input_names = set(clone.inputs)
     quant_type = _normalize_quant_type(quant_type)
+    controls = _normalize_quantization_controls(
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        min_numel=min_numel,
+        min_abs_max=min_abs_max,
+        scale_floor=scale_floor,
+    )
 
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
@@ -257,6 +391,11 @@ def build_dynamic_range_quantized_model_ir(
                     tensor=tensor,
                     quant_mode=quant_mode,
                     quantized_dimension=quant_axis,
+                    calibration_method=str(controls["calibration_method"]),
+                    calibration_percentile=float(controls["calibration_percentile"]),
+                    min_numel=int(controls["min_numel"]),
+                    min_abs_max=float(controls["min_abs_max"]),
+                    scale_floor=float(controls["scale_floor"]),
                 ):
                     quantized_tensor_names.add(weight_name)
 
@@ -266,7 +405,20 @@ def build_dynamic_range_quantized_model_ir(
                 if tensor is None:
                     continue
                 if _is_float_constant_tensor(tensor=tensor, graph_input_names=graph_input_names):
-                    if _quantize_tensor_inplace(tensor=tensor, quant_mode="per-tensor"):
+                    const_mode, const_axis = _const_quant_mode_and_axis(
+                        quant_type=quant_type,
+                        tensor=tensor,
+                    )
+                    if _quantize_tensor_inplace(
+                        tensor=tensor,
+                        quant_mode=const_mode,
+                        quantized_dimension=const_axis,
+                        calibration_method=str(controls["calibration_method"]),
+                        calibration_percentile=float(controls["calibration_percentile"]),
+                        min_numel=int(controls["min_numel"]),
+                        min_abs_max=float(controls["min_abs_max"]),
+                        scale_floor=float(controls["scale_floor"]),
+                    ):
                         quantized_tensor_names.add(input_name)
                 tensor = clone.tensors.get(input_name)
                 if tensor is None or tensor.dtype != "INT8":
@@ -293,10 +445,20 @@ def build_dynamic_range_quantized_model_ir(
 def build_integer_quantized_model_ir(
     model_ir: ModelIR,
     quant_type: str = "per-channel",
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
 ) -> ModelIR:
     clone = build_dynamic_range_quantized_model_ir(
         model_ir,
         quant_type=quant_type,
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        min_numel=min_numel,
+        min_abs_max=min_abs_max,
+        scale_floor=scale_floor,
     )
     clone.description = f"{clone.description} (integer_quantized_limited)"
     return clone
@@ -308,10 +470,13 @@ def _normalize_quant_io_dtype(dtype: str) -> Tuple[str, QuantParamIR]:
         return "INT8", QuantParamIR(scale=[1.0 / 128.0], zero_point=[0], quantized_dimension=0)
     if d == "uint8":
         return "UINT8", QuantParamIR(scale=[1.0 / 255.0], zero_point=[128], quantized_dimension=0)
+    if d == "int16":
+        return "INT16", QuantParamIR(scale=[1.0 / 32768.0], zero_point=[0], quantized_dimension=0)
     if d == "float32":
         return "FLOAT32", QuantParamIR(scale=[1.0], zero_point=[0], quantized_dimension=0)
     raise ValueError(
-        f"flatbuffer_direct full integer quantization supports input/output dtype int8/uint8/float32. got: {dtype}"
+        "flatbuffer_direct full integer quantization supports input/output dtype "
+        f"int8/uint8/int16/float32. got: {dtype}"
     )
 
 
@@ -320,8 +485,21 @@ def build_full_integer_quantized_model_ir(
     quant_type: str = "per-channel",
     input_quant_dtype: str = "int8",
     output_quant_dtype: str = "int8",
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
 ) -> ModelIR:
-    clone = build_integer_quantized_model_ir(model_ir, quant_type=quant_type)
+    clone = build_integer_quantized_model_ir(
+        model_ir,
+        quant_type=quant_type,
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        min_numel=min_numel,
+        min_abs_max=min_abs_max,
+        scale_floor=scale_floor,
+    )
 
     input_dtype_name, input_qparams = _normalize_quant_io_dtype(input_quant_dtype)
     output_dtype_name, output_qparams = _normalize_quant_io_dtype(output_quant_dtype)
@@ -399,4 +577,50 @@ def build_full_integer_quantized_model_ir(
     clone.outputs = new_outputs
     clone.operators = pre_ops + clone.operators + post_ops
     clone.description = f"{clone.description} (full_integer_quantized_limited)"
+    return clone
+
+
+def build_integer_quantized_with_int16_act_model_ir(
+    model_ir: ModelIR,
+    quant_type: str = "per-channel",
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
+) -> ModelIR:
+    clone = build_integer_quantized_model_ir(
+        model_ir,
+        quant_type=quant_type,
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        min_numel=min_numel,
+        min_abs_max=min_abs_max,
+        scale_floor=scale_floor,
+    )
+    clone.description = f"{clone.description} (integer_quant_with_int16_act_limited)"
+    return clone
+
+
+def build_full_integer_quantized_with_int16_act_model_ir(
+    model_ir: ModelIR,
+    quant_type: str = "per-channel",
+    calibration_method: str = "max",
+    calibration_percentile: float = 99.99,
+    min_numel: int = 1,
+    min_abs_max: float = 0.0,
+    scale_floor: float = 1e-8,
+) -> ModelIR:
+    clone = build_full_integer_quantized_model_ir(
+        model_ir,
+        quant_type=quant_type,
+        input_quant_dtype="int16",
+        output_quant_dtype="int16",
+        calibration_method=calibration_method,
+        calibration_percentile=calibration_percentile,
+        min_numel=min_numel,
+        min_abs_max=min_abs_max,
+        scale_floor=scale_floor,
+    )
+    clone.description = f"{clone.description} (full_integer_quant_with_int16_act_limited)"
     return clone

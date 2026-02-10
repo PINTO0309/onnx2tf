@@ -9,7 +9,9 @@ from onnx2tf.tflite_builder.model_writer import write_model_file
 from onnx2tf.tflite_builder.quantization import (
     build_dynamic_range_quantized_model_ir,
     build_full_integer_quantized_model_ir,
+    build_full_integer_quantized_with_int16_act_model_ir,
     build_integer_quantized_model_ir,
+    build_integer_quantized_with_int16_act_model_ir,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.utils.common_functions import weights_export
@@ -17,6 +19,36 @@ from onnx2tf.utils.common_functions import weights_export
 
 def _reject_unsupported_quantization(**kwargs: Any) -> None:
     return
+
+
+def _resolve_quantization_controls(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    calibration_method = kwargs.get(
+        "flatbuffer_direct_calibration_method",
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD", "max"),
+    )
+    calibration_percentile = kwargs.get(
+        "flatbuffer_direct_calibration_percentile",
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE", "99.99"),
+    )
+    quant_min_numel = kwargs.get(
+        "flatbuffer_direct_quant_min_numel",
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL", "1"),
+    )
+    quant_min_abs_max = kwargs.get(
+        "flatbuffer_direct_quant_min_abs_max",
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX", "0.0"),
+    )
+    quant_scale_floor = kwargs.get(
+        "flatbuffer_direct_quant_scale_floor",
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR", "1e-8"),
+    )
+    return {
+        "calibration_method": str(calibration_method),
+        "calibration_percentile": float(calibration_percentile),
+        "min_numel": int(quant_min_numel),
+        "min_abs_max": float(quant_min_abs_max),
+        "scale_floor": float(quant_scale_floor),
+    }
 
 
 def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
@@ -35,6 +67,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
     output_integer_quantized_tflite = bool(
         kwargs.get("output_integer_quantized_tflite", False)
     )
+    quant_controls = _resolve_quantization_controls(kwargs)
 
     if onnx_graph is None:
         raise ValueError(
@@ -69,6 +102,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         dynamic_model_ir = build_dynamic_range_quantized_model_ir(
             model_ir,
             quant_type=str(quant_type),
+            calibration_method=quant_controls["calibration_method"],
+            calibration_percentile=quant_controls["calibration_percentile"],
+            min_numel=quant_controls["min_numel"],
+            min_abs_max=quant_controls["min_abs_max"],
+            scale_floor=quant_controls["scale_floor"],
         )
         dynamic_range_path = os.path.join(
             output_folder_path,
@@ -86,6 +124,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         integer_model_ir = build_integer_quantized_model_ir(
             model_ir,
             quant_type=str(quant_type),
+            calibration_method=quant_controls["calibration_method"],
+            calibration_percentile=quant_controls["calibration_percentile"],
+            min_numel=quant_controls["min_numel"],
+            min_abs_max=quant_controls["min_abs_max"],
+            scale_floor=quant_controls["scale_floor"],
         )
         integer_quant_path = os.path.join(
             output_folder_path,
@@ -102,6 +145,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
             quant_type=str(quant_type),
             input_quant_dtype=str(input_quant_dtype),
             output_quant_dtype=str(output_quant_dtype),
+            calibration_method=quant_controls["calibration_method"],
+            calibration_percentile=quant_controls["calibration_percentile"],
+            min_numel=quant_controls["min_numel"],
+            min_abs_max=quant_controls["min_abs_max"],
+            scale_floor=quant_controls["scale_floor"],
         )
         full_integer_quant_path = os.path.join(
             output_folder_path,
@@ -112,6 +160,47 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
             model_ir=full_integer_model_ir,
             output_tflite_path=full_integer_quant_path,
         )
+
+        integer_quant_with_int16_act_model_ir = build_integer_quantized_with_int16_act_model_ir(
+            model_ir,
+            quant_type=str(quant_type),
+            calibration_method=quant_controls["calibration_method"],
+            calibration_percentile=quant_controls["calibration_percentile"],
+            min_numel=quant_controls["min_numel"],
+            min_abs_max=quant_controls["min_abs_max"],
+            scale_floor=quant_controls["scale_floor"],
+        )
+        integer_quant_with_int16_act_path = os.path.join(
+            output_folder_path,
+            f"{output_file_name}_integer_quant_with_int16_act.tflite",
+        )
+        write_model_file(
+            schema_tflite=schema_tflite,
+            model_ir=integer_quant_with_int16_act_model_ir,
+            output_tflite_path=integer_quant_with_int16_act_path,
+        )
+
+        full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
+            model_ir,
+            quant_type=str(quant_type),
+            calibration_method=quant_controls["calibration_method"],
+            calibration_percentile=quant_controls["calibration_percentile"],
+            min_numel=quant_controls["min_numel"],
+            min_abs_max=quant_controls["min_abs_max"],
+            scale_floor=quant_controls["scale_floor"],
+        )
+        full_integer_quant_with_int16_act_path = os.path.join(
+            output_folder_path,
+            f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
+        )
+        write_model_file(
+            schema_tflite=schema_tflite,
+            model_ir=full_integer_quant_with_int16_act_model_ir,
+            output_tflite_path=full_integer_quant_with_int16_act_path,
+        )
+    else:
+        integer_quant_with_int16_act_path = None
+        full_integer_quant_with_int16_act_path = None
 
     if output_weights:
         weights_export(
@@ -152,6 +241,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
                     f"{output_file_name}_full_integer_quant_weights.h5",
                 ),
             )
+        if integer_quant_with_int16_act_path is not None:
+            weights_export(
+                extract_target_tflite_file_path=integer_quant_with_int16_act_path,
+                output_weights_file_path=os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_integer_quant_with_int16_act_weights.h5",
+                ),
+            )
+        if full_integer_quant_with_int16_act_path is not None:
+            weights_export(
+                extract_target_tflite_file_path=full_integer_quant_with_int16_act_path,
+                output_weights_file_path=os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_full_integer_quant_with_int16_act_weights.h5",
+                ),
+            )
 
     outputs: Dict[str, str] = {
         "float32_tflite_path": float32_path,
@@ -163,4 +268,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         outputs["integer_quant_tflite_path"] = integer_quant_path
     if full_integer_quant_path is not None:
         outputs["full_integer_quant_tflite_path"] = full_integer_quant_path
+    if integer_quant_with_int16_act_path is not None:
+        outputs["integer_quant_with_int16_act_tflite_path"] = integer_quant_with_int16_act_path
+    if full_integer_quant_with_int16_act_path is not None:
+        outputs["full_integer_quant_with_int16_act_tflite_path"] = full_integer_quant_with_int16_act_path
     return outputs
