@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
-from onnx2tf.tflite_builder.model_writer import serialize_model
+from onnx2tf.tflite_builder.model_writer import serialize_model, write_model_file
 
 
 DEFAULT_TFLITE_SPLIT_MAX_BYTES = 1_073_741_824
@@ -484,3 +484,77 @@ def write_split_plan_report(
     with open(output_report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     return output_report_path
+
+
+def should_split_by_estimate(plan_report: Dict[str, Any]) -> bool:
+    total_estimated_bytes = int(plan_report.get("total_estimated_bytes", 0))
+    target_max_bytes = int(plan_report.get("target_max_bytes", 0))
+    return total_estimated_bytes > target_max_bytes
+
+
+def write_split_model_files_and_manifest(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    plan_report: Dict[str, Any],
+    output_folder_path: str,
+    output_file_name: str,
+    tflite_loader_validator: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    partitions = list(plan_report.get("partitions", []))
+    edges = list(plan_report.get("edges", []))
+    generated_partition_paths: List[str] = []
+    generated_partition_entries: List[Dict[str, Any]] = []
+
+    for part in partitions:
+        partition_id = int(part["partition_id"])
+        start_op_index = int(part["start_op_index"])
+        end_op_index = int(part["end_op_index"])
+        part_model_ir = build_partition_model_ir(
+            model_ir=model_ir,
+            start_op_index=start_op_index,
+            end_op_index=end_op_index,
+            partition_id=partition_id,
+        )
+        split_file_name = f"{output_file_name}_{partition_id:04d}.tflite"
+        split_file_path = os.path.join(output_folder_path, split_file_name)
+        write_model_file(
+            schema_tflite=schema_tflite,
+            model_ir=part_model_ir,
+            output_tflite_path=split_file_path,
+        )
+        if tflite_loader_validator is not None:
+            tflite_loader_validator(split_file_path)
+
+        generated_partition_paths.append(split_file_path)
+        generated_partition_entries.append(
+            {
+                "partition_id": partition_id,
+                "file": split_file_name,
+                "start_op_index": start_op_index,
+                "end_op_index": end_op_index,
+                "estimated_bytes": int(part.get("estimated_bytes", 0)),
+                "inputs": list(part_model_ir.inputs),
+                "outputs": list(part_model_ir.outputs),
+            }
+        )
+
+    manifest: Dict[str, Any] = {
+        "schema_version": 1,
+        "base_model": f"{output_file_name}.tflite",
+        "target_max_bytes": int(plan_report.get("target_max_bytes", 0)),
+        "hard_max_bytes": int(plan_report.get("hard_max_bytes", 0)),
+        "total_estimated_bytes": int(plan_report.get("total_estimated_bytes", 0)),
+        "partitions": generated_partition_entries,
+        "edges": edges,
+    }
+    manifest_path = os.path.join(output_folder_path, f"{output_file_name}_split_manifest.json")
+    os.makedirs(os.path.dirname(manifest_path) or ".", exist_ok=True)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    return {
+        "split_manifest_path": manifest_path,
+        "split_partition_paths": generated_partition_paths,
+        "split_partition_count": len(generated_partition_paths),
+    }

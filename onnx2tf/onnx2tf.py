@@ -2936,6 +2936,27 @@ def convert(
                         f'({direct_outputs["split_plan_report_path"]})'
                     )
                 )
+                if bool(direct_outputs.get('split_required_by_estimate', False)):
+                    if 'split_manifest_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct split was required by estimate, '
+                            'but split manifest was not generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'Split manifest output complete! '
+                            f'({direct_outputs["split_manifest_path"]}) '
+                            f'partitions={direct_outputs.get("split_partition_count", "0")}'
+                        )
+                    )
+                else:
+                    info(
+                        Color.GREEN(
+                            'Split output was not required by estimate. '
+                            f'estimated={direct_outputs.get("split_plan_total_estimated_bytes", 0)} '
+                            f'target={tflite_split_target_bytes}'
+                        )
+                    )
             if output_dynamic_range_quantized_tflite:
                 if 'dynamic_range_quant_tflite_path' not in direct_outputs:
                     raise RuntimeError(
