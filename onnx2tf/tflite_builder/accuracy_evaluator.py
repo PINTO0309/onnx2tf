@@ -1,0 +1,406 @@
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+import onnx
+
+
+def _normalize_tensor_name(name: str) -> str:
+    return str(name).split(":")[0]
+
+
+def _load_custom_input_data(
+    custom_input_op_name_np_data_path: Optional[List[Any]],
+) -> Dict[str, np.ndarray]:
+    custom_inputs: Dict[str, np.ndarray] = {}
+    if not custom_input_op_name_np_data_path:
+        return custom_inputs
+    for param in custom_input_op_name_np_data_path:
+        if not isinstance(param, (list, tuple)) or len(param) < 2:
+            continue
+        input_name = str(param[0])
+        numpy_file_path = str(param[1])
+        if not os.path.exists(numpy_file_path):
+            raise FileNotFoundError(
+                "Evaluation input file does not exist. "
+                f"input_name={input_name} path={numpy_file_path}"
+            )
+        custom_inputs[input_name] = np.asarray(np.load(numpy_file_path))
+    return custom_inputs
+
+
+def _collect_onnx_input_specs(
+    onnx_graph: onnx.ModelProto,
+) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
+    initializer_names = {initializer.name for initializer in onnx_graph.graph.initializer}
+    input_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
+    for graph_input in onnx_graph.graph.input:
+        if graph_input.name in initializer_names:
+            continue
+        tensor_type = graph_input.type.tensor_type
+        np_dtype = np.dtype(onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
+        shape: List[int] = []
+        for dim in tensor_type.shape.dim:
+            if dim.HasField("dim_value") and int(dim.dim_value) > 0:
+                shape.append(int(dim.dim_value))
+            else:
+                shape.append(1)
+        input_specs.append((graph_input.name, np_dtype, tuple(shape)))
+    return input_specs
+
+
+def _generate_seeded_input(
+    *,
+    shape: Tuple[int, ...],
+    np_dtype: np.dtype,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    if np.issubdtype(np_dtype, np.bool_):
+        return (rng.random(shape) > 0.5).astype(np_dtype)
+    if np.issubdtype(np_dtype, np.floating):
+        return rng.standard_normal(shape).astype(np_dtype)
+    if np.issubdtype(np_dtype, np.signedinteger):
+        return rng.integers(low=-8, high=9, size=shape, dtype=np_dtype)
+    if np.issubdtype(np_dtype, np.unsignedinteger):
+        return rng.integers(low=0, high=17, size=shape, dtype=np_dtype)
+    return rng.standard_normal(shape).astype(np.float32).astype(np_dtype)
+
+
+def _extract_sample_from_custom(
+    *,
+    data: np.ndarray,
+    sample_index: int,
+    expected_shape: Tuple[int, ...],
+    np_dtype: np.dtype,
+) -> np.ndarray:
+    sample = np.asarray(data)
+    if (
+        sample.ndim == len(expected_shape)
+        and len(expected_shape) > 0
+        and expected_shape[0] == 1
+        and sample.shape[0] >= 1
+    ):
+        start = int(sample_index % sample.shape[0])
+        sample = sample[start : start + 1]
+    if tuple(sample.shape) != tuple(expected_shape):
+        expected_numel = int(np.prod(expected_shape, dtype=np.int64)) if len(expected_shape) > 0 else 1
+        if sample.size == expected_numel:
+            sample = sample.reshape(expected_shape)
+        else:
+            raise ValueError(
+                "Custom evaluation input shape mismatch. "
+                f"expected={expected_shape} actual={tuple(sample.shape)}"
+            )
+    return sample.astype(np_dtype, copy=False)
+
+
+def _build_tflite_detail_map(
+    *,
+    onnx_names: Sequence[str],
+    tflite_details: Sequence[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    detail_by_exact = {str(detail["name"]): detail for detail in tflite_details}
+    detail_by_base: Dict[str, Dict[str, Any]] = {}
+    for detail in tflite_details:
+        base_name = _normalize_tensor_name(str(detail["name"]))
+        if base_name not in detail_by_base:
+            detail_by_base[base_name] = detail
+
+    mapped: Dict[str, Dict[str, Any]] = {}
+    for idx, onnx_name in enumerate(onnx_names):
+        detail = detail_by_exact.get(onnx_name)
+        if detail is None:
+            detail = detail_by_base.get(_normalize_tensor_name(onnx_name))
+        if detail is None and idx < len(tflite_details):
+            detail = tflite_details[idx]
+        if detail is None:
+            raise ValueError(
+                "Failed to map ONNX tensor name to TFLite tensor detail. "
+                f"name={onnx_name}"
+            )
+        mapped[onnx_name] = detail
+    return mapped
+
+
+def _read_quantization_params(detail: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, int]:
+    qparams = detail.get("quantization_parameters", {}) or {}
+    scales = np.asarray(qparams.get("scales", []), dtype=np.float32).reshape(-1)
+    zero_points = np.asarray(qparams.get("zero_points", []), dtype=np.int64).reshape(-1)
+    quantized_dimension = int(qparams.get("quantized_dimension", 0))
+    if scales.size == 0:
+        legacy = detail.get("quantization", None)
+        if isinstance(legacy, (tuple, list)) and len(legacy) == 2:
+            legacy_scale = float(legacy[0])
+            legacy_zero = int(legacy[1])
+            if legacy_scale > 0.0:
+                scales = np.asarray([legacy_scale], dtype=np.float32)
+                zero_points = np.asarray([legacy_zero], dtype=np.int64)
+    return scales, zero_points, quantized_dimension
+
+
+def _quantize_for_tflite_input(data: np.ndarray, detail: Dict[str, Any]) -> np.ndarray:
+    target_dtype = np.dtype(detail["dtype"])
+    value = np.asarray(data)
+    if target_dtype == value.dtype:
+        return value
+    if np.issubdtype(target_dtype, np.floating):
+        return value.astype(target_dtype)
+    if np.issubdtype(target_dtype, np.bool_):
+        return (value.astype(np.float32) > 0.0).astype(np.bool_)
+    if np.issubdtype(target_dtype, np.integer):
+        scales, zero_points, quantized_dimension = _read_quantization_params(detail)
+        value_f32 = value.astype(np.float32)
+        if scales.size <= 1:
+            scale = float(scales[0]) if scales.size == 1 and scales[0] > 0.0 else 1.0
+            zero = int(zero_points[0]) if zero_points.size > 0 else 0
+            q = np.round(value_f32 / scale + zero)
+        else:
+            axis = quantized_dimension if quantized_dimension >= 0 else value_f32.ndim + quantized_dimension
+            if axis < 0 or axis >= value_f32.ndim or value_f32.shape[axis] != scales.size:
+                scale = float(scales[0]) if scales[0] > 0.0 else 1.0
+                zero = int(zero_points[0]) if zero_points.size > 0 else 0
+                q = np.round(value_f32 / scale + zero)
+            else:
+                shape = [1 for _ in range(value_f32.ndim)]
+                shape[axis] = int(scales.size)
+                scales_view = scales.reshape(shape)
+                if zero_points.size == scales.size:
+                    zero_points_view = zero_points.reshape(shape)
+                else:
+                    zero_points_view = np.zeros(shape, dtype=np.int64)
+                safe_scales = np.where(scales_view == 0.0, 1.0, scales_view)
+                q = np.round(value_f32 / safe_scales + zero_points_view)
+        dtype_info = np.iinfo(target_dtype)
+        return np.clip(q, dtype_info.min, dtype_info.max).astype(target_dtype)
+    return value.astype(target_dtype)
+
+
+def _dequantize_tflite_output(data: np.ndarray, detail: Dict[str, Any]) -> np.ndarray:
+    value = np.asarray(data)
+    if np.issubdtype(value.dtype, np.floating):
+        return value.astype(np.float32)
+    if np.issubdtype(value.dtype, np.bool_):
+        return value.astype(np.float32)
+    if np.issubdtype(value.dtype, np.integer):
+        scales, zero_points, quantized_dimension = _read_quantization_params(detail)
+        value_f32 = value.astype(np.float32)
+        if scales.size <= 1:
+            if scales.size == 0:
+                return value_f32
+            scale = float(scales[0])
+            zero = int(zero_points[0]) if zero_points.size > 0 else 0
+            return (value_f32 - zero) * scale
+        axis = quantized_dimension if quantized_dimension >= 0 else value_f32.ndim + quantized_dimension
+        if axis < 0 or axis >= value_f32.ndim or value_f32.shape[axis] != scales.size:
+            scale = float(scales[0])
+            zero = int(zero_points[0]) if zero_points.size > 0 else 0
+            return (value_f32 - zero) * scale
+        shape = [1 for _ in range(value_f32.ndim)]
+        shape[axis] = int(scales.size)
+        scales_view = scales.reshape(shape).astype(np.float32)
+        if zero_points.size == scales.size:
+            zero_points_view = zero_points.reshape(shape).astype(np.float32)
+        else:
+            zero_points_view = np.zeros(shape, dtype=np.float32)
+        return (value_f32 - zero_points_view) * scales_view
+    return value.astype(np.float32)
+
+
+class _MetricAccumulator:
+    def __init__(self) -> None:
+        self.numel = 0
+        self.max_abs = 0.0
+        self.sum_abs = 0.0
+        self.sum_sq = 0.0
+        self.sum_dot = 0.0
+        self.sum_ref_norm = 0.0
+        self.sum_pred_norm = 0.0
+
+    def update(self, ref: np.ndarray, pred: np.ndarray) -> None:
+        ref_flat = np.asarray(ref, dtype=np.float64).reshape(-1)
+        pred_flat = np.asarray(pred, dtype=np.float64).reshape(-1)
+        if ref_flat.shape != pred_flat.shape:
+            raise ValueError(
+                "Evaluation tensor shape mismatch. "
+                f"ref={tuple(ref.shape)} pred={tuple(pred.shape)}"
+            )
+        if ref_flat.size == 0:
+            return
+        diff = ref_flat - pred_flat
+        abs_diff = np.abs(diff)
+        self.max_abs = max(self.max_abs, float(np.max(abs_diff)))
+        self.sum_abs += float(np.sum(abs_diff))
+        self.sum_sq += float(np.sum(diff * diff))
+        self.sum_dot += float(np.dot(ref_flat, pred_flat))
+        self.sum_ref_norm += float(np.dot(ref_flat, ref_flat))
+        self.sum_pred_norm += float(np.dot(pred_flat, pred_flat))
+        self.numel += int(ref_flat.size)
+
+    def to_dict(self) -> Dict[str, float]:
+        if self.numel == 0:
+            return {
+                "max_abs": 0.0,
+                "mean_abs": 0.0,
+                "rmse": 0.0,
+                "cosine_similarity": 1.0,
+            }
+        mean_abs = self.sum_abs / float(self.numel)
+        rmse = float(np.sqrt(self.sum_sq / float(self.numel)))
+        if self.sum_ref_norm == 0.0 and self.sum_pred_norm == 0.0:
+            cosine = 1.0
+        elif self.sum_ref_norm == 0.0 or self.sum_pred_norm == 0.0:
+            cosine = 0.0
+        else:
+            cosine = float(
+                self.sum_dot / np.sqrt(self.sum_ref_norm * self.sum_pred_norm)
+            )
+            cosine = float(np.clip(cosine, -1.0, 1.0))
+        return {
+            "max_abs": float(self.max_abs),
+            "mean_abs": float(mean_abs),
+            "rmse": float(rmse),
+            "cosine_similarity": float(cosine),
+        }
+
+
+def evaluate_onnx_tflite_outputs(
+    *,
+    onnx_graph: onnx.ModelProto,
+    tflite_path: str,
+    output_report_path: str,
+    num_samples: int = 10,
+    seed: int = 0,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    import onnxruntime as ort
+    from ai_edge_litert.interpreter import Interpreter
+
+    if int(num_samples) <= 0:
+        raise ValueError(f"num_samples must be > 0. got: {num_samples}")
+    if not os.path.exists(tflite_path):
+        raise FileNotFoundError(f"TFLite file for evaluation does not exist. path={tflite_path}")
+
+    rng = np.random.default_rng(seed=int(seed))
+    custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
+    input_specs = _collect_onnx_input_specs(onnx_graph)
+    onnx_input_names = [name for name, _, _ in input_specs]
+    onnx_output_names = [output.name for output in onnx_graph.graph.output]
+
+    try:
+        onnx_session = ort.InferenceSession(
+            onnx_graph.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    except Exception as ex:
+        err = str(ex)
+        if "Unsupported model IR version" not in err:
+            raise
+        fallback_graph = onnx.ModelProto()
+        fallback_graph.CopyFrom(onnx_graph)
+        fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
+        onnx_session = ort.InferenceSession(
+            fallback_graph.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    interpreter = Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    tflite_input_map = _build_tflite_detail_map(
+        onnx_names=onnx_input_names,
+        tflite_details=interpreter.get_input_details(),
+    )
+    tflite_output_map = _build_tflite_detail_map(
+        onnx_names=onnx_output_names,
+        tflite_details=interpreter.get_output_details(),
+    )
+
+    total_metrics = _MetricAccumulator()
+    per_output_metrics: Dict[str, _MetricAccumulator] = {
+        output_name: _MetricAccumulator() for output_name in onnx_output_names
+    }
+    tflite_output_name_map: Dict[str, str] = {
+        output_name: str(tflite_output_map[output_name]["name"])
+        for output_name in onnx_output_names
+    }
+
+    for sample_index in range(int(num_samples)):
+        onnx_inputs: Dict[str, np.ndarray] = {}
+        for input_name, input_dtype, input_shape in input_specs:
+            custom_data = custom_inputs.get(input_name)
+            if custom_data is None:
+                custom_data = custom_inputs.get(_normalize_tensor_name(input_name))
+            if custom_data is not None:
+                sample = _extract_sample_from_custom(
+                    data=custom_data,
+                    sample_index=sample_index,
+                    expected_shape=input_shape,
+                    np_dtype=input_dtype,
+                )
+            else:
+                sample = _generate_seeded_input(
+                    shape=input_shape,
+                    np_dtype=input_dtype,
+                    rng=rng,
+                )
+            onnx_inputs[input_name] = sample
+
+        onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
+        onnx_outputs_by_name = {
+            output_name: output_value
+            for output_name, output_value in zip(onnx_output_names, onnx_outputs)
+        }
+
+        for input_name in onnx_input_names:
+            detail = tflite_input_map[input_name]
+            interpreter.set_tensor(
+                detail["index"],
+                _quantize_for_tflite_input(onnx_inputs[input_name], detail),
+            )
+        interpreter.invoke()
+
+        for output_name in onnx_output_names:
+            detail = tflite_output_map[output_name]
+            tflite_output = interpreter.get_tensor(detail["index"])
+            tflite_output = _dequantize_tflite_output(tflite_output, detail)
+
+            onnx_output = np.asarray(onnx_outputs_by_name[output_name])
+            if onnx_output.shape != tflite_output.shape:
+                if onnx_output.size == tflite_output.size:
+                    tflite_output = tflite_output.reshape(onnx_output.shape)
+                else:
+                    raise ValueError(
+                        "Evaluation output shape mismatch. "
+                        f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
+                        f"tflite_shape={tuple(tflite_output.shape)}"
+                    )
+
+            total_metrics.update(onnx_output, tflite_output)
+            per_output_metrics[output_name].update(onnx_output, tflite_output)
+
+    os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
+    report: Dict[str, Any] = {
+        "schema_version": 1,
+        "seed": int(seed),
+        "num_samples": int(num_samples),
+        "inputs_source": (
+            "custom_input_op_name_np_data_path"
+            if len(custom_inputs) > 0
+            else "seeded_random"
+        ),
+        "onnx_input_names": onnx_input_names,
+        "onnx_output_names": onnx_output_names,
+        "tflite_path": tflite_path,
+        "overall_metrics": total_metrics.to_dict(),
+        "per_output_metrics": {
+            output_name: {
+                "tflite_output_name": tflite_output_name_map[output_name],
+                **per_output_metrics[output_name].to_dict(),
+            }
+            for output_name in onnx_output_names
+        },
+    }
+    with open(output_report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    return report

@@ -628,6 +628,8 @@ def convert(
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_dynamic_range_quantized_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
+    eval_with_onnx: Optional[bool] = False,
+    eval_num_samples: Optional[int] = 10,
     tflite_backend: Optional[str] = 'tf_converter',
     quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
     quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -734,6 +736,16 @@ def convert(
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
+
+    eval_with_onnx: Optional[bool]
+        Evaluate generated float32 tflite output against ONNX output and
+        write a JSON report (`*_accuracy_report.json`).\n
+        Currently supported only when `tflite_backend="flatbuffer_direct"`.
+
+    eval_num_samples: Optional[int]
+        Number of samples for ONNX/TFLite accuracy evaluation.\n
+        Only used when `eval_with_onnx=True`.\n
+        Default: 10
 
     tflite_backend: Optional[str]
         TFLite generation backend.\n
@@ -1154,6 +1166,18 @@ def convert(
         error(
             f'tflite_backend must be one of ["tf_converter", "flatbuffer_direct"]. ' +
             f'tflite_backend: {tflite_backend}'
+        )
+        sys.exit(1)
+    eval_with_onnx = bool(eval_with_onnx)
+    eval_num_samples = int(eval_num_samples)
+    if eval_num_samples <= 0:
+        error(
+            f'eval_num_samples must be > 0. eval_num_samples: {eval_num_samples}'
+        )
+        sys.exit(1)
+    if eval_with_onnx and tflite_backend != 'flatbuffer_direct':
+        error(
+            'eval_with_onnx currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
 
@@ -1707,6 +1731,8 @@ def convert(
                     'copy_onnx_input_output_names_to_tflite': copy_onnx_input_output_names_to_tflite,
                     'output_dynamic_range_quantized_tflite': output_dynamic_range_quantized_tflite,
                     'output_integer_quantized_tflite': output_integer_quantized_tflite,
+                    'eval_with_onnx': eval_with_onnx,
+                    'eval_num_samples': eval_num_samples,
                     'tflite_backend': tflite_backend,
                     'quant_norm_mean': quant_norm_mean,
                     'quant_norm_std': quant_norm_std,
@@ -2833,6 +2859,29 @@ def convert(
             if copy_onnx_input_output_names_to_tflite:
                 info(
                     'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
+                )
+            if eval_with_onnx:
+                from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
+                accuracy_report_path = os.path.join(
+                    output_folder_path,
+                    f'{output_file_name}_accuracy_report.json',
+                )
+                report = evaluate_onnx_tflite_outputs(
+                    onnx_graph=onnx_graph,
+                    tflite_path=direct_outputs['float32_tflite_path'],
+                    output_report_path=accuracy_report_path,
+                    num_samples=eval_num_samples,
+                    seed=0,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                )
+                info(
+                    Color.GREEN(
+                        'ONNX/TFLite accuracy report output complete! '
+                        f'({accuracy_report_path}) '
+                        f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
+                        f'rmse={report["overall_metrics"]["rmse"]:.6g} '
+                        f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g}'
+                    )
                 )
             return model
 
