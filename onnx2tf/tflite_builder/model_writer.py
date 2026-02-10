@@ -147,7 +147,7 @@ def _build_builtin_options(
         return _build_pool2d_options(schema_tflite, op)
     if op.op_type == "FULLY_CONNECTED":
         return _build_fully_connected_options(schema_tflite, op)
-    if op.op_type == "LOGISTIC":
+    if op.op_type in ["LOGISTIC", "DEQUANTIZE"]:
         return _enum(schema_tflite, "BuiltinOptions", "NONE"), None
     raise NotImplementedError(
         f"BuiltinOptions mapping is not implemented for op_type={op.op_type}"

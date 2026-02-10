@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
-_DYNAMIC_RANGE_TARGET_OPS = {
+_DYNAMIC_RANGE_KERNEL_OPS = {
     "CONV_2D",
     "DEPTHWISE_CONV_2D",
     "FULLY_CONNECTED",
+}
+
+_DYNAMIC_RANGE_CONST_DEQUANT_OPS = {
+    "ADD",
+    "SUB",
+    "MUL",
+    "DIV",
+    "CONCATENATION",
 }
 
 
@@ -62,7 +70,7 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
     return clone
 
 
-def _symmetric_int8_quantize(data: np.ndarray) -> tuple[np.ndarray, float]:
+def _symmetric_int8_quantize(data: np.ndarray) -> Tuple[np.ndarray, float]:
     data = np.asarray(data, dtype=np.float32)
     max_abs = float(np.max(np.abs(data))) if data.size > 0 else 0.0
     if max_abs == 0.0:
@@ -75,40 +83,140 @@ def _symmetric_int8_quantize(data: np.ndarray) -> tuple[np.ndarray, float]:
     return q, float(scale)
 
 
+def _is_float_constant_tensor(
+    *,
+    tensor: TensorIR,
+    graph_input_names: Set[str],
+) -> bool:
+    if tensor.name in graph_input_names:
+        return False
+    if tensor.is_variable:
+        return False
+    if tensor.dtype != "FLOAT32":
+        return False
+    if not isinstance(tensor.data, np.ndarray):
+        return False
+    return True
+
+
+def _quantize_tensor_inplace(
+    *,
+    tensor: TensorIR,
+) -> bool:
+    if tensor.dtype == "INT8" and isinstance(tensor.quantization, QuantParamIR):
+        return True
+    if tensor.dtype != "FLOAT32":
+        return False
+    if not isinstance(tensor.data, np.ndarray):
+        return False
+
+    q_data, scale = _symmetric_int8_quantize(tensor.data)
+    tensor.dtype = "INT8"
+    tensor.data = q_data
+    tensor.quantization = QuantParamIR(
+        scale=[float(scale)],
+        zero_point=[0],
+        min=[float(np.min(tensor.data.astype(np.float32) * scale))],
+        max=[float(np.max(tensor.data.astype(np.float32) * scale))],
+        quantized_dimension=0,
+    )
+    return True
+
+
+def _make_unique_tensor_name(base: str, tensors: Dict[str, TensorIR]) -> str:
+    if base not in tensors:
+        return base
+    serial = 1
+    while f"{base}_{serial}" in tensors:
+        serial += 1
+    return f"{base}_{serial}"
+
+
 def build_dynamic_range_quantized_model_ir(model_ir: ModelIR) -> ModelIR:
     clone = _clone_model_ir(model_ir)
+    graph_input_names = set(clone.inputs)
 
-    quantized_weight_names: List[str] = []
-    for op in clone.operators:
-        if op.op_type not in _DYNAMIC_RANGE_TARGET_OPS:
-            continue
-        if len(op.inputs) < 2:
-            continue
-        weight_name = op.inputs[1]
-        if weight_name not in clone.tensors:
-            continue
-        tensor = clone.tensors[weight_name]
-        if tensor.dtype != "FLOAT32":
-            continue
-        if not isinstance(tensor.data, np.ndarray):
-            continue
+    quantized_tensor_names: Set[str] = set()
+    dequantized_tensor_map: Dict[str, str] = {}
 
-        q_data, scale = _symmetric_int8_quantize(tensor.data)
-        tensor.dtype = "INT8"
-        tensor.data = q_data
-        tensor.quantization = QuantParamIR(
-            scale=[float(scale)],
-            zero_point=[0],
-            min=[float(np.min(tensor.data.astype(np.float32) * scale))],
-            max=[float(np.max(tensor.data.astype(np.float32) * scale))],
-            quantized_dimension=0,
+    rewritten_ops: List[OperatorIR] = []
+
+    def ensure_dequantized_tensor(quant_tensor_name: str) -> Optional[str]:
+        if quant_tensor_name in dequantized_tensor_map:
+            return dequantized_tensor_map[quant_tensor_name]
+
+        if quant_tensor_name not in clone.tensors:
+            return None
+        q_tensor = clone.tensors[quant_tensor_name]
+        if q_tensor.dtype != "INT8":
+            return None
+
+        deq_name = _make_unique_tensor_name(f"{quant_tensor_name}_dequantized", clone.tensors)
+        clone.tensors[deq_name] = TensorIR(
+            name=deq_name,
+            dtype="FLOAT32",
+            shape=list(q_tensor.shape),
+            shape_signature=list(q_tensor.shape_signature)
+            if q_tensor.shape_signature is not None
+            else list(q_tensor.shape),
+            data=None,
+            is_variable=False,
+            quantization=None,
         )
-        quantized_weight_names.append(weight_name)
+        rewritten_ops.append(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[quant_tensor_name],
+                outputs=[deq_name],
+                options={},
+            )
+        )
+        dequantized_tensor_map[quant_tensor_name] = deq_name
+        return deq_name
 
-    if len(quantized_weight_names) == 0:
+    for op in clone.operators:
+        new_op = OperatorIR(
+            op_type=op.op_type,
+            inputs=list(op.inputs),
+            outputs=list(op.outputs),
+            options=dict(op.options),
+            version=op.version,
+        )
+
+        if new_op.op_type in _DYNAMIC_RANGE_KERNEL_OPS and len(new_op.inputs) >= 2:
+            weight_name = new_op.inputs[1]
+            tensor = clone.tensors.get(weight_name)
+            if tensor is not None and _is_float_constant_tensor(
+                tensor=tensor,
+                graph_input_names=graph_input_names,
+            ):
+                if _quantize_tensor_inplace(tensor=tensor):
+                    quantized_tensor_names.add(weight_name)
+
+        if new_op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
+            for idx, input_name in enumerate(list(new_op.inputs)):
+                tensor = clone.tensors.get(input_name)
+                if tensor is None:
+                    continue
+                if _is_float_constant_tensor(tensor=tensor, graph_input_names=graph_input_names):
+                    if _quantize_tensor_inplace(tensor=tensor):
+                        quantized_tensor_names.add(input_name)
+                tensor = clone.tensors.get(input_name)
+                if tensor is None or tensor.dtype != "INT8":
+                    continue
+                deq_name = ensure_dequantized_tensor(input_name)
+                if deq_name is not None:
+                    new_op.inputs[idx] = deq_name
+
+        rewritten_ops.append(new_op)
+
+    clone.operators = rewritten_ops
+
+    if len(quantized_tensor_names) == 0:
         raise NotImplementedError(
-            "flatbuffer_direct dynamic-range quantization requires at least one supported weight tensor "
-            "(CONV_2D/DEPTHWISE_CONV_2D/FULLY_CONNECTED)."
+            "flatbuffer_direct dynamic-range quantization requires at least one quantizable float32 constant tensor "
+            "(kernel weights for CONV_2D/DEPTHWISE_CONV_2D/FULLY_CONNECTED or constants used by "
+            "ADD/SUB/MUL/DIV/CONCATENATION)."
         )
 
     clone.description = f"{clone.description} (dynamic_range_quantized)"

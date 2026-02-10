@@ -65,6 +65,18 @@ def _make_add_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_add_const_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    c = numpy_helper.from_array(
+        np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+        name="c",
+    )
+    node = helper.make_node("Add", ["x", "c"], ["y"], name="AddConstNode")
+    graph = helper.make_graph([node], "add_const_graph", [x], [y], initializer=[c])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_conv_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
@@ -175,3 +187,34 @@ def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
         interpreter.invoke()
         y = interpreter.get_tensor(output_details[0]["index"])
         assert y.shape == (1, 3)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_const_model()
+        model_path = _save_model(tmpdir, "add_const_dq", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_dynamic_range_quantized_tflite=True,
+        )
+        tflite_path = os.path.join(out_dir, "add_const_dq_dynamic_range_quant.tflite")
+        assert os.path.isfile(tflite_path)
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.array([[1.0, 1.0, 1.0]], dtype=np.float32)
+        interpreter.set_tensor(input_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        np.testing.assert_allclose(
+            y,
+            np.array([[2.0, 3.0, 4.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=5e-2,
+        )
