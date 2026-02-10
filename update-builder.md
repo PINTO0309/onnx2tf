@@ -54,6 +54,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 15 実装（`-oiqt` 最小対応: `*_integer_quant.tflite` と `*_full_integer_quant.tflite` を生成。`QUANTIZE/DEQUANTIZE` による限定I/O量子化を追加）
 - Step 16 実装（dynamic range quantization 精度強化: per-channel 対象を定数演算へ拡張、しきい値制御を追加、percentile校正戦略を追加）
 - Step 17 実装（`integer_quant_with_int16_act` / `full_integer_quant_with_int16_act` の direct builder 対応を追加）
+- Step 18 実装（追加要件の仕様固定: 精度評価・1GB分割・全OP本格実装の境界条件とCLI方針を明文化）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -72,8 +73,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX` による量子化しきい値制御で非量子化ケースが明示失敗すること
 
 3. 未着手:
-- dynamic range / integer quantization の本格的な校正データ連携（代表データベース）
-- int16 activation 系の演算精度整合（現状は限定ラッパー方式）
+- 追加要件 Step 19-28（精度評価機能、1GB近傍自動分割、全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -148,6 +148,135 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 完了条件:
 1. int16 activation 系2ファイルが生成される。
 2. 小規模モデルで `Interpreter.invoke()` が通る。
+
+## 追加要件ステージ（M6-M8）
+### Step 18: 追加要件の仕様固定
+1. ONNX と TFLite の精度比較指標（max_abs/mean_abs/RMSE/cosine）と判定閾値を固定する。
+2. FlatBuffer 1GB 近傍分割の制約（上限、命名規則、manifest 形式）を固定する。
+3. 全OP本格実装の対象範囲（対象opset、dtype、サブグラフ方針）を固定する。
+
+完了条件:
+1. 評価・分割・OP実装の境界条件が文書化されている。
+2. CLI/README の設計方針が合意されている。
+
+固定仕様（Step 18 確定値）:
+1. 精度評価:
+- 既定指標: `max_abs`, `mean_abs`, `rmse`, `cosine_similarity`
+- 既定閾値（float系）: `max_abs<=1e-4`, `mean_abs<=1e-5`, `rmse<=1e-5`, `cosine>=0.9999`
+- 既定閾値（quant系）: `max_abs<=5e-2`, `mean_abs<=1e-2`, `rmse<=2e-2`, `cosine>=0.98`
+- 入力データ方針: `-cind` 指定を最優先、未指定時は固定seed疑似乱数（seed=0）で生成
+- 既定サンプル数: 10
+- レポート出力: `{model_name}_accuracy_report.json`
+
+2. 1GB近傍分割:
+- ハード上限: `1_073_741_824` bytes（1GiB）
+- 既定目標サイズ: `1_060_000_000` bytes（安全余白込み）
+- ファイル命名: `{output_file_name}_0001.tflite`, `{output_file_name}_0002.tflite`, ...
+- manifest: `{output_file_name}_split_manifest.json`
+- manifest 既定項目: `schema_version`, `base_model`, `target_max_bytes`, `partitions`, `edges`
+- 分割単位: 依存関係を壊さない連続ノード範囲（既存ONNX分割ロジックを骨格流用）
+
+3. 全OP本格実装:
+- 対象opset: ONNX opset 13-18 を第1目標、以降は上位opsetを段階追随
+- 対象dtype（第1目標）: `float32`, `float16`, `int8`, `uint8`, `int16`, `int32`, `int64`, `bool`
+- サブグラフ方針: まず単一SubGraphで完成度を上げ、複数SubGraphは後続段階で対応
+- Builtin優先、表現不能演算は Custom OP 方針へ明示分岐
+- 未対応は沈黙せず理由付き例外 + 機械可読レポートに出力
+
+4. CLI設計方針（追加予定）:
+- 精度評価: `--eval_with_onnx`, `--eval_num_samples`, `--eval_rtol`, `--eval_atol`, `--eval_fail_on_threshold`
+- 分割: `--auto_split_tflite_by_size`, `--tflite_split_max_bytes`, `--tflite_split_target_bytes`
+- OPカバレッジ: `--report_op_coverage`
+
+### Step 19: 精度評価基盤（最終出力比較）
+1. ONNX Runtime と TFLite Interpreter の共通推論ラッパーを実装する。
+2. 同一入力で両者出力を比較し、指標を算出する。
+3. `*_accuracy_report.json` を生成する。
+
+完了条件:
+1. 小規模モデルで評価レポートを出力できる。
+2. 指標計算の再現性が確保できる。
+
+### Step 20: 精度評価運用化（CLI/CI）
+1. 評価用 CLI オプションを追加する（サンプル数、rtol/atol、fail-on-threshold）。
+2. 量子化モデル向けの比較モード（dequant比較）を追加する。
+3. 閾値超過時の終了コード制御を追加する。
+
+完了条件:
+1. CI で評価ゲートとして使える。
+2. 失敗時の診断情報が JSON とログに出る。
+
+### Step 21: 1GB分割のサイズ見積り基盤
+1. IR/Tensor/Buffer から FlatBuffer サイズ推定器を実装する。
+2. 依存関係を壊さない分割候補点を探索する。
+3. 1GB 近傍への収束ロジックを実装する。
+
+完了条件:
+1. 分割前に見積り結果を出力できる。
+2. 不正な分割案を事前に排除できる。
+
+### Step 22: 自動分割出力実装
+1. `*_0001.tflite`, `*_0002.tflite` 形式で分割出力する。
+2. パーティション間 I/O を `*_split_manifest.json` に保存する。
+3. 各分割ファイルのロード可能性を検証する。
+
+完了条件:
+1. 1GB 超見込み時に自動で分割される。
+2. 全分割ファイルで `Interpreter.allocate_tensors()` が通る。
+
+### Step 23: 分割後精度評価
+1. manifest に従って分割モデルを逐次実行する評価器を実装する。
+2. 非分割版または ONNX と終端出力を比較する。
+3. 分割起因差分をレポート化する。
+
+完了条件:
+1. 分割前後の精度差が定量化できる。
+2. 許容閾値超過時に失敗として扱える。
+
+### Step 24: 全OP本格実装の基盤整備
+1. OPディスパッチを登録テーブル化し、検証フック（shape/dtype/attr）を共通化する。
+2. 未対応理由の機械可読レポートを生成できるようにする。
+3. ONNX op schema と対応状況の突合を自動化する。
+
+完了条件:
+1. 対応率を自動集計できる。
+2. 未対応OPの優先順位付けが可能になる。
+
+### Step 25: 全OP実装 Wave 1（高頻度OP）
+1. 実モデル出現頻度が高い未対応OPから優先実装する。
+2. OP単体変換テストと推論比較テストを追加する。
+3. 互換性影響の大きい属性差分を先に吸収する。
+
+完了条件:
+1. 主要公開モデルで未対応率が大幅に低下する。
+2. 回帰テストで既存対応OPの退行がない。
+
+### Step 26: 全OP実装 Wave 2（複雑演算）
+1. Reduce/Norm/Broadcast複合/Index 系を拡張する。
+2. dtype 境界ケース（int/bool/mixed precision）を網羅する。
+3. 量子化経路での互換性を合わせる。
+
+完了条件:
+1. 複雑演算を含む代表モデル群が変換可能になる。
+2. 精度評価で許容範囲を満たす。
+
+### Step 27: 全OP実装 Wave 3（難所）
+1. ControlFlow/Sequence/特殊演算を段階対応する。
+2. Builtin で表現不能な演算の Custom OP 方針を確立する。
+3. 失敗時のフォールバック/診断パスを整備する。
+
+完了条件:
+1. 難所演算の変換可否が明示される。
+2. Custom OP 方針で運用可能な形になる。
+
+### Step 28: 収束・安定化
+1. 対象opset範囲で未対応ゼロまたは方針化済みにする。
+2. 分割・量子化・精度評価を含む統合回帰を確立する。
+3. README と移行ガイドを最終更新する。
+
+完了条件:
+1. 追加要件3点（精度評価/1GB分割/全OP実装）が運用可能になる。
+2. 利用者向けドキュメントが自己完結する。
 
 ## 作業ステップ
 
@@ -318,3 +447,14 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 16. `[x] Step 15 完了`
 17. `[x] Step 16 完了`
 18. `[x] Step 17 完了`
+19. `[x] Step 18 完了`
+20. `[ ] Step 19 完了`
+21. `[ ] Step 20 完了`
+22. `[ ] Step 21 完了`
+23. `[ ] Step 22 完了`
+24. `[ ] Step 23 完了`
+25. `[ ] Step 24 完了`
+26. `[ ] Step 25 完了`
+27. `[ ] Step 26 完了`
+28. `[ ] Step 27 完了`
+29. `[ ] Step 28 完了`
