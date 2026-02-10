@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import TensorIR
+from onnx2tf.tflite_builder.ir import QuantParamIR, TensorIR
 
 
 _NP_DTYPE_TO_TFLITE_DTYPE = {
@@ -54,6 +54,28 @@ def build_tensors_and_buffers(
         )
         tensor_obj.type = getattr(schema_tflite["TensorType"], tensor.dtype)
         tensor_obj.isVariable = bool(tensor.is_variable)
+        quant_params = tensor.quantization
+        if isinstance(quant_params, QuantParamIR):
+            quant_params = {
+                "scale": list(quant_params.scale),
+                "zero_point": list(quant_params.zero_point),
+                "min": list(quant_params.min) if quant_params.min is not None else None,
+                "max": list(quant_params.max) if quant_params.max is not None else None,
+                "quantized_dimension": int(quant_params.quantized_dimension),
+            }
+
+        if isinstance(quant_params, dict):
+            q = schema_tflite["QuantizationParametersT"]()
+            if "scale" in quant_params:
+                q.scale = [float(v) for v in quant_params["scale"]]
+            if "zero_point" in quant_params:
+                q.zeroPoint = [int(v) for v in quant_params["zero_point"]]
+            if "min" in quant_params and quant_params["min"] is not None:
+                q.min = [float(v) for v in quant_params["min"]]
+            if "max" in quant_params and quant_params["max"] is not None:
+                q.max = [float(v) for v in quant_params["max"]]
+            q.quantizedDimension = int(quant_params.get("quantized_dimension", 0))
+            tensor_obj.quantization = q
 
         if tensor.data is not None:
             b = schema_tflite["BufferT"]()
