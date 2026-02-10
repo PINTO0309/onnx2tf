@@ -25,6 +25,8 @@ def _convert(
     output_dynamic_range_quantized_tflite: bool = False,
     output_integer_quantized_tflite: bool = False,
     quant_type: str = "per-channel",
+    input_quant_dtype: str = "int8",
+    output_quant_dtype: str = "int8",
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -35,6 +37,8 @@ def _convert(
         output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=output_integer_quantized_tflite,
         quant_type=quant_type,
+        input_quant_dtype=input_quant_dtype,
+        output_quant_dtype=output_quant_dtype,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -285,3 +289,49 @@ def test_flatbuffer_direct_dynamic_range_quantized_fc_quant_type(
 
         interpreter = Interpreter(model_path=tflite_path)
         interpreter.allocate_tensors()
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_integer_quantized_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_iq", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_integer_quantized_tflite=True,
+            quant_type="per-channel",
+            input_quant_dtype="int8",
+            output_quant_dtype="int8",
+        )
+
+        integer_tflite = os.path.join(out_dir, "gemm_iq_integer_quant.tflite")
+        full_integer_tflite = os.path.join(out_dir, "gemm_iq_full_integer_quant.tflite")
+        assert os.path.isfile(integer_tflite)
+        assert os.path.isfile(full_integer_tflite)
+
+        # integer_quant: float input/output path
+        interpreter = Interpreter(model_path=integer_tflite)
+        interpreter.allocate_tensors()
+        in_details = interpreter.get_input_details()
+        out_details = interpreter.get_output_details()
+        x = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        interpreter.set_tensor(in_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(out_details[0]["index"])
+        assert y.shape == (1, 3)
+
+        # full_integer_quant: quantized io path
+        interpreter2 = Interpreter(model_path=full_integer_tflite)
+        interpreter2.allocate_tensors()
+        in2 = interpreter2.get_input_details()
+        out2 = interpreter2.get_output_details()
+        assert in2[0]["dtype"] == np.int8
+        assert out2[0]["dtype"] == np.int8
+        xq = np.zeros(in2[0]["shape"], dtype=np.int8)
+        interpreter2.set_tensor(in2[0]["index"], xq)
+        interpreter2.invoke()
+        yq = interpreter2.get_tensor(out2[0]["index"])
+        assert yq.dtype == np.int8

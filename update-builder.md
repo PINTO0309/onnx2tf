@@ -50,6 +50,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 10-12 実装（`flatbuffer_direct` に限定 dynamic range quantization を追加、`QuantParamIR`/quantization 書き込み対応、`-oiqt` は未対応のまま明示エラー）
 - Step 13 実装（`-odrqt` 対象拡張: 定数入力を使う `ADD/SUB/MUL/DIV/CONCATENATION` に対して定数INT8化 + `DEQUANTIZE` 挿入を追加）
 - Step 14 実装（`-odrqt` の `quant_type` 連携: kernel weight に `per-channel` / `per-tensor` を反映）
+- Step 15 実装（`-oiqt` 最小対応: `*_integer_quant.tflite` と `*_full_integer_quant.tflite` を生成。`QUANTIZE/DEQUANTIZE` による限定I/O量子化を追加）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -58,14 +59,15 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `tflite_backend='tf_converter'` で従来どおり変換可能なこと
 - `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
 - 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
-- `pytest -q tests/test_tflite_builder_direct.py` が通過（8 passed）
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（9 passed）
 - `-odrqt` 指定で `*_dynamic_range_quant.tflite` が生成され、Gemm小規模モデルで `Interpreter.allocate_tensors()` および `invoke()` が通ること
 - `-odrqt` 指定で Add(constant) 小規模モデルも `Interpreter.invoke()` まで通ること
 - `-odrqt` + `--quant_type per-channel/per-tensor` でFCモデルの量子化 scale 形状が切り替わること（テストで検証）
+- `-oiqt` 指定で `*_integer_quant.tflite` と `*_full_integer_quant.tflite` が生成され、両方 `Interpreter.invoke()` まで通ること
 
 3. 未着手:
-- `-oiqt`（full/integer quantization）対応
 - dynamic range quantization の精度強化（例: per-channel の対象拡張、しきい値制御、校正戦略）
+- `integer_quant_with_int16_act` / `full_integer_quant_with_int16_act` の direct builder 対応
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -112,6 +114,16 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 完了条件:
 1. `-odrqt --quant_type per-channel` と `per-tensor` の双方で変換・推論が可能。
 2. FC系小規模モデルで scale 長が切り替わることをテストで確認できる。
+
+### Step 15: Integer Quantization 最小対応
+1. `flatbuffer_direct` で `-oiqt` 指定時に `*_integer_quant.tflite` と `*_full_integer_quant.tflite` を生成する。
+2. `integer_quant` は既存 dynamic-range 相当の量子化済み重み経路を利用する。
+3. `full_integer_quant` は量子化I/Oラッパー（`DEQUANTIZE`/`QUANTIZE`）を挿入して `input_quant_dtype` / `output_quant_dtype` を反映する。
+4. `integer_quant_with_int16_act` 系はこの段階では対象外とする。
+
+完了条件:
+1. `-oiqt` 指定で integer/full-integer の2ファイルが生成される。
+2. 小規模FCモデルで変換後に推論実行可能である。
 
 ## 作業ステップ
 
@@ -279,3 +291,4 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 13. `[x] Step 12 完了`
 14. `[x] Step 13 完了`
 15. `[x] Step 14 完了`
+16. `[x] Step 15 完了`
