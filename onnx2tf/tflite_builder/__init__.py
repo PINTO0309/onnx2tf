@@ -14,6 +14,12 @@ from onnx2tf.tflite_builder.quantization import (
     build_integer_quantized_with_int16_act_model_ir,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
+from onnx2tf.tflite_builder.split_planner import (
+    DEFAULT_TFLITE_SPLIT_MAX_BYTES,
+    DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
+    plan_contiguous_partitions_by_size,
+    write_split_plan_report,
+)
 from onnx2tf.utils.common_functions import weights_export
 
 
@@ -67,6 +73,27 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
     output_integer_quantized_tflite = bool(
         kwargs.get("output_integer_quantized_tflite", False)
     )
+    auto_split_tflite_by_size = bool(
+        kwargs.get("auto_split_tflite_by_size", False)
+    )
+    tflite_split_max_bytes = int(
+        kwargs.get(
+            "tflite_split_max_bytes",
+            os.environ.get(
+                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES",
+                str(DEFAULT_TFLITE_SPLIT_MAX_BYTES),
+            ),
+        )
+    )
+    tflite_split_target_bytes = int(
+        kwargs.get(
+            "tflite_split_target_bytes",
+            os.environ.get(
+                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_TARGET_BYTES",
+                str(DEFAULT_TFLITE_SPLIT_TARGET_BYTES),
+            ),
+        )
+    )
     quant_controls = _resolve_quantization_controls(kwargs)
 
     if onnx_graph is None:
@@ -81,6 +108,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         onnx_graph=onnx_graph,
         output_file_name=output_file_name,
     )
+
+    split_plan_report_path = None
+    if auto_split_tflite_by_size:
+        split_plan_report = plan_contiguous_partitions_by_size(
+            model_ir=model_ir,
+            target_max_bytes=tflite_split_target_bytes,
+            hard_max_bytes=tflite_split_max_bytes,
+            schema_tflite=schema_tflite,
+        )
+        split_plan_report_path = write_split_plan_report(
+            report=split_plan_report,
+            output_report_path=os.path.join(
+                output_folder_path,
+                f"{output_file_name}_split_plan.json",
+            ),
+        )
 
     float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
     write_model_file(
@@ -272,4 +315,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         outputs["integer_quant_with_int16_act_tflite_path"] = integer_quant_with_int16_act_path
     if full_integer_quant_with_int16_act_path is not None:
         outputs["full_integer_quant_with_int16_act_tflite_path"] = full_integer_quant_with_int16_act_path
+    if split_plan_report_path is not None:
+        outputs["split_plan_report_path"] = split_plan_report_path
     return outputs
