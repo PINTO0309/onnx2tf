@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 
 import numpy as np
 import onnx
@@ -129,6 +130,22 @@ def _make_gemm_model() -> onnx.ModelProto:
 
 def _requires_flatbuffer_tools() -> bool:
     return shutil.which("flatc") is not None and shutil.which("curl") is not None
+
+
+@contextmanager
+def _temporary_env(updates: dict[str, str]):
+    previous = {}
+    for key, value in updates.items():
+        previous[key] = os.environ.get(key, None)
+        os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
 
 
 def _collect_int8_quant_scale_lengths(tflite_path: str) -> list[int]:
@@ -309,8 +326,12 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
 
         integer_tflite = os.path.join(out_dir, "gemm_iq_integer_quant.tflite")
         full_integer_tflite = os.path.join(out_dir, "gemm_iq_full_integer_quant.tflite")
+        integer_i16_tflite = os.path.join(out_dir, "gemm_iq_integer_quant_with_int16_act.tflite")
+        full_integer_i16_tflite = os.path.join(out_dir, "gemm_iq_full_integer_quant_with_int16_act.tflite")
         assert os.path.isfile(integer_tflite)
         assert os.path.isfile(full_integer_tflite)
+        assert os.path.isfile(integer_i16_tflite)
+        assert os.path.isfile(full_integer_i16_tflite)
 
         # integer_quant: float input/output path
         interpreter = Interpreter(model_path=integer_tflite)
@@ -335,3 +356,69 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
         interpreter2.invoke()
         yq = interpreter2.get_tensor(out2[0]["index"])
         assert yq.dtype == np.int8
+
+        # integer_quant_with_int16_act: float input/output path
+        interpreter3 = Interpreter(model_path=integer_i16_tflite)
+        interpreter3.allocate_tensors()
+        in3 = interpreter3.get_input_details()
+        out3 = interpreter3.get_output_details()
+        x3 = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        interpreter3.set_tensor(in3[0]["index"], x3)
+        interpreter3.invoke()
+        y3 = interpreter3.get_tensor(out3[0]["index"])
+        assert y3.shape == (1, 3)
+
+        # full_integer_quant_with_int16_act: int16 input/output path
+        interpreter4 = Interpreter(model_path=full_integer_i16_tflite)
+        interpreter4.allocate_tensors()
+        in4 = interpreter4.get_input_details()
+        out4 = interpreter4.get_output_details()
+        assert in4[0]["dtype"] == np.int16
+        assert out4[0]["dtype"] == np.int16
+        x4 = np.zeros(in4[0]["shape"], dtype=np.int16)
+        interpreter4.set_tensor(in4[0]["index"], x4)
+        interpreter4.invoke()
+        y4 = interpreter4.get_tensor(out4[0]["index"])
+        assert y4.dtype == np.int16
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_dynamic_range_percentile_calibration_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_pct", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with _temporary_env(
+            {
+                "ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD": "percentile",
+                "ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE": "99.0",
+            }
+        ):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                output_dynamic_range_quantized_tflite=True,
+            )
+        tflite_path = os.path.join(out_dir, "gemm_pct_dynamic_range_quant.tflite")
+        assert os.path.isfile(tflite_path)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_th", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with _temporary_env(
+            {
+                "ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX": "1000.0",
+            }
+        ):
+            with pytest.raises(NotImplementedError):
+                _convert(
+                    model_path,
+                    out_dir,
+                    "flatbuffer_direct",
+                    output_dynamic_range_quantized_tflite=True,
+                )

@@ -741,7 +741,7 @@ def convert(
         "flatbuffer_direct": Use direct FlatBuffer builder path.\n
         Note: "flatbuffer_direct" supports a limited builtin OP set,\n
         FP32/FP16 export, limited dynamic-range quantization,\n
-        and limited integer quantization.\n
+        limited integer quantization, and limited int16-activation variants.\n
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.\n
@@ -2798,6 +2798,14 @@ def convert(
                     raise RuntimeError(
                         'flatbuffer_direct full integer quantization was requested but no output was generated.'
                     )
+                if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
+                    )
+                if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
+                    )
                 info(
                     Color.GREEN(
                         f'INT8 Quantization tflite output complete! '
@@ -2808,6 +2816,18 @@ def convert(
                     Color.GREEN(
                         f'Full INT8 Quantization tflite output complete! '
                         f'({direct_outputs["full_integer_quant_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
                     )
                 )
             if copy_onnx_input_output_names_to_tflite:
