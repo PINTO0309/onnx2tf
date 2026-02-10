@@ -6,16 +6,12 @@ from typing import Any, Dict
 from onnx2tf.tflite_builder.ir import clone_model_ir_with_float16
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
 from onnx2tf.tflite_builder.model_writer import write_model_file
+from onnx2tf.tflite_builder.quantization import build_dynamic_range_quantized_model_ir
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.utils.common_functions import weights_export
 
 
 def _reject_unsupported_quantization(**kwargs: Any) -> None:
-    if kwargs.get("output_dynamic_range_quantized_tflite", False):
-        raise NotImplementedError(
-            "flatbuffer_direct does not support dynamic-range quantized tflite yet. "
-            "Use tflite_backend='tf_converter' for quantized export."
-        )
     if kwargs.get("output_integer_quantized_tflite", False):
         raise NotImplementedError(
             "flatbuffer_direct does not support integer-quantized tflite yet. "
@@ -30,6 +26,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
     output_file_name = kwargs.get("output_file_name", "model")
     onnx_graph = kwargs.get("onnx_graph", None)
     output_weights = bool(kwargs.get("output_weights", False))
+    output_dynamic_range_quantized_tflite = bool(
+        kwargs.get("output_dynamic_range_quantized_tflite", False)
+    )
 
     if onnx_graph is None:
         raise ValueError(
@@ -59,6 +58,19 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         output_tflite_path=float16_path,
     )
 
+    dynamic_range_path = None
+    if output_dynamic_range_quantized_tflite:
+        dynamic_model_ir = build_dynamic_range_quantized_model_ir(model_ir)
+        dynamic_range_path = os.path.join(
+            output_folder_path,
+            f"{output_file_name}_dynamic_range_quant.tflite",
+        )
+        write_model_file(
+            schema_tflite=schema_tflite,
+            model_ir=dynamic_model_ir,
+            output_tflite_path=dynamic_range_path,
+        )
+
     if output_weights:
         weights_export(
             extract_target_tflite_file_path=float32_path,
@@ -74,8 +86,19 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
                 f"{output_file_name}_float16_weights.h5",
             ),
         )
+        if dynamic_range_path is not None:
+            weights_export(
+                extract_target_tflite_file_path=dynamic_range_path,
+                output_weights_file_path=os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_dynamic_range_quant_weights.h5",
+                ),
+            )
 
-    return {
+    outputs: Dict[str, str] = {
         "float32_tflite_path": float32_path,
         "float16_tflite_path": float16_path,
     }
+    if dynamic_range_path is not None:
+        outputs["dynamic_range_quant_tflite_path"] = dynamic_range_path
+    return outputs

@@ -739,7 +739,8 @@ def convert(
         TFLite generation backend.\n
         "tf_converter"(default): Use TensorFlow Lite Converter.\n
         "flatbuffer_direct": Use direct FlatBuffer builder path.\n
-        Note: "flatbuffer_direct" supports a limited builtin OP set and FP32/FP16 only.\n
+        Note: "flatbuffer_direct" supports a limited builtin OP set,\n
+        FP32/FP16 export, and limited dynamic-range quantization.\n
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.\n
@@ -2772,6 +2773,17 @@ def convert(
             )
             info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
             info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+            if output_dynamic_range_quantized_tflite:
+                if 'dynamic_range_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'Dynamic range quantized tflite output complete! '
+                        f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                    )
+                )
             if copy_onnx_input_output_names_to_tflite:
                 info(
                     'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'

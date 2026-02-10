@@ -17,13 +17,21 @@ def _save_model(tmpdir: str, name: str, model: onnx.ModelProto) -> str:
     return model_path
 
 
-def _convert(model_path: str, output_dir: str, backend: str) -> str:
+def _convert(
+    model_path: str,
+    output_dir: str,
+    backend: str,
+    output_dynamic_range_quantized_tflite: bool = False,
+    output_integer_quantized_tflite: bool = False,
+) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
         output_folder_path=output_dir,
         disable_strict_mode=True,
         verbosity="error",
         tflite_backend=backend,
+        output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+        output_integer_quantized_tflite=output_integer_quantized_tflite,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -141,3 +149,29 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
         interpreter = Interpreter(model_path=tflite_path)
         interpreter.allocate_tensors()
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_dq", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_dynamic_range_quantized_tflite=True,
+        )
+        tflite_path = os.path.join(out_dir, "gemm_dq_dynamic_range_quant.tflite")
+        assert os.path.isfile(tflite_path)
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        interpreter.set_tensor(input_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        assert y.shape == (1, 3)

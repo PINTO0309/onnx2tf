@@ -47,6 +47,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 7 実装（ONNX I/O 名を生成時に直接反映、SignatureDef を生成）
 - Step 8 実装（`tests/test_tflite_builder_direct.py` 追加、backend matrix/Interpreter 実行テスト追加）
 - Step 9 実装（README に backend 制約・対応OP・schemaタグ固定運用を追記）
+- Step 10-12 実装（`flatbuffer_direct` に限定 dynamic range quantization を追加、`QuantParamIR`/quantization 書き込み対応、`-oiqt` は未対応のまま明示エラー）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -55,10 +56,40 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `tflite_backend='tf_converter'` で従来どおり変換可能なこと
 - `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
 - 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
-- `pytest -q tests/test_tflite_builder_direct.py` が通過（4 passed）
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（5 passed）
+- `-odrqt` 指定で `*_dynamic_range_quant.tflite` が生成され、Gemm小規模モデルで `Interpreter.allocate_tensors()` および `invoke()` が通ること
 
 3. 未着手:
-- 量子化対応（M5 の段階拡張）
+- `-oiqt`（full/integer quantization）対応
+- dynamic range quantization の対象OP拡張（現状: `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED` のweight-only）
+
+## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
+### Step 10: 拡張仕様固定（限定解禁）
+1. `flatbuffer_direct` における量子化は段階解禁とし、まず `-odrqt` のみを対象にする。
+2. 対応対象は weight-only INT8（dynamic range）とし、対象OPは `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED` に限定する。
+3. `-oiqt` は引き続き未対応とし、明示例外で失敗させる。
+
+完了条件:
+1. README と実装の制約が一致している。
+2. 非対応モードが暗黙フォールバックせず明示失敗する。
+
+### Step 11: QuantParam IR / Tensor 書き込み拡張
+1. `QuantParamIR` を導入し、scale/zero_point/min/max/quantized_dimension を保持できるようにする。
+2. Tensor シリアライズ時に `QuantizationParametersT` を書き込む。
+3. 既存 FP32/FP16 出力への回帰がないことを確認する。
+
+完了条件:
+1. INT8 weight tensor の quantization parameter が `.tflite` に反映される。
+2. 既存テストが通過する。
+
+### Step 12: Dynamic Range Quant 実装（第1段階）
+1. `flatbuffer_direct` で `-odrqt` 指定時に dynamic range quantized `.tflite` を追加生成する。
+2. 量子化は対象OPの weight tensor のみを対称INT8で実施する。
+3. 対象weightが存在しない場合は明示例外を返す。
+
+完了条件:
+1. `*_dynamic_range_quant.tflite` が生成される。
+2. 小規模モデルで `Interpreter.allocate_tensors()` が通る。
 
 ## 作業ステップ
 
@@ -221,3 +252,6 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 8. `[x] Step 7 完了`
 9. `[x] Step 8 完了`
 10. `[x] Step 9 完了`
+11. `[x] Step 10 完了`
+12. `[x] Step 11 完了`
+13. `[x] Step 12 完了`

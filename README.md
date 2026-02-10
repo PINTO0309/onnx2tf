@@ -1666,11 +1666,12 @@ optional arguments:
     "flatbuffer_direct": Use direct FlatBuffer builder path (limited OP/quantization support).
 
 flatbuffer_direct notes:
-1. Direct export currently supports FP32/FP16 `.tflite` generation only.
-2. Dynamic range quantization (`-odrqt`) and integer quantization (`-oiqt`) are not supported.
-3. Supported builtin OP set (first implementation): `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`.
-4. Unsupported OPs fail explicitly with `NotImplementedError`.
-5. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+1. Direct export supports FP32/FP16 `.tflite` generation.
+2. Dynamic range quantization (`-odrqt`) is supported in a limited form: weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`.
+3. Integer quantization (`-oiqt`) is not supported in `flatbuffer_direct` yet.
+4. Supported builtin OP set: `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`.
+5. Unsupported OPs fail explicitly with `NotImplementedError`.
+6. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
    `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
@@ -2237,7 +2238,8 @@ convert(
       TFLite generation backend.
       "tf_converter"(default): Use TensorFlow Lite Converter.
       "flatbuffer_direct": Use direct FlatBuffer builder path.
-      Note: "flatbuffer_direct" supports a limited builtin OP set and FP32/FP16 only.
+      Note: "flatbuffer_direct" supports a limited builtin OP set,
+      FP32/FP16 export, and limited dynamic-range quantization.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.

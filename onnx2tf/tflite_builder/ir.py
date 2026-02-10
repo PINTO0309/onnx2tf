@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+
+@dataclass
+class QuantParamIR:
+    scale: List[float]
+    zero_point: List[int]
+    quantized_dimension: int = 0
+    min: Optional[List[float]] = None
+    max: Optional[List[float]] = None
 
 
 @dataclass
@@ -14,7 +23,7 @@ class TensorIR:
     shape_signature: Optional[List[int]] = None
     data: Optional[np.ndarray] = None
     is_variable: bool = False
-    quantization: Optional[Dict[str, Any]] = None
+    quantization: Optional[Union[Dict[str, Any], QuantParamIR]] = None
 
 
 @dataclass
@@ -88,6 +97,22 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
             shape_signature=list(tensor.shape_signature) if tensor.shape_signature is not None else None,
             data=new_data.copy() if isinstance(new_data, np.ndarray) else new_data,
             is_variable=tensor.is_variable,
-            quantization=dict(tensor.quantization) if isinstance(tensor.quantization, dict) else tensor.quantization,
+            quantization=(
+                dict(tensor.quantization)
+                if isinstance(tensor.quantization, dict)
+                else QuantParamIR(
+                    scale=list(tensor.quantization.scale),
+                    zero_point=list(tensor.quantization.zero_point),
+                    quantized_dimension=int(tensor.quantization.quantized_dimension),
+                    min=list(tensor.quantization.min)
+                    if tensor.quantization.min is not None
+                    else None,
+                    max=list(tensor.quantization.max)
+                    if tensor.quantization.max is not None
+                    else None,
+                )
+                if isinstance(tensor.quantization, QuantParamIR)
+                else tensor.quantization
+            ),
         )
     return clone
