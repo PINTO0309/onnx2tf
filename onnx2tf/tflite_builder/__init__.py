@@ -4,7 +4,11 @@ import os
 from typing import Any, Dict
 
 from onnx2tf.tflite_builder.ir import clone_model_ir_with_float16
-from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
+from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    build_op_coverage_report,
+    lower_onnx_to_ir,
+    write_op_coverage_report,
+)
 from onnx2tf.tflite_builder.model_writer import write_model_file
 from onnx2tf.tflite_builder.quantization import (
     build_dynamic_range_quantized_model_ir,
@@ -78,6 +82,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     auto_split_tflite_by_size = bool(
         kwargs.get("auto_split_tflite_by_size", False)
     )
+    report_op_coverage = bool(kwargs.get("report_op_coverage", False))
     tflite_split_max_bytes = int(
         kwargs.get(
             "tflite_split_max_bytes",
@@ -106,10 +111,39 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     os.makedirs(output_folder_path, exist_ok=True)
     schema_tflite = load_schema_module(output_folder_path)
 
-    model_ir = lower_onnx_to_ir(
-        onnx_graph=onnx_graph,
-        output_file_name=output_file_name,
-    )
+    op_coverage_report_path = None
+    if report_op_coverage:
+        op_coverage_report_path = os.path.join(
+            output_folder_path,
+            f"{output_file_name}_op_coverage_report.json",
+        )
+
+    def _write_coverage_report(conversion_error: str | None) -> None:
+        if not report_op_coverage or op_coverage_report_path is None:
+            return
+        report = build_op_coverage_report(
+            onnx_graph=onnx_graph,
+            output_file_name=output_file_name,
+            conversion_error=conversion_error,
+        )
+        write_op_coverage_report(
+            report=report,
+            output_report_path=op_coverage_report_path,
+        )
+
+    try:
+        model_ir = lower_onnx_to_ir(
+            onnx_graph=onnx_graph,
+            output_file_name=output_file_name,
+        )
+    except Exception as ex:
+        try:
+            _write_coverage_report(str(ex))
+        except Exception:
+            pass
+        raise
+
+    _write_coverage_report(None)
 
     split_plan_report_path = None
     split_required_by_estimate = False
@@ -353,4 +387,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if split_partition_paths is not None:
         outputs["split_partition_paths"] = split_partition_paths
         outputs["split_partition_count"] = int(split_partition_count)
+    if op_coverage_report_path is not None:
+        outputs["op_coverage_report_path"] = op_coverage_report_path
     return outputs

@@ -42,6 +42,7 @@ def _convert(
     eval_split_reference: str = "unsplit_tflite",
     eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
+    report_op_coverage: bool = False,
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
 ) -> str:
@@ -67,6 +68,7 @@ def _convert(
         eval_split_reference=eval_split_reference,
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
+        report_op_coverage=report_op_coverage,
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
     )
@@ -165,6 +167,14 @@ def _make_add_chain_model() -> onnx.ModelProto:
     n1 = helper.make_node("Add", ["a0", "y"], ["a1"], name="AddChain1")
     n2 = helper.make_node("Add", ["a1", "y"], ["z"], name="AddChain2")
     graph = helper.make_graph([n0, n1, n2], "add_chain_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_relu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("Relu", ["x"], ["y"], name="ReluNode")
+    graph = helper.make_graph([node], "relu_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -672,3 +682,49 @@ def test_split_accuracy_report_fail_on_threshold() -> None:
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
         assert report["evaluation_pass"] is False
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_op_coverage_report_generation() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_model()
+        model_path = _save_model(tmpdir, "add_cov", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "add_cov_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["schema_version"] == 1
+        assert report["conversion_error"] is None
+        assert "Add" in report["graph_ops"]
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["coverage_ratio"] == 1.0
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_relu_model()
+        model_path = _save_model(tmpdir, "relu_cov", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(NotImplementedError):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                report_op_coverage=True,
+            )
+        report_path = os.path.join(out_dir, "relu_cov_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["conversion_error"] is not None
+        assert report["graph_summary"]["unsupported_nodes"] == 1
+        assert report["unsupported_reason_counts"]["unsupported_onnx_op"] == 1
+        assert report["unsupported_nodes"][0]["onnx_op"] == "Relu"
