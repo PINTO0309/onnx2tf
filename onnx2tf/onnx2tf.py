@@ -635,6 +635,9 @@ def convert(
     eval_fail_on_threshold: Optional[bool] = False,
     eval_target_tflite: Optional[str] = 'float32',
     eval_compare_mode: Optional[str] = 'auto',
+    auto_split_tflite_by_size: Optional[bool] = False,
+    tflite_split_max_bytes: Optional[int] = 1073741824,
+    tflite_split_target_bytes: Optional[int] = 1060000000,
     tflite_backend: Optional[str] = 'tf_converter',
     quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
     quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -780,6 +783,18 @@ def convert(
         "dequant": dequantize TFLite outputs before comparison.\n
         "raw": compare raw TFLite output tensors.\n
         Default: "auto"
+
+    auto_split_tflite_by_size: Optional[bool]
+        Estimate flatbuffer size and generate split planning report
+        (`*_split_plan.json`) for flatbuffer_direct backend.
+
+    tflite_split_max_bytes: Optional[int]
+        Hard upper bound for split planning.
+        Default: 1073741824 (1GiB)
+
+    tflite_split_target_bytes: Optional[int]
+        Target size used to converge split partitions.
+        Default: 1060000000
 
     tflite_backend: Optional[str]
         TFLite generation backend.\n
@@ -1209,6 +1224,9 @@ def convert(
     eval_fail_on_threshold = bool(eval_fail_on_threshold)
     eval_target_tflite = str(eval_target_tflite).lower() if eval_target_tflite is not None else 'float32'
     eval_compare_mode = str(eval_compare_mode).lower() if eval_compare_mode is not None else 'auto'
+    auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
+    tflite_split_max_bytes = int(tflite_split_max_bytes)
+    tflite_split_target_bytes = int(tflite_split_target_bytes)
     if eval_num_samples <= 0:
         error(
             f'eval_num_samples must be > 0. eval_num_samples: {eval_num_samples}'
@@ -1245,9 +1263,31 @@ def convert(
             f'eval_compare_mode: {eval_compare_mode}'
         )
         sys.exit(1)
+    if tflite_split_max_bytes <= 0:
+        error(
+            f'tflite_split_max_bytes must be > 0. tflite_split_max_bytes: {tflite_split_max_bytes}'
+        )
+        sys.exit(1)
+    if tflite_split_target_bytes <= 0:
+        error(
+            f'tflite_split_target_bytes must be > 0. tflite_split_target_bytes: {tflite_split_target_bytes}'
+        )
+        sys.exit(1)
+    if tflite_split_target_bytes > tflite_split_max_bytes:
+        error(
+            f'tflite_split_target_bytes must be <= tflite_split_max_bytes. ' +
+            f'tflite_split_target_bytes: {tflite_split_target_bytes} ' +
+            f'tflite_split_max_bytes: {tflite_split_max_bytes}'
+        )
+        sys.exit(1)
     if eval_with_onnx and tflite_backend != 'flatbuffer_direct':
         error(
             'eval_with_onnx currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if auto_split_tflite_by_size and tflite_backend != 'flatbuffer_direct':
+        error(
+            'auto_split_tflite_by_size currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
 
@@ -1808,6 +1848,9 @@ def convert(
                     'eval_fail_on_threshold': eval_fail_on_threshold,
                     'eval_target_tflite': eval_target_tflite,
                     'eval_compare_mode': eval_compare_mode,
+                    'auto_split_tflite_by_size': auto_split_tflite_by_size,
+                    'tflite_split_max_bytes': tflite_split_max_bytes,
+                    'tflite_split_target_bytes': tflite_split_target_bytes,
                     'tflite_backend': tflite_backend,
                     'quant_norm_mean': quant_norm_mean,
                     'quant_norm_std': quant_norm_std,
@@ -2876,9 +2919,23 @@ def convert(
                 output_quant_dtype=output_quant_dtype,
                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
+                auto_split_tflite_by_size=auto_split_tflite_by_size,
+                tflite_split_max_bytes=tflite_split_max_bytes,
+                tflite_split_target_bytes=tflite_split_target_bytes,
             )
             info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
             info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+            if auto_split_tflite_by_size:
+                if 'split_plan_report_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct split plan was requested but no report was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'Split plan report output complete! '
+                        f'({direct_outputs["split_plan_report_path"]})'
+                    )
+                )
             if output_dynamic_range_quantized_tflite:
                 if 'dynamic_range_quant_tflite_path' not in direct_outputs:
                     raise RuntimeError(
@@ -4027,6 +4084,29 @@ def main():
             'Default: auto'
     )
     parser.add_argument(
+        '--auto_split_tflite_by_size',
+        action='store_true',
+        help=\
+            'Estimate flatbuffer split partitions and output *_split_plan.json. \n' +
+            'Currently available only with --tflite_backend flatbuffer_direct.'
+    )
+    parser.add_argument(
+        '--tflite_split_max_bytes',
+        type=int,
+        default=1073741824,
+        help=\
+            'Hard upper bound for split planning (bytes). \n' +
+            'Default: 1073741824 (1GiB)'
+    )
+    parser.add_argument(
+        '--tflite_split_target_bytes',
+        type=int,
+        default=1060000000,
+        help=\
+            'Target size for split planning convergence (bytes). \n' +
+            'Default: 1060000000'
+    )
+    parser.add_argument(
         '-qt',
         '--quant_type',
         type=str,
@@ -4698,6 +4778,9 @@ def main():
         eval_fail_on_threshold=args.eval_fail_on_threshold,
         eval_target_tflite=args.eval_target_tflite,
         eval_compare_mode=args.eval_compare_mode,
+        auto_split_tflite_by_size=args.auto_split_tflite_by_size,
+        tflite_split_max_bytes=args.tflite_split_max_bytes,
+        tflite_split_target_bytes=args.tflite_split_target_bytes,
         tflite_backend=args.tflite_backend,
         quant_norm_mean=args.quant_norm_mean,
         quant_norm_std=args.quant_norm_std,

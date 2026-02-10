@@ -37,6 +37,9 @@ def _convert(
     eval_fail_on_threshold: bool = False,
     eval_target_tflite: str = "float32",
     eval_compare_mode: str = "auto",
+    auto_split_tflite_by_size: bool = False,
+    tflite_split_max_bytes: int = 1073741824,
+    tflite_split_target_bytes: int = 1060000000,
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -56,6 +59,9 @@ def _convert(
         eval_fail_on_threshold=eval_fail_on_threshold,
         eval_target_tflite=eval_target_tflite,
         eval_compare_mode=eval_compare_mode,
+        auto_split_tflite_by_size=auto_split_tflite_by_size,
+        tflite_split_max_bytes=tflite_split_max_bytes,
+        tflite_split_target_bytes=tflite_split_target_bytes,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -522,3 +528,27 @@ def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
         assert report["evaluation_pass"] is False
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_split_plan_report_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_split_plan", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=9_000_000,
+        )
+        report_path = os.path.join(out_dir, "gemm_split_plan_split_plan.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["schema_version"] == 1
+        assert report["plan_valid"] is True
+        assert report["total_estimated_bytes"] > 0
+        assert len(report["partitions"]) >= 1
