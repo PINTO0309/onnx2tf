@@ -2768,6 +2768,7 @@ def convert(
                 output_folder_path=output_folder_path,
                 output_file_name=output_file_name,
                 output_weights=output_weights,
+                quant_type=quant_type,
                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
             )

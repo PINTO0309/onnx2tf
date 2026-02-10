@@ -83,6 +83,26 @@ def _symmetric_int8_quantize(data: np.ndarray) -> Tuple[np.ndarray, float]:
     return q, float(scale)
 
 
+def _symmetric_int8_quantize_per_channel(
+    data: np.ndarray,
+    axis: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    data = np.asarray(data, dtype=np.float32)
+    if axis < 0:
+        axis += data.ndim
+    if axis < 0 or axis >= data.ndim:
+        raise ValueError(f"Invalid quantization axis {axis} for data rank {data.ndim}")
+
+    reduce_axes = tuple(i for i in range(data.ndim) if i != axis)
+    max_abs = np.max(np.abs(data), axis=reduce_axes, keepdims=True)
+    scales = max_abs / 127.0
+    scales = np.where(scales == 0.0, 1.0, scales).astype(np.float32)
+    q = np.round(data / scales)
+    q = np.clip(q, -127, 127).astype(np.int8)
+    scales_1d = np.squeeze(scales, axis=reduce_axes).astype(np.float32)
+    return q, scales_1d
+
+
 def _is_float_constant_tensor(
     *,
     tensor: TensorIR,
@@ -102,6 +122,8 @@ def _is_float_constant_tensor(
 def _quantize_tensor_inplace(
     *,
     tensor: TensorIR,
+    quant_mode: str = "per-tensor",
+    quantized_dimension: int = 0,
 ) -> bool:
     if tensor.dtype == "INT8" and isinstance(tensor.quantization, QuantParamIR):
         return True
@@ -110,16 +132,33 @@ def _quantize_tensor_inplace(
     if not isinstance(tensor.data, np.ndarray):
         return False
 
-    q_data, scale = _symmetric_int8_quantize(tensor.data)
-    tensor.dtype = "INT8"
-    tensor.data = q_data
-    tensor.quantization = QuantParamIR(
-        scale=[float(scale)],
-        zero_point=[0],
-        min=[float(np.min(tensor.data.astype(np.float32) * scale))],
-        max=[float(np.max(tensor.data.astype(np.float32) * scale))],
-        quantized_dimension=0,
-    )
+    if quant_mode == "per-tensor":
+        q_data, scale = _symmetric_int8_quantize(tensor.data)
+        tensor.dtype = "INT8"
+        tensor.data = q_data
+        tensor.quantization = QuantParamIR(
+            scale=[float(scale)],
+            zero_point=[0],
+            min=[float(np.min(tensor.data.astype(np.float32) * scale))],
+            max=[float(np.max(tensor.data.astype(np.float32) * scale))],
+            quantized_dimension=0,
+        )
+    elif quant_mode == "per-channel":
+        q_data, scales = _symmetric_int8_quantize_per_channel(
+            tensor.data,
+            axis=quantized_dimension,
+        )
+        tensor.dtype = "INT8"
+        tensor.data = q_data
+        tensor.quantization = QuantParamIR(
+            scale=[float(v) for v in scales.reshape(-1).tolist()],
+            zero_point=[0 for _ in range(int(scales.size))],
+            min=None,
+            max=None,
+            quantized_dimension=int(quantized_dimension),
+        )
+    else:
+        raise ValueError(f"Unsupported quantization mode: {quant_mode}")
     return True
 
 
@@ -132,9 +171,26 @@ def _make_unique_tensor_name(base: str, tensors: Dict[str, TensorIR]) -> str:
     return f"{base}_{serial}"
 
 
-def build_dynamic_range_quantized_model_ir(model_ir: ModelIR) -> ModelIR:
+def _kernel_weight_quant_axis(op_type: str, tensor: TensorIR) -> int:
+    if op_type in ["CONV_2D", "DEPTHWISE_CONV_2D"]:
+        return len(tensor.shape) - 1
+    if op_type == "FULLY_CONNECTED":
+        return 0
+    return 0
+
+
+def build_dynamic_range_quantized_model_ir(
+    model_ir: ModelIR,
+    quant_type: str = "per-channel",
+) -> ModelIR:
     clone = _clone_model_ir(model_ir)
     graph_input_names = set(clone.inputs)
+    quant_type = str(quant_type).strip().lower()
+    if quant_type not in ["per-channel", "per-tensor"]:
+        raise ValueError(
+            f"flatbuffer_direct dynamic-range quantization quant_type must be one of "
+            f"[\"per-channel\", \"per-tensor\"]. got: {quant_type}"
+        )
 
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
@@ -190,7 +246,13 @@ def build_dynamic_range_quantized_model_ir(model_ir: ModelIR) -> ModelIR:
                 tensor=tensor,
                 graph_input_names=graph_input_names,
             ):
-                if _quantize_tensor_inplace(tensor=tensor):
+                quant_mode = "per-channel" if quant_type == "per-channel" else "per-tensor"
+                quant_axis = _kernel_weight_quant_axis(new_op.op_type, tensor)
+                if _quantize_tensor_inplace(
+                    tensor=tensor,
+                    quant_mode=quant_mode,
+                    quantized_dimension=quant_axis,
+                ):
                     quantized_tensor_names.add(weight_name)
 
         if new_op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
@@ -199,7 +261,7 @@ def build_dynamic_range_quantized_model_ir(model_ir: ModelIR) -> ModelIR:
                 if tensor is None:
                     continue
                 if _is_float_constant_tensor(tensor=tensor, graph_input_names=graph_input_names):
-                    if _quantize_tensor_inplace(tensor=tensor):
+                    if _quantize_tensor_inplace(tensor=tensor, quant_mode="per-tensor"):
                         quantized_tensor_names.add(input_name)
                 tensor = clone.tensors.get(input_name)
                 if tensor is None or tensor.dtype != "INT8":

@@ -7,6 +7,7 @@ import onnx
 import onnx2tf
 import pytest
 from onnx import TensorProto, helper, numpy_helper
+from onnx2tf.tflite_builder.schema_loader import load_schema_module
 
 Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
 
@@ -23,6 +24,7 @@ def _convert(
     backend: str,
     output_dynamic_range_quantized_tflite: bool = False,
     output_integer_quantized_tflite: bool = False,
+    quant_type: str = "per-channel",
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -32,6 +34,7 @@ def _convert(
         tflite_backend=backend,
         output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=output_integer_quantized_tflite,
+        quant_type=quant_type,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -124,6 +127,24 @@ def _requires_flatbuffer_tools() -> bool:
     return shutil.which("flatc") is not None and shutil.which("curl") is not None
 
 
+def _collect_int8_quant_scale_lengths(tflite_path: str) -> list[int]:
+    output_dir = os.path.dirname(tflite_path)
+    schema = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model = schema["ModelT"].InitFromObj(schema["Model"].GetRootAs(model_bytes, 0))
+    subgraph = model.subgraphs[0]
+    int8_type = getattr(schema["TensorType"], "INT8")
+    lengths: list[int] = []
+    for tensor in subgraph.tensors:
+        if tensor.type != int8_type:
+            continue
+        if tensor.quantization is None or tensor.quantization.scale is None:
+            continue
+        lengths.append(len(list(tensor.quantization.scale)))
+    return lengths
+
+
 def test_tflite_backend_matrix_add() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -161,6 +182,12 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
         interpreter = Interpreter(model_path=tflite_path)
         interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.ones(input_details[0]["shape"], dtype=np.float32)
+        interpreter.set_tensor(input_details[0]["index"], x)
+        interpreter.invoke()
+        _ = interpreter.get_tensor(output_details[0]["index"])
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
@@ -218,3 +245,43 @@ def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
             rtol=0.0,
             atol=5e-2,
         )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.parametrize(
+    "quant_type, expected_multi_scale",
+    [
+        ("per-channel", True),
+        ("per-tensor", False),
+    ],
+)
+def test_flatbuffer_direct_dynamic_range_quantized_fc_quant_type(
+    quant_type: str,
+    expected_multi_scale: bool,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, f"gemm_{quant_type}", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_dynamic_range_quantized_tflite=True,
+            quant_type=quant_type,
+        )
+        tflite_path = os.path.join(
+            out_dir,
+            f"gemm_{quant_type}_dynamic_range_quant.tflite",
+        )
+        assert os.path.isfile(tflite_path)
+
+        scale_lengths = _collect_int8_quant_scale_lengths(tflite_path)
+        assert len(scale_lengths) > 0
+        if expected_multi_scale:
+            assert any(length > 1 for length in scale_lengths)
+        else:
+            assert all(length == 1 for length in scale_lengths)
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
