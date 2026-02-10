@@ -1670,6 +1670,7 @@ flatbuffer_direct notes:
 2. Dynamic range quantization (`-odrqt`) is supported in a limited form:
    weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
    and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
+   For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
 3. Integer quantization (`-oiqt`) is not supported in `flatbuffer_direct` yet.
 4. Supported builtin OP set: `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`.
 5. Unsupported OPs fail explicitly with `NotImplementedError`.

@@ -49,6 +49,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 9 実装（README に backend 制約・対応OP・schemaタグ固定運用を追記）
 - Step 10-12 実装（`flatbuffer_direct` に限定 dynamic range quantization を追加、`QuantParamIR`/quantization 書き込み対応、`-oiqt` は未対応のまま明示エラー）
 - Step 13 実装（`-odrqt` 対象拡張: 定数入力を使う `ADD/SUB/MUL/DIV/CONCATENATION` に対して定数INT8化 + `DEQUANTIZE` 挿入を追加）
+- Step 14 実装（`-odrqt` の `quant_type` 連携: kernel weight に `per-channel` / `per-tensor` を反映）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -57,13 +58,14 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `tflite_backend='tf_converter'` で従来どおり変換可能なこと
 - `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
 - 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
-- `pytest -q tests/test_tflite_builder_direct.py` が通過（6 passed）
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（8 passed）
 - `-odrqt` 指定で `*_dynamic_range_quant.tflite` が生成され、Gemm小規模モデルで `Interpreter.allocate_tensors()` および `invoke()` が通ること
 - `-odrqt` 指定で Add(constant) 小規模モデルも `Interpreter.invoke()` まで通ること
+- `-odrqt` + `--quant_type per-channel/per-tensor` でFCモデルの量子化 scale 形状が切り替わること（テストで検証）
 
 3. 未着手:
 - `-oiqt`（full/integer quantization）対応
-- dynamic range quantization の精度強化（例: per-channel 量子化やしきい値制御）
+- dynamic range quantization の精度強化（例: per-channel の対象拡張、しきい値制御、校正戦略）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -101,6 +103,15 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 完了条件:
 1. Add(constant) などの小規模モデルで `-odrqt` が成功し、推論可能である。
 2. 既存 `-odrqt`（Conv/Depthwise/FC weight-only）が回帰しない。
+
+### Step 14: Dynamic Range Quant の量子化モード切替
+1. `flatbuffer_direct` に `quant_type` を連携し、`-odrqt` 時の kernel weight 量子化モードを切替可能にする。
+2. `per-channel` は kernel weight に対して channel-wise scale を出力し、`per-tensor` は単一 scale を出力する。
+3. 定数演算（Add/Sub/Mul/Div/Concat）側は互換性のため per-tensor 量子化のままとする。
+
+完了条件:
+1. `-odrqt --quant_type per-channel` と `per-tensor` の双方で変換・推論が可能。
+2. FC系小規模モデルで scale 長が切り替わることをテストで確認できる。
 
 ## 作業ステップ
 
@@ -267,3 +278,4 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 12. `[x] Step 11 完了`
 13. `[x] Step 12 完了`
 14. `[x] Step 13 完了`
+15. `[x] Step 14 完了`

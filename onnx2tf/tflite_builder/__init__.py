@@ -26,6 +26,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
     output_file_name = kwargs.get("output_file_name", "model")
     onnx_graph = kwargs.get("onnx_graph", None)
     output_weights = bool(kwargs.get("output_weights", False))
+    quant_type = kwargs.get("quant_type", "per-channel")
     output_dynamic_range_quantized_tflite = bool(
         kwargs.get("output_dynamic_range_quantized_tflite", False)
     )
@@ -60,7 +61,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
 
     dynamic_range_path = None
     if output_dynamic_range_quantized_tflite:
-        dynamic_model_ir = build_dynamic_range_quantized_model_ir(model_ir)
+        dynamic_model_ir = build_dynamic_range_quantized_model_ir(
+            model_ir,
+            quant_type=str(quant_type),
+        )
         dynamic_range_path = os.path.join(
             output_folder_path,
             f"{output_file_name}_dynamic_range_quant.tflite",
