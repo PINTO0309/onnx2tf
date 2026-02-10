@@ -179,18 +179,23 @@ def _kernel_weight_quant_axis(op_type: str, tensor: TensorIR) -> int:
     return 0
 
 
+def _normalize_quant_type(quant_type: str) -> str:
+    quant_type = str(quant_type).strip().lower()
+    if quant_type not in ["per-channel", "per-tensor"]:
+        raise ValueError(
+            "flatbuffer_direct quant_type must be one of [\"per-channel\", \"per-tensor\"]. "
+            f"got: {quant_type}"
+        )
+    return quant_type
+
+
 def build_dynamic_range_quantized_model_ir(
     model_ir: ModelIR,
     quant_type: str = "per-channel",
 ) -> ModelIR:
     clone = _clone_model_ir(model_ir)
     graph_input_names = set(clone.inputs)
-    quant_type = str(quant_type).strip().lower()
-    if quant_type not in ["per-channel", "per-tensor"]:
-        raise ValueError(
-            f"flatbuffer_direct dynamic-range quantization quant_type must be one of "
-            f"[\"per-channel\", \"per-tensor\"]. got: {quant_type}"
-        )
+    quant_type = _normalize_quant_type(quant_type)
 
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
@@ -282,4 +287,116 @@ def build_dynamic_range_quantized_model_ir(
         )
 
     clone.description = f"{clone.description} (dynamic_range_quantized)"
+    return clone
+
+
+def build_integer_quantized_model_ir(
+    model_ir: ModelIR,
+    quant_type: str = "per-channel",
+) -> ModelIR:
+    clone = build_dynamic_range_quantized_model_ir(
+        model_ir,
+        quant_type=quant_type,
+    )
+    clone.description = f"{clone.description} (integer_quantized_limited)"
+    return clone
+
+
+def _normalize_quant_io_dtype(dtype: str) -> Tuple[str, QuantParamIR]:
+    d = str(dtype).strip().lower()
+    if d == "int8":
+        return "INT8", QuantParamIR(scale=[1.0 / 128.0], zero_point=[0], quantized_dimension=0)
+    if d == "uint8":
+        return "UINT8", QuantParamIR(scale=[1.0 / 255.0], zero_point=[128], quantized_dimension=0)
+    if d == "float32":
+        return "FLOAT32", QuantParamIR(scale=[1.0], zero_point=[0], quantized_dimension=0)
+    raise ValueError(
+        f"flatbuffer_direct full integer quantization supports input/output dtype int8/uint8/float32. got: {dtype}"
+    )
+
+
+def build_full_integer_quantized_model_ir(
+    model_ir: ModelIR,
+    quant_type: str = "per-channel",
+    input_quant_dtype: str = "int8",
+    output_quant_dtype: str = "int8",
+) -> ModelIR:
+    clone = build_integer_quantized_model_ir(model_ir, quant_type=quant_type)
+
+    input_dtype_name, input_qparams = _normalize_quant_io_dtype(input_quant_dtype)
+    output_dtype_name, output_qparams = _normalize_quant_io_dtype(output_quant_dtype)
+
+    pre_ops: List[OperatorIR] = []
+    post_ops: List[OperatorIR] = []
+
+    new_inputs: List[str] = []
+    for input_name in list(clone.inputs):
+        old_tensor = clone.tensors[input_name]
+        if input_dtype_name == "FLOAT32":
+            new_inputs.append(input_name)
+            continue
+
+        q_input_name = _make_unique_tensor_name(f"{input_name}_quantized_input", clone.tensors)
+        clone.tensors[q_input_name] = TensorIR(
+            name=q_input_name,
+            dtype=input_dtype_name,
+            shape=list(old_tensor.shape),
+            shape_signature=list(old_tensor.shape_signature)
+            if old_tensor.shape_signature is not None
+            else list(old_tensor.shape),
+            data=None,
+            is_variable=False,
+            quantization=QuantParamIR(
+                scale=list(input_qparams.scale),
+                zero_point=list(input_qparams.zero_point),
+                quantized_dimension=int(input_qparams.quantized_dimension),
+            ),
+        )
+        pre_ops.append(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[q_input_name],
+                outputs=[input_name],
+                options={},
+            )
+        )
+        new_inputs.append(q_input_name)
+
+    new_outputs: List[str] = []
+    for output_name in list(clone.outputs):
+        old_tensor = clone.tensors[output_name]
+        if output_dtype_name == "FLOAT32":
+            new_outputs.append(output_name)
+            continue
+
+        q_output_name = _make_unique_tensor_name(f"{output_name}_quantized_output", clone.tensors)
+        clone.tensors[q_output_name] = TensorIR(
+            name=q_output_name,
+            dtype=output_dtype_name,
+            shape=list(old_tensor.shape),
+            shape_signature=list(old_tensor.shape_signature)
+            if old_tensor.shape_signature is not None
+            else list(old_tensor.shape),
+            data=None,
+            is_variable=False,
+            quantization=QuantParamIR(
+                scale=list(output_qparams.scale),
+                zero_point=list(output_qparams.zero_point),
+                quantized_dimension=int(output_qparams.quantized_dimension),
+            ),
+        )
+        post_ops.append(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[output_name],
+                outputs=[q_output_name],
+                options={},
+            )
+        )
+        new_outputs.append(q_output_name)
+
+    clone.inputs = new_inputs
+    clone.outputs = new_outputs
+    clone.operators = pre_ops + clone.operators + post_ops
+    clone.description = f"{clone.description} (full_integer_quantized_limited)"
     return clone

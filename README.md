@@ -1671,8 +1671,10 @@ flatbuffer_direct notes:
    weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
    and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
    For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-3. Integer quantization (`-oiqt`) is not supported in `flatbuffer_direct` yet.
-4. Supported builtin OP set: `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`.
+3. Integer quantization (`-oiqt`) is supported in a limited form:
+   `*_integer_quant.tflite` and `*_full_integer_quant.tflite` are generated.
+   `*_integer_quant_with_int16_act.tflite` and `*_full_integer_quant_with_int16_act.tflite` are not generated in `flatbuffer_direct`.
+4. Supported builtin OP set: `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`, `DEQUANTIZE`, `QUANTIZE`.
 5. Unsupported OPs fail explicitly with `NotImplementedError`.
 6. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
    `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
@@ -2242,7 +2244,8 @@ convert(
       "tf_converter"(default): Use TensorFlow Lite Converter.
       "flatbuffer_direct": Use direct FlatBuffer builder path.
       Note: "flatbuffer_direct" supports a limited builtin OP set,
-      FP32/FP16 export, and limited dynamic-range quantization.
+      FP32/FP16 export, limited dynamic-range quantization,
+      and limited integer quantization.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.

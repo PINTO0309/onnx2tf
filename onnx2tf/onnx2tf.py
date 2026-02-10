@@ -740,7 +740,8 @@ def convert(
         "tf_converter"(default): Use TensorFlow Lite Converter.\n
         "flatbuffer_direct": Use direct FlatBuffer builder path.\n
         Note: "flatbuffer_direct" supports a limited builtin OP set,\n
-        FP32/FP16 export, and limited dynamic-range quantization.\n
+        FP32/FP16 export, limited dynamic-range quantization,\n
+        and limited integer quantization.\n
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.\n
@@ -2202,6 +2203,7 @@ def convert(
             """
             # AUTO calib 4D check
             if output_integer_quantized_tflite \
+                and tflite_backend == 'tf_converter' \
                 and custom_input_op_name_np_data_path is None \
                 and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
                 error(
@@ -2769,6 +2771,8 @@ def convert(
                 output_file_name=output_file_name,
                 output_weights=output_weights,
                 quant_type=quant_type,
+                input_quant_dtype=input_quant_dtype,
+                output_quant_dtype=output_quant_dtype,
                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
             )
@@ -2783,6 +2787,27 @@ def convert(
                     Color.GREEN(
                         f'Dynamic range quantized tflite output complete! '
                         f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                    )
+                )
+            if output_integer_quantized_tflite:
+                if 'integer_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct integer quantization was requested but no output was generated.'
+                    )
+                if 'full_integer_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct full integer quantization was requested but no output was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization tflite output complete! '
+                        f'({direct_outputs["integer_quant_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_tflite_path"]})'
                     )
                 )
             if copy_onnx_input_output_names_to_tflite:
