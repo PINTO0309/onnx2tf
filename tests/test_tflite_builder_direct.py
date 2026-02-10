@@ -38,6 +38,9 @@ def _convert(
     eval_fail_on_threshold: bool = False,
     eval_target_tflite: str = "float32",
     eval_compare_mode: str = "auto",
+    eval_split_models: bool = False,
+    eval_split_reference: str = "unsplit_tflite",
+    eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
@@ -60,6 +63,9 @@ def _convert(
         eval_fail_on_threshold=eval_fail_on_threshold,
         eval_target_tflite=eval_target_tflite,
         eval_compare_mode=eval_compare_mode,
+        eval_split_models=eval_split_models,
+        eval_split_reference=eval_split_reference,
+        eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
@@ -598,3 +604,71 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
         for part_file in part_files:
             interpreter = Interpreter(model_path=part_file)
             interpreter.allocate_tensors()
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=1,
+            eval_split_models=True,
+            eval_split_reference="unsplit_tflite",
+            eval_num_samples=3,
+        )
+        report_path = os.path.join(out_dir, "add_chain_eval_split_split_accuracy_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["reference_mode"] == "unsplit_tflite"
+        assert report["evaluation_pass"] is True
+        assert report["allclose_summary"]["pass"] is True
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_split_accuracy_report_fail_on_threshold() -> None:
+    from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split_fail", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=1,
+        )
+        split_manifest_path = os.path.join(out_dir, "add_chain_eval_split_fail_split_manifest.json")
+        reference_tflite_path = os.path.join(out_dir, "add_chain_eval_split_fail_float32.tflite")
+        onnx_graph = onnx.load(model_path)
+        report_path = os.path.join(out_dir, "add_chain_eval_split_fail_split_accuracy_report.json")
+        with pytest.raises(RuntimeError):
+            evaluate_split_manifest_outputs(
+                onnx_graph=onnx_graph,
+                split_manifest_path=split_manifest_path,
+                reference_mode="unsplit_tflite",
+                reference_tflite_path=reference_tflite_path,
+                output_report_path=report_path,
+                num_samples=2,
+                fail_on_threshold=True,
+                metric_thresholds={
+                    "max_abs": 0.0,
+                    "mean_abs": 0.0,
+                    "rmse": 0.0,
+                    "cosine_similarity": 1.1,
+                },
+            )
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["evaluation_pass"] is False

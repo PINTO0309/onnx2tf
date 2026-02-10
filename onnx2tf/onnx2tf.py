@@ -635,6 +635,9 @@ def convert(
     eval_fail_on_threshold: Optional[bool] = False,
     eval_target_tflite: Optional[str] = 'float32',
     eval_compare_mode: Optional[str] = 'auto',
+    eval_split_models: Optional[bool] = False,
+    eval_split_reference: Optional[str] = 'unsplit_tflite',
+    eval_split_fail_on_threshold: Optional[bool] = False,
     auto_split_tflite_by_size: Optional[bool] = False,
     tflite_split_max_bytes: Optional[int] = 1073741824,
     tflite_split_target_bytes: Optional[int] = 1060000000,
@@ -783,6 +786,17 @@ def convert(
         "dequant": dequantize TFLite outputs before comparison.\n
         "raw": compare raw TFLite output tensors.\n
         Default: "auto"
+
+    eval_split_models: Optional[bool]
+        Evaluate split tflite partitions (generated from split manifest)
+        by sequential execution.
+
+    eval_split_reference: Optional[str]
+        Reference for split evaluation.\n
+        "unsplit_tflite"(default) or "onnx"
+
+    eval_split_fail_on_threshold: Optional[bool]
+        Fail conversion when split evaluation thresholds are not satisfied.
 
     auto_split_tflite_by_size: Optional[bool]
         Estimate flatbuffer size and generate split planning report
@@ -1224,6 +1238,9 @@ def convert(
     eval_fail_on_threshold = bool(eval_fail_on_threshold)
     eval_target_tflite = str(eval_target_tflite).lower() if eval_target_tflite is not None else 'float32'
     eval_compare_mode = str(eval_compare_mode).lower() if eval_compare_mode is not None else 'auto'
+    eval_split_models = bool(eval_split_models)
+    eval_split_reference = str(eval_split_reference).lower() if eval_split_reference is not None else 'unsplit_tflite'
+    eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
     auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
     tflite_split_max_bytes = int(tflite_split_max_bytes)
     tflite_split_target_bytes = int(tflite_split_target_bytes)
@@ -1263,6 +1280,12 @@ def convert(
             f'eval_compare_mode: {eval_compare_mode}'
         )
         sys.exit(1)
+    if eval_split_reference not in ['unsplit_tflite', 'onnx']:
+        error(
+            f'eval_split_reference must be one of ["unsplit_tflite", "onnx"]. ' +
+            f'eval_split_reference: {eval_split_reference}'
+        )
+        sys.exit(1)
     if tflite_split_max_bytes <= 0:
         error(
             f'tflite_split_max_bytes must be > 0. tflite_split_max_bytes: {tflite_split_max_bytes}'
@@ -1283,6 +1306,16 @@ def convert(
     if eval_with_onnx and tflite_backend != 'flatbuffer_direct':
         error(
             'eval_with_onnx currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if eval_split_models and tflite_backend != 'flatbuffer_direct':
+        error(
+            'eval_split_models currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if eval_split_models and not auto_split_tflite_by_size:
+        error(
+            'eval_split_models=True requires auto_split_tflite_by_size=True.'
         )
         sys.exit(1)
     if auto_split_tflite_by_size and tflite_backend != 'flatbuffer_direct':
@@ -1848,6 +1881,9 @@ def convert(
                     'eval_fail_on_threshold': eval_fail_on_threshold,
                     'eval_target_tflite': eval_target_tflite,
                     'eval_compare_mode': eval_compare_mode,
+                    'eval_split_models': eval_split_models,
+                    'eval_split_reference': eval_split_reference,
+                    'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'auto_split_tflite_by_size': auto_split_tflite_by_size,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
                     'tflite_split_target_bytes': tflite_split_target_bytes,
@@ -3057,6 +3093,44 @@ def convert(
                         f'pass={report["evaluation_pass"]}'
                     )
                 )
+            if eval_split_models:
+                if 'split_manifest_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'eval_split_models=True but split manifest is not available. '
+                        'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
+                    )
+                from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
+                split_accuracy_report_path = os.path.join(
+                    output_folder_path,
+                    f'{output_file_name}_split_accuracy_report.json',
+                )
+                reference_tflite_path = None
+                if eval_split_reference == 'unsplit_tflite':
+                    reference_tflite_path = direct_outputs['float32_tflite_path']
+                split_report = evaluate_split_manifest_outputs(
+                    onnx_graph=onnx_graph,
+                    split_manifest_path=direct_outputs['split_manifest_path'],
+                    reference_mode=eval_split_reference,
+                    reference_tflite_path=reference_tflite_path,
+                    output_report_path=split_accuracy_report_path,
+                    num_samples=eval_num_samples,
+                    seed=0,
+                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                    rtol=eval_rtol,
+                    atol=eval_atol,
+                    compare_mode=eval_compare_mode,
+                    fail_on_threshold=eval_split_fail_on_threshold,
+                )
+                info(
+                    Color.GREEN(
+                        'Split-model accuracy report output complete! '
+                        f'({split_accuracy_report_path}) '
+                        f'max_abs={split_report["overall_metrics"]["max_abs"]:.6g} '
+                        f'rmse={split_report["overall_metrics"]["rmse"]:.6g} '
+                        f'cosine={split_report["overall_metrics"]["cosine_similarity"]:.6g} '
+                        f'pass={split_report["evaluation_pass"]}'
+                    )
+                )
             return model
 
         try:
@@ -4105,6 +4179,27 @@ def main():
             'Default: auto'
     )
     parser.add_argument(
+        '--eval_split_models',
+        action='store_true',
+        help=\
+            'Evaluate split partitions sequentially using split manifest output.'
+    )
+    parser.add_argument(
+        '--eval_split_reference',
+        type=str,
+        choices=['unsplit_tflite', 'onnx'],
+        default='unsplit_tflite',
+        help=\
+            'Reference for split evaluation. \n' +
+            '"unsplit_tflite"(default) or "onnx".'
+    )
+    parser.add_argument(
+        '--eval_split_fail_on_threshold',
+        action='store_true',
+        help=\
+            'Return failure when split-model evaluation thresholds are not satisfied.'
+    )
+    parser.add_argument(
         '--auto_split_tflite_by_size',
         action='store_true',
         help=\
@@ -4799,6 +4894,9 @@ def main():
         eval_fail_on_threshold=args.eval_fail_on_threshold,
         eval_target_tflite=args.eval_target_tflite,
         eval_compare_mode=args.eval_compare_mode,
+        eval_split_models=args.eval_split_models,
+        eval_split_reference=args.eval_split_reference,
+        eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         auto_split_tflite_by_size=args.auto_split_tflite_by_size,
         tflite_split_max_bytes=args.tflite_split_max_bytes,
         tflite_split_target_bytes=args.tflite_split_target_bytes,
