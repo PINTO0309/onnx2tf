@@ -18,6 +18,8 @@ from onnx2tf.tflite_builder.split_planner import (
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     plan_contiguous_partitions_by_size,
+    should_split_by_estimate,
+    write_split_model_files_and_manifest,
     write_split_plan_report,
 )
 from onnx2tf.utils.common_functions import weights_export
@@ -57,7 +59,7 @@ def _resolve_quantization_controls(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
+def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     _reject_unsupported_quantization(**kwargs)
 
     output_folder_path = kwargs.get("output_folder_path", "saved_model")
@@ -110,12 +112,21 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
     )
 
     split_plan_report_path = None
+    split_required_by_estimate = False
+    split_plan_total_estimated_bytes = None
+    split_manifest_path = None
+    split_partition_paths = None
+    split_partition_count = 0
     if auto_split_tflite_by_size:
         split_plan_report = plan_contiguous_partitions_by_size(
             model_ir=model_ir,
             target_max_bytes=tflite_split_target_bytes,
             hard_max_bytes=tflite_split_max_bytes,
             schema_tflite=schema_tflite,
+        )
+        split_required_by_estimate = bool(should_split_by_estimate(split_plan_report))
+        split_plan_total_estimated_bytes = int(
+            split_plan_report.get("total_estimated_bytes", 0)
         )
         split_plan_report_path = write_split_plan_report(
             report=split_plan_report,
@@ -124,6 +135,24 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
                 f"{output_file_name}_split_plan.json",
             ),
         )
+        if split_required_by_estimate:
+            from ai_edge_litert.interpreter import Interpreter
+
+            def _validate_split_tflite_loadable(tflite_path: str) -> None:
+                interpreter = Interpreter(model_path=tflite_path)
+                interpreter.allocate_tensors()
+
+            split_outputs = write_split_model_files_and_manifest(
+                schema_tflite=schema_tflite,
+                model_ir=model_ir,
+                plan_report=split_plan_report,
+                output_folder_path=output_folder_path,
+                output_file_name=output_file_name,
+                tflite_loader_validator=_validate_split_tflite_loadable,
+            )
+            split_manifest_path = split_outputs["split_manifest_path"]
+            split_partition_paths = split_outputs["split_partition_paths"]
+            split_partition_count = int(split_outputs["split_partition_count"])
 
     float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
     write_model_file(
@@ -301,7 +330,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
                 ),
             )
 
-    outputs: Dict[str, str] = {
+    outputs: Dict[str, Any] = {
         "float32_tflite_path": float32_path,
         "float16_tflite_path": float16_path,
     }
@@ -317,4 +346,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, str]:
         outputs["full_integer_quant_with_int16_act_tflite_path"] = full_integer_quant_with_int16_act_path
     if split_plan_report_path is not None:
         outputs["split_plan_report_path"] = split_plan_report_path
+        outputs["split_required_by_estimate"] = bool(split_required_by_estimate)
+        outputs["split_plan_total_estimated_bytes"] = int(split_plan_total_estimated_bytes)
+    if split_manifest_path is not None:
+        outputs["split_manifest_path"] = split_manifest_path
+    if split_partition_paths is not None:
+        outputs["split_partition_paths"] = split_partition_paths
+        outputs["split_partition_count"] = int(split_partition_count)
     return outputs

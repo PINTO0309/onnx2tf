@@ -58,6 +58,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 19 実装（ONNX Runtime/TFLite 共通推論ラッパーと指標算出を追加し、`*_accuracy_report.json` を生成）
 - Step 20 実装（評価用CLIオプション拡張、量子化モデル向け dequant/raw 比較モード、閾値超過時の失敗制御を追加）
 - Step 21 実装（IR/Tensor/Bufferベースのサイズ見積りと依存関係を壊さない分割候補探索、1GB近傍収束ロジックを追加）
+- Step 22 実装（`*_0001.tflite` 形式の分割出力、`*_split_manifest.json` 出力、各分割の `Interpreter.allocate_tensors()` 検証を追加）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -66,7 +67,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `tflite_backend='tf_converter'` で従来どおり変換可能なこと
 - `python -m py_compile onnx2tf/tflite_builder/*.py onnx2tf/tflite_builder/op_builders/*.py`
 - 小規模 ONNX モデル（Add/Reshape/Conv/AveragePool/Gemm）で `flatbuffer_direct` 出力を生成し `Interpreter.allocate_tensors()` が通ること
-- `pytest -q tests/test_tflite_builder_direct.py` が通過（15 passed）
+- `pytest -q tests/test_tflite_builder_direct.py` が通過（16 passed）
 - `-odrqt` 指定で `*_dynamic_range_quant.tflite` が生成され、Gemm小規模モデルで `Interpreter.allocate_tensors()` および `invoke()` が通ること
 - `-odrqt` 指定で Add(constant) 小規模モデルも `Interpreter.invoke()` まで通ること
 - `-odrqt` + `--quant_type per-channel/per-tensor` でFCモデルの量子化 scale 形状が切り替わること（テストで検証）
@@ -80,9 +81,11 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `eval_fail_on_threshold=True` かつ閾値超過時に変換を失敗終了できること
 - `auto_split_tflite_by_size=True` 指定で `*_split_plan.json` が生成され、推定サイズと分割候補点を出力できること
 - `pytest -q tests/test_tflite_split_planner.py` が通過（4 passed）
+- `auto_split_tflite_by_size=True` かつ split 必要時に `*_0001.tflite`, `*_0002.tflite`... および `*_split_manifest.json` が生成されること
+- 分割出力された全 `*_nnnn.tflite` が `Interpreter.allocate_tensors()` を通過すること
 
 3. 未着手:
-- 追加要件 Step 22-28（1GB近傍自動分割、全OP本格実装）
+- 追加要件 Step 23-28（分割後精度評価、全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -460,7 +463,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 20. `[x] Step 19 完了`
 21. `[x] Step 20 完了`
 22. `[x] Step 21 完了`
-23. `[ ] Step 22 完了`
+23. `[x] Step 22 完了`
 24. `[ ] Step 23 完了`
 25. `[ ] Step 24 完了`
 26. `[ ] Step 25 完了`

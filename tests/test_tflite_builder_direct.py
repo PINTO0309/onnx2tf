@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import shutil
@@ -147,6 +148,17 @@ def _make_gemm_model() -> onnx.ModelProto:
     b = numpy_helper.from_array(np.zeros((3,), dtype=np.float32), name="B")
     node = helper.make_node("Gemm", ["x", "W", "B"], ["y"], name="GemmNode", transB=1)
     graph = helper.make_graph([node], "gemm_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_add_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3])
+    n0 = helper.make_node("Add", ["x", "y"], ["a0"], name="AddChain0")
+    n1 = helper.make_node("Add", ["a0", "y"], ["a1"], name="AddChain1")
+    n2 = helper.make_node("Add", ["a1", "y"], ["z"], name="AddChain2")
+    graph = helper.make_graph([n0, n1, n2], "add_chain_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -552,3 +564,37 @@ def test_flatbuffer_direct_split_plan_report_smoke() -> None:
         assert report["plan_valid"] is True
         assert report["total_estimated_bytes"] > 0
         assert len(report["partitions"]) >= 1
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=1,
+        )
+
+        manifest_path = os.path.join(out_dir, "add_chain_split_split_manifest.json")
+        assert os.path.isfile(manifest_path)
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert manifest["schema_version"] == 1
+        assert manifest["base_model"] == "add_chain_split.tflite"
+        assert manifest["target_max_bytes"] == 1
+        assert len(manifest["partitions"]) >= 1
+        assert "edges" in manifest
+
+        part_files = sorted(
+            glob.glob(os.path.join(out_dir, "add_chain_split_[0-9][0-9][0-9][0-9].tflite"))
+        )
+        assert len(part_files) >= 1
+        for part_file in part_files:
+            interpreter = Interpreter(model_path=part_file)
+            interpreter.allocate_tensors()
