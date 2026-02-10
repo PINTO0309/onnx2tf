@@ -266,6 +266,69 @@ class _MetricAccumulator:
         }
 
 
+_FLOAT_METRIC_THRESHOLDS = {
+    "max_abs": 1.0e-4,
+    "mean_abs": 1.0e-5,
+    "rmse": 1.0e-5,
+    "cosine_similarity": 0.9999,
+}
+
+
+_QUANT_METRIC_THRESHOLDS = {
+    "max_abs": 5.0e-2,
+    "mean_abs": 1.0e-2,
+    "rmse": 2.0e-2,
+    "cosine_similarity": 0.98,
+}
+
+
+def _is_integer_or_bool_dtype(np_dtype: np.dtype) -> bool:
+    return np.issubdtype(np_dtype, np.integer) or np.issubdtype(np_dtype, np.bool_)
+
+
+def _resolve_compare_mode(compare_mode: str, *, has_quantized_outputs: bool) -> str:
+    compare_mode = str(compare_mode).strip().lower()
+    if compare_mode not in ["auto", "dequant", "raw"]:
+        raise ValueError(
+            "compare_mode must be one of ['auto', 'dequant', 'raw']. "
+            f"got: {compare_mode}"
+        )
+    if compare_mode == "auto":
+        return "dequant" if has_quantized_outputs else "raw"
+    return compare_mode
+
+
+def _resolve_metric_thresholds(
+    *,
+    metric_thresholds: Optional[Dict[str, float]],
+    use_quant_defaults: bool,
+) -> Dict[str, float]:
+    base = dict(_QUANT_METRIC_THRESHOLDS if use_quant_defaults else _FLOAT_METRIC_THRESHOLDS)
+    if metric_thresholds is None:
+        return base
+    for key in base.keys():
+        if key in metric_thresholds and metric_thresholds[key] is not None:
+            base[key] = float(metric_thresholds[key])
+    return base
+
+
+def _judge_metrics(
+    *,
+    metrics: Dict[str, float],
+    thresholds: Dict[str, float],
+) -> Dict[str, Any]:
+    checks = {
+        "max_abs": float(metrics["max_abs"]) <= float(thresholds["max_abs"]),
+        "mean_abs": float(metrics["mean_abs"]) <= float(thresholds["mean_abs"]),
+        "rmse": float(metrics["rmse"]) <= float(thresholds["rmse"]),
+        "cosine_similarity": float(metrics["cosine_similarity"]) >= float(thresholds["cosine_similarity"]),
+    }
+    return {
+        "pass": bool(all(checks.values())),
+        "checks": checks,
+    }
+
+
 def evaluate_onnx_tflite_outputs(
     *,
     onnx_graph: onnx.ModelProto,
@@ -274,12 +337,23 @@ def evaluate_onnx_tflite_outputs(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    rtol: float = 0.0,
+    atol: float = 1.0e-4,
+    compare_mode: str = "auto",
+    fail_on_threshold: bool = False,
+    metric_thresholds: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     import onnxruntime as ort
     from ai_edge_litert.interpreter import Interpreter
 
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
+    rtol = float(rtol)
+    atol = float(atol)
+    if rtol < 0.0:
+        raise ValueError(f"rtol must be >= 0.0. got: {rtol}")
+    if atol < 0.0:
+        raise ValueError(f"atol must be >= 0.0. got: {atol}")
     if not os.path.exists(tflite_path):
         raise FileNotFoundError(f"TFLite file for evaluation does not exist. path={tflite_path}")
 
@@ -307,13 +381,27 @@ def evaluate_onnx_tflite_outputs(
         )
     interpreter = Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
+    tflite_input_details = interpreter.get_input_details()
+    tflite_output_details = interpreter.get_output_details()
     tflite_input_map = _build_tflite_detail_map(
         onnx_names=onnx_input_names,
-        tflite_details=interpreter.get_input_details(),
+        tflite_details=tflite_input_details,
     )
     tflite_output_map = _build_tflite_detail_map(
         onnx_names=onnx_output_names,
-        tflite_details=interpreter.get_output_details(),
+        tflite_details=tflite_output_details,
+    )
+    has_quantized_outputs = any(
+        _is_integer_or_bool_dtype(np.dtype(detail["dtype"]))
+        for detail in tflite_output_details
+    )
+    resolved_compare_mode = _resolve_compare_mode(
+        compare_mode,
+        has_quantized_outputs=has_quantized_outputs,
+    )
+    resolved_thresholds = _resolve_metric_thresholds(
+        metric_thresholds=metric_thresholds,
+        use_quant_defaults=has_quantized_outputs,
     )
 
     total_metrics = _MetricAccumulator()
@@ -322,6 +410,12 @@ def evaluate_onnx_tflite_outputs(
     }
     tflite_output_name_map: Dict[str, str] = {
         output_name: str(tflite_output_map[output_name]["name"])
+        for output_name in onnx_output_names
+    }
+    allclose_total = 0
+    allclose_matched = 0
+    per_output_allclose: Dict[str, Dict[str, int]] = {
+        output_name: {"matched": 0, "total": 0}
         for output_name in onnx_output_names
     }
 
@@ -363,7 +457,10 @@ def evaluate_onnx_tflite_outputs(
         for output_name in onnx_output_names:
             detail = tflite_output_map[output_name]
             tflite_output = interpreter.get_tensor(detail["index"])
-            tflite_output = _dequantize_tflite_output(tflite_output, detail)
+            if resolved_compare_mode == "dequant":
+                tflite_output = _dequantize_tflite_output(tflite_output, detail)
+            else:
+                tflite_output = np.asarray(tflite_output)
 
             onnx_output = np.asarray(onnx_outputs_by_name[output_name])
             if onnx_output.shape != tflite_output.shape:
@@ -378,12 +475,36 @@ def evaluate_onnx_tflite_outputs(
 
             total_metrics.update(onnx_output, tflite_output)
             per_output_metrics[output_name].update(onnx_output, tflite_output)
+            is_allclose = bool(
+                np.allclose(
+                    onnx_output,
+                    tflite_output,
+                    rtol=rtol,
+                    atol=atol,
+                    equal_nan=True,
+                )
+            )
+            allclose_total += 1
+            allclose_matched += int(is_allclose)
+            per_output_allclose[output_name]["total"] += 1
+            per_output_allclose[output_name]["matched"] += int(is_allclose)
 
     os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
+    overall_metrics = total_metrics.to_dict()
+    metric_judgement = _judge_metrics(
+        metrics=overall_metrics,
+        thresholds=resolved_thresholds,
+    )
+    allclose_pass = bool(allclose_total == allclose_matched)
+    evaluation_pass = bool(metric_judgement["pass"] and allclose_pass)
     report: Dict[str, Any] = {
         "schema_version": 1,
         "seed": int(seed),
         "num_samples": int(num_samples),
+        "rtol": float(rtol),
+        "atol": float(atol),
+        "compare_mode": resolved_compare_mode,
+        "has_quantized_outputs": bool(has_quantized_outputs),
         "inputs_source": (
             "custom_input_op_name_np_data_path"
             if len(custom_inputs) > 0
@@ -392,10 +513,28 @@ def evaluate_onnx_tflite_outputs(
         "onnx_input_names": onnx_input_names,
         "onnx_output_names": onnx_output_names,
         "tflite_path": tflite_path,
-        "overall_metrics": total_metrics.to_dict(),
+        "metric_thresholds": {
+            k: float(v) for k, v in resolved_thresholds.items()
+        },
+        "overall_metrics": overall_metrics,
+        "metric_threshold_judgement": metric_judgement,
+        "allclose_summary": {
+            "matched": int(allclose_matched),
+            "total": int(allclose_total),
+            "pass": allclose_pass,
+        },
+        "evaluation_pass": evaluation_pass,
         "per_output_metrics": {
             output_name: {
                 "tflite_output_name": tflite_output_name_map[output_name],
+                "allclose": {
+                    "matched": int(per_output_allclose[output_name]["matched"]),
+                    "total": int(per_output_allclose[output_name]["total"]),
+                    "pass": (
+                        per_output_allclose[output_name]["matched"]
+                        == per_output_allclose[output_name]["total"]
+                    ),
+                },
                 **per_output_metrics[output_name].to_dict(),
             }
             for output_name in onnx_output_names
@@ -403,4 +542,11 @@ def evaluate_onnx_tflite_outputs(
     }
     with open(output_report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
+    if bool(fail_on_threshold) and not evaluation_pass:
+        raise RuntimeError(
+            "ONNX/TFLite evaluation failed thresholds. "
+            f"report={output_report_path} "
+            f"metrics={overall_metrics} "
+            f"allclose={report['allclose_summary']}"
+        )
     return report

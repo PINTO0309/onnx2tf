@@ -32,6 +32,11 @@ def _convert(
     output_quant_dtype: str = "int8",
     eval_with_onnx: bool = False,
     eval_num_samples: int = 10,
+    eval_rtol: float = 0.0,
+    eval_atol: float = 1e-4,
+    eval_fail_on_threshold: bool = False,
+    eval_target_tflite: str = "float32",
+    eval_compare_mode: str = "auto",
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -46,6 +51,11 @@ def _convert(
         output_quant_dtype=output_quant_dtype,
         eval_with_onnx=eval_with_onnx,
         eval_num_samples=eval_num_samples,
+        eval_rtol=eval_rtol,
+        eval_atol=eval_atol,
+        eval_fail_on_threshold=eval_fail_on_threshold,
+        eval_target_tflite=eval_target_tflite,
+        eval_compare_mode=eval_compare_mode,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -454,7 +464,61 @@ def test_flatbuffer_direct_accuracy_report_generation() -> None:
         assert report["num_samples"] == 3
         assert report["seed"] == 0
         assert report["inputs_source"] == "seeded_random"
+        assert report["compare_mode"] == "raw"
+        assert report["evaluation_pass"] is True
+        assert report["allclose_summary"]["pass"] is True
         assert "overall_metrics" in report
         assert "per_output_metrics" in report
         assert "z" in report["per_output_metrics"]
         assert report["overall_metrics"]["max_abs"] <= 1e-6
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_eval_q", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_integer_quantized_tflite=True,
+            eval_with_onnx=True,
+            eval_num_samples=3,
+            eval_target_tflite="full_integer_quant",
+            eval_compare_mode="dequant",
+        )
+
+        report_path = os.path.join(out_dir, "gemm_eval_q_accuracy_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["compare_mode"] == "dequant"
+        assert report["has_quantized_outputs"] is True
+        assert "metric_threshold_judgement" in report
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_eval_fail", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(RuntimeError):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                output_integer_quantized_tflite=True,
+                eval_with_onnx=True,
+                eval_num_samples=2,
+                eval_target_tflite="full_integer_quant",
+                eval_compare_mode="raw",
+                eval_fail_on_threshold=True,
+            )
+        report_path = os.path.join(out_dir, "gemm_eval_fail_accuracy_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["evaluation_pass"] is False
