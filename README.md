@@ -714,7 +714,11 @@ After many upgrades, the need for JSON parameter correction has become much less
 
 `-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
 
-Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter).
+Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter). If your input is image data in NHWC format, you can also use `--test_data_nhwc_path` to provide fixed test samples for validation.
+
+Quick difference between `-tdnp` and `-cind`:
+- `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`.
+- `-cind` (`--custom_input_op_name_np_data_path`): Per-input custom data mapping by input name. Supports multi-input/non-image inputs. Also used for INT8 calibration (`-oiqt`) with optional `mean/std`.
 
 The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
 
@@ -728,6 +732,10 @@ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 or
 
 onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -cind "input" "/your/path/x.npy"
+
+or
+
+onnx2tf -i mobilenetv2-12.onnx -cotof -cotoa 1e-1 -tdnp "/your/path/test_data_nhwc.npy"
 
 or
 
@@ -1730,6 +1738,7 @@ usage: onnx2tf
 [-coton]
 [-cotor CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_RTOL]
 [-cotoa CHECK_ONNX_TF_OUTPUTS_ELEMENTWISE_CLOSE_ATOL]
+[-tdnp TEST_DATA_NHWC_PATH]
 [-agj]
 [-dms]
 [-uc]
@@ -1844,6 +1853,7 @@ optional arguments:
     --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
     Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
     and mean (optional) and std (optional).
+    Unlike -tdnp, this option supports per-input mapping, non-image tensors, and INT8 calibration.
 
     <Usage in -cotof>
       When using -cotof, custom input defined by the user, instead of dummy data, is used.
@@ -2238,6 +2248,17 @@ optional arguments:
     The absolute tolerance parameter.
     Default: 1e-4
 
+  -tdnp TEST_DATA_NHWC_PATH, --test_data_nhwc_path TEST_DATA_NHWC_PATH
+    Path to a numpy file (.npy) containing custom test data in NHWC format.
+    This is used for test inference and validation when check_onnx_tf_outputs options are enabled.
+    If not specified, the tool will attempt to download sample data from the internet
+    when the input is a 4D RGB image tensor.
+    The numpy array should have shape [batch_size, height, width, 3] with values
+    normalized to the range [0, 1].
+    This option is useful for offline environments or when you want to use
+    specific test data for validation.
+    Unlike -cind, this option is not used for INT8 calibration and does not accept mean/std.
+
   -agj, --auto_generate_json
     Automatically generates a parameter replacement JSON file that achieves minimal error
     when converting the model. This option explores various parameter combinations to find
@@ -2336,6 +2357,7 @@ convert(
   check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
+  test_data_nhwc_path: Union[str, NoneType] = None,
   disable_model_save: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False,
   verbosity: Optional[str] = 'debug'
@@ -2827,6 +2849,16 @@ convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
       The absolute tolerance parameter.
       Default: 1e-4
+
+    test_data_nhwc_path: Optional[str]
+      Path to a numpy file (.npy) containing custom test data in NHWC format.
+      This is used for test inference and validation when check_onnx_tf_outputs options are enabled.
+      If not specified, the tool will attempt to download sample data from the internet
+      when the input is a 4D RGB image tensor.
+      The numpy array should have shape [batch_size, height, width, 3] with values
+      normalized to the range [0, 1].
+      This option is useful for offline environments or when you want to use
+      specific test data for validation.
 
     disable_model_save: Optional[bool]
       Does not save the converted model. For CIs RAM savings.
