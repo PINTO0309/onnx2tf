@@ -49,6 +49,41 @@
 1. 差分マップ（ルール一覧）が文書化されている。
 2. Step A2 以降の対象が優先度付きで確定している。
 
+#### Step A1 実施結果（2026-02-11）
+棚卸しサマリ:
+1. 擬似OP置換（`replace_to_pseudo_operators`）関連: 14演算キーワード / 14ファイルで使用確認
+2. 連鎖最適化トラッキング辞書: `gelu_replace_op_names` / `space_to_depth_replace_op_names` / `relu_relu6_merge_op_names` / `mul_div_replace_op_names`
+3. グラフ前処理系: `onnxsim`、`fuse_expanded_qdq_to_qdq`、`shape_inference` 補正、`op_name_auto_generate`
+4. TF実行時ヒューリスティクス: `disable_unnecessary_transpose`、`shape_unmatched_special_avoidance_workaround`、`correction_process_for_accuracy_errors`
+
+差分マップ（優先度・移植可否分類）:
+
+|ID|資産/ルール|主な参照元|優先度|分類|判断理由|
+|:-|:-|:-|:-:|:-|:-|
+|A1-01|擬似OP置換フラグ群（`-rtpo`）|`onnx2tf/onnx2tf.py:4937`|High|移植可能|direct 前処理ルールへ分離しやすい|
+|A1-02|Unary擬似実装（Abs/Acos/Asin/Atan/Neg/HardSwish/LeakyRelu/PRelu/Pow/Erf）|`onnx2tf/ops/*.py`|High|移植可能|ONNXパターン正規化として実装可能|
+|A1-03|`Relu + Clip -> Relu6` 連鎖吸収|`onnx2tf/ops/Relu.py:78`, `onnx2tf/ops/Clip.py:87`|High|移植可能|局所2ノード置換で適用容易|
+|A1-04|GeLU連鎖吸収（Div->Erf->Add->Mul->Mul）|`onnx2tf/ops/Div.py:291`, `onnx2tf/ops/Erf.py:83`, `onnx2tf/ops/Mul.py:258`, `onnx2tf/ops/Add.py:101`|High|設計変更が必要|複数ノード探索 + スキップ制御の再設計が必要|
+|A1-05|SpaceToDepth連鎖吸収（Reshape->Transpose->Reshape）|`onnx2tf/ops/Reshape.py:269`, `onnx2tf/ops/Transpose.py:63`|High|設計変更が必要|グラフ連鎖照合とshape検証のプリパス化が必要|
+|A1-06|QDQ展開パターンの融合|`onnx2tf/onnx2tf.py:475`, `onnx2tf/onnx2tf.py:1732`|High|移植可能|既存関数を direct 前段へ共通適用可能|
+|A1-07|GatherND擬似化（batch_dims=0制約）|`onnx2tf/ops/GatherND.py:91`, `onnx2tf/ops/GatherND.py:169`|Medium|設計変更が必要|direct IRでの分解規則設計が必要|
+|A1-08|MatMulInteger擬似化（float演算経路）|`onnx2tf/ops/MatMulInteger.py:87`|Medium|設計変更が必要|量子化意味論とdtype整合の再定義が必要|
+|A1-09|Mul/Div連鎖の定数前計算置換|`onnx2tf/ops/Mul.py:292`, `onnx2tf/ops/Div.py:344`|Medium|設計変更が必要|誤差管理付きの安全な畳み込み条件が必要|
+|A1-10|Einsum/OneHot shape補正（ORT推論補助）|`onnx2tf/onnx2tf.py:2653`, `onnx2tf/onnx2tf.py:2678`|Medium|設計変更が必要|direct 前処理へ依存切り出しが必要|
+|A1-11|onnxsim 3回最適化|`onnx2tf/onnx2tf.py:1616`, `onnx2tf/onnx2tf.py:1659`|Low|設計変更が必要|外部CLI依存で再現性・速度制御の設計が必要|
+|A1-12|OP名自動生成（sng4onnx）|`onnx2tf/onnx2tf.py:1683`|Low|direct 非適合|変換成功率より運用利便性寄り|
+|A1-13|TF実行時誤差補正/転置回避ヒューリスティクス|`onnx2tf/ops/Div.py:130`, `onnx2tf/ops/Div.py:233`, `onnx2tf/ops/Mul.py:134`, `onnx2tf/ops/Mul.py:245`|Low|direct 非適合|TFテンソル実行を前提とし、direct IRでは前提が異なる|
+
+分類集計:
+1. 移植可能: 4
+2. 設計変更が必要: 7
+3. direct 非適合: 2
+
+Step A2 以降の優先着手対象（確定）:
+1. High / 移植可能: `A1-01`, `A1-02`, `A1-03`, `A1-06`
+2. High / 設計変更: `A1-04`, `A1-05`
+3. Medium / 設計変更: `A1-07`, `A1-08`, `A1-09`, `A1-10`
+
 ### Step A2: direct 共通プリパス基盤の導入
 1. ONNX Graph への前処理フックを direct 前段に追加する。
 2. ルール適用履歴（rule_id、対象ノード数）を保持するデータ構造を導入する。
@@ -154,6 +189,17 @@
 4. direct 成功率（代表モデルセット）
 5. 変換後推論可否（`Interpreter.allocate_tensors()` / `invoke()`）
 
+## カバレッジ定義と運用ルール
+1. カバレッジ母数は LiteRT `schema.fbs` の `BuiltinOperator` から `CUSTOM` と `STABLEHLO_*` を除外した集合を使う。
+2. 2026-02-11 時点の基準値は以下とする。
+3. 母数（`CUSTOM` と `STABLEHLO_*` 除外）: `163`
+4. 現状の ONNX -> flatbuffer_direct で到達可能な TFLite Builtin 数: `25`
+5. カバレッジ: `15.34%`
+6. 今後は修正を加えるたびに、同一条件でカバレッジを再計測して本ファイルへ反映する。
+7. 各 Step 完了時に「前回値 -> 今回値（差分）」を必ず追記する。
+8. カバレッジが変化しない修正でも「変化なし（理由）」を記録する。
+9. `CUSTOM`/`STABLEHLO_*` を再び母数へ含めないことを運用ルールとして固定する。
+
 ## リスクと対策
 1. 過剰置換による誤変換
 - 対策: ルール単位で feature flag を持ち、段階有効化する。
@@ -170,7 +216,7 @@
 5. Step A4/A5/A6 を反復
 
 ## 進捗トラッキング（テンプレ）
-1. `[ ] Step A1 完了`
+1. `[x] Step A1 完了`
 2. `[ ] Step A2 完了`
 3. `[ ] Step A3 完了`
 4. `[ ] Step A4 完了`
