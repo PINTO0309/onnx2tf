@@ -1674,11 +1674,23 @@ flatbuffer_direct notes:
 3. Integer quantization (`-oiqt`) is supported in a limited form:
    `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
    `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-4. Supported builtin OP set: `ADD`, `SUB`, `MUL`, `DIV`, `RESHAPE`, `TRANSPOSE`, `CONCATENATION`, `LOGISTIC`, `SOFTMAX`, `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`, `DEQUANTIZE`, `QUANTIZE`.
+4. Supported builtin OP set includes:
+   `ADD`, `SUB`, `MUL`, `DIV`,
+   `MEAN`, `SUM`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`,
+   `CONCATENATION`, `GATHER`,
+   `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`,
+   `SOFTMAX`, `L2_NORMALIZATION`,
+   `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
+   `DEQUANTIZE`, `QUANTIZE`.
 5. Unsupported OPs fail explicitly with `NotImplementedError`.
-6. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+6. Custom OP policy (opt-in):
+   `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
+   `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
+   If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
+   If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
+7. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
    `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
-7. flatbuffer_direct quantization precision controls are configurable via environment variables:
+8. flatbuffer_direct quantization precision controls are configurable via environment variables:
    `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
    `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,

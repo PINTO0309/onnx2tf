@@ -9,8 +9,9 @@ from onnx import numpy_helper
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_registry import (
     NodeValidationError,
+    get_custom_op_candidate_ops,
     get_supported_onnx_ops,
-    validate_node_support,
+    resolve_node_dispatch,
 )
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -88,11 +89,17 @@ class LoweringContext:
         shape_map: Dict[str, List[Any]],
         dtype_map: Dict[str, str],
         constants: Dict[str, np.ndarray],
+        allow_custom_ops: bool = False,
+        custom_op_allowlist: Optional[List[str]] = None,
     ):
         self.model_ir = model_ir
         self.shape_map = shape_map
         self.dtype_map = dtype_map
         self.constants = constants
+        self.allow_custom_ops = bool(allow_custom_ops)
+        self.custom_op_allowlist = (
+            list(custom_op_allowlist) if custom_op_allowlist is not None else None
+        )
         self._serial = 0
 
     def _next_name(self, base: str) -> str:
@@ -219,6 +226,8 @@ def build_op_coverage_report(
     opset_min: int = 13,
     opset_max: int = 18,
     conversion_error: Optional[str] = None,
+    allow_custom_ops: bool = False,
+    custom_op_allowlist: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
         onnx_graph = onnx.shape_inference.infer_shapes(onnx_graph)
@@ -236,6 +245,8 @@ def build_op_coverage_report(
         shape_map=shape_map,
         dtype_map=dtype_map,
         constants=constants,
+        allow_custom_ops=allow_custom_ops,
+        custom_op_allowlist=custom_op_allowlist,
     )
     initializer_names = {ini.name for ini in onnx_graph.graph.initializer}
     for graph_input in onnx_graph.graph.input:
@@ -249,6 +260,7 @@ def build_op_coverage_report(
 
     node_reports: List[Dict[str, Any]] = []
     unsupported_nodes: List[Dict[str, Any]] = []
+    custom_lowered_nodes: List[Dict[str, Any]] = []
     graph_unique_ops: set = set()
     for node in onnx_graph.graph.node:
         node_name = node.name if node.name else node.op_type
@@ -287,19 +299,33 @@ def build_op_coverage_report(
 
         wrapped = _NodeWrap(node)
         try:
-            validate_node_support(wrapped, ctx)
+            resolution = resolve_node_dispatch(wrapped, ctx)
+            dispatch_mode = str(resolution.dispatch_mode)
+            reason_code = resolution.reason_code
+            message = resolution.message
             node_reports.append(
                 {
                     "node_name": node_name,
                     "onnx_op": node.op_type,
                     "supported": True,
-                    "reason_code": None,
-                    "message": None,
+                    "dispatch_mode": dispatch_mode,
+                    "reason_code": reason_code,
+                    "message": message,
                 }
             )
+            if dispatch_mode == "custom":
+                custom_lowered_nodes.append(
+                    {
+                        "node_name": node_name,
+                        "onnx_op": node.op_type,
+                        "reason_code": reason_code,
+                        "message": message,
+                    }
+                )
         except NodeValidationError as ve:
             issue = ve.to_dict()
             issue["supported"] = False
+            issue["dispatch_mode"] = "unsupported"
             node_reports.append(issue)
             unsupported_nodes.append(issue)
         except Exception as ex:
@@ -307,6 +333,7 @@ def build_op_coverage_report(
                 "node_name": node_name,
                 "onnx_op": node.op_type,
                 "supported": False,
+                "dispatch_mode": "unsupported",
                 "reason_code": "validation_exception",
                 "message": str(ex),
             }
@@ -314,6 +341,7 @@ def build_op_coverage_report(
             unsupported_nodes.append(issue)
 
     supported_registry_ops = set(get_supported_onnx_ops())
+    custom_candidate_ops = set(get_custom_op_candidate_ops())
     schema_ops = set(_collect_schema_ops_for_range(opset_min=opset_min, opset_max=opset_max))
     graph_ops = sorted(graph_unique_ops)
     supported_graph_ops = sorted(
@@ -335,20 +363,33 @@ def build_op_coverage_report(
         "target_opset_min": int(opset_min),
         "target_opset_max": int(opset_max),
         "supported_onnx_ops_registry": sorted(list(supported_registry_ops)),
+        "custom_op_candidate_ops": sorted(list(custom_candidate_ops)),
         "schema_onnx_ops_target_range": sorted(list(schema_ops)),
         "registry_missing_from_schema_range": sorted(list(schema_ops - supported_registry_ops)),
         "registry_extra_outside_schema_range": sorted(list(supported_registry_ops - schema_ops)),
         "graph_ops": graph_ops,
         "graph_supported_ops": supported_graph_ops,
         "graph_unsupported_ops": unsupported_graph_ops,
+        "graph_custom_ops": sorted(list({r["onnx_op"] for r in custom_lowered_nodes})),
         "graph_node_reports": node_reports,
+        "custom_lowered_nodes": custom_lowered_nodes,
         "unsupported_nodes": unsupported_nodes,
         "unsupported_reason_counts": reason_counts,
         "graph_summary": {
             "total_nodes": int(total_nodes),
             "supported_nodes": int(supported_nodes),
+            "custom_lowered_nodes": int(len(custom_lowered_nodes)),
             "unsupported_nodes": int(total_nodes - supported_nodes),
             "coverage_ratio": float(coverage),
+        },
+        "custom_op_policy": {
+            "allow_custom_ops": bool(allow_custom_ops),
+            "custom_op_allowlist": (
+                [str(v) for v in custom_op_allowlist]
+                if custom_op_allowlist is not None
+                else None
+            ),
+            "candidate_count": int(len(custom_candidate_ops)),
         },
         "conversion_error": conversion_error,
     }
@@ -372,6 +413,8 @@ def write_op_coverage_report(
 def lower_onnx_to_ir(
     onnx_graph: onnx.ModelProto,
     output_file_name: str,
+    allow_custom_ops: bool = False,
+    custom_op_allowlist: Optional[List[str]] = None,
 ) -> ModelIR:
     try:
         onnx_graph = onnx.shape_inference.infer_shapes(onnx_graph)
@@ -389,6 +432,8 @@ def lower_onnx_to_ir(
         shape_map=shape_map,
         dtype_map=dtype_map,
         constants=constants,
+        allow_custom_ops=allow_custom_ops,
+        custom_op_allowlist=custom_op_allowlist,
     )
 
     # Inputs

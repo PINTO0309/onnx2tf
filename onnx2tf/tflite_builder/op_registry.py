@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_clip_op,
     build_concat_op,
     build_conv2d_or_depthwise_op,
+    build_custom_passthrough_op,
     build_fully_connected_from_gemm_or_matmul,
     build_gather_op,
     build_identity_op,
@@ -68,6 +69,35 @@ class DispatchEntry:
     builder: Callable[[Any, Any], None]
     validation: ValidationSpec = field(default_factory=ValidationSpec)
     extra_validator: Optional[Callable[[Any, Any], None]] = None
+
+
+@dataclass(frozen=True)
+class DispatchResolution:
+    entry: DispatchEntry
+    dispatch_mode: str
+    reason_code: Optional[str] = None
+    message: Optional[str] = None
+
+
+_CUSTOM_OP_CANDIDATES = {
+    "If",
+    "Loop",
+    "Scan",
+    "SequenceConstruct",
+    "SequenceAt",
+    "SequenceInsert",
+    "SequenceErase",
+    "SequenceLength",
+    "GridSample",
+    "RoiAlign",
+    "DeformConv",
+    "Einsum",
+    "DynamicQuantizeLinear",
+    "ScatterElements",
+    "Unique",
+    "TopK",
+    "NonMaxSuppression",
+}
 
 
 def _validate_counts(node: Any, spec: ValidationSpec) -> None:
@@ -417,6 +447,68 @@ def _make_unary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
     return _builder
 
 
+def _custom_dispatch_entry_for_node(node_op: str) -> DispatchEntry:
+    return DispatchEntry(
+        onnx_op=str(node_op),
+        tflite_ops=["CUSTOM"],
+        builder=build_custom_passthrough_op,
+        validation=ValidationSpec(min_inputs=0, max_inputs=None, min_outputs=1, max_outputs=None),
+    )
+
+
+def _normalize_custom_op_allowlist(allowlist: Optional[Any]) -> set:
+    if allowlist is None:
+        return set()
+    if isinstance(allowlist, (str, bytes)):
+        items = [str(allowlist)]
+    else:
+        try:
+            items = [str(v) for v in list(allowlist)]
+        except Exception:
+            items = [str(allowlist)]
+    normalized = set()
+    for item in items:
+        v = str(item).strip()
+        if v != "":
+            normalized.add(v.upper())
+    return normalized
+
+
+def _resolve_custom_candidate(node: Any, ctx: Any) -> Optional[DispatchResolution]:
+    if str(node.op) not in _CUSTOM_OP_CANDIDATES:
+        return None
+    allow_custom_ops = bool(getattr(ctx, "allow_custom_ops", False))
+    if not allow_custom_ops:
+        raise NodeValidationError(
+            reason_code="custom_op_candidate_disabled",
+            message=(
+                "This ONNX op is a custom-op candidate, but custom-op lowering is disabled. "
+                f"Enable flatbuffer_direct_allow_custom_ops to lower it as CUSTOM. op={node.op}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    allowlist = _normalize_custom_op_allowlist(
+        getattr(ctx, "custom_op_allowlist", None)
+    )
+    if len(allowlist) > 0 and str(node.op).upper() not in allowlist:
+        raise NodeValidationError(
+            reason_code="custom_op_not_in_allowlist",
+            message=(
+                "This ONNX op is a custom-op candidate but not included in custom_op_allowlist. "
+                f"op={node.op}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    return DispatchResolution(
+        entry=_custom_dispatch_entry_for_node(str(node.op)),
+        dispatch_mode="custom",
+        reason_code="custom_op_lowered",
+        message=f"Lowered as CUSTOM op with customCode=ONNX_{str(node.op).upper()}",
+    )
+
+
 def _validate_clip(node: Any, ctx: Any) -> None:
     min_value = node.attrs.get("min", float("-inf"))
     max_value = node.attrs.get("max", float("inf"))
@@ -665,9 +757,20 @@ def get_supported_onnx_ops() -> List[str]:
     return sorted(_DISPATCH_REGISTRY.keys())
 
 
-def validate_node_support(node: Any, ctx: Any) -> DispatchEntry:
+def get_custom_op_candidate_ops() -> List[str]:
+    return sorted(list(_CUSTOM_OP_CANDIDATES))
+
+
+def resolve_node_dispatch(node: Any, ctx: Any) -> DispatchResolution:
     entry = get_dispatch_entry(node.op)
     if entry is None:
+        custom_resolution = _resolve_custom_candidate(node, ctx)
+        if custom_resolution is not None:
+            entry = custom_resolution.entry
+            _validate_counts(node, entry.validation)
+            _validate_attrs(node, entry.validation)
+            _validate_rank_constraints(node, ctx, entry.validation)
+            return custom_resolution
         raise NodeValidationError(
             reason_code="unsupported_onnx_op",
             message=f"ONNX op is not supported by flatbuffer_direct: {node.op}",
@@ -679,4 +782,11 @@ def validate_node_support(node: Any, ctx: Any) -> DispatchEntry:
     _validate_rank_constraints(node, ctx, entry.validation)
     if entry.extra_validator is not None:
         entry.extra_validator(node, ctx)
-    return entry
+    return DispatchResolution(
+        entry=entry,
+        dispatch_mode="builtin",
+    )
+
+
+def validate_node_support(node: Any, ctx: Any) -> DispatchEntry:
+    return resolve_node_dispatch(node, ctx).entry
