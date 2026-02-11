@@ -1784,42 +1784,42 @@ optional arguments:
     "tf_converter"(default): Use TensorFlow Lite Converter.
     "flatbuffer_direct": Experimental direct FlatBuffer builder path (limited OP/quantization support).
 
-flatbuffer_direct notes:
-1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
-2. Direct export supports FP32/FP16 `.tflite` generation.
-3. Dynamic range quantization (`-odrqt`) is supported in a limited form:
-   weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
-   and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
-   For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-4. Integer quantization (`-oiqt`) is supported in a limited form:
-   `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
-   `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-5. Supported builtin OP set includes:
-   `ADD`, `SUB`, `MUL`, `DIV`,
-   `MEAN`, `SUM`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`,
-   `CONCATENATION`, `GATHER`,
-   `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`,
-   `SOFTMAX`, `L2_NORMALIZATION`,
-   `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
-   `DEQUANTIZE`, `QUANTIZE`.
-6. Unsupported OPs fail explicitly with `NotImplementedError`.
-7. Custom OP policy (opt-in):
-   `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
-   `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
-   If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
-   If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-8. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
-   `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
-9. flatbuffer_direct quantization precision controls are configurable via environment variables:
-   `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
-   `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
-   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
-   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
-   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-10. Optional fallback:
-   `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
-11. Migration guide:
-   See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
+    flatbuffer_direct notes:
+    1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
+    2. Direct export supports FP32/FP16 `.tflite` generation.
+    3. Dynamic range quantization (`-odrqt`) is supported in a limited form:
+       weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
+       and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
+       For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
+    4. Integer quantization (`-oiqt`) is supported in a limited form:
+       `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
+       `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
+    5. Supported builtin OP set includes:
+       `ADD`, `SUB`, `MUL`, `DIV`,
+       `MEAN`, `SUM`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`,
+       `CONCATENATION`, `GATHER`,
+       `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`,
+       `SOFTMAX`, `L2_NORMALIZATION`,
+       `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
+       `DEQUANTIZE`, `QUANTIZE`.
+    6. Unsupported OPs fail explicitly with `NotImplementedError`.
+    7. Custom OP policy (opt-in):
+       `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
+       `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
+       If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
+       If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
+    8. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+       `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
+    9. flatbuffer_direct quantization precision controls are configurable via environment variables:
+       `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
+       `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
+       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
+       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
+       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
+    10. Optional fallback:
+       `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
+    11. Migration guide:
+       See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
