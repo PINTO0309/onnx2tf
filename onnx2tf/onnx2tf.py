@@ -2632,6 +2632,8 @@ def convert(
                     expected_batch = inputs[0].shape[0]
                     if expected_batch is not None and test_data_nhwc.shape[0] < expected_batch:
                         warn(f'Test data batch size ({test_data_nhwc.shape[0]}) is smaller than model input batch size ({expected_batch}). Using available samples.')
+                if check_onnx_tf_outputs_sample_data_normalization == "denorm":
+                    test_data_nhwc = test_data_nhwc * 255.0
             except Exception as e:
                 error(f'Failed to load test data from {test_data_nhwc_path}: {e}')
                 warn('Falling back to automatic test data download if applicable.')
