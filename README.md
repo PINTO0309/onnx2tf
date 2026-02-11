@@ -717,7 +717,7 @@ After many upgrades, the need for JSON parameter correction has become much less
 Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter). If your input is image data in NHWC format, you can also use `--test_data_nhwc_path` to provide fixed test samples for validation.
 
 Quick difference between `-tdnp` and `-cind`:
-- `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`.
+- `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`. For multi-input models, this single array is reused across inputs (per-input mapping is not supported).
 - `-cind` (`--custom_input_op_name_np_data_path`): Per-input custom data mapping by input name. Supports multi-input/non-image inputs. Also used for INT8 calibration (`-oiqt`) with optional `mean/std`.
 
 The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
@@ -2257,6 +2257,8 @@ optional arguments:
     normalized to the range [0, 1].
     This option is useful for offline environments or when you want to use
     specific test data for validation.
+    For models with multiple inputs, the same test array is reused for each eligible input
+    after per-input resize/layout conversion.
     Unlike -cind, this option is not used for INT8 calibration and does not accept mean/std.
 
   -agj, --auto_generate_json
