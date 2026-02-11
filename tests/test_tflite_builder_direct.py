@@ -202,6 +202,48 @@ def _make_elu_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_hardswish_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("HardSwish", ["x"], ["y"], name="HardSwishNode")
+    graph = helper.make_graph([node], "hardswish_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 14)])
+
+
+def _make_leakyrelu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("LeakyRelu", ["x"], ["y"], name="LeakyReluNode", alpha=0.2)
+    graph = helper.make_graph([node], "leakyrelu_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_prelu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    slope = numpy_helper.from_array(np.array([0.25], dtype=np.float32), name="slope")
+    node = helper.make_node("PRelu", ["x", "slope"], ["y"], name="PReluNode")
+    graph = helper.make_graph([node], "prelu_graph", [x], [y], initializer=[slope])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gelu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("Gelu", ["x"], ["y"], name="GeluNode")
+    graph = helper.make_graph([node], "gelu_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 20)])
+
+
+def _make_pow_square_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    exponent = numpy_helper.from_array(np.array([2.0], dtype=np.float32), name="pow_exp")
+    node = helper.make_node("Pow", ["x", "pow_exp"], ["y"], name="PowNode")
+    graph = helper.make_graph([node], "pow_graph", [x], [y], initializer=[exponent])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_mean_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1])
@@ -405,6 +447,11 @@ def test_tflite_backend_matrix_add() -> None:
         ("exp", lambda: _make_unary_model("Exp", name="exp")),
         ("sqrt", lambda: _make_unary_model("Sqrt", name="sqrt")),
         ("neg", lambda: _make_unary_model("Neg", name="neg")),
+        ("hardswish", _make_hardswish_model),
+        ("leakyrelu", _make_leakyrelu_model),
+        ("prelu", _make_prelu_model),
+        ("gelu", _make_gelu_model),
+        ("pow_square", _make_pow_square_model),
     ],
 )
 def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
