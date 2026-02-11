@@ -17,7 +17,10 @@ from onnx2tf.tflite_builder.quantization import (
     build_integer_quantized_model_ir,
     build_integer_quantized_with_int16_act_model_ir,
 )
-from onnx2tf.tflite_builder.preprocess import run_preprocess_pipeline
+from onnx2tf.tflite_builder.preprocess import (
+    register_default_preprocess_rules,
+    run_preprocess_pipeline,
+)
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.split_planner import (
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
@@ -124,6 +127,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         raise ValueError(
             "onnx_graph is required for tflite_backend='flatbuffer_direct'."
         )
+    register_default_preprocess_rules()
     preprocessed_onnx_graph = onnx_graph
     preprocess_report: Dict[str, Any] = {
         "schema_version": 1,

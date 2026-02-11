@@ -124,6 +124,27 @@ Step A2 以降の優先着手対象（確定）:
 1. 置換前に失敗していた小規模ケースが Builtin 変換可能になる。
 2. `report_op_coverage` で `unsupported_onnx_op` 件数が減少する。
 
+#### Step A3 実施結果（2026-02-11）
+実装内容:
+1. `onnx2tf/tflite_builder/preprocess/rules/pseudo_ops.py` を新規追加し、`pseudo_ops_wave1` を実装。
+2. 置換ルールを追加:
+3. `HardSwish -> Add + Clip(0..6) + Div + Mul`
+4. `LeakyRelu -> Neg + Relu + Relu + Mul + Sub`
+5. `PRelu -> Neg + Relu + Relu + Mul + Sub`
+6. `Gelu(approximate=none/tanh) -> Mul + Mul + Mul + Add + Mul + Tanh + Add + Mul + Mul`
+7. `Pow`（指数が定数で `1.0` / `2.0` / `0.5`）を `Identity` / `Mul` / `Sqrt` へ正規化
+8. `register_default_preprocess_rules()` を通じて、`flatbuffer_direct` 実行時に Wave1 ルールを自動登録
+9. テストを追加・更新:
+10. `tests/test_tflite_builder_preprocess.py` に置換ユニットテスト（HardSwish/Gelu/Pow）
+11. `tests/test_tflite_builder_direct.py` の operator smoke に `HardSwish/LeakyRelu/PRelu/Gelu/Pow` を追加
+
+未対応（次段階送り）:
+1. `MatMulInteger` は dtype/zero-point の意味論維持が必要なため、Wave1 では自動置換対象から除外（Step A4/A5 で再設計）。
+
+カバレッジ差分:
+1. 前回値 `15.34%` -> 今回値 `15.34%`（差分 `+0.00%`）
+2. 変化なし理由: Step A3 は前処理置換による成功率改善が主目的で、direct Builtin 種別の追加は行っていない。
+
 ### Step A4: 複合パターン吸収（Wave2）移植
 1. GELU 系など複数ノード連鎖を単純表現へ吸収するパターンを移植する。
 2. ReLU/ReLU6 merge、SpaceToDepth 周辺の連鎖最適化を段階移植する。
@@ -230,7 +251,7 @@ Step A2 以降の優先着手対象（確定）:
 ## 進捗トラッキング（テンプレ）
 1. `[x] Step A1 完了`
 2. `[x] Step A2 完了`
-3. `[ ] Step A3 完了`
+3. `[x] Step A3 完了`
 4. `[ ] Step A4 完了`
 5. `[ ] Step A5 完了`
 6. `[ ] Step A6 完了`
