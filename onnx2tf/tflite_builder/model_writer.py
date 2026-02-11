@@ -71,6 +71,32 @@ def _build_transpose_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> 
     return _enum(schema_tflite, "BuiltinOptions", "TransposeOptions"), options
 
 
+def _build_reducer_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ReducerOptionsT"]()
+    options.keepDims = bool(op.options.get("keepDims", True))
+    return _enum(schema_tflite, "BuiltinOptions", "ReducerOptions"), options
+
+
+def _build_squeeze_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["SqueezeOptionsT"]()
+    options.squeezeDims = [int(v) for v in op.options.get("squeezeDims", [])]
+    return _enum(schema_tflite, "BuiltinOptions", "SqueezeOptions"), options
+
+
+def _build_gather_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["GatherOptionsT"]()
+    options.axis = int(op.options.get("axis", 0))
+    options.batchDims = int(op.options.get("batchDims", 0))
+    return _enum(schema_tflite, "BuiltinOptions", "GatherOptions"), options
+
+
+def _build_l2_norm_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["L2NormOptionsT"]()
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
+    return _enum(schema_tflite, "BuiltinOptions", "L2NormOptions"), options
+
+
 def _build_conv_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["Conv2DOptionsT"]()
     options.padding = _enum(schema_tflite, "Padding", str(op.options["padding"]))
@@ -139,6 +165,14 @@ def _build_builtin_options(
         return _build_softmax_options(schema_tflite, op)
     if op.op_type == "TRANSPOSE":
         return _build_transpose_options(schema_tflite, op)
+    if op.op_type in ["MEAN", "SUM"]:
+        return _build_reducer_options(schema_tflite, op)
+    if op.op_type == "SQUEEZE":
+        return _build_squeeze_options(schema_tflite, op)
+    if op.op_type == "GATHER":
+        return _build_gather_options(schema_tflite, op)
+    if op.op_type == "L2_NORMALIZATION":
+        return _build_l2_norm_options(schema_tflite, op)
     if op.op_type == "CONV_2D":
         return _build_conv_options(schema_tflite, op)
     if op.op_type == "DEPTHWISE_CONV_2D":

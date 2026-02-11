@@ -62,6 +62,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 23 実装（manifestに従う分割モデル逐次実行評価器を追加し、`*_split_accuracy_report.json` を出力。`unsplit_tflite` / `onnx` 比較と閾値失敗制御を追加）
 - Step 24 実装（OPディスパッチを登録テーブル化し、共通検証フックと機械可読な未対応理由レポートを追加。ONNX schema 13-18 と対応状況の突合を自動化し、`--report_op_coverage` で `*_op_coverage_report.json` を出力）
 - Step 25 実装（全OP Wave1 第1弾: `Relu`, `Tanh`, `Exp`, `Sqrt`, `Neg`, `Clip(min=0,max=6 / +inf)` を追加し、高頻度活性化・単項演算の変換成功率を向上）
+- Step 26 実装（Wave2 第1弾: `ReduceMean`, `ReduceSum`, `Squeeze`, `Unsqueeze`, `Gather`, `LpNormalization(p=2, axis=last)` を追加し、Reduce/Norm/Index 系を拡張。`Gather(int32)` と integer quantized 経路で互換性を検証）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -91,9 +92,11 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `--report_op_coverage` 指定で `*_op_coverage_report.json` が生成され、`graph_node_reports` / `unsupported_reason_counts` / `conversion_error` が出力されること
 - 未対応 OP を含むモデルでも失敗時に OP カバレッジレポートが出力されること（`unsupported_onnx_op` などの reason_code を確認）
 - 追加対応 OP（`Relu`, `Tanh`, `Exp`, `Sqrt`, `Neg`, `Clip` relu系限定）を含む小規模モデルで `flatbuffer_direct` 変換・`Interpreter.invoke()` が通ること
+- 追加対応 OP（`ReduceMean`, `ReduceSum`, `Squeeze`, `Unsqueeze`, `Gather`, `LpNormalization`）を含む小規模モデルで `flatbuffer_direct` 変換・`Interpreter.invoke()` が通ること
+- `Gather(int32)` で dtype 境界ケースが通ること、および `Gemm -> Relu -> ReduceMean` 構成で `*_integer_quant.tflite` 推論が可能なこと
 
 3. 未着手:
-- 追加要件 Step 26-28（全OP本格実装）
+- 追加要件 Step 27-28（全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -475,6 +478,6 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 24. `[x] Step 23 完了`
 25. `[x] Step 24 完了`
 26. `[x] Step 25 完了`
-27. `[ ] Step 26 完了`
+27. `[x] Step 26 完了`
 28. `[ ] Step 27 完了`
 29. `[ ] Step 28 完了`

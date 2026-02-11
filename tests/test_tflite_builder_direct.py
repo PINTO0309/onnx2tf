@@ -194,6 +194,100 @@ def _make_elu_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_reduce_mean_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1])
+    axes = numpy_helper.from_array(np.array([2], dtype=np.int64), name="axes")
+    node = helper.make_node(
+        "ReduceMean",
+        ["x", "axes"],
+        ["y"],
+        name="ReduceMeanNode",
+        keepdims=1,
+    )
+    graph = helper.make_graph([node], "reduce_mean_graph", [x], [y], initializer=[axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reduce_sum_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="axes")
+    node = helper.make_node(
+        "ReduceSum",
+        ["x", "axes"],
+        ["y"],
+        name="ReduceSumNode",
+        keepdims=1,
+    )
+    graph = helper.make_graph([node], "reduce_sum_graph", [x], [y], initializer=[axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_squeeze_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="axes")
+    node = helper.make_node("Squeeze", ["x", "axes"], ["y"], name="SqueezeNode")
+    graph = helper.make_graph([node], "squeeze_graph", [x], [y], initializer=[axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_unsqueeze_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="axes")
+    node = helper.make_node("Unsqueeze", ["x", "axes"], ["y"], name="UnsqueezeNode")
+    graph = helper.make_graph([node], "unsqueeze_graph", [x], [y], initializer=[axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gather_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 2])
+    indices = numpy_helper.from_array(np.array([3, 1], dtype=np.int64), name="indices")
+    node = helper.make_node("Gather", ["x", "indices"], ["y"], name="GatherNode", axis=1)
+    graph = helper.make_graph([node], "gather_graph", [x], [y], initializer=[indices])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_l2_norm_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])
+    node = helper.make_node(
+        "LpNormalization",
+        ["x"],
+        ["y"],
+        name="LpNormNode",
+        axis=-1,
+        p=2,
+    )
+    graph = helper.make_graph([node], "l2norm_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gather_int32_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT32, [2, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [2, 2])
+    indices = numpy_helper.from_array(np.array([3, 1], dtype=np.int64), name="indices")
+    node = helper.make_node("Gather", ["x", "indices"], ["y"], name="GatherIntNode", axis=1)
+    graph = helper.make_graph([node], "gather_int_graph", [x], [y], initializer=[indices])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gemm_reduce_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1])
+    w = numpy_helper.from_array(np.ones((3, 4), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((3,), dtype=np.float32), name="B")
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="axes")
+    gemm = helper.make_node("Gemm", ["x", "W", "B"], ["h"], name="GemmNode", transB=1)
+    relu = helper.make_node("Relu", ["h"], ["r"], name="ReluNode")
+    reduce = helper.make_node("ReduceMean", ["r", "axes"], ["y"], name="ReduceNode", keepdims=1)
+    graph = helper.make_graph([gemm, relu, reduce], "gemm_reduce_graph", [x], [y], initializer=[w, b, axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _requires_flatbuffer_tools() -> bool:
     return shutil.which("flatc") is not None and shutil.which("curl") is not None
 
@@ -259,6 +353,12 @@ def test_tflite_backend_matrix_add() -> None:
         ("conv", _make_conv_model),
         ("pool", _make_pool_model),
         ("gemm", _make_gemm_model),
+        ("reduce_mean", _make_reduce_mean_model),
+        ("reduce_sum", _make_reduce_sum_model),
+        ("squeeze", _make_squeeze_model),
+        ("unsqueeze", _make_unsqueeze_model),
+        ("gather", _make_gather_model),
+        ("l2_norm", _make_l2_norm_model),
         ("relu", lambda: _make_unary_model("Relu", name="relu")),
         ("tanh", lambda: _make_unary_model("Tanh", name="tanh")),
         ("exp", lambda: _make_unary_model("Exp", name="exp")),
@@ -303,6 +403,40 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
             np.array([[0.0, 3.0, 6.0]], dtype=np.float32),
             rtol=0.0,
             atol=1e-6,
+        )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gather_int32_model()
+        model_path = _save_model(tmpdir, "gather_int32", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.array(
+            [
+                [10, 20, 30, 40],
+                [1, 2, 3, 4],
+            ],
+            dtype=np.int32,
+        )
+        interpreter.set_tensor(input_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        np.testing.assert_array_equal(
+            y,
+            np.array(
+                [
+                    [40, 20],
+                    [4, 2],
+                ],
+                dtype=np.int32,
+            ),
         )
 
 
@@ -475,6 +609,33 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
         interpreter4.invoke()
         y4 = interpreter4.get_tensor(out4[0]["index"])
         assert y4.dtype == np.int16
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_reduce_model()
+        model_path = _save_model(tmpdir, "gemm_reduce_iq", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_integer_quantized_tflite=True,
+            quant_type="per-channel",
+        )
+        tflite_path = os.path.join(out_dir, "gemm_reduce_iq_integer_quant.tflite")
+        assert os.path.isfile(tflite_path)
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        in_details = interpreter.get_input_details()
+        out_details = interpreter.get_output_details()
+        x = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        interpreter.set_tensor(in_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(out_details[0]["index"])
+        assert y.shape == (1, 1)
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
