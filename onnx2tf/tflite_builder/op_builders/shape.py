@@ -36,15 +36,27 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
 
 def build_transpose_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
-    perm_name = node.inputs[1].name
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
 
-    perm = ctx.get_constant_array(perm_name)
+    perm = None
+    if len(node.inputs) >= 2:
+        perm_name = node.inputs[1].name
+        perm = ctx.get_constant_array(perm_name)
+    if perm is None and "perm" in node.attrs:
+        attr_perm = node.attrs.get("perm")
+        if isinstance(attr_perm, (list, tuple)):
+            perm = np.asarray([int(v) for v in attr_perm], dtype=np.int32)
+        elif attr_perm is not None:
+            perm = np.asarray([int(attr_perm)], dtype=np.int32)
+    if perm is None:
+        input_rank = len(ctx.get_tensor_shape(input_name))
+        perm = np.asarray(list(reversed(range(input_rank))), dtype=np.int32)
+
     if perm is None:
         raise NotImplementedError(
-            f"Transpose permutation tensor must be constant for flatbuffer_direct. op={node.name}"
+            f"Transpose permutation must be resolvable for flatbuffer_direct. op={node.name}"
         )
     perm_const = ctx.add_const_tensor(
         f"{output_name}_transpose_perm",

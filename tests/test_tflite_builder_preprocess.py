@@ -4,6 +4,8 @@ import numpy as np
 from onnx import TensorProto, helper
 
 from onnx2tf.tflite_builder.preprocess import (
+    CONSTANT_FOLD_RULE_ID,
+    NORMALIZE_ATTRS_RULE_ID,
     PATTERN_FUSION_WAVE2_RULE_ID,
     clear_preprocess_rules,
     register_default_preprocess_rules,
@@ -115,6 +117,41 @@ def _make_space_to_depth_chain_model(*, with_fanout_conflict: bool = False) -> o
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_transpose_attr_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
+    n0 = helper.make_node("Transpose", ["x"], ["y"], name="TransposeAttrNode", perm=[0, 2, 1])
+    graph = helper.make_graph([n0], "transpose_attr_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reduce_axes_attr_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
+    n0 = helper.make_node("ReduceSum", ["x"], ["y"], name="ReduceAxesAttrNode", axes=[1], keepdims=1)
+    graph = helper.make_graph([n0], "reduce_axes_attr_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_softmax_axis_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    n0 = helper.make_node("Softmax", ["x"], ["y"], name="SoftmaxAxisNode", axis=1)
+    graph = helper.make_graph([n0], "softmax_axis_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reduce_axes_concat_const_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
+    c0 = helper.make_tensor("c0", TensorProto.INT64, [1], [1])
+    c1 = helper.make_tensor("c1", TensorProto.INT64, [0], [])
+    n0 = helper.make_node("Concat", ["c0", "c1"], ["axes"], name="AxesConcatNode", axis=0)
+    n1 = helper.make_node("ReduceSum", ["x", "axes"], ["y"], name="ReduceConstFoldNode", keepdims=1)
+    graph = helper.make_graph([n0, n1], "reduce_axes_concat_const_graph", [x], [y], [c0, c1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def test_preprocess_wave1_rewrites_hardswish() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
@@ -200,3 +237,61 @@ def test_pattern_fusion_wave2_invalid_rewrite_raises_reason_code() -> None:
             onnx_graph=model,
             enabled_rule_ids=[PATTERN_FUSION_WAVE2_RULE_ID],
         )
+
+
+def test_normalize_attrs_adds_transpose_perm_input() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_transpose_attr_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[NORMALIZE_ATTRS_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    node = preprocessed.graph.node[0]
+    assert str(node.op_type) == "Transpose"
+    assert len(node.input) == 2
+    perm_name = str(node.input[1])
+    init_names = {str(i.name) for i in preprocessed.graph.initializer}
+    assert perm_name in init_names
+
+
+def test_normalize_attrs_adds_reduce_axes_input() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_reduce_axes_attr_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[NORMALIZE_ATTRS_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    node = preprocessed.graph.node[0]
+    assert str(node.op_type) == "ReduceSum"
+    assert len(node.input) == 2
+
+
+def test_normalize_attrs_inserts_softmax_transpose_bridge() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_softmax_axis_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[NORMALIZE_ATTRS_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["Transpose", "Softmax", "Transpose"]
+
+
+def test_constant_fold_rewrites_concat_axes_to_constant() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_reduce_axes_concat_const_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[CONSTANT_FOLD_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops[0] == "Constant"
+    assert "ReduceSum" in ops

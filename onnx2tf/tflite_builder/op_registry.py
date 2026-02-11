@@ -218,7 +218,24 @@ def _validate_reshape(node: Any, ctx: Any) -> None:
 
 
 def _validate_transpose(node: Any, ctx: Any) -> None:
-    _require_const_input(node, ctx, 1, "transpose permutation")
+    if len(node.inputs) >= 2:
+        _require_const_input(node, ctx, 1, "transpose permutation")
+        return
+    if "perm" in node.attrs:
+        perm_attr = node.attrs.get("perm")
+        if isinstance(perm_attr, (list, tuple)):
+            _ = [int(v) for v in perm_attr]
+        elif perm_attr is not None:
+            _ = int(perm_attr)
+        return
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if input_rank <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Transpose input rank must be > 0. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_conv(node: Any, ctx: Any) -> None:
@@ -668,7 +685,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         onnx_op="Transpose",
         tflite_ops=["TRANSPOSE"],
         builder=build_transpose_op,
-        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_transpose,
     ),
     "Squeeze": DispatchEntry(
