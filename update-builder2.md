@@ -311,6 +311,22 @@ reason_code 付き明示失敗:
 1. 利用者が「なぜ失敗したか」「何を有効化すべきか」を自己解決できる。
 2. 追加された最適化ルールの適用範囲が追跡可能。
 
+#### Step A8 実施結果（2026-02-11）
+実装内容:
+1. `README.md` に `tf_converter` と `flatbuffer_direct` の運用差分を追記（失敗モデル、診断、custom-op方針、fallback差分）。
+2. `README.md` に direct 前処理の吸収範囲（`pattern_fusion_wave2` / `pseudo_ops_wave1` / `constant_fold_a5` / `normalize_attrs_a5`）を追記。
+3. `README.md` に `reason_code` ごとの回避オプション表を追記し、利用者が失敗理由から対処を逆引きできるように整理。
+4. `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` を段階移行手順中心に再構成し、以下を追加:
+5. backend差分の早見表
+6. Stage 0-3 の実運用コマンド（baseline/quant/split/fallback）
+7. 既知制約と mitigation 表
+8. 運用チェックリスト
+9. `update-builder.md` に Step A8 の進捗を反映。
+
+カバレッジ差分:
+1. 前回値 `16.56%` -> 今回値 `16.56%`（差分 `+0.00%`）
+2. 変化なし理由: Step A8 は文書化・運用導線整備のみで、Builtin 対応 OP の追加はなし。
+
 ## 測定指標（KPI）
 1. `unsupported_onnx_op` 件数
 2. `custom_op_candidate_disabled` 件数
@@ -352,4 +368,4 @@ reason_code 付き明示失敗:
 5. `[x] Step A5 完了`
 6. `[x] Step A6 完了`
 7. `[x] Step A7 完了`
-8. `[ ] Step A8 完了`
+8. `[x] Step A8 完了`

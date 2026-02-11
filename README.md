@@ -268,6 +268,10 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
   </div></details>
 
+> [!WARNING]
+> `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.  
+> For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
+
 ### flatbuffer_direct support status for ONNX ops in this list
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
@@ -343,6 +347,45 @@ Notes:
 
 Notes:
 - `Einsum` is now treated as `builtin_supported` when it matches builtin constraints; unsupported `Einsum` patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+
+### tf_converter vs flatbuffer_direct (operational differences)
+
+|Item|`tf_converter` (default)|`flatbuffer_direct`|
+|:-|:-|:-|
+|Final backend|TensorFlow Lite Converter|Direct FlatBuffer builder (`schema.fbs`)|
+|Model optimization source|Large set of existing TF-path graph rewrites/heuristics|Dedicated direct preprocess pipeline + direct dispatch constraints|
+|Failure behavior|Often absorbed by TF-side graph lowering|Explicit `reason_code`-based failure on unsupported patterns|
+|Custom op handling|Typically avoided by TF-side replacement when possible|Opt-in only (`--flatbuffer_direct_allow_custom_ops`) with allowlist|
+|Diagnostics|Standard conversion logs|`*_op_coverage_report.json` (`dispatch_mode`, `unsupported_reason_counts`, `custom_op_policy`, `preprocess_report`)|
+|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter` available|
+
+### flatbuffer_direct preprocess absorption scope
+
+`flatbuffer_direct` runs staged preprocess rules before lowering. Current major coverage:
+1. `pattern_fusion_wave2`
+   - `Relu -> Clip(min=0,max=6)` chain normalization
+   - GELU chain fusion (`Div -> Erf -> Add -> Mul -> Mul`)
+   - `Reshape -> Transpose -> Reshape` to `SpaceToDepth`
+2. `pseudo_ops_wave1`
+   - `HardSwish`, `LeakyRelu`, `PRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
+3. `constant_fold_a5`
+   - Limited constant folding for shape/axes and arithmetic helper chains
+4. `normalize_attrs_a5`
+   - Normalize `perm`/`axes`/negative-axis forms and softmax-axis bridge rewrites
+
+Notes:
+1. This reduces, but does not fully match, the TF-path replacement coverage.
+2. To inspect what was applied, use `--report_op_coverage` and check `preprocess_report.applied_rules`.
+
+### Known constraints and workaround options
+
+|Symptom (`reason_code`)|Meaning|Recommended action|
+|:-|:-|:-|
+|`unsupported_onnx_op`|No direct builtin/custom path for the node|Use `--tflite_backend tf_converter`, or enable `--flatbuffer_direct_fallback_to_tf_converter`|
+|`requires_constant_input`|Node requires compile-time constant input (e.g., axes/perm/shape)|Pre-fold ONNX graph (`onnxsim`) or rewrite model to constantize the input|
+|`unsupported_attribute_value`|Attribute/rank/value not accepted by direct builtin constraints|Adjust ONNX export options or rewrite offending subgraph before conversion|
+|`custom_op_candidate_disabled`|Op is in custom-candidate set but custom lowering is disabled|Enable `--flatbuffer_direct_allow_custom_ops` when runtime supports the custom op|
+|`custom_op_not_in_allowlist`|Custom lowering enabled but op is not allowlisted|Add op to `--flatbuffer_direct_custom_op_allowlist` explicitly|
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
@@ -1739,18 +1782,19 @@ optional arguments:
     --tflite_backend {tf_converter,flatbuffer_direct}
     TFLite generation backend.
     "tf_converter"(default): Use TensorFlow Lite Converter.
-    "flatbuffer_direct": Use direct FlatBuffer builder path (limited OP/quantization support).
+    "flatbuffer_direct": Experimental direct FlatBuffer builder path (limited OP/quantization support).
 
 flatbuffer_direct notes:
-1. Direct export supports FP32/FP16 `.tflite` generation.
-2. Dynamic range quantization (`-odrqt`) is supported in a limited form:
+1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
+2. Direct export supports FP32/FP16 `.tflite` generation.
+3. Dynamic range quantization (`-odrqt`) is supported in a limited form:
    weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
    and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
    For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-3. Integer quantization (`-oiqt`) is supported in a limited form:
+4. Integer quantization (`-oiqt`) is supported in a limited form:
    `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
    `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-4. Supported builtin OP set includes:
+5. Supported builtin OP set includes:
    `ADD`, `SUB`, `MUL`, `DIV`,
    `MEAN`, `SUM`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`,
    `CONCATENATION`, `GATHER`,
@@ -1758,23 +1802,23 @@ flatbuffer_direct notes:
    `SOFTMAX`, `L2_NORMALIZATION`,
    `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
    `DEQUANTIZE`, `QUANTIZE`.
-5. Unsupported OPs fail explicitly with `NotImplementedError`.
-6. Custom OP policy (opt-in):
+6. Unsupported OPs fail explicitly with `NotImplementedError`.
+7. Custom OP policy (opt-in):
    `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
    `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
    If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
    If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-7. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+8. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
    `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
-8. flatbuffer_direct quantization precision controls are configurable via environment variables:
+9. flatbuffer_direct quantization precision controls are configurable via environment variables:
    `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
    `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-9. Optional fallback:
+10. Optional fallback:
    `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
-10. Migration guide:
+11. Migration guide:
    See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
@@ -2343,7 +2387,7 @@ convert(
     tflite_backend: Optional[str]
       TFLite generation backend.
       "tf_converter"(default): Use TensorFlow Lite Converter.
-      "flatbuffer_direct": Use direct FlatBuffer builder path.
+      "flatbuffer_direct": Experimental direct FlatBuffer builder path.
       Note: "flatbuffer_direct" supports a limited builtin OP set,
       FP32/FP16 export, limited dynamic-range quantization,
       limited integer quantization, and limited int16-activation variants.

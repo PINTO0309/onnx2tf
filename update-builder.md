@@ -69,6 +69,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 27 実装（難所対応の方針化: `If/Loop/Scan/Sequence*/GridSample/RoiAlign/DeformConv/Einsum/...` を custom-op candidate として定義し、`--flatbuffer_direct_allow_custom_ops` + allowlist による `CUSTOM` 降格経路を追加。失敗時 reason_code（`custom_op_candidate_disabled` / `custom_op_not_in_allowlist`）と OP coverage 診断を拡張）
 - Step 28 実装（収束・安定化: schema-op 単位の policy matrix（`builtin_supported/custom_candidate/explicit_error`）を coverage report に追加し、統合回帰テスト（量子化+評価+coverage、分割+split評価+coverage）を導入。`--flatbuffer_direct_fallback_to_tf_converter` を追加し、README と `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` を最終更新）
 - Step 29 実装（`--auto_split_max_size_mb` を `--auto_split_max_size` へ移行し、`KB/MB/GB` 指定を解禁。`auto_split_tflite_by_size=True` かつ `auto_split_max_size` 指定時は同値を TFLite 分割 target に同期するよう変更）
+- Step 30 実装（Step A8 文書化: README に `tf_converter` vs `flatbuffer_direct` 差分、direct前処理の吸収範囲、reason_code別回避策を追記。`FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` を段階移行/既知制約/運用チェックリスト構成へ更新）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
