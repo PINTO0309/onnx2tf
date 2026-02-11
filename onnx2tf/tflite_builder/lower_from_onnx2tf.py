@@ -251,6 +251,7 @@ def build_op_coverage_report(
     conversion_error: Optional[str] = None,
     allow_custom_ops: bool = False,
     custom_op_allowlist: Optional[List[str]] = None,
+    preprocess_report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     try:
         onnx_graph = onnx.shape_inference.infer_shapes(onnx_graph)
@@ -430,6 +431,25 @@ def build_op_coverage_report(
             ),
             "candidate_count": int(len(custom_candidate_ops)),
         },
+        "preprocess_report": (
+            dict(preprocess_report)
+            if isinstance(preprocess_report, dict)
+            else {
+                "schema_version": 1,
+                "pipeline_version": 1,
+                "registered_rule_ids": [],
+                "enabled_rule_ids": [],
+                "applied_rules": [],
+                "summary": {
+                    "registered_rule_count": 0,
+                    "enabled_rule_count": 0,
+                    "executed_rule_count": 0,
+                    "changed_rule_count": 0,
+                    "total_matched_nodes": 0,
+                    "total_rewritten_nodes": 0,
+                },
+            }
+        ),
         "conversion_error": conversion_error,
     }
     return report
