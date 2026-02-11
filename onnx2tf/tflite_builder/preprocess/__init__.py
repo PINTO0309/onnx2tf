@@ -7,16 +7,20 @@ from onnx2tf.tflite_builder.preprocess.pipeline import (
     run_preprocess_pipeline,
 )
 from onnx2tf.tflite_builder.preprocess.rules import (
+    PATTERN_FUSION_WAVE2_RULE_ID,
     PSEUDO_OPS_WAVE1_RULE_ID,
     register_default_preprocess_rules,
+    register_pattern_fusion_wave2_rule,
     register_pseudo_ops_wave1_rule,
 )
 
 __all__ = [
+    "PATTERN_FUSION_WAVE2_RULE_ID",
     "PSEUDO_OPS_WAVE1_RULE_ID",
     "clear_preprocess_rules",
     "get_registered_preprocess_rule_ids",
     "register_default_preprocess_rules",
+    "register_pattern_fusion_wave2_rule",
     "register_preprocess_rule",
     "register_pseudo_ops_wave1_rule",
     "run_preprocess_pipeline",

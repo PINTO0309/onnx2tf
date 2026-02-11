@@ -178,3 +178,24 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
             options={"newShape": [int(v) for v in output_shape]},
         )
     )
+
+
+def build_space_to_depth_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    block_size = int(node.attrs.get("blocksize", 0))
+    if block_size <= 1:
+        raise NotImplementedError(
+            f"SpaceToDepth blocksize must be > 1. op={node.name} blocksize={block_size}"
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SPACE_TO_DEPTH",
+            inputs=[input_name],
+            outputs=[output_name],
+            options={"blockSize": int(block_size)},
+        )
+    )

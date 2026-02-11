@@ -159,6 +159,31 @@ Step A2 以降の優先着手対象（確定）:
 1. 代表パターンで direct 変換成功率が改善する。
 2. 不正置換時は reason_code 付きで明示失敗する。
 
+#### Step A4 実施結果（2026-02-11）
+実装内容:
+1. `onnx2tf/tflite_builder/preprocess/rules/pattern_fusion.py` を新規追加し、`pattern_fusion_wave2` を実装。
+2. 複合パターン融合を追加:
+3. `Div -> Erf -> Add -> Mul -> Mul`（GELU連鎖）を `Gelu(approximate="none")` へ融合
+4. `Relu -> Clip(min=0,max=6)` を単一 `Clip` へ融合（必要時は Relu ノード残置）
+5. `Reshape -> Transpose(perm=[0,1,3,5,2,4]) -> Reshape` を `SpaceToDepth(blocksize)` へ融合
+6. 融合結果の direct 受理のため `SpaceToDepth` Builtin dispatch を追加:
+7. `onnx2tf/tflite_builder/op_registry.py` に `SpaceToDepth` バリデータ/dispatcher を追加
+8. `onnx2tf/tflite_builder/op_builders/shape.py` に `build_space_to_depth_op` を追加
+9. `onnx2tf/tflite_builder/model_writer.py` に `SpaceToDepthOptions` の FlatBuffer 出力を追加
+10. デフォルト前処理順を `pattern_fusion_wave2 -> pseudo_ops_wave1` に変更
+
+reason_code 付き明示失敗:
+1. `pattern_fusion_invalid_rewrite reason_code=gelu_chain_fanout_conflict`
+2. `pattern_fusion_invalid_rewrite reason_code=space_to_depth_*`（fanout/blocksize/channel/spatial不整合）
+
+テスト:
+1. `tests/test_tflite_builder_preprocess.py` に A4 ルール単体テストを追加
+2. `tests/test_tflite_builder_direct.py` に `SpaceToDepth` と chain-fusion ケースを追加
+
+カバレッジ差分:
+1. 前回値 `15.34%` -> 今回値 `15.95%`（差分 `+0.61%`）
+2. 変化理由: `SpaceToDepth` Builtin を direct registry へ追加（到達可能 Builtin 数 `25 -> 26`）。
+
 ### Step A5: 属性・shape 正規化の強化
 1. axis/perm/pads などの属性を direct 受理形式へ事前正規化する。
 2. 定数入力必須の箇所に対して constant-folding を限定導入する。
@@ -226,8 +251,8 @@ Step A2 以降の優先着手対象（確定）:
 1. カバレッジ母数は LiteRT `schema.fbs` の `BuiltinOperator` から `CUSTOM` と `STABLEHLO_*` を除外した集合を使う。
 2. 2026-02-11 時点の基準値は以下とする。
 3. 母数（`CUSTOM` と `STABLEHLO_*` 除外）: `163`
-4. 現状の ONNX -> flatbuffer_direct で到達可能な TFLite Builtin 数: `25`
-5. カバレッジ: `15.34%`
+4. 現状の ONNX -> flatbuffer_direct で到達可能な TFLite Builtin 数: `26`
+5. カバレッジ: `15.95%`
 6. 今後は修正を加えるたびに、同一条件でカバレッジを再計測して本ファイルへ反映する。
 7. 各 Step 完了時に「前回値 -> 今回値（差分）」を必ず追記する。
 8. カバレッジが変化しない修正でも「変化なし（理由）」を記録する。
@@ -252,7 +277,7 @@ Step A2 以降の優先着手対象（確定）:
 1. `[x] Step A1 完了`
 2. `[x] Step A2 完了`
 3. `[x] Step A3 完了`
-4. `[ ] Step A4 完了`
+4. `[x] Step A4 完了`
 5. `[ ] Step A5 完了`
 6. `[ ] Step A6 完了`
 7. `[ ] Step A7 完了`
