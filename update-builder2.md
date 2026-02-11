@@ -240,6 +240,27 @@ reason_code 付き明示失敗:
 1. 同一モデル群で custom-op 降格率が低下する。
 2. policy matrix の差分を定量報告できる。
 
+#### Step A6 実施結果（2026-02-11）
+実装内容:
+1. `onnx2tf/tflite_builder/op_registry.py` に `Einsum` の builtin dispatch（`FULLY_CONNECTED`）を追加し、`ij,jk->ik` 型の rank-2 matmul パターンを受理するバリデータを実装。
+2. builtin バリデーション失敗時に custom candidate へフォールバックできるよう `resolve_node_dispatch` を更新し、既存 custom-op 運用との互換性を維持。
+3. `onnx2tf/tflite_builder/lower_from_onnx2tf.py` の `custom_op_policy` に診断キーを追加:
+4. `candidate_count_excluding_builtin_supported`
+5. `candidate_ops_now_builtin_supported`
+6. `allowlist_builtin_supported_ops`
+7. `allowlist_custom_candidate_ops`
+8. `allowlist_unknown_ops`
+9. `tests/test_tflite_builder_direct.py` を更新し、Einsum の custom 経路と builtin 優先経路の両方を検証。
+10. `README.md` の flatbuffer_direct 対応表を更新（`Einsum`/`SpaceToDepth` の builtin 記載、summary 数値更新）。
+
+効果（custom-op 縮小観点）:
+1. `Einsum` は条件を満たす場合に custom ではなく builtin へ優先 dispatch される。
+2. `custom_op_policy.candidate_count_excluding_builtin_supported` により、「候補だが既に builtin 化済み」の残件を定量把握可能になった（現状 `17 -> 16`）。
+
+カバレッジ差分:
+1. 前回値 `15.95%` -> 今回値 `16.56%`（差分 `+0.61%`）
+2. 変化理由: `Einsum` の builtin 対応により、到達可能 Builtin 数が `26 -> 27` に増加。
+
 ### Step A7: テスト・回帰固定
 1. backend matrix テストに「置換あり/なし」を追加する。
 2. 失敗 reason_code のスナップショットテストを追加する。
@@ -279,8 +300,8 @@ reason_code 付き明示失敗:
 1. カバレッジ母数は LiteRT `schema.fbs` の `BuiltinOperator` から `CUSTOM` と `STABLEHLO_*` を除外した集合を使う。
 2. 2026-02-11 時点の基準値は以下とする。
 3. 母数（`CUSTOM` と `STABLEHLO_*` 除外）: `163`
-4. 現状の ONNX -> flatbuffer_direct で到達可能な TFLite Builtin 数: `26`
-5. カバレッジ: `15.95%`
+4. 現状の ONNX -> flatbuffer_direct で到達可能な TFLite Builtin 数: `27`
+5. カバレッジ: `16.56%`
 6. 今後は修正を加えるたびに、同一条件でカバレッジを再計測して本ファイルへ反映する。
 7. 各 Step 完了時に「前回値 -> 今回値（差分）」を必ず追記する。
 8. カバレッジが変化しない修正でも「変化なし（理由）」を記録する。
@@ -307,6 +328,6 @@ reason_code 付き明示失敗:
 3. `[x] Step A3 完了`
 4. `[x] Step A4 完了`
 5. `[x] Step A5 完了`
-6. `[ ] Step A6 完了`
+6. `[x] Step A6 完了`
 7. `[ ] Step A7 完了`
 8. `[ ] Step A8 完了`

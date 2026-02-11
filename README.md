@@ -273,9 +273,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
   - Listed ONNX ops in this README section: `205`
-  - `builtin_supported`: `27`
-  - `custom_candidate` (opt-in): `17`
-  - `explicit_error` (default): `161`
+  - `builtin_supported`: `29`
+  - `custom_candidate` (opt-in): `16`
+  - `explicit_error` (default): `160`
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -292,6 +292,7 @@ Notes:
 |Concat|CONCATENATION|-|
 |Conv|CONV_2D / DEPTHWISE_CONV_2D|2D only (rank=4), weights must be constant, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`|
 |Div|DIV|-|
+|Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
 |Exp|EXP|-|
 |Gather|GATHER|`batch_dims=0` only|
 |Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
@@ -307,6 +308,7 @@ Notes:
 |Reshape|RESHAPE|Shape input must be constant|
 |Sigmoid|LOGISTIC|-|
 |Softmax|SOFTMAX|`axis=last` only|
+|SpaceToDepth|SPACE_TO_DEPTH|`blocksize > 1`, rank=4 (NCHW)|
 |Sqrt|SQRT|-|
 |Squeeze|SQUEEZE|Axes must be constant when provided via input tensor|
 |Sub|SUB|-|
@@ -322,7 +324,6 @@ Notes:
 |:-|:-|:-|
 |DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |DynamicQuantizeLinear|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|Einsum|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |GridSample|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |If|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
@@ -339,6 +340,9 @@ Notes:
 |Unique|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 
 </div></details>
+
+Notes:
+- `Einsum` is now treated as `builtin_supported` when it matches builtin constraints; unsupported `Einsum` patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
