@@ -640,6 +640,8 @@ def convert(
     eval_split_fail_on_threshold: Optional[bool] = False,
     auto_split_tflite_by_size: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
+    flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
+    flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
     tflite_split_target_bytes: Optional[int] = 1060000000,
     tflite_backend: Optional[str] = 'tf_converter',
@@ -806,6 +808,14 @@ def convert(
     report_op_coverage: Optional[bool]
         Generate ONNX OP coverage report (`*_op_coverage_report.json`) with
         machine-readable unsupported reasons for flatbuffer_direct backend.
+
+    flatbuffer_direct_allow_custom_ops: Optional[bool]
+        Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
+        flatbuffer_direct backend.
+
+    flatbuffer_direct_custom_op_allowlist: Optional[List[str]]
+        Optional allowlist of ONNX op names that are allowed to be lowered as
+        CUSTOM ops when `flatbuffer_direct_allow_custom_ops=True`.
 
     tflite_split_max_bytes: Optional[int]
         Hard upper bound for split planning.
@@ -1248,6 +1258,20 @@ def convert(
     eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
     auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
     report_op_coverage = bool(report_op_coverage)
+    flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
+    if flatbuffer_direct_custom_op_allowlist is None:
+        flatbuffer_direct_custom_op_allowlist = None
+    elif isinstance(flatbuffer_direct_custom_op_allowlist, list):
+        flatbuffer_direct_custom_op_allowlist = [
+            str(v).strip()
+            for v in flatbuffer_direct_custom_op_allowlist
+            if str(v).strip() != ''
+        ]
+        if len(flatbuffer_direct_custom_op_allowlist) == 0:
+            flatbuffer_direct_custom_op_allowlist = None
+    else:
+        v = str(flatbuffer_direct_custom_op_allowlist).strip()
+        flatbuffer_direct_custom_op_allowlist = [v] if v != '' else None
     tflite_split_max_bytes = int(tflite_split_max_bytes)
     tflite_split_target_bytes = int(tflite_split_target_bytes)
     if eval_num_samples <= 0:
@@ -1332,6 +1356,16 @@ def convert(
     if report_op_coverage and tflite_backend != 'flatbuffer_direct':
         error(
             'report_op_coverage currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if flatbuffer_direct_allow_custom_ops and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_allow_custom_ops currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if flatbuffer_direct_custom_op_allowlist is not None and not flatbuffer_direct_allow_custom_ops:
+        error(
+            'flatbuffer_direct_custom_op_allowlist requires flatbuffer_direct_allow_custom_ops=True.'
         )
         sys.exit(1)
 
@@ -1897,6 +1931,8 @@ def convert(
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'auto_split_tflite_by_size': auto_split_tflite_by_size,
                     'report_op_coverage': report_op_coverage,
+                    'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
+                    'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
                     'tflite_split_target_bytes': tflite_split_target_bytes,
                     'tflite_backend': tflite_backend,
@@ -2969,6 +3005,8 @@ def convert(
                 output_integer_quantized_tflite=output_integer_quantized_tflite,
                 auto_split_tflite_by_size=auto_split_tflite_by_size,
                 report_op_coverage=report_op_coverage,
+                flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
+                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                 tflite_split_max_bytes=tflite_split_max_bytes,
                 tflite_split_target_bytes=tflite_split_target_bytes,
             )
@@ -3015,6 +3053,13 @@ def convert(
                     Color.GREEN(
                         f'OP coverage report output complete! '
                         f'({direct_outputs["op_coverage_report_path"]})'
+                    )
+                )
+            if int(direct_outputs.get('custom_op_count', 0)) > 0:
+                info(
+                    Color.YELLOW(
+                        f'Custom ops lowered: count={direct_outputs["custom_op_count"]} '
+                        f'codes={direct_outputs.get("custom_ops_used", [])}'
                     )
                 )
             if output_dynamic_range_quantized_tflite:
@@ -4238,6 +4283,20 @@ def main():
             'Currently available only with --tflite_backend flatbuffer_direct.'
     )
     parser.add_argument(
+        '--flatbuffer_direct_allow_custom_ops',
+        action='store_true',
+        help=\
+            'Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in flatbuffer_direct backend.'
+    )
+    parser.add_argument(
+        '--flatbuffer_direct_custom_op_allowlist',
+        type=str,
+        default='',
+        help=\
+            'Comma-separated ONNX op names allowed for CUSTOM lowering. \n' +
+            'Requires --flatbuffer_direct_allow_custom_ops.'
+    )
+    parser.add_argument(
         '--tflite_split_max_bytes',
         type=int,
         default=1073741824,
@@ -4902,6 +4961,16 @@ def main():
     if len(custom_params) == 0:
         custom_params = None
 
+    flatbuffer_direct_custom_op_allowlist = None
+    if isinstance(args.flatbuffer_direct_custom_op_allowlist, str):
+        parsed_allowlist = [
+            v.strip()
+            for v in args.flatbuffer_direct_custom_op_allowlist.split(',')
+            if v.strip() != ''
+        ]
+        if len(parsed_allowlist) > 0:
+            flatbuffer_direct_custom_op_allowlist = parsed_allowlist
+
     args.replace_to_pseudo_operators = [
         name.lower() for name in args.replace_to_pseudo_operators
     ]
@@ -4930,6 +4999,8 @@ def main():
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         auto_split_tflite_by_size=args.auto_split_tflite_by_size,
         report_op_coverage=args.report_op_coverage,
+        flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
+        flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,
         tflite_split_target_bytes=args.tflite_split_target_bytes,
         tflite_backend=args.tflite_backend,

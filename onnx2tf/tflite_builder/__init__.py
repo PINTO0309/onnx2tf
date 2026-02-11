@@ -83,6 +83,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         kwargs.get("auto_split_tflite_by_size", False)
     )
     report_op_coverage = bool(kwargs.get("report_op_coverage", False))
+    flatbuffer_direct_allow_custom_ops = bool(
+        kwargs.get("flatbuffer_direct_allow_custom_ops", False)
+    )
+    custom_allowlist_raw = kwargs.get(
+        "flatbuffer_direct_custom_op_allowlist",
+        None,
+    )
+    if custom_allowlist_raw is None:
+        flatbuffer_direct_custom_op_allowlist = None
+    elif isinstance(custom_allowlist_raw, (list, tuple, set)):
+        flatbuffer_direct_custom_op_allowlist = [
+            str(v).strip() for v in custom_allowlist_raw if str(v).strip() != ""
+        ]
+    else:
+        v = str(custom_allowlist_raw).strip()
+        flatbuffer_direct_custom_op_allowlist = [v] if v != "" else None
     tflite_split_max_bytes = int(
         kwargs.get(
             "tflite_split_max_bytes",
@@ -125,6 +141,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             onnx_graph=onnx_graph,
             output_file_name=output_file_name,
             conversion_error=conversion_error,
+            allow_custom_ops=flatbuffer_direct_allow_custom_ops,
+            custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         )
         write_op_coverage_report(
             report=report,
@@ -135,6 +153,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         model_ir = lower_onnx_to_ir(
             onnx_graph=onnx_graph,
             output_file_name=output_file_name,
+            allow_custom_ops=flatbuffer_direct_allow_custom_ops,
+            custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         )
     except Exception as ex:
         try:
@@ -144,6 +164,15 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         raise
 
     _write_coverage_report(None)
+    custom_ops_used = sorted(
+        list(
+            {
+                str(op.options.get("customCode", "CUSTOM"))
+                for op in model_ir.operators
+                if str(op.op_type) == "CUSTOM"
+            }
+        )
+    )
 
     split_plan_report_path = None
     split_required_by_estimate = False
@@ -389,4 +418,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["split_partition_count"] = int(split_partition_count)
     if op_coverage_report_path is not None:
         outputs["op_coverage_report_path"] = op_coverage_report_path
+    outputs["custom_op_count"] = int(len(custom_ops_used))
+    if len(custom_ops_used) > 0:
+        outputs["custom_ops_used"] = custom_ops_used
     return outputs

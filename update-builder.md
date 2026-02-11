@@ -63,6 +63,7 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 24 実装（OPディスパッチを登録テーブル化し、共通検証フックと機械可読な未対応理由レポートを追加。ONNX schema 13-18 と対応状況の突合を自動化し、`--report_op_coverage` で `*_op_coverage_report.json` を出力）
 - Step 25 実装（全OP Wave1 第1弾: `Relu`, `Tanh`, `Exp`, `Sqrt`, `Neg`, `Clip(min=0,max=6 / +inf)` を追加し、高頻度活性化・単項演算の変換成功率を向上）
 - Step 26 実装（Wave2 第1弾: `ReduceMean`, `ReduceSum`, `Squeeze`, `Unsqueeze`, `Gather`, `LpNormalization(p=2, axis=last)` を追加し、Reduce/Norm/Index 系を拡張。`Gather(int32)` と integer quantized 経路で互換性を検証）
+- Step 27 実装（難所対応の方針化: `If/Loop/Scan/Sequence*/GridSample/RoiAlign/DeformConv/Einsum/...` を custom-op candidate として定義し、`--flatbuffer_direct_allow_custom_ops` + allowlist による `CUSTOM` 降格経路を追加。失敗時 reason_code（`custom_op_candidate_disabled` / `custom_op_not_in_allowlist`）と OP coverage 診断を拡張）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -94,9 +95,12 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - 追加対応 OP（`Relu`, `Tanh`, `Exp`, `Sqrt`, `Neg`, `Clip` relu系限定）を含む小規模モデルで `flatbuffer_direct` 変換・`Interpreter.invoke()` が通ること
 - 追加対応 OP（`ReduceMean`, `ReduceSum`, `Squeeze`, `Unsqueeze`, `Gather`, `LpNormalization`）を含む小規模モデルで `flatbuffer_direct` 変換・`Interpreter.invoke()` が通ること
 - `Gather(int32)` で dtype 境界ケースが通ること、および `Gemm -> Relu -> ReduceMean` 構成で `*_integer_quant.tflite` 推論が可能なこと
+- `Einsum` など custom-op candidate は既定で明示失敗し、`flatbuffer_direct_allow_custom_ops=True` + allowlist 指定時のみ `CUSTOM` として `.tflite` 出力できること
+- OP coverage report に `dispatch_mode`, `graph_custom_ops`, `custom_lowered_nodes`, `custom_op_policy` が出力されること
+- `python -m onnx2tf.onnx2tf -h` に `--flatbuffer_direct_allow_custom_ops`, `--flatbuffer_direct_custom_op_allowlist` が表示されること
 
 3. 未着手:
-- 追加要件 Step 27-28（全OP本格実装）
+- 追加要件 Step 28（全OP本格実装）
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -479,5 +483,5 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 25. `[x] Step 24 完了`
 26. `[x] Step 25 完了`
 27. `[x] Step 26 完了`
-28. `[ ] Step 27 完了`
+28. `[x] Step 27 完了`
 29. `[ ] Step 28 完了`

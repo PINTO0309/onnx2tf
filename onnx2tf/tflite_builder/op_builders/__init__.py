@@ -31,6 +31,9 @@ from onnx2tf.tflite_builder.op_builders.index import (
 from onnx2tf.tflite_builder.op_builders.norm import (
     build_l2_normalization_op,
 )
+from onnx2tf.tflite_builder.op_builders.custom import (
+    build_custom_passthrough_op,
+)
 
 __all__ = [
     "build_binary_op",
@@ -50,4 +53,5 @@ __all__ = [
     "build_reduce_op",
     "build_gather_op",
     "build_l2_normalization_op",
+    "build_custom_passthrough_op",
 ]

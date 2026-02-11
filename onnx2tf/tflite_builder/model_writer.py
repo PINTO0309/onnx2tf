@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import flatbuffers
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
-from onnx2tf.tflite_builder.opcodes import build_operator_codes
+from onnx2tf.tflite_builder.opcodes import build_operator_codes, operator_code_key
 from onnx2tf.tflite_builder.signature_builder import build_signature_defs
 from onnx2tf.tflite_builder.tensor_buffer_builder import build_tensors_and_buffers
 
@@ -155,6 +155,8 @@ def _build_builtin_options(
     schema_tflite: Dict[str, Any],
     op: OperatorIR,
 ) -> Tuple[int, Optional[object]]:
+    if op.op_type == "CUSTOM":
+        return _enum(schema_tflite, "BuiltinOptions", "NONE"), None
     if op.op_type in ["ADD", "SUB", "MUL", "DIV"]:
         return _build_binary_options(schema_tflite, op)
     if op.op_type == "RESHAPE":
@@ -202,12 +204,12 @@ def _build_operator_table(
     *,
     schema_tflite: Dict[str, Any],
     operators: List[OperatorIR],
-    op_index_map: Dict[Tuple[str, int], int],
+    op_index_map: Dict[Tuple[str, int, str], int],
     tensor_index_map: Dict[str, int],
 ) -> List[object]:
     table: List[object] = []
     for op in operators:
-        key = (op.op_type, op.version)
+        key = operator_code_key(op)
         if key not in op_index_map:
             raise KeyError(f"OperatorCode not found for op={op.op_type} version={op.version}")
 
@@ -229,6 +231,14 @@ def _build_operator_table(
         builtin_options_type, builtin_options = _build_builtin_options(schema_tflite, op)
         op_obj.builtinOptionsType = int(builtin_options_type)
         op_obj.builtinOptions = builtin_options
+        if op.op_type == "CUSTOM":
+            custom_options = op.options.get("customOptions", b"")
+            if isinstance(custom_options, str):
+                custom_options = custom_options.encode("utf-8")
+            op_obj.customOptions = bytes(custom_options)
+            op_obj.customOptionsFormat = _enum(
+                schema_tflite, "CustomOptionsFormat", "FLEXBUFFERS"
+            )
 
         table.append(op_obj)
     return table

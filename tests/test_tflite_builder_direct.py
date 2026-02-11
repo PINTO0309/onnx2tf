@@ -43,6 +43,8 @@ def _convert(
     eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
     report_op_coverage: bool = False,
+    flatbuffer_direct_allow_custom_ops: bool = False,
+    flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
 ) -> str:
@@ -69,6 +71,8 @@ def _convert(
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
         report_op_coverage=report_op_coverage,
+        flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
+        flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
     )
@@ -288,6 +292,21 @@ def _make_gemm_reduce_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_einsum_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumNode",
+        equation="ij,jk->ik",
+    )
+    graph = helper.make_graph([node], "einsum_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _requires_flatbuffer_tools() -> bool:
     return shutil.which("flatc") is not None and shutil.which("curl") is not None
 
@@ -324,6 +343,24 @@ def _collect_int8_quant_scale_lengths(tflite_path: str) -> list[int]:
             continue
         lengths.append(len(list(tensor.quantization.scale)))
     return lengths
+
+
+def _collect_custom_codes(tflite_path: str) -> list[str]:
+    output_dir = os.path.dirname(tflite_path)
+    schema = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model = schema["ModelT"].InitFromObj(schema["Model"].GetRootAs(model_bytes, 0))
+    builtin_custom = getattr(schema["BuiltinOperator"], "CUSTOM")
+    custom_codes: list[str] = []
+    for op_code in model.operatorCodes:
+        if int(op_code.builtinCode) == int(builtin_custom):
+            value = op_code.customCode
+            if isinstance(value, bytes):
+                custom_codes.append(value.decode("utf-8"))
+            else:
+                custom_codes.append(str(value))
+    return custom_codes
 
 
 def test_tflite_backend_matrix_add() -> None:
@@ -403,6 +440,82 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
             np.array([[0.0, 3.0, 6.0]], dtype=np.float32),
             rtol=0.0,
             atol=1e-6,
+        )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_einsum_model()
+        model_path = _save_model(tmpdir, "einsum_custom_disabled", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(NotImplementedError, match="custom_op_candidate_disabled"):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+            )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_custom_op_enabled_generates_custom_code() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_einsum_model()
+        model_path = _save_model(tmpdir, "einsum_custom_enabled", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["Einsum"],
+        )
+        assert os.path.isfile(tflite_path)
+        custom_codes = _collect_custom_codes(tflite_path)
+        assert "ONNX_EINSUM" in custom_codes
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_custom_op_not_in_allowlist_fails() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_einsum_model()
+        model_path = _save_model(tmpdir, "einsum_custom_allowlist_fail", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(NotImplementedError, match="custom_op_not_in_allowlist"):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                flatbuffer_direct_allow_custom_ops=True,
+                flatbuffer_direct_custom_op_allowlist=["TopK"],
+            )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_custom_op_coverage_report() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_einsum_model()
+        model_path = _save_model(tmpdir, "einsum_custom_report", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            report_op_coverage=True,
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["Einsum"],
+        )
+        report_path = os.path.join(out_dir, "einsum_custom_report_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["custom_op_policy"]["allow_custom_ops"] is True
+        assert "Einsum" in report["graph_custom_ops"]
+        assert report["graph_summary"]["custom_lowered_nodes"] == 1
+        node_reports = report["graph_node_reports"]
+        assert any(
+            r["onnx_op"] == "Einsum" and r["dispatch_mode"] == "custom"
+            for r in node_reports
         )
 
 
