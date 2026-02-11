@@ -40,7 +40,7 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 import onnx
 import onnx2tf.gs as gs
 from typing import Optional, List, Any, Dict
-from argparse import ArgumentParser
+from argparse import ArgumentParser, SUPPRESS
 
 import importlib
 import onnx2tf.utils.common_functions as common_functions
@@ -70,6 +70,69 @@ def _sanitize_split_input_name(name: str) -> str:
     if not name:
         return 'tensor'
     return re.sub(r'[^0-9A-Za-z._-]+', '_', name)
+
+
+_SIZE_WITH_UNIT_PATTERN = re.compile(
+    r'^\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?P<unit>KB|MB|GB)?\s*$',
+    flags=re.IGNORECASE,
+)
+
+
+def _parse_size_to_bytes(
+    size_value: Any,
+    *,
+    default_unit: str = 'MB',
+    param_name: str = 'size',
+) -> int:
+    if size_value is None:
+        raise ValueError(f'{param_name} must not be None.')
+
+    unit_multipliers = {
+        'KB': 1024,
+        'MB': 1024 * 1024,
+        'GB': 1024 * 1024 * 1024,
+    }
+    default_unit_upper = str(default_unit).upper()
+    if default_unit_upper not in unit_multipliers:
+        raise ValueError(
+            f'Unsupported default unit: {default_unit}. '
+            f'Supported units: {list(unit_multipliers.keys())}'
+        )
+
+    if isinstance(size_value, (int, float)):
+        size_number = float(size_value)
+        unit = default_unit_upper
+    else:
+        size_text = str(size_value).strip()
+        matched = _SIZE_WITH_UNIT_PATTERN.match(size_text)
+        if matched is None:
+            raise ValueError(
+                f'{param_name} must be a positive number optionally suffixed by '
+                f'KB/MB/GB. {param_name}: {size_value}'
+            )
+        size_number = float(matched.group('value'))
+        unit = str(matched.group('unit')).upper() if matched.group('unit') else default_unit_upper
+
+    if not np.isfinite(size_number) or size_number <= 0.0:
+        raise ValueError(
+            f'{param_name} must be greater than 0. {param_name}: {size_value}'
+        )
+
+    size_bytes = int(size_number * unit_multipliers[unit])
+    if size_bytes <= 0:
+        raise ValueError(
+            f'{param_name} resolved to <= 0 bytes. {param_name}: {size_value}'
+        )
+    return size_bytes
+
+
+def _format_size_bytes(size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024 * 1024:
+        return f'{size_bytes / (1024 * 1024 * 1024):.2f} GB'
+    if size_bytes >= 1024 * 1024:
+        return f'{size_bytes / (1024 * 1024):.2f} MB'
+    return f'{size_bytes / 1024:.2f} KB'
+
 
 def _write_memmap_array(path: str, array: np.ndarray) -> str:
     mm = np.lib.format.open_memmap(
@@ -640,6 +703,7 @@ def convert(
     eval_split_fail_on_threshold: Optional[bool] = False,
     auto_split_tflite_by_size: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
+    flatbuffer_direct_fallback_to_tf_converter: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
     flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
@@ -688,7 +752,8 @@ def convert(
     auto_generate_json: Optional[bool] = False,
     auto_generate_json_on_error: Optional[bool] = False,
     enable_auto_split_model: Optional[bool] = False,
-    auto_split_max_size_mb: Optional[int] = 1024,
+    auto_split_max_size: Optional[Any] = None,
+    auto_split_max_size_mb: Optional[int] = None,
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close_full: Optional[bool] = False,
@@ -808,6 +873,10 @@ def convert(
     report_op_coverage: Optional[bool]
         Generate ONNX OP coverage report (`*_op_coverage_report.json`) with
         machine-readable unsupported reasons for flatbuffer_direct backend.
+
+    flatbuffer_direct_fallback_to_tf_converter: Optional[bool]
+        When flatbuffer_direct conversion fails, fallback to tf_converter path
+        instead of failing immediately.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1147,12 +1216,17 @@ def convert(
 
     enable_auto_split_model: Optional[bool]
         Force auto split regardless of the ONNX file size.\n
-        The target size is controlled by auto_split_max_size_mb.\n
+        The target size is controlled by auto_split_max_size.\n
         Default: False
 
+    auto_split_max_size: Optional[Any]
+        Target maximum size per partition.\n
+        Accepts values like "512KB", "900MB", "1.5GB".\n
+        Bare numeric values are treated as MB.\n
+        Default: "1GB"
+
     auto_split_max_size_mb: Optional[int]
-        Target maximum size per partition in MB based on ONNX initializer sizes.\n
-        Default: 1024
+        [Deprecated] Legacy alias of auto_split_max_size in MB.
 
     check_gpu_delegate_compatibility: Optional[bool]
         Run TFLite ModelAnalyzer on the generated Float16 tflite model\n
@@ -1258,6 +1332,9 @@ def convert(
     eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
     auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
     report_op_coverage = bool(report_op_coverage)
+    flatbuffer_direct_fallback_to_tf_converter = bool(
+        flatbuffer_direct_fallback_to_tf_converter
+    )
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
     if flatbuffer_direct_custom_op_allowlist is None:
         flatbuffer_direct_custom_op_allowlist = None
@@ -1272,8 +1349,28 @@ def convert(
     else:
         v = str(flatbuffer_direct_custom_op_allowlist).strip()
         flatbuffer_direct_custom_op_allowlist = [v] if v != '' else None
+    auto_split_max_size_specified = (
+        auto_split_max_size is not None or auto_split_max_size_mb is not None
+    )
+    if auto_split_max_size is None and auto_split_max_size_mb is not None:
+        auto_split_max_size = auto_split_max_size_mb
+    if auto_split_max_size is None:
+        auto_split_max_size = '1GB'
+    try:
+        auto_split_max_size_bytes = _parse_size_to_bytes(
+            auto_split_max_size,
+            default_unit='MB',
+            param_name='auto_split_max_size',
+        )
+    except Exception as ex:
+        error(str(ex))
+        sys.exit(1)
     tflite_split_max_bytes = int(tflite_split_max_bytes)
     tflite_split_target_bytes = int(tflite_split_target_bytes)
+    if auto_split_tflite_by_size and auto_split_max_size_specified:
+        tflite_split_target_bytes = int(auto_split_max_size_bytes)
+        if tflite_split_max_bytes < tflite_split_target_bytes:
+            tflite_split_max_bytes = tflite_split_target_bytes
     if eval_num_samples <= 0:
         error(
             f'eval_num_samples must be > 0. eval_num_samples: {eval_num_samples}'
@@ -1358,6 +1455,11 @@ def convert(
             'report_op_coverage currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
+    if flatbuffer_direct_fallback_to_tf_converter and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_fallback_to_tf_converter currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
     if flatbuffer_direct_allow_custom_ops and tflite_backend != 'flatbuffer_direct':
         error(
             'flatbuffer_direct_allow_custom_ops currently supports only tflite_backend="flatbuffer_direct".'
@@ -1380,7 +1482,7 @@ def convert(
     if auto_split_model:
         info(
             Color.GREEN('Auto split forced by --enable_auto_split_model. ') +
-            f'target={auto_split_max_size_mb} MB'
+            f'target={_format_size_bytes(auto_split_max_size_bytes)}'
         )
     if onnx_graph is None and input_onnx_file_path and os.path.exists(input_onnx_file_path):
         try:
@@ -1637,11 +1739,6 @@ def convert(
                 'or output_names_to_interrupt_model_conversion.'
             )
             sys.exit(1)
-        if auto_split_max_size_mb is None or auto_split_max_size_mb <= 0:
-            error(
-                f'auto_split_max_size_mb must be greater than 0. auto_split_max_size_mb: {auto_split_max_size_mb}'
-            )
-            sys.exit(1)
         try:
             import sne4onnx
         except Exception:
@@ -1679,7 +1776,7 @@ def convert(
             graph,
             initializer_names=set(initializer_sizes.keys()),
         )
-        max_size_bytes = int(auto_split_max_size_mb) * 1024 * 1024
+        max_size_bytes = int(auto_split_max_size_bytes)
         ranges = _auto_partition_ranges(
             node_weight_keys=node_weight_keys,
             weight_sizes=weight_sizes,
@@ -1718,7 +1815,8 @@ def convert(
                 info(Color.REVERSE(f'Auto model partitioning enabled'), '=' * 44)
                 info(
                     Color.GREEN(f'Target partition size (estimated weights): ') +
-                    f'{auto_split_max_size_mb} MB'
+                    f'{_format_size_bytes(auto_split_max_size_bytes)} ' +
+                    f'({auto_split_max_size_bytes} bytes)'
                 )
                 for idx, part in enumerate(partitions):
                     size_mb = partition_sizes[idx] / (1024 * 1024)
@@ -1931,6 +2029,7 @@ def convert(
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'auto_split_tflite_by_size': auto_split_tflite_by_size,
                     'report_op_coverage': report_op_coverage,
+                    'flatbuffer_direct_fallback_to_tf_converter': flatbuffer_direct_fallback_to_tf_converter,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
                     'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
@@ -1979,6 +2078,7 @@ def convert(
                     'auto_generate_json': auto_generate_json,
                     'auto_generate_json_on_error': auto_generate_json_on_error,
                     'enable_auto_split_model': False,
+                    'auto_split_max_size': auto_split_max_size,
                     'auto_split_max_size_mb': auto_split_max_size_mb,
                     'check_gpu_delegate_compatibility': check_gpu_delegate_compatibility,
                     'check_onnx_tf_outputs_elementwise_close': check_onnx_tf_outputs_elementwise_close,
@@ -2992,215 +3092,248 @@ def convert(
         Version: 22.10.26
         """
         if tflite_backend == 'flatbuffer_direct':
-            from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
-            direct_outputs = export_tflite_model_flatbuffer_direct(
-                onnx_graph=onnx_graph,
-                output_folder_path=output_folder_path,
-                output_file_name=output_file_name,
-                output_weights=output_weights,
-                quant_type=quant_type,
-                input_quant_dtype=input_quant_dtype,
-                output_quant_dtype=output_quant_dtype,
-                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                output_integer_quantized_tflite=output_integer_quantized_tflite,
-                auto_split_tflite_by_size=auto_split_tflite_by_size,
-                report_op_coverage=report_op_coverage,
-                flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
-                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                tflite_split_max_bytes=tflite_split_max_bytes,
-                tflite_split_target_bytes=tflite_split_target_bytes,
-            )
-            info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
-            info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
-            if auto_split_tflite_by_size:
-                if 'split_plan_report_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct split plan was requested but no report was generated.'
-                    )
-                info(
-                    Color.GREEN(
-                        f'Split plan report output complete! '
-                        f'({direct_outputs["split_plan_report_path"]})'
+            direct_outputs = None
+            try:
+                from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
+                direct_outputs = export_tflite_model_flatbuffer_direct(
+                    onnx_graph=onnx_graph,
+                    output_folder_path=output_folder_path,
+                    output_file_name=output_file_name,
+                    output_weights=output_weights,
+                    quant_type=quant_type,
+                    input_quant_dtype=input_quant_dtype,
+                    output_quant_dtype=output_quant_dtype,
+                    output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                    output_integer_quantized_tflite=output_integer_quantized_tflite,
+                    auto_split_tflite_by_size=auto_split_tflite_by_size,
+                    report_op_coverage=report_op_coverage,
+                    flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
+                    flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                    tflite_split_max_bytes=tflite_split_max_bytes,
+                    tflite_split_target_bytes=tflite_split_target_bytes,
+                )
+            except Exception as ex:
+                if not flatbuffer_direct_fallback_to_tf_converter:
+                    raise
+                warn(
+                    Color.YELLOW(
+                        'flatbuffer_direct conversion failed. '
+                        'Falling back to tf_converter path. '
+                        f'reason={ex}'
                     )
                 )
-                if bool(direct_outputs.get('split_required_by_estimate', False)):
+                skipped_direct_features = []
+                if report_op_coverage:
+                    skipped_direct_features.append('report_op_coverage')
+                if auto_split_tflite_by_size:
+                    skipped_direct_features.append('auto_split_tflite_by_size')
+                if eval_with_onnx:
+                    skipped_direct_features.append('eval_with_onnx')
+                if eval_split_models:
+                    skipped_direct_features.append('eval_split_models')
+                if flatbuffer_direct_allow_custom_ops:
+                    skipped_direct_features.append('flatbuffer_direct_allow_custom_ops')
+                if len(skipped_direct_features) > 0:
+                    warn(
+                        Color.YELLOW(
+                            'Direct-only features are skipped in fallback mode: '
+                            f'{", ".join(skipped_direct_features)}'
+                        )
+                    )
+                direct_outputs = None
+
+            if direct_outputs is not None:
+                info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
+                info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+                if auto_split_tflite_by_size:
+                    if 'split_plan_report_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct split plan was requested but no report was generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'Split plan report output complete! '
+                            f'({direct_outputs["split_plan_report_path"]})'
+                        )
+                    )
+                    if bool(direct_outputs.get('split_required_by_estimate', False)):
+                        if 'split_manifest_path' not in direct_outputs:
+                            raise RuntimeError(
+                                'flatbuffer_direct split was required by estimate, '
+                                'but split manifest was not generated.'
+                            )
+                        info(
+                            Color.GREEN(
+                                f'Split manifest output complete! '
+                                f'({direct_outputs["split_manifest_path"]}) '
+                                f'partitions={direct_outputs.get("split_partition_count", "0")}'
+                            )
+                        )
+                    else:
+                        info(
+                            Color.GREEN(
+                                'Split output was not required by estimate. '
+                                f'estimated={direct_outputs.get("split_plan_total_estimated_bytes", 0)} '
+                                f'target={tflite_split_target_bytes}'
+                            )
+                        )
+                if report_op_coverage:
+                    if 'op_coverage_report_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct OP coverage report was requested but no report was generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'OP coverage report output complete! '
+                            f'({direct_outputs["op_coverage_report_path"]})'
+                        )
+                    )
+                if int(direct_outputs.get('custom_op_count', 0)) > 0:
+                    info(
+                        Color.YELLOW(
+                            f'Custom ops lowered: count={direct_outputs["custom_op_count"]} '
+                            f'codes={direct_outputs.get("custom_ops_used", [])}'
+                        )
+                    )
+                if output_dynamic_range_quantized_tflite:
+                    if 'dynamic_range_quant_tflite_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'Dynamic range quantized tflite output complete! '
+                            f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                        )
+                    )
+                if output_integer_quantized_tflite:
+                    if 'integer_quant_tflite_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct integer quantization was requested but no output was generated.'
+                        )
+                    if 'full_integer_quant_tflite_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct full integer quantization was requested but no output was generated.'
+                        )
+                    if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
+                        )
+                    if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'INT8 Quantization tflite output complete! '
+                            f'({direct_outputs["integer_quant_tflite_path"]})'
+                        )
+                    )
+                    info(
+                        Color.GREEN(
+                            f'Full INT8 Quantization tflite output complete! '
+                            f'({direct_outputs["full_integer_quant_tflite_path"]})'
+                        )
+                    )
+                    info(
+                        Color.GREEN(
+                            f'INT8 Quantization with int16 activations tflite output complete! '
+                            f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                        )
+                    )
+                    info(
+                        Color.GREEN(
+                            f'Full INT8 Quantization with int16 activations tflite output complete! '
+                            f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                        )
+                    )
+                if copy_onnx_input_output_names_to_tflite:
+                    info(
+                        'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
+                    )
+                if eval_with_onnx:
+                    from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
+                    eval_target_map = {
+                        'float32': 'float32_tflite_path',
+                        'float16': 'float16_tflite_path',
+                        'dynamic_range_quant': 'dynamic_range_quant_tflite_path',
+                        'integer_quant': 'integer_quant_tflite_path',
+                        'full_integer_quant': 'full_integer_quant_tflite_path',
+                        'integer_quant_with_int16_act': 'integer_quant_with_int16_act_tflite_path',
+                        'full_integer_quant_with_int16_act': 'full_integer_quant_with_int16_act_tflite_path',
+                    }
+                    eval_output_key = eval_target_map[eval_target_tflite]
+                    if eval_output_key not in direct_outputs:
+                        raise RuntimeError(
+                            f'eval_target_tflite="{eval_target_tflite}" was requested, '
+                            f'but output "{eval_output_key}" is not available in this conversion. '
+                            'Enable the corresponding quantization output option first.'
+                        )
+                    accuracy_report_path = os.path.join(
+                        output_folder_path,
+                        f'{output_file_name}_accuracy_report.json',
+                    )
+                    report = evaluate_onnx_tflite_outputs(
+                        onnx_graph=onnx_graph,
+                        tflite_path=direct_outputs[eval_output_key],
+                        output_report_path=accuracy_report_path,
+                        num_samples=eval_num_samples,
+                        seed=0,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        rtol=eval_rtol,
+                        atol=eval_atol,
+                        compare_mode=eval_compare_mode,
+                        fail_on_threshold=eval_fail_on_threshold,
+                    )
+                    info(
+                        Color.GREEN(
+                            'ONNX/TFLite accuracy report output complete! '
+                            f'({accuracy_report_path}) '
+                            f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
+                            f'rmse={report["overall_metrics"]["rmse"]:.6g} '
+                            f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g} '
+                            f'pass={report["evaluation_pass"]}'
+                        )
+                    )
+                if eval_split_models:
                     if 'split_manifest_path' not in direct_outputs:
                         raise RuntimeError(
-                            'flatbuffer_direct split was required by estimate, '
-                            'but split manifest was not generated.'
+                            'eval_split_models=True but split manifest is not available. '
+                            'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
                         )
+                    from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
+                    split_accuracy_report_path = os.path.join(
+                        output_folder_path,
+                        f'{output_file_name}_split_accuracy_report.json',
+                    )
+                    reference_tflite_path = None
+                    if eval_split_reference == 'unsplit_tflite':
+                        reference_tflite_path = direct_outputs['float32_tflite_path']
+                    split_report = evaluate_split_manifest_outputs(
+                        onnx_graph=onnx_graph,
+                        split_manifest_path=direct_outputs['split_manifest_path'],
+                        reference_mode=eval_split_reference,
+                        reference_tflite_path=reference_tflite_path,
+                        output_report_path=split_accuracy_report_path,
+                        num_samples=eval_num_samples,
+                        seed=0,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        rtol=eval_rtol,
+                        atol=eval_atol,
+                        compare_mode=eval_compare_mode,
+                        fail_on_threshold=eval_split_fail_on_threshold,
+                    )
                     info(
                         Color.GREEN(
-                            f'Split manifest output complete! '
-                            f'({direct_outputs["split_manifest_path"]}) '
-                            f'partitions={direct_outputs.get("split_partition_count", "0")}'
+                            'Split-model accuracy report output complete! '
+                            f'({split_accuracy_report_path}) '
+                            f'max_abs={split_report["overall_metrics"]["max_abs"]:.6g} '
+                            f'rmse={split_report["overall_metrics"]["rmse"]:.6g} '
+                            f'cosine={split_report["overall_metrics"]["cosine_similarity"]:.6g} '
+                            f'pass={split_report["evaluation_pass"]}'
                         )
                     )
-                else:
-                    info(
-                        Color.GREEN(
-                            'Split output was not required by estimate. '
-                            f'estimated={direct_outputs.get("split_plan_total_estimated_bytes", 0)} '
-                            f'target={tflite_split_target_bytes}'
-                        )
-                    )
-            if report_op_coverage:
-                if 'op_coverage_report_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct OP coverage report was requested but no report was generated.'
-                    )
-                info(
-                    Color.GREEN(
-                        f'OP coverage report output complete! '
-                        f'({direct_outputs["op_coverage_report_path"]})'
-                    )
-                )
-            if int(direct_outputs.get('custom_op_count', 0)) > 0:
-                info(
-                    Color.YELLOW(
-                        f'Custom ops lowered: count={direct_outputs["custom_op_count"]} '
-                        f'codes={direct_outputs.get("custom_ops_used", [])}'
-                    )
-                )
-            if output_dynamic_range_quantized_tflite:
-                if 'dynamic_range_quant_tflite_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
-                    )
-                info(
-                    Color.GREEN(
-                        f'Dynamic range quantized tflite output complete! '
-                        f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
-                    )
-                )
-            if output_integer_quantized_tflite:
-                if 'integer_quant_tflite_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct integer quantization was requested but no output was generated.'
-                    )
-                if 'full_integer_quant_tflite_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct full integer quantization was requested but no output was generated.'
-                    )
-                if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
-                    )
-                if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
-                    )
-                info(
-                    Color.GREEN(
-                        f'INT8 Quantization tflite output complete! '
-                        f'({direct_outputs["integer_quant_tflite_path"]})'
-                    )
-                )
-                info(
-                    Color.GREEN(
-                        f'Full INT8 Quantization tflite output complete! '
-                        f'({direct_outputs["full_integer_quant_tflite_path"]})'
-                    )
-                )
-                info(
-                    Color.GREEN(
-                        f'INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
-                info(
-                    Color.GREEN(
-                        f'Full INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
-            if copy_onnx_input_output_names_to_tflite:
-                info(
-                    'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
-                )
-            if eval_with_onnx:
-                from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
-                eval_target_map = {
-                    'float32': 'float32_tflite_path',
-                    'float16': 'float16_tflite_path',
-                    'dynamic_range_quant': 'dynamic_range_quant_tflite_path',
-                    'integer_quant': 'integer_quant_tflite_path',
-                    'full_integer_quant': 'full_integer_quant_tflite_path',
-                    'integer_quant_with_int16_act': 'integer_quant_with_int16_act_tflite_path',
-                    'full_integer_quant_with_int16_act': 'full_integer_quant_with_int16_act_tflite_path',
-                }
-                eval_output_key = eval_target_map[eval_target_tflite]
-                if eval_output_key not in direct_outputs:
-                    raise RuntimeError(
-                        f'eval_target_tflite="{eval_target_tflite}" was requested, '
-                        f'but output "{eval_output_key}" is not available in this conversion. '
-                        'Enable the corresponding quantization output option first.'
-                    )
-                accuracy_report_path = os.path.join(
-                    output_folder_path,
-                    f'{output_file_name}_accuracy_report.json',
-                )
-                report = evaluate_onnx_tflite_outputs(
-                    onnx_graph=onnx_graph,
-                    tflite_path=direct_outputs[eval_output_key],
-                    output_report_path=accuracy_report_path,
-                    num_samples=eval_num_samples,
-                    seed=0,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    rtol=eval_rtol,
-                    atol=eval_atol,
-                    compare_mode=eval_compare_mode,
-                    fail_on_threshold=eval_fail_on_threshold,
-                )
-                info(
-                    Color.GREEN(
-                        'ONNX/TFLite accuracy report output complete! '
-                        f'({accuracy_report_path}) '
-                        f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
-                        f'rmse={report["overall_metrics"]["rmse"]:.6g} '
-                        f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g} '
-                        f'pass={report["evaluation_pass"]}'
-                    )
-                )
-            if eval_split_models:
-                if 'split_manifest_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'eval_split_models=True but split manifest is not available. '
-                        'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
-                    )
-                from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
-                split_accuracy_report_path = os.path.join(
-                    output_folder_path,
-                    f'{output_file_name}_split_accuracy_report.json',
-                )
-                reference_tflite_path = None
-                if eval_split_reference == 'unsplit_tflite':
-                    reference_tflite_path = direct_outputs['float32_tflite_path']
-                split_report = evaluate_split_manifest_outputs(
-                    onnx_graph=onnx_graph,
-                    split_manifest_path=direct_outputs['split_manifest_path'],
-                    reference_mode=eval_split_reference,
-                    reference_tflite_path=reference_tflite_path,
-                    output_report_path=split_accuracy_report_path,
-                    num_samples=eval_num_samples,
-                    seed=0,
-                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                    rtol=eval_rtol,
-                    atol=eval_atol,
-                    compare_mode=eval_compare_mode,
-                    fail_on_threshold=eval_split_fail_on_threshold,
-                )
-                info(
-                    Color.GREEN(
-                        'Split-model accuracy report output complete! '
-                        f'({split_accuracy_report_path}) '
-                        f'max_abs={split_report["overall_metrics"]["max_abs"]:.6g} '
-                        f'rmse={split_report["overall_metrics"]["rmse"]:.6g} '
-                        f'cosine={split_report["overall_metrics"]["cosine_similarity"]:.6g} '
-                        f'pass={split_report["evaluation_pass"]}'
-                    )
-                )
-            return model
+                return model
 
         try:
             converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -4283,6 +4416,12 @@ def main():
             'Currently available only with --tflite_backend flatbuffer_direct.'
     )
     parser.add_argument(
+        '--flatbuffer_direct_fallback_to_tf_converter',
+        action='store_true',
+        help=\
+            'Fallback to tf_converter when flatbuffer_direct conversion fails.'
+    )
+    parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
         action='store_true',
         help=\
@@ -4606,16 +4745,25 @@ def main():
         action='store_true',
         help=\
             'Force auto split regardless of the ONNX file size. \n' +
-            'Uses --auto_split_max_size_mb as the target partition size.'
+            'Uses --auto_split_max_size as the target partition size.'
     )
     parser.add_argument(
-        '-asmsm',
+        '-asms',
+        '--auto_split_max_size',
+        type=str,
+        default=None,
+        help=\
+            'Target maximum size per partition when auto-split is triggered or forced. \n' +
+            'Supported units: KB, MB, GB (e.g. 900MB, 1GB, 1536KB). \n' +
+            'Bare numbers are treated as MB. \n' +
+            'When specified, this value is also used as the target size for --auto_split_tflite_by_size. \n' +
+            'Default: 1GB'
+    )
+    parser.add_argument(
         '--auto_split_max_size_mb',
         type=int,
-        default=1024,
-        help=\
-            'Target maximum size per partition in MB based on ONNX initializer sizes. \n' +
-            'Used when auto-split is triggered or forced.'
+        default=None,
+        help=SUPPRESS
     )
     parser.add_argument(
         '-dgc',
@@ -4999,6 +5147,7 @@ def main():
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         auto_split_tflite_by_size=args.auto_split_tflite_by_size,
         report_op_coverage=args.report_op_coverage,
+        flatbuffer_direct_fallback_to_tf_converter=args.flatbuffer_direct_fallback_to_tf_converter,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,
@@ -5046,6 +5195,7 @@ def main():
         auto_generate_json=args.auto_generate_json,
         auto_generate_json_on_error=args.auto_generate_json_on_error,
         enable_auto_split_model=args.enable_auto_split_model,
+        auto_split_max_size=args.auto_split_max_size,
         auto_split_max_size_mb=args.auto_split_max_size_mb,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,

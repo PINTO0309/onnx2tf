@@ -219,6 +219,29 @@ def _collect_schema_ops_for_range(
     return sorted(schema_ops)
 
 
+def _build_schema_policy_matrix(
+    *,
+    schema_ops: set,
+    supported_registry_ops: set,
+    custom_candidate_ops: set,
+) -> List[Dict[str, Any]]:
+    matrix: List[Dict[str, Any]] = []
+    for op in sorted(list(schema_ops)):
+        if op in supported_registry_ops:
+            policy = "builtin_supported"
+        elif op in custom_candidate_ops:
+            policy = "custom_candidate"
+        else:
+            policy = "explicit_error"
+        matrix.append(
+            {
+                "onnx_op": str(op),
+                "policy": str(policy),
+            }
+        )
+    return matrix
+
+
 def build_op_coverage_report(
     *,
     onnx_graph: onnx.ModelProto,
@@ -343,6 +366,19 @@ def build_op_coverage_report(
     supported_registry_ops = set(get_supported_onnx_ops())
     custom_candidate_ops = set(get_custom_op_candidate_ops())
     schema_ops = set(_collect_schema_ops_for_range(opset_min=opset_min, opset_max=opset_max))
+    schema_policy_matrix = _build_schema_policy_matrix(
+        schema_ops=schema_ops,
+        supported_registry_ops=supported_registry_ops,
+        custom_candidate_ops=custom_candidate_ops,
+    )
+    schema_policy_counts: Dict[str, int] = {
+        "builtin_supported": 0,
+        "custom_candidate": 0,
+        "explicit_error": 0,
+    }
+    for item in schema_policy_matrix:
+        p = str(item["policy"])
+        schema_policy_counts[p] = int(schema_policy_counts.get(p, 0) + 1)
     graph_ops = sorted(graph_unique_ops)
     supported_graph_ops = sorted(
         list({r["onnx_op"] for r in node_reports if r["supported"] is True})
@@ -365,6 +401,9 @@ def build_op_coverage_report(
         "supported_onnx_ops_registry": sorted(list(supported_registry_ops)),
         "custom_op_candidate_ops": sorted(list(custom_candidate_ops)),
         "schema_onnx_ops_target_range": sorted(list(schema_ops)),
+        "schema_policy_matrix": schema_policy_matrix,
+        "schema_policy_counts": schema_policy_counts,
+        "schema_unresolved_ops": [],
         "registry_missing_from_schema_range": sorted(list(schema_ops - supported_registry_ops)),
         "registry_extra_outside_schema_range": sorted(list(supported_registry_ops - schema_ops)),
         "graph_ops": graph_ops,

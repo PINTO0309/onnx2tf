@@ -43,8 +43,10 @@ def _convert(
     eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
     report_op_coverage: bool = False,
+    flatbuffer_direct_fallback_to_tf_converter: bool = False,
     flatbuffer_direct_allow_custom_ops: bool = False,
     flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
+    auto_split_max_size: str | int | None = None,
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
 ) -> str:
@@ -71,8 +73,10 @@ def _convert(
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
         report_op_coverage=report_op_coverage,
+        flatbuffer_direct_fallback_to_tf_converter=flatbuffer_direct_fallback_to_tf_converter,
         flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+        auto_split_max_size=auto_split_max_size,
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
     )
@@ -520,6 +524,102 @@ def test_flatbuffer_direct_custom_op_coverage_report() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_elu_model()
+        model_path = _save_model(tmpdir, "elu_fallback", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_fallback_to_tf_converter=True,
+            report_op_coverage=True,
+        )
+
+        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float32.tflite"))
+        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float16.tflite"))
+        report_path = os.path.join(out_dir, "elu_fallback_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["conversion_error"] is not None
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_integ", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            output_dynamic_range_quantized_tflite=True,
+            output_integer_quantized_tflite=True,
+            eval_with_onnx=True,
+            eval_num_samples=2,
+            eval_target_tflite="full_integer_quant",
+            eval_compare_mode="dequant",
+            report_op_coverage=True,
+        )
+
+        expected_files = [
+            "gemm_integ_float32.tflite",
+            "gemm_integ_float16.tflite",
+            "gemm_integ_dynamic_range_quant.tflite",
+            "gemm_integ_integer_quant.tflite",
+            "gemm_integ_full_integer_quant.tflite",
+            "gemm_integ_accuracy_report.json",
+            "gemm_integ_op_coverage_report.json",
+        ]
+        for name in expected_files:
+            assert os.path.isfile(os.path.join(out_dir, name))
+
+        with open(os.path.join(out_dir, "gemm_integ_accuracy_report.json"), "r", encoding="utf-8") as f:
+            acc = json.load(f)
+        assert acc["num_samples"] == 2
+
+        with open(os.path.join(out_dir, "gemm_integ_op_coverage_report.json"), "r", encoding="utf-8") as f:
+            cov = json.load(f)
+        assert "schema_policy_counts" in cov
+        assert cov["schema_unresolved_ops"] == []
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_integ", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=1,
+            eval_split_models=True,
+            eval_num_samples=2,
+            report_op_coverage=True,
+        )
+
+        expected_files = [
+            "add_chain_integ_split_plan.json",
+            "add_chain_integ_split_manifest.json",
+            "add_chain_integ_split_accuracy_report.json",
+            "add_chain_integ_op_coverage_report.json",
+        ]
+        for name in expected_files:
+            assert os.path.isfile(os.path.join(out_dir, name))
+
+        with open(os.path.join(out_dir, "add_chain_integ_split_accuracy_report.json"), "r", encoding="utf-8") as f:
+            split_report = json.load(f)
+        assert split_report["reference_mode"] == "unsplit_tflite"
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
 def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gather_int32_model()
@@ -899,6 +999,38 @@ def test_flatbuffer_direct_split_plan_report_smoke() -> None:
         assert report["plan_valid"] is True
         assert report["total_estimated_bytes"] > 0
         assert len(report["partitions"]) >= 1
+
+
+def test_parse_auto_split_size_to_bytes_units() -> None:
+    from onnx2tf.onnx2tf import _parse_size_to_bytes
+
+    assert _parse_size_to_bytes("1KB", param_name="x") == 1_024
+    assert _parse_size_to_bytes("2mb", param_name="x") == 2 * 1_048_576
+    assert _parse_size_to_bytes("1.5GB", param_name="x") == int(1.5 * 1_073_741_824)
+    assert _parse_size_to_bytes("256", default_unit="MB", param_name="x") == 256 * 1_048_576
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_gemm_model()
+        model_path = _save_model(tmpdir, "gemm_split_size_opt", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            auto_split_tflite_by_size=True,
+            auto_split_max_size="256KB",
+            tflite_split_max_bytes=10_000_000,
+            tflite_split_target_bytes=9_000_000,
+        )
+        report_path = os.path.join(out_dir, "gemm_split_size_opt_split_plan.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["target_max_bytes"] == 256 * 1024
+        assert report["hard_max_bytes"] >= report["target_max_bytes"]
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
