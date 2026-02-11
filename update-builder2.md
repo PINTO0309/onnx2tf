@@ -275,6 +275,28 @@ reason_code 付き明示失敗:
 1. 主要テストが CI で安定通過する。
 2. direct 変換成功率の改善が数値で確認できる。
 
+#### Step A7 実施結果（2026-02-11）
+実装内容:
+1. `tests/test_tflite_builder_direct.py` に backend matrix の「置換あり/なし」テストを追加。
+2. 対象ケースは `HardSwish` とし、以下を同一テストで固定:
+3. `tf_converter` は成功
+4. `flatbuffer_direct`（既定プリパス有効）は成功
+5. `flatbuffer_direct`（プリパス無効化）は `unsupported_onnx_op` で失敗
+6. `tests/test_tflite_builder_op_coverage.py` を新規追加し、reason_code スナップショットを固定:
+7. `unsupported_attribute_value`（Softmax axis 非末尾）
+8. `requires_constant_input`（Reduce axes 非定数）
+9. `custom_op_candidate_disabled` / `custom_op_not_in_allowlist`（Einsum custom policy）
+10. `onnx2tf/tflite_builder/lower_from_onnx2tf.py` の OP coverage report について、top-level keys と `custom_op_policy` / `preprocess_report` のキー互換テストを追加。
+
+検証:
+1. `pytest -q tests/test_tflite_builder_op_coverage.py` -> `3 passed`
+2. `pytest -q tests/test_tflite_builder_direct.py -k "hardswish_rewrite_on_off"` -> `1 passed`
+3. `pytest -q tests/test_tflite_builder_direct.py -k "custom_op_coverage_report or op_coverage_report_generation"` -> `2 passed`
+
+カバレッジ差分:
+1. 前回値 `16.56%` -> 今回値 `16.56%`（差分 `+0.00%`）
+2. 変化なし理由: Step A7 はテスト・回帰固定のみで、Builtin 対応 OP の追加はなし。
+
 ### Step A8: 文書化・運用導線
 1. README に「TF経路との差」「direct 前処理で吸収される範囲」を明記する。
 2. `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` に段階移行手順を追記する。
@@ -329,5 +351,5 @@ reason_code 付き明示失敗:
 4. `[x] Step A4 完了`
 5. `[x] Step A5 完了`
 6. `[x] Step A6 完了`
-7. `[ ] Step A7 完了`
+7. `[x] Step A7 完了`
 8. `[ ] Step A8 完了`

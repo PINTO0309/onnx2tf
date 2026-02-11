@@ -509,6 +509,50 @@ def test_tflite_backend_matrix_add() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    import onnx2tf.tflite_builder as tflite_builder_backend
+    from onnx2tf.tflite_builder.preprocess import clear_preprocess_rules
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_hardswish_model()
+        model_path = _save_model(tmpdir, "hardswish_rewrite_matrix", model)
+
+        # tf_converter backend should pass without direct preprocess dependency.
+        tf_out = os.path.join(tmpdir, "tf_converter")
+        tf_tflite = _convert(model_path, tf_out, "tf_converter")
+        assert os.path.isfile(tf_tflite)
+
+        # flatbuffer_direct with default preprocess should pass (rewrite enabled).
+        fb_out = os.path.join(tmpdir, "flatbuffer_direct")
+        fb_tflite = _convert(model_path, fb_out, "flatbuffer_direct")
+        assert os.path.isfile(fb_tflite)
+
+        # flatbuffer_direct with preprocess disabled should fail on unsupported HardSwish.
+        clear_preprocess_rules()
+        monkeypatch.setattr(
+            tflite_builder_backend,
+            "register_default_preprocess_rules",
+            lambda: None,
+        )
+        fb_no_rewrite_out = os.path.join(tmpdir, "flatbuffer_direct_no_rewrite")
+        with pytest.raises(NotImplementedError):
+            _convert(
+                model_path,
+                fb_no_rewrite_out,
+                "flatbuffer_direct",
+                report_op_coverage=True,
+            )
+        report_path = os.path.join(
+            fb_no_rewrite_out,
+            "hardswish_rewrite_matrix_op_coverage_report.json",
+        )
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["unsupported_reason_counts"]["unsupported_onnx_op"] == 1
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
 @pytest.mark.parametrize(
     "name, model_factory",
     [
