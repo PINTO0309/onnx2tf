@@ -104,3 +104,77 @@ def build_identity_op(node: Any, ctx: Any) -> None:
             options={"newShape": [int(v) for v in output_shape]},
         )
     )
+
+
+def _resolve_axes_from_attr_or_input(node: Any, ctx: Any) -> list[int]:
+    axes = None
+    if len(node.inputs) >= 2:
+        axes_arr = ctx.get_constant_array(node.inputs[1].name)
+        if axes_arr is None:
+            raise NotImplementedError(
+                f"{node.op} axes must be constant for flatbuffer_direct. op={node.name}"
+            )
+        axes = [int(v) for v in np.asarray(axes_arr).reshape(-1).tolist()]
+    elif "axes" in node.attrs:
+        attr_axes = node.attrs["axes"]
+        if isinstance(attr_axes, (list, tuple)):
+            axes = [int(v) for v in attr_axes]
+        else:
+            axes = [int(attr_axes)]
+    return [] if axes is None else axes
+
+
+def build_squeeze_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = ctx.get_tensor_shape(input_name)
+    rank = len(input_shape)
+    axes = _resolve_axes_from_attr_or_input(node, ctx)
+    if len(axes) == 0:
+        axes = [idx for idx, dim in enumerate(input_shape) if int(dim) == 1]
+
+    normalized_axes: list[int] = []
+    for axis in axes:
+        a = int(axis)
+        if a < 0:
+            a += rank
+        if a < 0 or a >= rank:
+            raise NotImplementedError(
+                f"Squeeze axis is out of range. op={node.name} axis={axis} rank={rank}"
+            )
+        if a not in normalized_axes:
+            normalized_axes.append(a)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=[input_name],
+            outputs=[output_name],
+            options={"squeezeDims": [int(v) for v in normalized_axes]},
+        )
+    )
+
+
+def build_unsqueeze_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    _ = _resolve_axes_from_attr_or_input(node, ctx)
+    output_shape = ctx.get_tensor_shape(output_name)
+    shape_const = ctx.add_const_tensor(
+        f"{output_name}_unsqueeze_shape",
+        np.asarray(output_shape, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_const],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in output_shape]},
+        )
+    )

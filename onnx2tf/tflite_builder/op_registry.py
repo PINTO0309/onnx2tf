@@ -11,13 +11,18 @@ from onnx2tf.tflite_builder.op_builders import (
     build_concat_op,
     build_conv2d_or_depthwise_op,
     build_fully_connected_from_gemm_or_matmul,
+    build_gather_op,
     build_identity_op,
+    build_l2_normalization_op,
     build_logistic_op,
     build_pool2d_op,
+    build_reduce_op,
     build_reshape_op,
+    build_squeeze_op,
     build_softmax_op,
     build_transpose_op,
     build_unary_op,
+    build_unsqueeze_op,
 )
 
 
@@ -252,6 +257,152 @@ def _validate_fc(node: Any, ctx: Any) -> None:
             )
 
 
+def _extract_axes(
+    *,
+    node: Any,
+    ctx: Any,
+    input_index: int = 1,
+    attr_name: str = "axes",
+    default_if_missing: Optional[List[int]] = None,
+) -> List[int]:
+    axes: Optional[List[int]] = None
+    if len(node.inputs) > input_index:
+        axes_arr = _require_const_input(node, ctx, input_index, f"{node.op} axes")
+        axes = [int(v) for v in np.asarray(axes_arr).reshape(-1).tolist()]
+    elif attr_name in node.attrs:
+        attr_axes = node.attrs.get(attr_name)
+        if isinstance(attr_axes, (list, tuple)):
+            axes = [int(v) for v in attr_axes]
+        elif attr_axes is None:
+            axes = []
+        else:
+            axes = [int(attr_axes)]
+    if axes is None:
+        axes = [] if default_if_missing is None else [int(v) for v in default_if_missing]
+    return [int(v) for v in axes]
+
+
+def _normalize_axes_for_rank(
+    *,
+    axes: List[int],
+    rank: int,
+    node: Any,
+) -> List[int]:
+    normalized: List[int] = []
+    for axis in axes:
+        a = int(axis)
+        if a < 0:
+            a += rank
+        if a < 0 or a >= rank:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"axis out of range. axis={axis} normalized={a} rank={rank}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if a not in normalized:
+            normalized.append(a)
+    return normalized
+
+
+def _validate_reduce(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axes = _extract_axes(
+        node=node,
+        ctx=ctx,
+        input_index=1,
+        attr_name="axes",
+        default_if_missing=[int(v) for v in range(input_rank)],
+    )
+    if len(axes) == 0 and int(node.attrs.get("noop_with_empty_axes", 0)) == 1:
+        return
+    _normalize_axes_for_rank(axes=axes, rank=input_rank, node=node)
+
+
+def _validate_squeeze(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axes = _extract_axes(
+        node=node,
+        ctx=ctx,
+        input_index=1,
+        attr_name="axes",
+    )
+    if len(axes) == 0:
+        return
+    _normalize_axes_for_rank(axes=axes, rank=input_rank, node=node)
+
+
+def _validate_unsqueeze(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axes = _extract_axes(
+        node=node,
+        ctx=ctx,
+        input_index=1,
+        attr_name="axes",
+    )
+    if len(axes) == 0:
+        raise NodeValidationError(
+            reason_code="missing_required_attribute",
+            message="Unsqueeze requires axes via input tensor or attribute.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for axis in axes:
+        a = int(axis)
+        if a < 0:
+            a += input_rank + 1
+        if a < 0 or a > input_rank:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"unsqueeze axis out of range. axis={axis} normalized={a} rank={input_rank}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_gather(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axis = int(node.attrs.get("axis", 0))
+    if axis < 0:
+        axis += input_rank
+    if axis < 0 or axis >= input_rank:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Gather axis out of range. axis={axis} rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(node.attrs.get("batch_dims", 0)) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Gather batch_dims must be 0. batch_dims={int(node.attrs.get('batch_dims', 0))}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_l2_norm(node: Any, ctx: Any) -> None:
+    p = float(node.attrs.get("p", 2.0))
+    if abs(p - 2.0) > 1e-6:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LpNormalization p must be 2. got={p}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axis = int(node.attrs.get("axis", -1))
+    if axis < 0:
+        axis += input_rank
+    if axis != input_rank - 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LpNormalization axis must be last dim. axis={axis} rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _make_binary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
     def _builder(node: Any, ctx: Any) -> None:
         build_binary_op(node, ctx, tflite_op)
@@ -323,6 +474,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=_make_binary_builder("DIV"),
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
     ),
+    "ReduceMean": DispatchEntry(
+        onnx_op="ReduceMean",
+        tflite_ops=["MEAN"],
+        builder=lambda node, ctx: build_reduce_op(node, ctx, "MEAN"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reduce,
+    ),
+    "ReduceSum": DispatchEntry(
+        onnx_op="ReduceSum",
+        tflite_ops=["SUM"],
+        builder=lambda node, ctx: build_reduce_op(node, ctx, "SUM"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reduce,
+    ),
     "Sigmoid": DispatchEntry(
         onnx_op="Sigmoid",
         tflite_ops=["LOGISTIC"],
@@ -366,6 +531,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_clip,
     ),
+    "LpNormalization": DispatchEntry(
+        onnx_op="LpNormalization",
+        tflite_ops=["L2_NORMALIZATION"],
+        builder=build_l2_normalization_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_l2_norm,
+    ),
     "Softmax": DispatchEntry(
         onnx_op="Softmax",
         tflite_ops=["SOFTMAX"],
@@ -387,11 +559,32 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_transpose,
     ),
+    "Squeeze": DispatchEntry(
+        onnx_op="Squeeze",
+        tflite_ops=["SQUEEZE"],
+        builder=build_squeeze_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_squeeze,
+    ),
+    "Unsqueeze": DispatchEntry(
+        onnx_op="Unsqueeze",
+        tflite_ops=["RESHAPE"],
+        builder=build_unsqueeze_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_unsqueeze,
+    ),
     "Concat": DispatchEntry(
         onnx_op="Concat",
         tflite_ops=["CONCATENATION"],
         builder=build_concat_op,
         validation=ValidationSpec(min_inputs=2, min_outputs=1, max_outputs=1),
+    ),
+    "Gather": DispatchEntry(
+        onnx_op="Gather",
+        tflite_ops=["GATHER"],
+        builder=build_gather_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_gather,
     ),
     "Identity": DispatchEntry(
         onnx_op="Identity",
