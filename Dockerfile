@@ -2,6 +2,11 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BUILD_ARCH="linux/amd64"
+ARG ONNX2TF_REF="main"
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=10 \
+    PIP_PROGRESS_BAR=off
 
 RUN apt-get update \
     && apt-get install -y \
@@ -12,23 +17,41 @@ RUN apt-get update \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m pip install --break-system-packages --prefer-binary \
-    onnx==1.20.1 \
-    onnxsim-prebuilt==0.4.39.post2 \
-    onnxoptimizer==0.4.2 \
-    onnxruntime==1.24.1 \
-    sne4onnx \
-    sng4onnx \
-    onnx2tf \
-    onnx2tf \
-    tensorflow==2.19.0 \
-    ai_edge_litert==2.1.2 \
-    protobuf==4.25.5 \
-    h5py==3.12.1 \
-    psutil==5.9.5 \
-    ml_dtypes==0.5.1 \
-    tf-keras==2.19.0 \
-    'flatbuffers>=23.5.26'
+RUN set -eux; \
+    for i in 1 2 3; do \
+        python -m pip install --break-system-packages --prefer-binary \
+            --timeout "${PIP_DEFAULT_TIMEOUT}" --retries "${PIP_RETRIES}" \
+            onnx==1.20.1 \
+            onnxsim-prebuilt==0.4.39.post2 \
+            onnxoptimizer==0.4.2 \
+            onnxruntime==1.24.1 \
+            sne4onnx \
+            sng4onnx \
+            tensorflow==2.19.0 \
+            ai_edge_litert==2.1.2 \
+            protobuf==4.25.5 \
+            h5py==3.12.1 \
+            psutil==5.9.5 \
+            ml_dtypes==0.5.1 \
+            tf-keras==2.19.0 \
+            'flatbuffers>=23.5.26' && break; \
+        if [ "${i}" -eq 3 ]; then \
+            exit 1; \
+        fi; \
+        sleep 10; \
+    done
+
+# Install onnx2tf from GitHub source (branch/tag/commit can be overridden by ONNX2TF_REF).
+RUN set -eux; \
+    for i in 1 2 3; do \
+        python -m pip install --break-system-packages --no-deps \
+            --timeout "${PIP_DEFAULT_TIMEOUT}" --retries "${PIP_RETRIES}" \
+            "git+https://github.com/PINTO0309/onnx2tf.git@${ONNX2TF_REF}" && break; \
+        if [ "${i}" -eq 3 ]; then \
+            exit 1; \
+        fi; \
+        sleep 10; \
+    done
 
 # Re-release flatc with some customizations of our own to address
 # the lack of arithmetic precision of the quantization parameters
