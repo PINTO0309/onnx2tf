@@ -7,6 +7,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.op_builders import (
     build_binary_op,
+    build_clip_op,
     build_concat_op,
     build_conv2d_or_depthwise_op,
     build_fully_connected_from_gemm_or_matmul,
@@ -16,6 +17,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_reshape_op,
     build_softmax_op,
     build_transpose_op,
+    build_unary_op,
 )
 
 
@@ -257,6 +259,45 @@ def _make_binary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
     return _builder
 
 
+def _make_unary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
+    def _builder(node: Any, ctx: Any) -> None:
+        build_unary_op(node, ctx, tflite_op)
+
+    return _builder
+
+
+def _validate_clip(node: Any, ctx: Any) -> None:
+    min_value = node.attrs.get("min", float("-inf"))
+    max_value = node.attrs.get("max", float("inf"))
+    if len(node.inputs) >= 2:
+        min_value = _require_const_input(node, ctx, 1, "clip minimum")
+    if len(node.inputs) >= 3:
+        max_value = _require_const_input(node, ctx, 2, "clip maximum")
+
+    def _to_float(v: Any, default: float) -> float:
+        if isinstance(v, (int, float)):
+            return float(v)
+        arr = np.asarray(v)
+        if arr.size == 0:
+            return float(default)
+        return float(arr.reshape(-1)[0])
+
+    min_f = _to_float(min_value, float("-inf"))
+    max_f = _to_float(max_value, float("inf"))
+    supports_relu6 = abs(min_f - 0.0) <= 1e-6 and abs(max_f - 6.0) <= 1e-6
+    supports_relu = abs(min_f - 0.0) <= 1e-6 and np.isinf(max_f) and max_f > 0.0
+    if not supports_relu6 and not supports_relu:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Clip supports only relu-style ranges: min=0,max=6 or min=0,max=+inf. "
+                f"min={min_f} max={max_f}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     "Add": DispatchEntry(
         onnx_op="Add",
@@ -287,6 +328,43 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["LOGISTIC"],
         builder=build_logistic_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Relu": DispatchEntry(
+        onnx_op="Relu",
+        tflite_ops=["RELU"],
+        builder=_make_unary_builder("RELU"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Tanh": DispatchEntry(
+        onnx_op="Tanh",
+        tflite_ops=["TANH"],
+        builder=_make_unary_builder("TANH"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Exp": DispatchEntry(
+        onnx_op="Exp",
+        tflite_ops=["EXP"],
+        builder=_make_unary_builder("EXP"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Sqrt": DispatchEntry(
+        onnx_op="Sqrt",
+        tflite_ops=["SQRT"],
+        builder=_make_unary_builder("SQRT"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Neg": DispatchEntry(
+        onnx_op="Neg",
+        tflite_ops=["NEG"],
+        builder=_make_unary_builder("NEG"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Clip": DispatchEntry(
+        onnx_op="Clip",
+        tflite_ops=["RELU", "RELU6"],
+        builder=build_clip_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_clip,
     ),
     "Softmax": DispatchEntry(
         onnx_op="Softmax",

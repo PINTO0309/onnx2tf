@@ -170,11 +170,27 @@ def _make_add_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
-def _make_relu_model() -> onnx.ModelProto:
+def _make_unary_model(op_type: str, *, name: str) -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
-    node = helper.make_node("Relu", ["x"], ["y"], name="ReluNode")
-    graph = helper.make_graph([node], "relu_graph", [x], [y])
+    node = helper.make_node(op_type, ["x"], ["y"], name=f"{name}Node")
+    graph = helper.make_graph([node], f"{name}_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_clip_relu6_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("Clip", ["x"], ["y"], name="ClipNode", min=0.0, max=6.0)
+    graph = helper.make_graph([node], "clip_relu6_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_elu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("Elu", ["x"], ["y"], name="EluNode", alpha=1.0)
+    graph = helper.make_graph([node], "elu_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -243,6 +259,11 @@ def test_tflite_backend_matrix_add() -> None:
         ("conv", _make_conv_model),
         ("pool", _make_pool_model),
         ("gemm", _make_gemm_model),
+        ("relu", lambda: _make_unary_model("Relu", name="relu")),
+        ("tanh", lambda: _make_unary_model("Tanh", name="tanh")),
+        ("exp", lambda: _make_unary_model("Exp", name="exp")),
+        ("sqrt", lambda: _make_unary_model("Sqrt", name="sqrt")),
+        ("neg", lambda: _make_unary_model("Neg", name="neg")),
     ],
 )
 def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
@@ -259,6 +280,30 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         interpreter.set_tensor(input_details[0]["index"], x)
         interpreter.invoke()
         _ = interpreter.get_tensor(output_details[0]["index"])
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_clip_relu6_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_clip_relu6_model()
+        model_path = _save_model(tmpdir, "clip_relu6", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.array([[-1.0, 3.0, 10.0]], dtype=np.float32)
+        interpreter.set_tensor(input_details[0]["index"], x)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        np.testing.assert_allclose(
+            y,
+            np.array([[0.0, 3.0, 6.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
@@ -710,8 +755,8 @@ def test_flatbuffer_direct_op_coverage_report_generation() -> None:
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
 def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        model = _make_relu_model()
-        model_path = _save_model(tmpdir, "relu_cov", model)
+        model = _make_elu_model()
+        model_path = _save_model(tmpdir, "elu_cov", model)
         out_dir = os.path.join(tmpdir, "out")
         with pytest.raises(NotImplementedError):
             _convert(
@@ -720,11 +765,11 @@ def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
                 "flatbuffer_direct",
                 report_op_coverage=True,
             )
-        report_path = os.path.join(out_dir, "relu_cov_op_coverage_report.json")
+        report_path = os.path.join(out_dir, "elu_cov_op_coverage_report.json")
         assert os.path.isfile(report_path)
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
         assert report["conversion_error"] is not None
         assert report["graph_summary"]["unsupported_nodes"] == 1
         assert report["unsupported_reason_counts"]["unsupported_onnx_op"] == 1
-        assert report["unsupported_nodes"][0]["onnx_op"] == "Relu"
+        assert report["unsupported_nodes"][0]["onnx_op"] == "Elu"
