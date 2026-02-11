@@ -392,6 +392,34 @@ def build_op_coverage_report(
         reason = str(issue.get("reason_code", "unknown"))
         reason_counts[reason] = int(reason_counts.get(reason, 0) + 1)
 
+    normalized_allowlist = (
+        [str(v).strip() for v in custom_op_allowlist if str(v).strip() != ""]
+        if custom_op_allowlist is not None
+        else None
+    )
+    allowlist_set = (
+        {str(v) for v in normalized_allowlist}
+        if normalized_allowlist is not None
+        else set()
+    )
+    candidate_ops_now_builtin_supported = sorted(
+        list(custom_candidate_ops & supported_registry_ops)
+    )
+    allowlist_builtin_supported_ops = sorted(
+        list(allowlist_set & supported_registry_ops)
+    )
+    allowlist_custom_candidate_ops = sorted(
+        list(allowlist_set & custom_candidate_ops)
+    )
+    allowlist_unknown_ops = sorted(
+        list(
+            allowlist_set
+            - supported_registry_ops
+            - custom_candidate_ops
+            - schema_ops
+        )
+    )
+
     total_nodes = len(node_reports)
     supported_nodes = len([r for r in node_reports if r["supported"] is True])
     coverage = float(supported_nodes / total_nodes) if total_nodes > 0 else 1.0
@@ -425,11 +453,18 @@ def build_op_coverage_report(
         "custom_op_policy": {
             "allow_custom_ops": bool(allow_custom_ops),
             "custom_op_allowlist": (
-                [str(v) for v in custom_op_allowlist]
-                if custom_op_allowlist is not None
+                [str(v) for v in normalized_allowlist]
+                if normalized_allowlist is not None
                 else None
             ),
             "candidate_count": int(len(custom_candidate_ops)),
+            "candidate_count_excluding_builtin_supported": int(
+                len(custom_candidate_ops - supported_registry_ops)
+            ),
+            "candidate_ops_now_builtin_supported": candidate_ops_now_builtin_supported,
+            "allowlist_builtin_supported_ops": allowlist_builtin_supported_ops,
+            "allowlist_custom_candidate_ops": allowlist_custom_candidate_ops,
+            "allowlist_unknown_ops": allowlist_unknown_ops,
         },
         "preprocess_report": (
             dict(preprocess_report)

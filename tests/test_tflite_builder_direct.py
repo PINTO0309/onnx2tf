@@ -407,6 +407,31 @@ def _make_einsum_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_einsum_fc_const_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2])
+    w = numpy_helper.from_array(
+        np.array(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ],
+            dtype=np.float32,
+        ),
+        name="W",
+    )
+    node = helper.make_node(
+        "Einsum",
+        ["x", "W"],
+        ["z"],
+        name="EinsumConstNode",
+        equation="ij,jk->ik",
+    )
+    graph = helper.make_graph([node], "einsum_fc_const_graph", [x], [z], initializer=[w])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _requires_flatbuffer_tools() -> bool:
     return shutil.which("flatc") is not None and shutil.which("curl") is not None
 
@@ -511,6 +536,7 @@ def test_tflite_backend_matrix_add() -> None:
         ("transpose_attr_only", _make_transpose_attr_only_model),
         ("softmax_axis_non_last", _make_softmax_axis_non_last_model),
         ("reduce_axes_concat_const", _make_reduce_axes_concat_const_model),
+        ("einsum_fc_const", _make_einsum_fc_const_model),
     ],
 )
 def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
@@ -622,10 +648,48 @@ def test_flatbuffer_direct_custom_op_coverage_report() -> None:
         assert report["custom_op_policy"]["allow_custom_ops"] is True
         assert "Einsum" in report["graph_custom_ops"]
         assert report["graph_summary"]["custom_lowered_nodes"] == 1
+        assert (
+            report["custom_op_policy"]["candidate_count_excluding_builtin_supported"]
+            == report["custom_op_policy"]["candidate_count"] - 1
+        )
+        assert "Einsum" in report["custom_op_policy"]["candidate_ops_now_builtin_supported"]
+        assert "Einsum" in report["custom_op_policy"]["allowlist_builtin_supported_ops"]
+        assert "Einsum" in report["custom_op_policy"]["allowlist_custom_candidate_ops"]
+        assert report["custom_op_policy"]["allowlist_unknown_ops"] == []
         node_reports = report["graph_node_reports"]
         assert any(
             r["onnx_op"] == "Einsum" and r["dispatch_mode"] == "custom"
             for r in node_reports
+        )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_einsum_builtin_preferred_over_custom() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_einsum_fc_const_model()
+        model_path = _save_model(tmpdir, "einsum_builtin_preferred", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["Einsum"],
+            report_op_coverage=True,
+        )
+        assert os.path.isfile(tflite_path)
+        custom_codes = _collect_custom_codes(tflite_path)
+        assert "ONNX_EINSUM" not in custom_codes
+
+        report_path = os.path.join(out_dir, "einsum_builtin_preferred_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert "Einsum" not in report["graph_custom_ops"]
+        assert any(
+            r["onnx_op"] == "Einsum" and r["dispatch_mode"] == "builtin"
+            for r in report["graph_node_reports"]
         )
 
 

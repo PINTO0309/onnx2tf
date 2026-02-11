@@ -451,6 +451,60 @@ def _validate_l2_norm(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_einsum(node: Any, ctx: Any) -> None:
+    equation = str(node.attrs.get("equation", "")).replace(" ", "")
+    if equation == "":
+        raise NodeValidationError(
+            reason_code="missing_required_attribute",
+            message="Einsum requires equation attribute.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if "..." in equation:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Einsum ellipsis is not supported for builtin lowering. equation={equation}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    try:
+        lhs, rhs_out = equation.split(",", 1)
+        rhs, out = rhs_out.split("->", 1)
+    except Exception as ex:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Einsum equation format is invalid. equation={equation}",
+            node_name=node.name,
+            node_op=node.op,
+        ) from ex
+    if len(lhs) != 2 or len(rhs) != 2 or len(out) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Einsum builtin lowering currently supports rank-2 matmul-style equations only. "
+                f"equation={equation}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    is_matmul_style = (
+        lhs[1] == rhs[0]
+        and out[0] == lhs[0]
+        and out[1] == rhs[1]
+    )
+    if not is_matmul_style:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Einsum equation is not matmul-style for builtin lowering. "
+                f"equation={equation}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    _validate_fc(node, ctx)
+
+
 def _validate_space_to_depth(node: Any, ctx: Any) -> None:
     block_size = int(node.attrs.get("blocksize", 0))
     if block_size <= 1:
@@ -793,6 +847,18 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_fc,
     ),
+    "Einsum": DispatchEntry(
+        onnx_op="Einsum",
+        tflite_ops=["FULLY_CONNECTED"],
+        builder=build_fully_connected_from_gemm_or_matmul,
+        validation=ValidationSpec(
+            min_inputs=2,
+            max_inputs=2,
+            min_outputs=1,
+            max_outputs=1,
+        ),
+        extra_validator=_validate_einsum,
+    ),
 }
 
 
@@ -828,15 +894,22 @@ def resolve_node_dispatch(node: Any, ctx: Any) -> DispatchResolution:
             node_name=node.name,
             node_op=node.op,
         )
-    _validate_counts(node, entry.validation)
-    _validate_attrs(node, entry.validation)
-    _validate_rank_constraints(node, ctx, entry.validation)
-    if entry.extra_validator is not None:
-        entry.extra_validator(node, ctx)
-    return DispatchResolution(
-        entry=entry,
-        dispatch_mode="builtin",
-    )
+    try:
+        _validate_counts(node, entry.validation)
+        _validate_attrs(node, entry.validation)
+        _validate_rank_constraints(node, ctx, entry.validation)
+        if entry.extra_validator is not None:
+            entry.extra_validator(node, ctx)
+        return DispatchResolution(
+            entry=entry,
+            dispatch_mode="builtin",
+        )
+    except NodeValidationError as ve:
+        if str(node.op) in _CUSTOM_OP_CANDIDATES:
+            custom_resolution = _resolve_custom_candidate(node, ctx)
+            if custom_resolution is not None:
+                return custom_resolution
+        raise ve
 
 
 def validate_node_support(node: Any, ctx: Any) -> DispatchEntry:
