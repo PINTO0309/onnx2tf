@@ -198,6 +198,34 @@ reason_code 付き明示失敗:
 1. `requires_constant_input` / `unsupported_attribute_value` の失敗率が低下する。
 2. 既存成功ケースに回帰がない。
 
+#### Step A5 実施結果（2026-02-11）
+実装内容:
+1. `onnx2tf/tflite_builder/preprocess/rules/normalize_attrs.py` を新規追加し、属性/shape 正規化ルールを実装。
+2. 正規化対象:
+3. `Transpose` の `perm` 属性を定数入力へ正規化（input[1] 生成）
+4. `Reduce*` / `Squeeze` / `Unsqueeze` の `axes` 属性を定数入力へ正規化
+5. `Gather` / `Softmax` / `LpNormalization` の負axisを rank 基準で正規化
+6. `Conv` / `Pool` の `pads`（長さ2）を `[t,l,b,r]` 形式へ正規化
+7. `Softmax(axis != last)` は `Transpose -> Softmax(last axis) -> Transpose` へ事前変換
+8. `onnx2tf/tflite_builder/preprocess/rules/constant_fold.py` を新規追加し、限定 constant-folding を実装。
+9. fold 対象: `Identity`, `Cast`, `Unsqueeze`, `Squeeze`, `Concat`, `Reshape`, `Transpose`, `Gather`, `Shape`, `Add/Sub/Mul/Div`, `Neg`
+10. `onnx2tf/tflite_builder/preprocess/rules/__init__.py` の default 順を更新:
+11. `pattern_fusion_wave2 -> pseudo_ops_wave1 -> constant_fold_a5 -> normalize_attrs_a5`
+12. `onnx2tf/tflite_builder/op_registry.py` を更新し、`Transpose` を attr-perm/暗黙perm でも受理可能化（min_inputs 1..2）
+
+テスト:
+1. `tests/test_tflite_builder_preprocess.py` に normalize/constant-fold の単体テストを追加
+2. `tests/test_tflite_builder_direct.py` の operator smoke に A5 対象モデルを追加
+3. 既存の Step A3/A4 ケースを含む選択実行で回帰なしを確認
+
+効果（失敗率観点）:
+1. `requires_constant_input` を起こしやすい `Transpose`/`Reduce axes` 入力を前段で定数化
+2. `unsupported_attribute_value` を起こしやすい `Softmax axis != last` を前段で変換
+
+カバレッジ差分:
+1. 前回値 `15.95%` -> 今回値 `15.95%`（差分 `+0.00%`）
+2. 変化なし理由: Step A5 は主に失敗回避/正規化強化で、Builtin 種別の新規追加はなし。
+
 ### Step A6: custom-op candidate 縮小フェーズ
 1. custom candidate 一覧を再評価し、Builtin 化済み OP を候補から外す。
 2. `schema_policy_matrix` の `custom_candidate` を段階的に減らす。
@@ -278,7 +306,7 @@ reason_code 付き明示失敗:
 2. `[x] Step A2 完了`
 3. `[x] Step A3 完了`
 4. `[x] Step A4 完了`
-5. `[ ] Step A5 完了`
+5. `[x] Step A5 完了`
 6. `[ ] Step A6 完了`
 7. `[ ] Step A7 完了`
 8. `[ ] Step A8 完了`

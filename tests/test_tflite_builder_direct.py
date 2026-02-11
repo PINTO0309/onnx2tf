@@ -271,6 +271,33 @@ def _make_space_to_depth_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_transpose_attr_only_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
+    node = helper.make_node("Transpose", ["x"], ["y"], name="TransposeAttrOnlyNode", perm=[0, 2, 1])
+    graph = helper.make_graph([node], "transpose_attr_only_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_softmax_axis_non_last_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node("Softmax", ["x"], ["y"], name="SoftmaxAxisNonLastNode", axis=1)
+    graph = helper.make_graph([node], "softmax_axis_non_last_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reduce_axes_concat_const_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
+    c0 = numpy_helper.from_array(np.array([1], dtype=np.int64), name="c0")
+    c1 = numpy_helper.from_array(np.array([], dtype=np.int64), name="c1")
+    n0 = helper.make_node("Concat", ["c0", "c1"], ["axes"], name="AxesConcatNode", axis=0)
+    n1 = helper.make_node("ReduceSum", ["x", "axes"], ["y"], name="ReduceConstFoldNode", keepdims=1)
+    graph = helper.make_graph([n0, n1], "reduce_axes_concat_const_graph", [x], [y], initializer=[c0, c1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_mean_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1])
@@ -481,6 +508,9 @@ def test_tflite_backend_matrix_add() -> None:
         ("pow_square", _make_pow_square_model),
         ("space_to_depth", _make_space_to_depth_model),
         ("space_to_depth_chain", _make_space_to_depth_chain_model),
+        ("transpose_attr_only", _make_transpose_attr_only_model),
+        ("softmax_axis_non_last", _make_softmax_axis_non_last_model),
+        ("reduce_axes_concat_const", _make_reduce_axes_concat_const_model),
     ],
 )
 def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
