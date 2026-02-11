@@ -244,6 +244,33 @@ def _make_pow_square_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_space_to_depth_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
+    node = helper.make_node(
+        "SpaceToDepth",
+        ["x"],
+        ["y"],
+        name="SpaceToDepthNode",
+        blocksize=2,
+        mode="DCR",
+    )
+    graph = helper.make_graph([node], "space_to_depth_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_space_to_depth_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
+    shape1 = numpy_helper.from_array(np.array([1, 2, 2, 2, 2, 2], dtype=np.int64), name="shape1")
+    shape2 = numpy_helper.from_array(np.array([1, 8, 2, 2], dtype=np.int64), name="shape2")
+    n0 = helper.make_node("Reshape", ["x", "shape1"], ["r1"], name="ReshapeNode0")
+    n1 = helper.make_node("Transpose", ["r1"], ["t1"], name="TransposeNode", perm=[0, 1, 3, 5, 2, 4])
+    n2 = helper.make_node("Reshape", ["t1", "shape2"], ["y"], name="ReshapeNode1")
+    graph = helper.make_graph([n0, n1, n2], "space_to_depth_chain_graph", [x], [y], initializer=[shape1, shape2])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_mean_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1])
@@ -452,6 +479,8 @@ def test_tflite_backend_matrix_add() -> None:
         ("prelu", _make_prelu_model),
         ("gelu", _make_gelu_model),
         ("pow_square", _make_pow_square_model),
+        ("space_to_depth", _make_space_to_depth_model),
+        ("space_to_depth_chain", _make_space_to_depth_chain_model),
     ],
 )
 def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:

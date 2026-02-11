@@ -19,6 +19,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_pool2d_op,
     build_reduce_op,
     build_reshape_op,
+    build_space_to_depth_op,
     build_squeeze_op,
     build_softmax_op,
     build_transpose_op,
@@ -433,6 +434,25 @@ def _validate_l2_norm(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_space_to_depth(node: Any, ctx: Any) -> None:
+    block_size = int(node.attrs.get("blocksize", 0))
+    if block_size <= 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"SpaceToDepth blocksize must be > 1. got={block_size}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    mode = str(node.attrs.get("mode", "DCR")).upper()
+    if mode != "DCR":
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"SpaceToDepth mode must be DCR. got={mode}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _make_binary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
     def _builder(node: Any, ctx: Any) -> None:
         build_binary_op(node, ctx, tflite_op)
@@ -683,6 +703,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["RESHAPE"],
         builder=build_identity_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "SpaceToDepth": DispatchEntry(
+        onnx_op="SpaceToDepth",
+        tflite_ops=["SPACE_TO_DEPTH"],
+        builder=build_space_to_depth_op,
+        validation=ValidationSpec(
+            min_inputs=1,
+            max_inputs=1,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [4]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_space_to_depth,
     ),
     "Conv": DispatchEntry(
         onnx_op="Conv",
