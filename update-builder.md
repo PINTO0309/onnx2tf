@@ -64,6 +64,8 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - Step 25 実装（全OP Wave1 第1弾: `Relu`, `Tanh`, `Exp`, `Sqrt`, `Neg`, `Clip(min=0,max=6 / +inf)` を追加し、高頻度活性化・単項演算の変換成功率を向上）
 - Step 26 実装（Wave2 第1弾: `ReduceMean`, `ReduceSum`, `Squeeze`, `Unsqueeze`, `Gather`, `LpNormalization(p=2, axis=last)` を追加し、Reduce/Norm/Index 系を拡張。`Gather(int32)` と integer quantized 経路で互換性を検証）
 - Step 27 実装（難所対応の方針化: `If/Loop/Scan/Sequence*/GridSample/RoiAlign/DeformConv/Einsum/...` を custom-op candidate として定義し、`--flatbuffer_direct_allow_custom_ops` + allowlist による `CUSTOM` 降格経路を追加。失敗時 reason_code（`custom_op_candidate_disabled` / `custom_op_not_in_allowlist`）と OP coverage 診断を拡張）
+- Step 28 実装（収束・安定化: schema-op 単位の policy matrix（`builtin_supported/custom_candidate/explicit_error`）を coverage report に追加し、統合回帰テスト（量子化+評価+coverage、分割+split評価+coverage）を導入。`--flatbuffer_direct_fallback_to_tf_converter` を追加し、README と `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` を最終更新）
+- Step 29 実装（`--auto_split_max_size_mb` を `--auto_split_max_size` へ移行し、`KB/MB/GB` 指定を解禁。`auto_split_tflite_by_size=True` かつ `auto_split_max_size` 指定時は同値を TFLite 分割 target に同期するよう変更）
 
 2. 検証済み:
 - `python -m py_compile onnx2tf/onnx2tf.py onnx2tf/tflite_builder/__init__.py`
@@ -98,9 +100,13 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 - `Einsum` など custom-op candidate は既定で明示失敗し、`flatbuffer_direct_allow_custom_ops=True` + allowlist 指定時のみ `CUSTOM` として `.tflite` 出力できること
 - OP coverage report に `dispatch_mode`, `graph_custom_ops`, `custom_lowered_nodes`, `custom_op_policy` が出力されること
 - `python -m onnx2tf.onnx2tf -h` に `--flatbuffer_direct_allow_custom_ops`, `--flatbuffer_direct_custom_op_allowlist` が表示されること
+- OP coverage report に `schema_policy_matrix`, `schema_policy_counts`, `schema_unresolved_ops` が出力されること
+- `--flatbuffer_direct_fallback_to_tf_converter` 指定時、direct失敗で tf_converter へフォールバックできること
+- 統合回帰（量子化+評価+coverage、分割+split評価+coverage）がテスト化されていること
+- `--auto_split_max_size`（`KB/MB/GB`）の解釈と `auto_split_tflite_by_size` 連携をテストで検証できること（`pytest -q tests/test_tflite_builder_direct.py`: 43 passed）
 
 3. 未着手:
-- 追加要件 Step 28（全OP本格実装）
+- なし
 
 ## 拡張ステージ（M5-Stage1: Dynamic Range Quant 最小対応）
 ### Step 10: 拡張仕様固定（限定解禁）
@@ -484,4 +490,5 @@ ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、
 26. `[x] Step 25 完了`
 27. `[x] Step 26 完了`
 28. `[x] Step 27 完了`
-29. `[ ] Step 28 完了`
+29. `[x] Step 28 完了`
+30. `[x] Step 29 完了`

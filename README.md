@@ -1696,6 +1696,10 @@ flatbuffer_direct notes:
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
    `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
+9. Optional fallback:
+   `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
+10. Migration guide:
+   See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
@@ -1899,12 +1903,14 @@ flatbuffer_direct notes:
 
   -easm, --enable_auto_split_model
     Force auto split regardless of the ONNX file size.
-    Uses --auto_split_max_size_mb as the target partition size.
+    Uses --auto_split_max_size as the target partition size.
 
-  -asmsm AUTO_SPLIT_MAX_SIZE_MB, --auto_split_max_size_mb AUTO_SPLIT_MAX_SIZE_MB
-    Target maximum size per partition in MB based on ONNX initializer sizes.
-    Used when auto-split is triggered or forced.
-    Default: 1024
+  -asms AUTO_SPLIT_MAX_SIZE, --auto_split_max_size AUTO_SPLIT_MAX_SIZE
+    Target maximum size per partition when auto-split is triggered or forced.
+    Supported units: KB, MB, GB (e.g. 900MB, 1GB, 1536KB).
+    Bare numbers are treated as MB.
+    When specified, this value is also used as the target size for --auto_split_tflite_by_size.
+    Default: 1GB
 
   -dgc, --disable_group_convolution
     Disable GroupConvolution and replace it with SeparableConvolution for
@@ -2178,7 +2184,8 @@ convert(
   input_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   enable_auto_split_model: Optional[bool] = False,
-  auto_split_max_size_mb: Optional[int] = 1024,
+  auto_split_max_size: Union[Any, NoneType] = None,
+  auto_split_max_size_mb: Union[int, NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
   enable_rnn_unroll: Optional[bool] = False,
@@ -2464,14 +2471,20 @@ convert(
 
     enable_auto_split_model: Optional[bool]
       Force auto split regardless of the ONNX file size.
-      Uses auto_split_max_size_mb as the target partition size.
+      Uses auto_split_max_size as the target partition size.
       Short option: -easm
       Default: False
 
-    auto_split_max_size_mb: Optional[int]
-      Target maximum size per partition in MB based on ONNX initializer sizes.
+    auto_split_max_size: Optional[Any]
+      Target maximum size per partition.
+      Supports values such as "512KB", "900MB", and "1.5GB".
+      Bare numeric values are treated as MB.
       Used when auto-split is triggered or forced.
-      Default: 1024
+      When specified, also used as the split target when auto_split_tflite_by_size=True.
+      Default: "1GB"
+
+    auto_split_max_size_mb: Optional[int]
+      [Deprecated] Legacy alias of auto_split_max_size in MB.
 
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for
