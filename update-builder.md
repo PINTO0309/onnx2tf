@@ -1,5 +1,8 @@
 # TFLite FlatBuffer Builder 直接生成: 作業分解
 
+## 関連ドキュメント
+1. TF 経路最適化資産の direct 移植計画: [`update-builder2.md`](update-builder2.md)
+
 ## 目的
 ONNX -> TensorFlow -> TFLiteConverter の最終段を段階的に置き換え、TFLite FlatBuffer Builder を直接使って `.tflite` を生成できる経路を追加する。
 
