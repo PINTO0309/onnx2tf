@@ -48,6 +48,31 @@ ONNX_INF_INDEX_VALUE = sys.maxsize # 9223372036854775807
 
 _DEFAULT_DUMMY_SHAPE_HINTS: Optional[List[str]] = None
 _DEFAULT_DUMMY_VALUE_HINTS: Optional[List[str]] = None
+_DEFAULT_TFLITE_SCHEMA_REPOSITORY: str = 'google-ai-edge/LiteRT'
+_DEFAULT_TFLITE_SCHEMA_TAG: str = 'v2.1.2'
+_DEFAULT_TFLITE_SCHEMA_RELATIVE_PATH: str = 'tflite/converter/schema/schema.fbs'
+
+
+def get_tflite_schema_fbs_url() -> str:
+    repository = os.environ.get(
+        'ONNX2TF_TFLITE_SCHEMA_REPOSITORY',
+        _DEFAULT_TFLITE_SCHEMA_REPOSITORY,
+    ).strip().strip('/')
+    schema_tag = os.environ.get(
+        'ONNX2TF_TFLITE_SCHEMA_TAG',
+        _DEFAULT_TFLITE_SCHEMA_TAG,
+    ).strip()
+    schema_relative_path = os.environ.get(
+        'ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH',
+        _DEFAULT_TFLITE_SCHEMA_RELATIVE_PATH,
+    ).strip().lstrip('/')
+    if repository == '':
+        repository = _DEFAULT_TFLITE_SCHEMA_REPOSITORY
+    if schema_tag == '':
+        schema_tag = _DEFAULT_TFLITE_SCHEMA_TAG
+    if schema_relative_path == '':
+        schema_relative_path = _DEFAULT_TFLITE_SCHEMA_RELATIVE_PATH
+    return f'https://raw.githubusercontent.com/{repository}/{schema_tag}/{schema_relative_path}'
 
 
 def set_dummy_shape_hints(shape_hints: Optional[List[str]]) -> None:
@@ -5169,10 +5194,12 @@ def rewrite_tflite_inout_opname(
 
         # Download schema.fbs if it does not exist
         if not os.path.isfile(f'{output_folder_path}/schema.fbs'):
+            schema_fbs_url = get_tflite_schema_fbs_url()
             result = subprocess.check_output(
                 [
                     'curl',
-                    'https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0-rc1/tensorflow/compiler/mlir/lite/schema/schema.fbs',
+                    '-fL',
+                    schema_fbs_url,
                     '-o',
                     f'{output_folder_path}/schema.fbs'
                 ],
@@ -5314,6 +5341,8 @@ def rewrite_tflite_inout_opname(
             'If you want tflite input OP name and output OP name ' +
             'to match ONNX input and output names, ' +
             'convert them after installing "flatc". ' +
+            f'Current schema.fbs source: {get_tflite_schema_fbs_url()} ' +
+            '(override by ONNX2TF_TFLITE_SCHEMA_TAG/REPOSITORY/RELATIVE_PATH). ' +
             'Also, do not use symbols such as slashes in input/output OP names. ' +
             'To install flatc, run the following command:\n' +
             'wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz' +

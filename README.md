@@ -1,5 +1,5 @@
 # onnx2tf
-Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). 
+Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC).
 
 You should use LiteRT Torch rather than onnx2tf. https://github.com/google-ai-edge/litert-torch
 
@@ -268,6 +268,125 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
   </div></details>
 
+> [!WARNING]
+> `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
+> For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
+
+### flatbuffer_direct support status for ONNX ops in this list
+- Scope: ONNX ops listed in the `Supported layers` table above.
+- Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
+- Current summary:
+  - Listed ONNX ops in this README section: `205`
+  - `builtin_supported`: `29`
+  - `custom_candidate` (opt-in): `16`
+  - `explicit_error` (default): `160`
+
+Notes:
+- `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
+- Some ops are conditionally supported (rank/attribute/constant-input constraints).
+- For model-specific results, use `--report_op_coverage` and check `*_op_coverage_report.json`.
+
+<details><summary>Builtin supported (ONNX -> TFLite) in flatbuffer_direct</summary><div>
+
+|ONNX OP|TFLite OP|Key constraints (flatbuffer_direct)|
+|:-|:-|:-|
+|Add|ADD|-|
+|AveragePool|AVERAGE_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|Clip|RELU / RELU6|Only `min=0,max=+inf` (ReLU) or `min=0,max=6` (ReLU6)|
+|Concat|CONCATENATION|-|
+|Conv|CONV_2D / DEPTHWISE_CONV_2D|2D only (rank=4), weights must be constant, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`|
+|Div|DIV|-|
+|Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
+|Exp|EXP|-|
+|Gather|GATHER|`batch_dims=0` only|
+|Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
+|Identity|RESHAPE|-|
+|LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
+|MatMul|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant|
+|MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|Mul|MUL|-|
+|Neg|NEG|-|
+|ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
+|ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
+|Relu|RELU|-|
+|Reshape|RESHAPE|Shape input must be constant|
+|Sigmoid|LOGISTIC|-|
+|Softmax|SOFTMAX|`axis=last` only|
+|SpaceToDepth|SPACE_TO_DEPTH|`blocksize > 1`, rank=4 (NCHW)|
+|Sqrt|SQRT|-|
+|Squeeze|SQUEEZE|Axes must be constant when provided via input tensor|
+|Sub|SUB|-|
+|Tanh|TANH|-|
+|Transpose|TRANSPOSE|Permutation input must be constant|
+|Unsqueeze|RESHAPE|Axes must be constant and in range|
+
+</div></details>
+
+<details><summary>Custom-op candidates in flatbuffer_direct (opt-in)</summary><div>
+
+|ONNX OP|Default policy|When enabled|
+|:-|:-|:-|
+|DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|DynamicQuantizeLinear|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|GridSample|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|If|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|NonMaxSuppression|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|RoiAlign|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Scan|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|ScatterElements|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceAt|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceConstruct|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceErase|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceInsert|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceLength|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|TopK|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Unique|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+
+</div></details>
+
+Notes:
+- `Einsum` is now treated as `builtin_supported` when it matches builtin constraints; unsupported `Einsum` patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+
+### tf_converter vs flatbuffer_direct (operational differences)
+
+|Item|`tf_converter` (default)|`flatbuffer_direct`|
+|:-|:-|:-|
+|Final backend|TensorFlow Lite Converter|Direct FlatBuffer builder (`schema.fbs`)|
+|Model optimization source|Large set of existing TF-path graph rewrites/heuristics|Dedicated direct preprocess pipeline + direct dispatch constraints|
+|Failure behavior|Often absorbed by TF-side graph lowering|Explicit `reason_code`-based failure on unsupported patterns|
+|Custom op handling|Typically avoided by TF-side replacement when possible|Opt-in only (`--flatbuffer_direct_allow_custom_ops`) with allowlist|
+|Diagnostics|Standard conversion logs|`*_op_coverage_report.json` (`dispatch_mode`, `unsupported_reason_counts`, `custom_op_policy`, `preprocess_report`)|
+|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter` available|
+
+### flatbuffer_direct preprocess absorption scope
+
+`flatbuffer_direct` runs staged preprocess rules before lowering. Current major coverage:
+1. `pattern_fusion_wave2`
+   - `Relu -> Clip(min=0,max=6)` chain normalization
+   - GELU chain fusion (`Div -> Erf -> Add -> Mul -> Mul`)
+   - `Reshape -> Transpose -> Reshape` to `SpaceToDepth`
+2. `pseudo_ops_wave1`
+   - `HardSwish`, `LeakyRelu`, `PRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
+3. `constant_fold_a5`
+   - Limited constant folding for shape/axes and arithmetic helper chains
+4. `normalize_attrs_a5`
+   - Normalize `perm`/`axes`/negative-axis forms and softmax-axis bridge rewrites
+
+Notes:
+1. This reduces, but does not fully match, the TF-path replacement coverage.
+2. To inspect what was applied, use `--report_op_coverage` and check `preprocess_report.applied_rules`.
+
+### Known constraints and workaround options
+
+|Symptom (`reason_code`)|Meaning|Recommended action|
+|:-|:-|:-|
+|`unsupported_onnx_op`|No direct builtin/custom path for the node|Use `--tflite_backend tf_converter`, or enable `--flatbuffer_direct_fallback_to_tf_converter`|
+|`requires_constant_input`|Node requires compile-time constant input (e.g., axes/perm/shape)|Pre-fold ONNX graph (`onnxsim`) or rewrite model to constantize the input|
+|`unsupported_attribute_value`|Attribute/rank/value not accepted by direct builtin constraints|Adjust ONNX export options or rewrite offending subgraph before conversion|
+|`custom_op_candidate_disabled`|Op is in custom-candidate set but custom lowering is disabled|Enable `--flatbuffer_direct_allow_custom_ops` when runtime supports the custom op|
+|`custom_op_not_in_allowlist`|Custom lowering enabled but op is not allowlisted|Add op to `--flatbuffer_direct_custom_op_allowlist` explicitly|
+
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
 ![render1665941718294](https://user-images.githubusercontent.com/33194443/196049928-57520fc2-842d-459c-9f28-7ee5f040c226.gif)
@@ -331,7 +450,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.5
+  ghcr.io/pinto0309/onnx2tf:2.0.6
 
   or
 
@@ -339,7 +458,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.5
+  docker.io/pinto0309/onnx2tf:2.0.6
 
   or
 
@@ -349,7 +468,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.5 \
+  docker.io/pinto0309/onnx2tf:2.0.6 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1659,6 +1778,49 @@ optional arguments:
   -oiqt, --output_integer_quantized_tflite
     Output of integer quantized tflite.
 
+  -tb {tf_converter,flatbuffer_direct}, \
+    --tflite_backend {tf_converter,flatbuffer_direct}
+    TFLite generation backend.
+    "tf_converter"(default): Use TensorFlow Lite Converter.
+    "flatbuffer_direct": Experimental direct FlatBuffer builder path (limited OP/quantization support).
+
+flatbuffer_direct notes:
+1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
+2. Direct export supports FP32/FP16 `.tflite` generation.
+3. Dynamic range quantization (`-odrqt`) is supported in a limited form:
+   weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
+   and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
+   For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
+4. Integer quantization (`-oiqt`) is supported in a limited form:
+   `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
+   `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
+5. Supported builtin OP set includes:
+   `ADD`, `SUB`, `MUL`, `DIV`,
+   `MEAN`, `SUM`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`,
+   `CONCATENATION`, `GATHER`,
+   `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`,
+   `SOFTMAX`, `L2_NORMALIZATION`,
+   `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
+   `DEQUANTIZE`, `QUANTIZE`.
+6. Unsupported OPs fail explicitly with `NotImplementedError`.
+7. Custom OP policy (opt-in):
+   `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
+   `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
+   If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
+   If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
+8. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+   `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
+9. flatbuffer_direct quantization precision controls are configurable via environment variables:
+   `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
+   `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
+   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
+   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
+   `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
+10. Optional fallback:
+   `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
+11. Migration guide:
+   See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
+
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
@@ -1861,12 +2023,14 @@ optional arguments:
 
   -easm, --enable_auto_split_model
     Force auto split regardless of the ONNX file size.
-    Uses --auto_split_max_size_mb as the target partition size.
+    Uses --auto_split_max_size as the target partition size.
 
-  -asmsm AUTO_SPLIT_MAX_SIZE_MB, --auto_split_max_size_mb AUTO_SPLIT_MAX_SIZE_MB
-    Target maximum size per partition in MB based on ONNX initializer sizes.
-    Used when auto-split is triggered or forced.
-    Default: 1024
+  -asms AUTO_SPLIT_MAX_SIZE, --auto_split_max_size AUTO_SPLIT_MAX_SIZE
+    Target maximum size per partition when auto-split is triggered or forced.
+    Supported units: KB, MB, GB (e.g. 900MB, 1GB, 1536KB).
+    Bare numbers are treated as MB.
+    When specified, this value is also used as the target size for --auto_split_tflite_by_size.
+    Default: 1GB
 
   -dgc, --disable_group_convolution
     Disable GroupConvolution and replace it with SeparableConvolution for
@@ -2024,7 +2188,7 @@ optional arguments:
     * Buffers of TFLite model are mostly used for constant tensors.
       And zero value buffers are buffers filled with zeros.
       Non-data buffers area are used to store operators, subgraphs and etc.
-      You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+      You can find more details from https://github.com/google-ai-edge/LiteRT/blob/v2.1.2/tflite/converter/schema/schema.fbs
     """
 
   -coto, --check_onnx_tf_outputs_elementwise_close
@@ -2118,6 +2282,7 @@ convert(
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
+  tflite_backend: Optional[str] = 'tf_converter',
   quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
   quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
   quant_type: Optional[str] = 'per-channel',
@@ -2139,7 +2304,8 @@ convert(
   input_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   enable_auto_split_model: Optional[bool] = False,
-  auto_split_max_size_mb: Optional[int] = 1024,
+  auto_split_max_size: Union[Any, NoneType] = None,
+  auto_split_max_size_mb: Union[int, NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
   enable_batchmatmul_unfold: Optional[bool] = False,
   enable_rnn_unroll: Optional[bool] = False,
@@ -2217,6 +2383,14 @@ convert(
 
     output_integer_quantized_tflite: Optional[bool]
       Output of integer quantized tflite.
+
+    tflite_backend: Optional[str]
+      TFLite generation backend.
+      "tf_converter"(default): Use TensorFlow Lite Converter.
+      "flatbuffer_direct": Experimental direct FlatBuffer builder path.
+      Note: "flatbuffer_direct" supports a limited builtin OP set,
+      FP32/FP16 export, limited dynamic-range quantization,
+      limited integer quantization, and limited int16-activation variants.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.
@@ -2417,14 +2591,20 @@ convert(
 
     enable_auto_split_model: Optional[bool]
       Force auto split regardless of the ONNX file size.
-      Uses auto_split_max_size_mb as the target partition size.
+      Uses auto_split_max_size as the target partition size.
       Short option: -easm
       Default: False
 
-    auto_split_max_size_mb: Optional[int]
-      Target maximum size per partition in MB based on ONNX initializer sizes.
+    auto_split_max_size: Optional[Any]
+      Target maximum size per partition.
+      Supports values such as "512KB", "900MB", and "1.5GB".
+      Bare numeric values are treated as MB.
       Used when auto-split is triggered or forced.
-      Default: 1024
+      When specified, also used as the split target when auto_split_tflite_by_size=True.
+      Default: "1GB"
+
+    auto_split_max_size_mb: Optional[int]
+      [Deprecated] Legacy alias of auto_split_max_size in MB.
 
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for
@@ -2600,7 +2780,7 @@ convert(
       * Buffers of TFLite model are mostly used for constant tensors.
         And zero value buffers are buffers filled with zeros.
         Non-data buffers area are used to store operators, subgraphs and etc.
-        You can find more details from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/schema/schema.fbs
+        You can find more details from https://github.com/google-ai-edge/LiteRT/blob/v2.1.2/tflite/converter/schema/schema.fbs
       """
 
     check_onnx_tf_outputs_elementwise_close: Optional[bool]
