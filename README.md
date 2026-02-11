@@ -268,6 +268,78 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
   </div></details>
 
+### flatbuffer_direct support status for ONNX ops in this list
+- Scope: ONNX ops listed in the `Supported layers` table above.
+- Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
+- Current summary:
+  - Listed ONNX ops in this README section: `205`
+  - `builtin_supported`: `27`
+  - `custom_candidate` (opt-in): `17`
+  - `explicit_error` (default): `161`
+
+Notes:
+- `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
+- Some ops are conditionally supported (rank/attribute/constant-input constraints).
+- For model-specific results, use `--report_op_coverage` and check `*_op_coverage_report.json`.
+
+<details><summary>Builtin supported (ONNX -> TFLite) in flatbuffer_direct</summary><div>
+
+|ONNX OP|TFLite OP|Key constraints (flatbuffer_direct)|
+|:-|:-|:-|
+|Add|ADD|-|
+|AveragePool|AVERAGE_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|Clip|RELU / RELU6|Only `min=0,max=+inf` (ReLU) or `min=0,max=6` (ReLU6)|
+|Concat|CONCATENATION|-|
+|Conv|CONV_2D / DEPTHWISE_CONV_2D|2D only (rank=4), weights must be constant, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`|
+|Div|DIV|-|
+|Exp|EXP|-|
+|Gather|GATHER|`batch_dims=0` only|
+|Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
+|Identity|RESHAPE|-|
+|LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
+|MatMul|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant|
+|MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|Mul|MUL|-|
+|Neg|NEG|-|
+|ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
+|ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
+|Relu|RELU|-|
+|Reshape|RESHAPE|Shape input must be constant|
+|Sigmoid|LOGISTIC|-|
+|Softmax|SOFTMAX|`axis=last` only|
+|Sqrt|SQRT|-|
+|Squeeze|SQUEEZE|Axes must be constant when provided via input tensor|
+|Sub|SUB|-|
+|Tanh|TANH|-|
+|Transpose|TRANSPOSE|Permutation input must be constant|
+|Unsqueeze|RESHAPE|Axes must be constant and in range|
+
+</div></details>
+
+<details><summary>Custom-op candidates in flatbuffer_direct (opt-in)</summary><div>
+
+|ONNX OP|Default policy|When enabled|
+|:-|:-|:-|
+|DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|DynamicQuantizeLinear|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Einsum|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|GridSample|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|If|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|NonMaxSuppression|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|RoiAlign|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Scan|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|ScatterElements|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceAt|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceConstruct|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceErase|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceInsert|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|SequenceLength|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|TopK|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Unique|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+
+</div></details>
+
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
 ![render1665941718294](https://user-images.githubusercontent.com/33194443/196049928-57520fc2-842d-459c-9f28-7ee5f040c226.gif)
