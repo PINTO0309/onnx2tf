@@ -1156,6 +1156,9 @@ def test_flatbuffer_direct_op_coverage_report_generation() -> None:
         assert "Add" in report["graph_ops"]
         assert report["graph_summary"]["unsupported_nodes"] == 0
         assert report["graph_summary"]["coverage_ratio"] == 1.0
+        assert "preprocess_report" in report
+        assert report["preprocess_report"]["schema_version"] == 1
+        assert report["preprocess_report"]["summary"]["executed_rule_count"] >= 0
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")

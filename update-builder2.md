@@ -98,6 +98,18 @@ Step A2 以降の優先着手対象（確定）:
 1. ルール未登録でも no-op で従来通り動作する。
 2. レポートにプリパス適用履歴を出力できる。
 
+#### Step A2 実施結果（2026-02-11）
+実装内容:
+1. `onnx2tf/tflite_builder/preprocess/` を新設し、direct 前処理パイプラインの共通基盤を追加。
+2. `export_tflite_model_flatbuffer_direct` で `lower_onnx_to_ir` 前に `run_preprocess_pipeline` を実行。
+3. `report_op_coverage` 出力に `preprocess_report` を追加し、`rule_id` 単位の適用履歴を出力可能化。
+4. ルール未登録時は `registered_rule_count=0` / `executed_rule_count=0` の no-op 動作を確認。
+5. テスト: `tests/test_tflite_builder_preprocess.py`（新規）と `tests/test_tflite_builder_direct.py` の coverage report 検証を更新。
+
+カバレッジ差分:
+1. 前回値 `15.34%` -> 今回値 `15.34%`（差分 `+0.00%`）
+2. 変化なし理由: Step A2 は前処理基盤と計測導線の追加のみで、Builtin 化ルール自体は未追加。
+
 ### Step A3: 擬似OP置換ルール（Wave1）移植
 1. TF 経路で頻用の `replace_to_pseudo_operators` 相当を direct 前処理へ移植する。
 2. 対象候補: `Erf`, `GeLU`, `HardSwish`, `LeakyRelu`, `PReLU`, `Power/Pow`, `MatMulInteger`。
@@ -217,7 +229,7 @@ Step A2 以降の優先着手対象（確定）:
 
 ## 進捗トラッキング（テンプレ）
 1. `[x] Step A1 完了`
-2. `[ ] Step A2 完了`
+2. `[x] Step A2 完了`
 3. `[ ] Step A3 完了`
 4. `[ ] Step A4 完了`
 5. `[ ] Step A5 完了`

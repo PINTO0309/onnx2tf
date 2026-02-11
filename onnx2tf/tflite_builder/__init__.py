@@ -17,6 +17,7 @@ from onnx2tf.tflite_builder.quantization import (
     build_integer_quantized_model_ir,
     build_integer_quantized_with_int16_act_model_ir,
 )
+from onnx2tf.tflite_builder.preprocess import run_preprocess_pipeline
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.split_planner import (
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
@@ -123,6 +124,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         raise ValueError(
             "onnx_graph is required for tflite_backend='flatbuffer_direct'."
         )
+    preprocessed_onnx_graph = onnx_graph
+    preprocess_report: Dict[str, Any] = {
+        "schema_version": 1,
+        "pipeline_version": 1,
+        "registered_rule_ids": [],
+        "enabled_rule_ids": [],
+        "applied_rules": [],
+        "summary": {
+            "registered_rule_count": 0,
+            "enabled_rule_count": 0,
+            "executed_rule_count": 0,
+            "changed_rule_count": 0,
+            "total_matched_nodes": 0,
+            "total_rewritten_nodes": 0,
+        },
+    }
 
     os.makedirs(output_folder_path, exist_ok=True)
     schema_tflite = load_schema_module(output_folder_path)
@@ -138,11 +155,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         if not report_op_coverage or op_coverage_report_path is None:
             return
         report = build_op_coverage_report(
-            onnx_graph=onnx_graph,
+            onnx_graph=preprocessed_onnx_graph,
             output_file_name=output_file_name,
             conversion_error=conversion_error,
             allow_custom_ops=flatbuffer_direct_allow_custom_ops,
             custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+            preprocess_report=preprocess_report,
         )
         write_op_coverage_report(
             report=report,
@@ -150,8 +168,19 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         )
 
     try:
-        model_ir = lower_onnx_to_ir(
+        preprocessed_onnx_graph, preprocess_report = run_preprocess_pipeline(
             onnx_graph=onnx_graph,
+        )
+    except Exception as ex:
+        try:
+            _write_coverage_report(str(ex))
+        except Exception:
+            pass
+        raise
+
+    try:
+        model_ir = lower_onnx_to_ir(
+            onnx_graph=preprocessed_onnx_graph,
             output_file_name=output_file_name,
             allow_custom_ops=flatbuffer_direct_allow_custom_ops,
             custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
