@@ -1,5 +1,5 @@
 # onnx2tf
-Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). 
+Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC).
 
 You should use LiteRT Torch rather than onnx2tf. https://github.com/google-ai-edge/litert-torch
 
@@ -269,7 +269,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   </div></details>
 
 > [!WARNING]
-> `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.  
+> `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
 
 ### flatbuffer_direct support status for ONNX ops in this list
@@ -450,7 +450,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.5
+  ghcr.io/pinto0309/onnx2tf:2.0.6
 
   or
 
@@ -458,7 +458,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.5
+  docker.io/pinto0309/onnx2tf:2.0.6
 
   or
 
@@ -468,7 +468,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.5 \
+  docker.io/pinto0309/onnx2tf:2.0.6 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
