@@ -273,6 +273,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
 
 ### flatbuffer_direct support status for ONNX ops in this list
+
+<details><summary>Click to Click to expand</summary>
+
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
@@ -386,6 +389,8 @@ Notes:
 |`unsupported_attribute_value`|Attribute/rank/value not accepted by direct builtin constraints|Adjust ONNX export options or rewrite offending subgraph before conversion|
 |`custom_op_candidate_disabled`|Op is in custom-candidate set but custom lowering is disabled|Enable `--flatbuffer_direct_allow_custom_ops` when runtime supports the custom op|
 |`custom_op_not_in_allowlist`|Custom lowering enabled but op is not allowlisted|Add op to `--flatbuffer_direct_custom_op_allowlist` explicitly|
+
+</details>
 
 ## Demo
 Video speed is adjusted approximately 50 times slower than actual speed.
