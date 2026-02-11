@@ -127,6 +127,81 @@ def _run_split_partitions(
     return last_outputs
 
 
+def _load_test_data_nhwc(test_data_nhwc_path: Optional[str]) -> Optional[np.ndarray]:
+    if not test_data_nhwc_path:
+        return None
+    if not os.path.exists(test_data_nhwc_path):
+        raise FileNotFoundError(
+            f"test_data_nhwc_path does not exist. path={test_data_nhwc_path}"
+        )
+    data = np.asarray(np.load(test_data_nhwc_path))
+    if data.ndim != 4:
+        raise ValueError(
+            "test_data_nhwc_path must contain a 4D array [N,H,W,C]. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    if data.shape[-1] != 3:
+        raise ValueError(
+            "test_data_nhwc_path must have 3 channels in the last dim. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    if data.shape[0] <= 0:
+        raise ValueError(
+            "test_data_nhwc_path must include at least 1 sample. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    return data
+
+
+def _extract_sample_from_test_data_nhwc(
+    *,
+    data: np.ndarray,
+    sample_index: int,
+    expected_shape: tuple[int, ...],
+    np_dtype: np.dtype,
+) -> np.ndarray:
+    import tensorflow as tf
+
+    if len(expected_shape) != 4:
+        raise ValueError(
+            "test_data_nhwc_path can only be used for rank-4 inputs. "
+            f"expected_shape={expected_shape}"
+        )
+
+    expected_batch = int(expected_shape[0]) if int(expected_shape[0]) > 0 else 1
+    if data.shape[0] >= expected_batch:
+        start = int(sample_index % data.shape[0])
+        if start + expected_batch <= data.shape[0]:
+            sample = data[start : start + expected_batch]
+        else:
+            indices = [(start + i) % data.shape[0] for i in range(expected_batch)]
+            sample = data[indices]
+    else:
+        repeats = int(np.ceil(expected_batch / data.shape[0]))
+        sample = np.concatenate([data] * repeats, axis=0)[:expected_batch]
+
+    # ONNX input is NCHW
+    if expected_shape[1] == 3:
+        target_h = int(expected_shape[2]) if int(expected_shape[2]) > 0 else sample.shape[1]
+        target_w = int(expected_shape[3]) if int(expected_shape[3]) > 0 else sample.shape[2]
+        if sample.shape[1] != target_h or sample.shape[2] != target_w:
+            sample = tf.image.resize(sample, [target_h, target_w]).numpy()
+        sample = np.transpose(sample, [0, 3, 1, 2])
+    # ONNX input is NHWC
+    elif expected_shape[3] == 3:
+        target_h = int(expected_shape[1]) if int(expected_shape[1]) > 0 else sample.shape[1]
+        target_w = int(expected_shape[2]) if int(expected_shape[2]) > 0 else sample.shape[2]
+        if sample.shape[1] != target_h or sample.shape[2] != target_w:
+            sample = tf.image.resize(sample, [target_h, target_w]).numpy()
+    else:
+        raise ValueError(
+            "test_data_nhwc_path can only be used for 3-channel image inputs. "
+            f"expected_shape={expected_shape}"
+        )
+
+    return np.asarray(sample).astype(np_dtype, copy=False)
+
+
 def evaluate_split_manifest_outputs(
     *,
     onnx_graph: onnx.ModelProto,
@@ -137,6 +212,7 @@ def evaluate_split_manifest_outputs(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    test_data_nhwc_path: Optional[str] = None,
     rtol: float = 0.0,
     atol: float = 1e-4,
     compare_mode: str = "auto",
@@ -166,6 +242,7 @@ def evaluate_split_manifest_outputs(
 
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
+    test_data_nhwc = _load_test_data_nhwc(test_data_nhwc_path)
     input_specs = _collect_onnx_input_specs(onnx_graph)
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
@@ -225,6 +302,8 @@ def evaluate_split_manifest_outputs(
         output_name: {"matched": 0, "total": 0}
         for output_name in final_partition_outputs
     }
+    used_custom_inputs = False
+    used_test_data_nhwc = False
 
     for sample_index in range(int(num_samples)):
         sample_inputs: Dict[str, np.ndarray] = {}
@@ -239,6 +318,19 @@ def evaluate_split_manifest_outputs(
                     expected_shape=input_shape,
                     np_dtype=input_dtype,
                 )
+                used_custom_inputs = True
+            elif (
+                test_data_nhwc is not None
+                and len(input_shape) == 4
+                and (int(input_shape[1]) == 3 or int(input_shape[3]) == 3)
+            ):
+                sample = _extract_sample_from_test_data_nhwc(
+                    data=test_data_nhwc,
+                    sample_index=sample_index,
+                    expected_shape=input_shape,
+                    np_dtype=input_dtype,
+                )
+                used_test_data_nhwc = True
             else:
                 sample = _generate_seeded_input(
                     shape=input_shape,
@@ -309,12 +401,21 @@ def evaluate_split_manifest_outputs(
     )
     allclose_pass = bool(allclose_total == allclose_matched)
     evaluation_pass = bool(metric_judgement["pass"] and allclose_pass)
+    if used_custom_inputs and used_test_data_nhwc:
+        inputs_source = "mixed_custom_and_test_data_nhwc"
+    elif used_test_data_nhwc:
+        inputs_source = "test_data_nhwc_path"
+    elif used_custom_inputs:
+        inputs_source = "custom_input_op_name_np_data_path"
+    else:
+        inputs_source = "seeded_random"
 
     report: Dict[str, Any] = {
         "schema_version": 1,
         "reference_mode": reference_mode,
         "split_manifest_path": split_manifest_path,
         "reference_tflite_path": reference_tflite_path,
+        "inputs_source": inputs_source,
         "seed": int(seed),
         "num_samples": int(num_samples),
         "rtol": float(rtol),

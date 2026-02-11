@@ -800,6 +800,7 @@ def convert(
     check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
     check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
+    test_data_nhwc_path: Optional[str] = None,
     mvn_epsilon: Optional[float] = 0.0000000001,
     disable_model_save: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
@@ -1311,6 +1312,18 @@ def convert(
     check_onnx_tf_outputs_elementwise_close_atol: Optional[float]
         The absolute tolerance parameter.\n
         Default: 1e-4
+
+    test_data_nhwc_path: Optional[str]
+        Path to a numpy file (.npy) containing custom test data in NHWC format.\n
+        This is used for test inference and validation when check_onnx_tf_outputs options are enabled.\n
+        If not specified, the tool will attempt to download sample data from the internet\n
+        when the input is a 4D RGB image tensor.\n
+        The numpy array should have shape [batch_size, height, width, 3] with values\n
+        normalized to the range [0, 1].\n
+        This option is useful for offline environments or when you want to use\n
+        specific test data for validation.\n\n
+        e.g.\n
+        test_data_nhwc_path='./my_test_data.npy'
 
     disable_model_save: Optional[bool]
         Does not save the converted model. For CIs RAM savings.\n
@@ -2126,6 +2139,7 @@ def convert(
                     'check_onnx_tf_outputs_sample_data_normalization': check_onnx_tf_outputs_sample_data_normalization,
                     'check_onnx_tf_outputs_elementwise_close_rtol': check_onnx_tf_outputs_elementwise_close_rtol,
                     'check_onnx_tf_outputs_elementwise_close_atol': check_onnx_tf_outputs_elementwise_close_atol,
+                    'test_data_nhwc_path': test_data_nhwc_path,
                     'mvn_epsilon': mvn_epsilon,
                     'disable_model_save': disable_model_save,
                     'non_verbose': non_verbose,
@@ -2605,9 +2619,27 @@ def convert(
             tf_layers_dict=tf_layers_dict,
         )
 
-        # download test data
+        # download test data or load from file
         test_data_nhwc = None
-        if inputs:
+        if test_data_nhwc_path:
+            # Load user-provided test data
+            try:
+                test_data_nhwc = np.load(test_data_nhwc_path)
+                info(f'Loaded custom test data from: {test_data_nhwc_path}')
+                info(f'Test data shape: {test_data_nhwc.shape}')
+                # Validate that it matches expected batch size if applicable
+                if inputs and len(inputs) > 0:
+                    expected_batch = inputs[0].shape[0]
+                    if expected_batch is not None and test_data_nhwc.shape[0] < expected_batch:
+                        warn(f'Test data batch size ({test_data_nhwc.shape[0]}) is smaller than model input batch size ({expected_batch}). Using available samples.')
+                if check_onnx_tf_outputs_sample_data_normalization == "denorm":
+                    test_data_nhwc = test_data_nhwc * 255.0
+            except Exception as e:
+                error(f'Failed to load test data from {test_data_nhwc_path}: {e}')
+                warn('Falling back to automatic test data download if applicable.')
+                test_data_nhwc = None
+
+        if test_data_nhwc is None and inputs:
             all_four_dim = sum(
                 [
                     1 for input in inputs \
@@ -3394,7 +3426,7 @@ def convert(
                         output_report_path=split_accuracy_report_path,
                         num_samples=eval_num_samples,
                         seed=0,
-                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        test_data_nhwc_path=test_data_nhwc_path,
                         rtol=eval_rtol,
                         atol=eval_atol,
                         compare_mode=eval_compare_mode,
@@ -5112,6 +5144,22 @@ def main():
             'Default: 1e-4'
     )
     parser.add_argument(
+        '-tdnp',
+        '--test_data_nhwc_path',
+        type=str,
+        help=\
+            'Path to a numpy file (.npy) containing custom test data in NHWC format. \n' +
+            'This is used for test inference and validation when check_onnx_tf_outputs options are enabled. \n' +
+            'If not specified, the tool will attempt to download sample data from the internet \n' +
+            'when the input is a 4D RGB image tensor. \n' +
+            'The numpy array should have shape [batch_size, height, width, 3] with values \n' +
+            'normalized to the range [0, 1]. \n' +
+            'This option is useful for offline environments or when you want to use \n' +
+            'specific test data for validation. \n\n' +
+            'e.g. \n' +
+            '--test_data_nhwc_path "./my_test_data.npy"'
+    )
+    parser.add_argument(
         '-agj',
         '--auto_generate_json',
         action='store_true',
@@ -5280,6 +5328,7 @@ def main():
         check_onnx_tf_outputs_sample_data_normalization=args.check_onnx_tf_outputs_sample_data_normalization,
         check_onnx_tf_outputs_elementwise_close_rtol=args.check_onnx_tf_outputs_elementwise_close_rtol,
         check_onnx_tf_outputs_elementwise_close_atol=args.check_onnx_tf_outputs_elementwise_close_atol,
+        test_data_nhwc_path=args.test_data_nhwc_path,
         mvn_epsilon=args.mvn_epsilon,
         disable_model_save=args.disable_model_save,
         non_verbose=args.non_verbose,
