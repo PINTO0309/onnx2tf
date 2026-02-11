@@ -643,6 +643,46 @@ def apply_nonzero_passthrough(
             if update_graph_shape and hasattr(passthrough_tensor, 'shape'):
                 nonzero_output.shape = list(passthrough_tensor.shape)
 
+def apply_gelu_shape_passthrough(
+    *,
+    graph: gs.Graph,
+) -> int:
+    """Propagate Gelu output shape from its input when missing.
+
+    Gelu is elementwise and must preserve input/output geometry.
+    This helps recover shape metadata when ONNX shape inference is broken
+    by invalid or partially unsupported models.
+    """
+    corrected_count = 0
+    for graph_node in graph.nodes:
+        if graph_node.op not in ['Gelu', 'GeLU']:
+            continue
+        if len(graph_node.inputs) == 0 or len(graph_node.outputs) == 0:
+            continue
+
+        gelu_input = graph_node.inputs[0]
+        gelu_output = graph_node.outputs[0]
+        input_shape = getattr(gelu_input, 'shape', None)
+        output_shape = getattr(gelu_output, 'shape', None)
+
+        if input_shape is None:
+            continue
+
+        # Fix only when output shape metadata is missing or all dims are unknown.
+        output_shape_is_unknown = output_shape is None
+        if not output_shape_is_unknown:
+            normalized_output_shape = list(output_shape)
+            output_shape_is_unknown = len(normalized_output_shape) == 0 or \
+                all([(dim is None) or isinstance(dim, str) for dim in normalized_output_shape])
+
+        if output_shape_is_unknown:
+            gelu_output.shape = list(input_shape)
+            if getattr(gelu_output, 'dtype', None) is None \
+                and getattr(gelu_input, 'dtype', None) is not None:
+                gelu_output.dtype = gelu_input.dtype
+            corrected_count += 1
+    return corrected_count
+
 def apply_nonzero_passthrough_tf(
     *,
     graph: gs.Graph,
@@ -2649,6 +2689,43 @@ def convert(
         additional_parameters['onnx_tensor_infos_for_validation'] = onnx_tensor_infos_for_validation
         additional_parameters['test_data_nhwc'] = test_data_nhwc
         additional_parameters['custom_input_op_name_np_data_path'] = custom_input_op_name_np_data_path
+
+        # Workaround for invalid models where Gelu shape inference fails:
+        # Gelu is elementwise and output shape must match input shape.
+        gelu_shape_corrected_total = 0
+        gelu_shape_passes = 0
+        gelu_op_count = sum([
+            1 for graph_node in graph.nodes \
+                if graph_node.op in ['Gelu', 'GeLU']
+        ])
+        gelu_shape_max_passes = max(16, gelu_op_count * 2)
+        for _ in range(gelu_shape_max_passes):
+            gelu_shape_corrected_count = apply_gelu_shape_passthrough(graph=graph)
+            if gelu_shape_corrected_count <= 0:
+                break
+            gelu_shape_corrected_total += gelu_shape_corrected_count
+            gelu_shape_passes += 1
+            try:
+                exported_onnx_graph = gs.export_onnx(graph, do_type_check=False, **meta_data)
+                if metadata_props is not None:
+                    exported_onnx_graph.metadata_props.extend(metadata_props)
+                if not has_external_data:
+                    estimated_graph = onnx.shape_inference.infer_shapes(exported_onnx_graph)
+                else:
+                    estimated_graph = exported_onnx_graph
+                graph = gs.import_onnx(estimated_graph)
+            except Exception as ex:
+                warn(
+                    'Gelu shape passthrough workaround was applied, '
+                    'but ONNX shape refresh failed. Continuing with current graph metadata.'
+                )
+                warn(f'{ex}')
+                break
+        if gelu_shape_corrected_total > 0:
+            info(
+                f'Applied Gelu shape passthrough workaround and refreshed shape inference. '
+                f'corrected_ops={gelu_shape_corrected_total} passes={gelu_shape_passes}'
+            )
 
         # Addressing Einsum and OneHot shape_inference failure for onnx.
         # However, relief is provided only when the input tensor does not contain undefined dimensions.
