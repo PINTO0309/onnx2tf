@@ -509,6 +509,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  # It is possible to cross-compile an arm64 environment on an x64 environment.
   docker buildx build \
   --platform linux/arm64 \
   --build-arg BUILD_ARCH=linux/arm64 \
