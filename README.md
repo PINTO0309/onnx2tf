@@ -452,6 +452,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   Password: {Personal Access Token}
   Login Succeeded
 
+  # Start an interactive session on the terminal.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
@@ -460,6 +461,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   or
 
   # Authentication is not required for pulls from Docker Hub.
+  # Start an interactive session on the terminal.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
@@ -478,6 +480,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  curl -LsSf https://astral.sh/uv/install.sh | sh
   uv python install 3.12.12
   uv venv -p 3.12.12 .venv
   source .venv/bin/activate
@@ -485,6 +488,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
+  curl -LsSf https://astral.sh/uv/install.sh | sh
   uv python install 3.12.12
   uv venv -p 3.12.12 .venv
   source .venv/bin/activate
