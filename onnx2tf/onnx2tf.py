@@ -764,6 +764,7 @@ def convert(
     value_hints: Optional[List[str]] = None,
     no_large_tensor: Optional[bool] = False,
     output_nms_with_dynamic_tensor: Optional[bool] = False,
+    output_nms_with_argmax: Optional[bool] = False,
     switch_nms_version: Optional[str] = 'v4',
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
@@ -1085,6 +1086,10 @@ def convert(
             output_tensor_shape: [100, 7]\n
         enable --output_nms_with_dynamic_tensor:\n
             output_tensor_shape: [N, 7]
+
+    output_nms_with_argmax: Optional[bool]
+        Apply argmax over scores class dimension in NonMaxSuppression to\n
+        shrink scores from [B, C, N] to [B, 1, N].\n
 
     switch_nms_version: Optional[str]
         Switch the NMS version to V4 or V5 to convert.\n\n
@@ -2103,6 +2108,7 @@ def convert(
                     'value_hints': value_hints,
                     'no_large_tensor': no_large_tensor,
                     'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+                    'output_nms_with_argmax': output_nms_with_argmax,
                     'switch_nms_version': switch_nms_version,
                     'keep_ncw_or_nchw_or_ncdhw_input_names': keep_ncw_or_nchw_or_ncdhw_input_names,
                     'keep_nwc_or_nhwc_or_ndhwc_input_names': keep_nwc_or_nhwc_or_ndhwc_input_names,
@@ -2538,6 +2544,7 @@ def convert(
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
+        'output_nms_with_argmax': output_nms_with_argmax,
         'switch_nms_version': switch_nms_version,
         'output_integer_quantized_tflite': output_integer_quantized_tflite,
         'gelu_replace_op_names': {},
@@ -4776,6 +4783,14 @@ def main():
             '    output_tensor_shape: [N, 7]'
     )
     parser.add_argument(
+        '-onwa',
+        '--output_nms_with_argmax',
+        action='store_true',
+        help=\
+            'Apply argmax to class scores dimension in NonMaxSuppression and shrink \n' +
+            'scores tensor from [B, C, N] to [B, 1, N].'
+    )
+    parser.add_argument(
         '-snms',
         '--switch_nms_version',
         type=str,
@@ -5292,6 +5307,7 @@ def main():
         value_hints=args.value_hints,
         no_large_tensor=args.no_large_tensor,
         output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
+        output_nms_with_argmax=args.output_nms_with_argmax,
         switch_nms_version=args.switch_nms_version,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,

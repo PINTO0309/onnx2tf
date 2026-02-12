@@ -226,7 +226,9 @@ def make_node(
     pad_mode = 'VALID'
     if auto_pad == 'NOTSET':
         if input_tensor_rank >=2 \
-            and graph_node.i().inputs[0].shape[2:] == output_tensor_shape[2:]:
+            and graph_node.inputs[0].shape is not None \
+            and output_tensor_shape is not None \
+            and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:
             input_tensor = get_padding_as_op(
@@ -260,7 +262,7 @@ def make_node(
         depthwise = bool(group == input_tensor_shape[-1])
 
     if depthwise is True:
-        depthwise_filter_shape = list(input_weights_shape[0:2]) + [input_weights_shape[2], input_weights_shape[3] // group]
+        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     # Conv

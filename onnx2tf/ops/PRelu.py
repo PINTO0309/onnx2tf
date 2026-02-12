@@ -91,21 +91,6 @@ def make_node(
             tf_layers_dict= tf_layers_dict,
         )
 
-    # input_tensor: [1, 4, 4, 4]
-    # slope: [4, 1, 1] -> [1, 4, 1, 1] -> [1, 1, 1, 4]
-    # https://github.com/PINTO0309/onnx2tf/issues/418
-    if tf_layers_dict[graph_node_output.name]['nhwc'] == True \
-        and input_tensor_shape is not None \
-        and input_tensor_rank >= 3 \
-        and sum([1 if isinstance(s, int) and s == input_tensor_shape[1] else 0 for s in input_tensor_shape]) == input_tensor_rank - 1 \
-        and slope.shape is not None \
-        and len(slope.shape) >= 3 \
-        and input_tensor_rank == len(slope.shape) \
-        and isinstance(slope, np.ndarray) \
-        and slope.shape[-1] == 1:
-        convertion_table = [0] + [i for i in range(2, input_tensor_rank)] + [1]
-        slope = slope.transpose(convertion_table)
-
     slope = tf.convert_to_tensor(slope)
 
     # Pre-process transpose
@@ -122,6 +107,33 @@ def make_node(
         and tf_layers_dict[graph_node_output.name]['nhwc'] == True \
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
+
+    # Align slope layout to the runtime input tensor layout.
+    # Handles cases like slope=[C,1,1] with input=[N,H,W,C].
+    input_shape = input_tensor.shape
+    slope_shape = slope.shape if hasattr(slope, 'shape') else None
+    if input_shape is not None and slope_shape is not None:
+        input_rank = len(input_shape)
+        slope_rank = len(slope_shape)
+        if input_rank >= 3 and slope_rank >= 1:
+            slope_shape_list = list(slope_shape)
+            non_one_dims = [
+                int(dim) for dim in slope_shape_list
+                if isinstance(dim, (int, np.integer)) and dim != 1
+            ]
+            if slope_rank == 1 and isinstance(slope_shape_list[0], (int, np.integer)):
+                non_one_dims = [int(slope_shape_list[0])]
+            if len(non_one_dims) == 1:
+                slope_channel_dim = non_one_dims[0]
+                channel_first_dim = input_shape[1] if input_rank >= 2 else None
+                channel_last_dim = input_shape[-1]
+                target_shape = None
+                if isinstance(channel_last_dim, (int, np.integer)) and int(channel_last_dim) == slope_channel_dim:
+                    target_shape = [1 for _ in range(input_rank - 2)] + [slope_channel_dim]
+                elif isinstance(channel_first_dim, (int, np.integer)) and int(channel_first_dim) == slope_channel_dim:
+                    target_shape = [slope_channel_dim] + [1 for _ in range(input_rank - 2)]
+                if target_shape is not None and list(slope_shape) != target_shape:
+                    slope = tf.reshape(slope, target_shape)
 
     # Generation of TF OP
     shared_axes = None
