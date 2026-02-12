@@ -159,6 +159,7 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     output_nms_with_dynamic_tensor: bool = kwargs['output_nms_with_dynamic_tensor']
+    output_nms_with_argmax: bool = kwargs.get('output_nms_with_argmax', False)
     switch_nms_version: str = kwargs['switch_nms_version']
 
     # Pre-process transpose
@@ -303,6 +304,26 @@ def make_node(
             **kwargs,
         )
 
+    scores_argmax_classes = None
+    if output_nms_with_argmax:
+        scores_rank = scores.shape.rank if hasattr(scores.shape, 'rank') else len(scores.shape)
+        if scores_rank == 3:
+            scores_argmax_classes = tf.argmax(
+                scores,
+                axis=1,
+                output_type=tf.int64,
+            )
+            scores = tf.reduce_max(
+                scores,
+                axis=1,
+                keepdims=True,
+            )
+        else:
+            warn(
+                f'--output_nms_with_argmax is enabled, but scores rank is not 3. ' +
+                f'Argmax shrink is skipped. graph_node.name: {graph_node.name} scores.shape: {scores.shape}'
+            )
+
     num_batches = boxes.shape[0]
 
     if num_batches is None:
@@ -347,6 +368,12 @@ def make_node(
                 ),
                 axis=0,
             )
+        batch_i_class_ids = None
+        if output_nms_with_argmax and scores_argmax_classes is not None:
+            batch_i_class_ids = tf.gather(
+                scores_argmax_classes,
+                batch_i,
+            )
         # get number of classess in batch_i only
         num_classes = batch_i_scores.shape[0]
         for class_j in tf.range(num_classes):
@@ -378,18 +405,36 @@ def make_node(
             )
 
             # add batch and class information into the indices
-            output = tf.transpose([tf.cast(selected_indices, dtype=tf.int64)])
-            paddings = tf.constant([[0, 0], [1, 0]])
-            output = tf.pad(
-                output,
-                paddings,
-                constant_values=tf.cast(class_j, dtype=tf.int64),
-            )
-            output = tf.pad(
-                output,
-                paddings,
-                constant_values=tf.cast(batch_i, dtype=tf.int64),
-            )
+            selected_indices_int64 = tf.cast(selected_indices, dtype=tf.int64)
+            if output_nms_with_argmax and batch_i_class_ids is not None:
+                selected_class_ids = tf.gather(
+                    batch_i_class_ids,
+                    tf.cast(selected_indices, dtype=tf.int32),
+                )
+                output = tf.stack(
+                    [
+                        tf.fill(
+                            dims=tf.shape(selected_indices_int64),
+                            value=tf.cast(batch_i, dtype=tf.int64),
+                        ),
+                        tf.cast(selected_class_ids, dtype=tf.int64),
+                        selected_indices_int64,
+                    ],
+                    axis=1,
+                )
+            else:
+                output = tf.transpose([selected_indices_int64])
+                paddings = tf.constant([[0, 0], [1, 0]])
+                output = tf.pad(
+                    output,
+                    paddings,
+                    constant_values=tf.cast(class_j, dtype=tf.int64),
+                )
+                output = tf.pad(
+                    output,
+                    paddings,
+                    constant_values=tf.cast(batch_i, dtype=tf.int64),
+                )
             # tf.function will auto convert "result" from variable to placeholder
             # therefore don't need to use assign here
             result = output if tf.equal(batch_i, 0) and tf.equal(class_j, 0) else tf.concat([result, output], 0)

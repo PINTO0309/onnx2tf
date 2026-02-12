@@ -456,7 +456,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.8
+  ghcr.io/pinto0309/onnx2tf:2.0.9
 
   or
 
@@ -465,7 +465,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.8
+  docker.io/pinto0309/onnx2tf:2.0.9
 
   or
 
@@ -475,7 +475,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.8 \
+  docker.io/pinto0309/onnx2tf:2.0.9 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1141,7 +1141,7 @@ PyTorch's `NonMaxSuppression (torchvision.ops.nms)` and ONNX's `NonMaxSuppressio
 
     https://github.com/PINTO0309/PINTO_model_zoo/tree/main/307_YOLOv7/post_process_gen_tools
 
-3. Finally, simply convert ONNX to TFLite or saved_model or TFJS using onnx2tf. onnx2tf performs an internal operation to automatically optimize the NMS output to a fixed shape if `max_output_boxes_per_class` is set to a value other than `-Infinity` and `9223372036854775807 (Maximum value of INT64)`. Specify `--output_nms_with_dynamic_tensor` or `-onwdt` if you do not want to optimize for a fixed shape.
+3. Finally, simply convert ONNX to TFLite or saved_model or TFJS using onnx2tf. onnx2tf performs an internal operation to automatically optimize the NMS output to a fixed shape if `max_output_boxes_per_class` is set to a value other than `-Infinity` and `9223372036854775807 (Maximum value of INT64)`. Specify `--output_nms_with_dynamic_tensor` or `-onwdt` if you do not want to optimize for a fixed shape. If you want to shrink class scores in NMS from `[B, C, N]` to `[B, 1, N]`, enable `--output_nms_with_argmax` or `-onwa`.
     ```
     onnx2tf -i nms_yolov7_update.onnx -osd -cotof
     ```
@@ -1999,6 +1999,10 @@ optional arguments:
     enable --output_nms_with_dynamic_tensor:
         output_tensor_shape: [N, 7]
 
+  -onwa, --output_nms_with_argmax
+    Apply argmax to class scores dimension in NonMaxSuppression and shrink
+    scores tensor from [B, C, N] to [B, 1, N].
+
   -snms {v4,v5}, --switch_nms_version {v4,v5}
     Switch the NMS version to V4 or V5 to convert.
     e.g.
@@ -2333,6 +2337,7 @@ convert(
   value_hints: Union[List[str], NoneType] = None,
   no_large_tensor: Optional[bool] = False,
   output_nms_with_dynamic_tensor: Optional[bool] = False,
+  output_nms_with_argmax: Optional[bool] = False,
   switch_nms_version: Optional[str] = 'v4',
   keep_ncw_or_nchw_or_ncdhw_input_names: Union[List[str], NoneType] = None,
   keep_nwc_or_nhwc_or_ndhwc_input_names: Union[List[str], NoneType] = None,
@@ -2583,6 +2588,10 @@ convert(
           output_tensor_shape: [100, 7]
       enable --output_nms_with_dynamic_tensor:
           output_tensor_shape: [N, 7]
+
+    output_nms_with_argmax: Optional[bool]
+      Apply argmax over scores class dimension in NonMaxSuppression to
+      shrink scores from [B, C, N] to [B, 1, N].
 
     switch_nms_version {v4,v5}
       Switch the NMS version to V4 or V5 to convert.
