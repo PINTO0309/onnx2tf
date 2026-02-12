@@ -478,7 +478,10 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
   or
 
-  pip install -U onnx2tf
+  uv python install 3.12.12
+  uv venv -p 3.12.12 .venv
+  source .venv/bin/activate
+  uv pip install -U onnx2tf
 
   or
 
