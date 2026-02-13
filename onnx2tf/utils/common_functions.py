@@ -5183,6 +5183,81 @@ def rewrite_tflite_inout_opname(
     onnx_graph_output_shapes: List[List[int |str]]
         List of ONNX output OP shapes
     """
+    def _canonicalize_io_name(name: str) -> str:
+        normalized = str(name).strip()
+        if normalized.startswith('serving_default_'):
+            normalized = normalized[len('serving_default_'):]
+        if normalized.endswith(':0'):
+            normalized = normalized[:-2]
+        normalized = normalized.replace('__', ':')
+        normalized = normalized.lstrip('/')
+        return normalized
+
+    def _resolve_io_indices_by_name(
+        *,
+        onnx_names: List[str],
+        candidates: List[Tuple[str, int]],
+    ) -> Optional[List[int]]:
+        if len(onnx_names) != len(candidates):
+            return None
+
+        onnx_names_canonical = [_canonicalize_io_name(name) for name in onnx_names]
+        candidate_name_idx_pairs = [
+            (_canonicalize_io_name(name), tensor_index) for name, tensor_index in candidates
+        ]
+
+        resolved_indices: List[int] = []
+        used_candidate_indices: set[int] = set()
+        for onnx_name in onnx_names_canonical:
+            matched_candidate_indices = [
+                candidate_idx
+                for candidate_idx, (candidate_name, _) in enumerate(candidate_name_idx_pairs)
+                if candidate_name == onnx_name and candidate_idx not in used_candidate_indices
+            ]
+            if len(matched_candidate_indices) != 1:
+                return None
+            selected_candidate_idx = matched_candidate_indices[0]
+            used_candidate_indices.add(selected_candidate_idx)
+            resolved_indices.append(
+                candidate_name_idx_pairs[selected_candidate_idx][1]
+            )
+        return resolved_indices
+
+    def _resolve_io_indices_by_shape(
+        *,
+        onnx_shapes: List[List[int | str]],
+        tflite_indices: List[int],
+        tflite_infos: List[Any],
+    ) -> Optional[List[int]]:
+        if len(onnx_shapes) != len(tflite_indices):
+            return None
+
+        try:
+            tflite_shape_product_to_indices: Dict[int, List[int]] = {}
+            for tensor_index, tensor_info in zip(tflite_indices, tflite_infos):
+                shape_product = int(np.prod(list(tensor_info.shape)))
+                tflite_shape_product_to_indices.setdefault(shape_product, []).append(tensor_index)
+
+            resolved_indices: List[int] = []
+            used_tensor_indices: set[int] = set()
+            for onnx_shape in onnx_shapes:
+                if any(isinstance(item, str) for item in onnx_shape):
+                    return None
+                onnx_shape_product = int(np.prod(onnx_shape))
+                candidate_indices = [
+                    tensor_index
+                    for tensor_index in tflite_shape_product_to_indices.get(onnx_shape_product, [])
+                    if tensor_index not in used_tensor_indices
+                ]
+                if len(candidate_indices) != 1:
+                    return None
+                selected_tensor_index = candidate_indices[0]
+                used_tensor_indices.add(selected_tensor_index)
+                resolved_indices.append(selected_tensor_index)
+            return resolved_indices
+        except Exception:
+            return None
+
     try:
         # Check to see if flatc is installed
         result = subprocess.check_output(
@@ -5254,27 +5329,97 @@ def rewrite_tflite_inout_opname(
         outputs_has_duplicates = len(outputs_second_dim_elements) != len(set(outputs_second_dim_elements))
         outputs_has_undefined_dim = any(isinstance(item, str) for onnx_graph_output_shape in onnx_graph_output_shapes for item in onnx_graph_output_shape)
 
+        # Try to resolve tensor index correspondence without shape-based heuristics:
+        # 1. Existing SignatureDef (if any)
+        # 2. Existing tensor names
+        # 3. Shape-product match (only when unambiguous)
+        # 4. Current tflite input/output order fallback
+        existing_signature_def = \
+            flat_model.signatureDefs[0] if flat_model.signatureDefs and len(flat_model.signatureDefs) > 0 else None
+
+        tensor_count = len(flat_tensors)
+        resolved_input_tensor_indices: Optional[List[int]] = None
+        resolved_output_tensor_indices: Optional[List[int]] = None
+
+        if existing_signature_def is not None and getattr(existing_signature_def, 'inputs', None):
+            signature_input_candidates = [
+                (str(tensor_map.name), int(tensor_map.tensorIndex))
+                for tensor_map in existing_signature_def.inputs
+                if 0 <= int(tensor_map.tensorIndex) < tensor_count
+            ]
+            resolved_input_tensor_indices = _resolve_io_indices_by_name(
+                onnx_names=onnx_input_names,
+                candidates=signature_input_candidates,
+            )
+            if resolved_input_tensor_indices is None \
+                and len(signature_input_candidates) == len(onnx_input_names):
+                signature_input_indices = [tensor_index for _, tensor_index in signature_input_candidates]
+                if len(set(signature_input_indices)) == len(signature_input_indices):
+                    resolved_input_tensor_indices = signature_input_indices
+
+        if resolved_input_tensor_indices is None:
+            tensor_input_candidates = [
+                (str(tensor_info.name), int(tensor_index))
+                for tensor_index, tensor_info in zip(flat_input_nums, flat_input_infos)
+            ]
+            resolved_input_tensor_indices = _resolve_io_indices_by_name(
+                onnx_names=onnx_input_names,
+                candidates=tensor_input_candidates,
+            )
+
+        if resolved_input_tensor_indices is None and not inputs_has_duplicates and not inputs_has_undefined_dim:
+            resolved_input_tensor_indices = _resolve_io_indices_by_shape(
+                onnx_shapes=onnx_graph_input_shapes,
+                tflite_indices=flat_input_nums,
+                tflite_infos=flat_input_infos,
+            )
+
+        if resolved_input_tensor_indices is None:
+            resolved_input_tensor_indices = list(flat_input_nums)
+
+        if existing_signature_def is not None and getattr(existing_signature_def, 'outputs', None):
+            signature_output_candidates = [
+                (str(tensor_map.name), int(tensor_map.tensorIndex))
+                for tensor_map in existing_signature_def.outputs
+                if 0 <= int(tensor_map.tensorIndex) < tensor_count
+            ]
+            resolved_output_tensor_indices = _resolve_io_indices_by_name(
+                onnx_names=onnx_output_names,
+                candidates=signature_output_candidates,
+            )
+            if resolved_output_tensor_indices is None \
+                and len(signature_output_candidates) == len(onnx_output_names):
+                signature_output_indices = [tensor_index for _, tensor_index in signature_output_candidates]
+                if len(set(signature_output_indices)) == len(signature_output_indices):
+                    resolved_output_tensor_indices = signature_output_indices
+
+        if resolved_output_tensor_indices is None:
+            tensor_output_candidates = [
+                (str(tensor_info.name), int(tensor_index))
+                for tensor_index, tensor_info in zip(flat_output_nums, flat_output_infos)
+            ]
+            resolved_output_tensor_indices = _resolve_io_indices_by_name(
+                onnx_names=onnx_output_names,
+                candidates=tensor_output_candidates,
+            )
+
+        if resolved_output_tensor_indices is None and not outputs_has_duplicates and not outputs_has_undefined_dim:
+            resolved_output_tensor_indices = _resolve_io_indices_by_shape(
+                onnx_shapes=onnx_graph_output_shapes,
+                tflite_indices=flat_output_nums,
+                tflite_infos=flat_output_infos,
+            )
+
+        if resolved_output_tensor_indices is None:
+            resolved_output_tensor_indices = list(flat_output_nums)
+
         # INPUT
-        if not inputs_has_duplicates and not inputs_has_undefined_dim:
-            for onnx_input_name, onnx_input_shape in zip(onnx_input_names, onnx_graph_input_shapes):
-                for flat_input_info in flat_input_infos:
-                    if np.prod(onnx_input_shape) == np.prod(list(flat_input_info.shape)):
-                        flat_input_info.name = onnx_input_name
-                        break
-        else:
-            for idx, flat_input_info in enumerate(flat_input_infos):
-                flat_input_info.name = onnx_input_names[idx]
+        for onnx_input_name, tensor_index in zip(onnx_input_names, resolved_input_tensor_indices):
+            flat_tensors[tensor_index].name = onnx_input_name
 
         # OUTPUT
-        if not outputs_has_duplicates and not outputs_has_undefined_dim:
-            for onnx_output_name, onnx_output_shape in zip(onnx_output_names, onnx_graph_output_shapes):
-                for flat_output_info in flat_output_infos:
-                    if np.prod(onnx_output_shape) == np.prod(list(flat_output_info.shape)):
-                        flat_output_info.name = onnx_output_name
-                        break
-        else:
-            for idx, flat_output_info in enumerate(flat_output_infos):
-                flat_output_info.name = onnx_output_names[idx]
+        for onnx_output_name, tensor_index in zip(onnx_output_names, resolved_output_tensor_indices):
+            flat_tensors[tensor_index].name = onnx_output_name
 
         if inputs_has_duplicates or inputs_has_undefined_dim or outputs_has_duplicates or outputs_has_undefined_dim:
             warn('Carefully check the output .tflite as the order of input OP names and output OP names may have been corrupted by TensorFlow.')
@@ -5307,18 +5452,18 @@ def rewrite_tflite_inout_opname(
         signature_defs = schema_tflite['SignatureDefT']()
         # signature_defs_inputs
         signature_defs_inputs = []
-        for idx, flat_input_info in enumerate(flat_input_infos):
+        for idx, tensor_index in enumerate(resolved_input_tensor_indices):
             tm = schema_tflite["TensorMapT"]()
             tm.name = onnx_input_names[idx]
-            tm.tensorIndex = flat_input_info.buffer - 1
+            tm.tensorIndex = tensor_index
             signature_defs_inputs.append(tm)
         signature_defs.inputs = signature_defs_inputs
         # signature_defs_outputs
         signature_defs_outputs = []
-        for idx, flat_output_info in enumerate(flat_output_infos):
+        for idx, tensor_index in enumerate(resolved_output_tensor_indices):
             tm = schema_tflite["TensorMapT"]()
             tm.name = onnx_output_names[idx]
-            tm.tensorIndex = flat_output_info.buffer - 1
+            tm.tensorIndex = tensor_index
             signature_defs_outputs.append(tm)
         signature_defs.outputs = signature_defs_outputs
         # signature_defs_inputs
