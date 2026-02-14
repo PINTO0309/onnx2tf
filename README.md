@@ -280,9 +280,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
   - Listed ONNX ops in this README section: `205`
-  - `builtin_supported`: `29`
+  - `builtin_supported`: `37`
   - `custom_candidate` (opt-in): `16`
-  - `explicit_error` (default): `160`
+  - `explicit_error` (default): `152`
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -295,12 +295,15 @@ Notes:
 |:-|:-|:-|
 |Add|ADD|-|
 |AveragePool|AVERAGE_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|BatchNormalization|MUL + ADD|All parameter inputs (`scale`, `bias`, `mean`, `var`) must be constant|
 |Clip|RELU / RELU6|Only `min=0,max=+inf` (ReLU) or `min=0,max=6` (ReLU6)|
 |Concat|CONCATENATION|-|
 |Conv|CONV_2D / DEPTHWISE_CONV_2D|2D only (rank=4), weights must be constant, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`|
+|DequantizeLinear|DEQUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |Div|DIV|-|
 |Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
 |Exp|EXP|-|
+|Flatten|RESHAPE|Input rank must be >= 1|
 |Gather|GATHER|`batch_dims=0` only|
 |Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
 |Identity|RESHAPE|-|
@@ -309,6 +312,11 @@ Notes:
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
 |Mul|MUL|-|
 |Neg|NEG|-|
+|QLinearAdd|ADD|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
+|QLinearConv|CONV_2D / DEPTHWISE_CONV_2D|Input/output rank=4, weight must be constant rank=4, all quantization params constant, group conv only regular/depthwise, optional bias must be constant|
+|QLinearMatMul|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, all quantization params constant|
+|QLinearMul|MUL|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
+|QuantizeLinear|QUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
 |ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
 |Relu|RELU|-|
@@ -369,11 +377,14 @@ Notes:
    - `Relu -> Clip(min=0,max=6)` chain normalization
    - GELU chain fusion (`Div -> Erf -> Add -> Mul -> Mul`)
    - `Reshape -> Transpose -> Reshape` to `SpaceToDepth`
-2. `pseudo_ops_wave1`
+2. `quant_chain_fusion_wave3`
+   - `DequantizeLinear -> BatchNormalization -> PRelu -> QuantizeLinear` chain rewrite
+   - BatchNormalization parameter folding into `Mul + Add`
+3. `pseudo_ops_wave1`
    - `HardSwish`, `LeakyRelu`, `PRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
-3. `constant_fold_a5`
+4. `constant_fold_a5`
    - Limited constant folding for shape/axes and arithmetic helper chains
-4. `normalize_attrs_a5`
+5. `normalize_attrs_a5`
    - Normalize `perm`/`axes`/negative-axis forms and softmax-axis bridge rewrites
 
 Notes:
@@ -456,7 +467,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.10
+  ghcr.io/pinto0309/onnx2tf:2.0.11
 
   or
 
@@ -465,7 +476,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.10
+  docker.io/pinto0309/onnx2tf:2.0.11
 
   or
 
@@ -475,7 +486,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.10 \
+  docker.io/pinto0309/onnx2tf:2.0.11 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

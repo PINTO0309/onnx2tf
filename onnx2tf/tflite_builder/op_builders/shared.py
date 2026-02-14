@@ -14,8 +14,12 @@ def resolve_padding(node: Any) -> str:
     pads = list(node.attrs.get("pads", [0, 0, 0, 0]))
     if len(pads) == 4 and sum([abs(int(v)) for v in pads]) == 0:
         return "VALID"
+    if len(pads) == 4:
+        top, left, bottom, right = [int(v) for v in pads]
+        if top == bottom and left == right and top >= 0 and left >= 0:
+            return "SAME"
     raise NotImplementedError(
-        "Only zero pads or SAME auto_pad are supported in flatbuffer_direct. "
+        "Only zero pads, symmetric pads, or SAME auto_pad are supported in flatbuffer_direct. "
         f"op={node.name} pads={pads} auto_pad={auto_pad}"
     )
 

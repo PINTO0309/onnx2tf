@@ -6,12 +6,28 @@ import math
 from onnx2tf.tflite_builder.ir import OperatorIR
 
 
+def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:
+    ctx.ensure_tensor(src_tensor_name)
+    ctx.ensure_tensor(dst_tensor_name)
+    src = ctx.model_ir.tensors[src_tensor_name]
+    dst = ctx.model_ir.tensors[dst_tensor_name]
+    if dst.shape == [1] and src.shape != [1]:
+        dst.shape = list(src.shape)
+        dst.shape_signature = (
+            list(src.shape_signature)
+            if src.shape_signature is not None
+            else list(src.shape)
+        )
+
+
 def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name
     for name in input_names:
         ctx.ensure_tensor(name)
     ctx.ensure_tensor(output_name)
+    if len(input_names) > 0:
+        _propagate_shape(ctx, input_names[0], output_name)
 
     options = {"fusedActivationFunction": "NONE"}
     ctx.add_operator(
@@ -29,6 +45,7 @@ def build_logistic_op(node: Any, ctx: Any) -> None:
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
     ctx.add_operator(
         OperatorIR(
             op_type="LOGISTIC",
@@ -43,6 +60,7 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
@@ -72,6 +90,7 @@ def build_clip_op(node: Any, ctx: Any) -> None:
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
 
     clip_min = _get_clip_bound_value(node.attrs.get("min", None), float("-inf"))
     clip_max = _get_clip_bound_value(node.attrs.get("max", None), float("inf"))
