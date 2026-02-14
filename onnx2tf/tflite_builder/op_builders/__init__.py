@@ -2,6 +2,7 @@ from onnx2tf.tflite_builder.op_builders.elementwise import (
     build_binary_op,
     build_clip_op,
     build_logistic_op,
+    build_prelu_op,
     build_softmax_op,
     build_unary_op,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "build_binary_op",
     "build_clip_op",
     "build_logistic_op",
+    "build_prelu_op",
     "build_softmax_op",
     "build_unary_op",
     "build_concat_op",

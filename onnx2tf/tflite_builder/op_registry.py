@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_l2_normalization_op,
     build_logistic_op,
     build_pool2d_op,
+    build_prelu_op,
     build_qlinear_add_op,
     build_qlinear_conv_op,
     build_qlinear_matmul_op,
@@ -660,6 +661,31 @@ def _validate_qlinear_matmul(node: Any, ctx: Any) -> None:
         _require_const_input(node, ctx, idx, f"QLinearMatMul {label}")
 
 
+def _validate_prelu(node: Any, ctx: Any) -> None:
+    slope = _require_const_input(node, ctx, 1, "PRelu slope")
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    input_rank = len(input_shape)
+    slope_size = int(np.asarray(slope).size)
+    if slope_size <= 1:
+        return
+    if input_shape == [1] or input_rank <= 1:
+        # Unknown/placeholder shape. Defer broadcast validation to runtime.
+        return
+    if input_rank in [2, 4] and len(input_shape) >= 2:
+        channels = int(input_shape[1])
+        if slope_size == channels:
+            return
+    raise NodeValidationError(
+        reason_code="unsupported_attribute_value",
+        message=(
+            "PRelu slope supports scalar or per-channel only in flatbuffer_direct. "
+            f"input_shape={input_shape} slope_size={slope_size}"
+        ),
+        node_name=node.name,
+        node_op=node.op,
+    )
+
+
 def _normalize_axis_for_rank(*, axis: int, rank: int, node: Any) -> int:
     a = int(axis)
     if a < 0:
@@ -910,6 +936,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["NEG"],
         builder=_make_unary_builder("NEG"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "PRelu": DispatchEntry(
+        onnx_op="PRelu",
+        tflite_ops=["PRELU"],
+        builder=build_prelu_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_prelu,
     ),
     "Clip": DispatchEntry(
         onnx_op="Clip",

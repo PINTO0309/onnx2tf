@@ -199,6 +199,7 @@ def _build_builtin_options(
         "EXP",
         "SQRT",
         "NEG",
+        "PRELU",
         "DEQUANTIZE",
         "QUANTIZE",
     ]:

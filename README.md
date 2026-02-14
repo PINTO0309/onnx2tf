@@ -280,9 +280,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
   - Listed ONNX ops in this README section: `205`
-  - `builtin_supported`: `37`
+  - `builtin_supported`: `38`
   - `custom_candidate` (opt-in): `16`
-  - `explicit_error` (default): `152`
+  - `explicit_error` (default): `151`
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -312,6 +312,7 @@ Notes:
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
 |Mul|MUL|-|
 |Neg|NEG|-|
+|PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QLinearAdd|ADD|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
 |QLinearConv|CONV_2D / DEPTHWISE_CONV_2D|Input/output rank=4, weight must be constant rank=4, all quantization params constant, group conv only regular/depthwise, optional bias must be constant|
 |QLinearMatMul|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, all quantization params constant|
@@ -381,7 +382,7 @@ Notes:
    - `DequantizeLinear -> BatchNormalization -> PRelu -> QuantizeLinear` chain rewrite
    - BatchNormalization parameter folding into `Mul + Add`
 3. `pseudo_ops_wave1`
-   - `HardSwish`, `LeakyRelu`, `PRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
+   - `HardSwish`, `LeakyRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
 4. `constant_fold_a5`
    - Limited constant folding for shape/axes and arithmetic helper chains
 5. `normalize_attrs_a5`

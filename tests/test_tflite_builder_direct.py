@@ -710,6 +710,29 @@ def _collect_custom_codes(tflite_path: str) -> list[str]:
     return custom_codes
 
 
+def _collect_builtin_op_names(tflite_path: str) -> list[str]:
+    output_dir = os.path.dirname(tflite_path)
+    schema = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model = schema["ModelT"].InitFromObj(schema["Model"].GetRootAs(model_bytes, 0))
+    subgraph = model.subgraphs[0]
+    op_enum = schema["BuiltinOperator"]
+    op_names: list[str] = []
+    for op in subgraph.operators:
+        op_code = model.operatorCodes[int(op.opcodeIndex)]
+        builtin_code = int(op_code.builtinCode)
+        resolved = str(builtin_code)
+        for attr in dir(op_enum):
+            if not attr.isupper():
+                continue
+            if int(getattr(op_enum, attr)) == builtin_code:
+                resolved = attr
+                break
+        op_names.append(resolved)
+    return op_names
+
+
 def test_tflite_backend_matrix_add() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -845,6 +868,17 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
             rtol=0.0,
             atol=1e-6,
         )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_prelu_model()
+        model_path = _save_model(tmpdir, "prelu_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+        op_names = _collect_builtin_op_names(tflite_path)
+        assert "PRELU" in op_names
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")

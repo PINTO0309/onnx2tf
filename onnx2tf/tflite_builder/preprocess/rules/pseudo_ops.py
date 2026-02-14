@@ -486,15 +486,13 @@ def apply_pseudo_ops_wave1(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
     for node in graph.node:
         node_op = str(node.op_type)
         replacement: Optional[Tuple[List[onnx.NodeProto], List[onnx.TensorProto]]] = None
-        if node_op in {"HardSwish", "LeakyRelu", "PRelu", "Pow", "Gelu", "GeLU", "MatMulInteger"}:
+        if node_op in {"HardSwish", "LeakyRelu", "Pow", "Gelu", "GeLU", "MatMulInteger"}:
             matched_nodes += 1
             matched_by_op[node_op] = int(matched_by_op.get(node_op, 0) + 1)
             if node_op == "HardSwish":
                 replacement = _rewrite_hardswish(node=node, used_names=used_names)
             elif node_op == "LeakyRelu":
                 replacement = _rewrite_leaky_relu(node=node, used_names=used_names)
-            elif node_op == "PRelu":
-                replacement = _rewrite_prelu(node=node, used_names=used_names)
             elif node_op == "Pow":
                 replacement = _rewrite_pow(node=node, used_names=used_names, const_map=const_map)
             elif node_op in {"Gelu", "GeLU"}:
