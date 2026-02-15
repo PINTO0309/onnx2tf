@@ -46,6 +46,17 @@ def resolve_padding(node: Any) -> str:
         top, left, bottom, right = [int(v) for v in pads]
         if top == bottom and left == right and top >= 0 and left >= 0:
             return "SAME"
+        # ONNX exports from TF frequently encode SAME padding as asymmetric pads
+        # (e.g. [0, 0, 1, 1]). TFLite SAME supports this distribution internally.
+        if (
+            top >= 0
+            and left >= 0
+            and bottom >= 0
+            and right >= 0
+            and abs(top - bottom) <= 1
+            and abs(left - right) <= 1
+        ):
+            return "SAME"
     raise NotImplementedError(
         "Only zero pads, symmetric pads, or SAME auto_pad are supported in flatbuffer_direct. "
         f"op={node.name} pads={pads} auto_pad={auto_pad}"

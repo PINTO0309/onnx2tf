@@ -77,6 +77,53 @@ _SIZE_WITH_UNIT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+_TEMP_MICROSOFT_DOMAIN_OPS = {
+    'QGemm',
+    'QLinearAdd',
+    'QLinearAveragePool',
+    'QLinearConcat',
+    'QLinearGlobalAveragePool',
+    'QLinearMul',
+    'QLinearSigmoid',
+}
+
+
+def _supplement_microsoft_domain_for_selected_ops(
+    *,
+    onnx_model: onnx.ModelProto,
+    target_ops: Optional[set] = None,
+) -> Dict[str, int]:
+    """
+    Supplement node domains for selected quantized ops that are often exported
+    as default-domain custom ops, but are registered in ORT contrib under
+    `com.microsoft`.
+
+    This only mutates the in-memory model used during conversion.
+    """
+    if onnx_model is None or not hasattr(onnx_model, 'graph') or onnx_model.graph is None:
+        return {}
+
+    target_ops = target_ops if target_ops is not None else _TEMP_MICROSOFT_DOMAIN_OPS
+    if not target_ops:
+        return {}
+
+    rewritten_counts: Dict[str, int] = {}
+    for node in onnx_model.graph.node:
+        if node.op_type not in target_ops:
+            continue
+        # Only supplement nodes that are effectively default domain.
+        if node.domain not in ['', 'ai.onnx']:
+            continue
+        node.domain = 'com.microsoft'
+        rewritten_counts[node.op_type] = rewritten_counts.get(node.op_type, 0) + 1
+
+    if rewritten_counts:
+        has_ms_domain = any(opset.domain == 'com.microsoft' for opset in onnx_model.opset_import)
+        if not has_ms_domain:
+            onnx_model.opset_import.append(onnx.helper.make_operatorsetid('com.microsoft', 1))
+
+    return rewritten_counts
+
 
 def _parse_size_to_bytes(
     size_value: Any,
@@ -1523,6 +1570,99 @@ def convert(
             'flatbuffer_direct_allow_custom_ops currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
+
+    auto_eval_with_onnx_from_cotof = bool(
+        check_onnx_tf_outputs_elementwise_close_full
+    )
+    run_onnx_tflite_output_check = bool(
+        eval_with_onnx or auto_eval_with_onnx_from_cotof
+    )
+
+    def _run_onnx_tflite_output_check(
+        *,
+        tflite_paths: Dict[str, str],
+        source_label: str,
+    ) -> None:
+        if not run_onnx_tflite_output_check:
+            return
+        explicit_eval = bool(eval_with_onnx)
+        required = bool(explicit_eval)
+        report_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_accuracy_report.json',
+        )
+        try:
+            from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
+        except Exception as ex:
+            msg = (
+                'ONNX/TFLite output check was skipped because evaluator dependencies are unavailable. '
+                f'source={source_label} reason={ex}'
+            )
+            if required:
+                raise RuntimeError(msg) from ex
+            warn(msg)
+            return
+
+        target_key = str(eval_target_tflite) if explicit_eval else 'float32'
+        tflite_path = tflite_paths.get(target_key, None)
+        if tflite_path is None:
+            if required:
+                raise RuntimeError(
+                    f'eval_target_tflite="{target_key}" was requested, but the corresponding output was not generated. '
+                    f'available={sorted(list(tflite_paths.keys()))}'
+                )
+            fallback_path = tflite_paths.get('float32', None)
+            if fallback_path is None and len(tflite_paths) > 0:
+                fallback_path = list(tflite_paths.values())[0]
+            if fallback_path is None:
+                warn(
+                    'ONNX/TFLite output check was skipped because no TFLite path is available.'
+                )
+                return
+            tflite_path = fallback_path
+            target_key = 'float32'
+
+        eval_num_samples_local = int(eval_num_samples) if explicit_eval else 1
+        eval_fail_on_threshold_local = bool(eval_fail_on_threshold) if explicit_eval else False
+
+        try:
+            _supplement_microsoft_domain_for_selected_ops(
+                onnx_model=onnx_graph,
+            )
+            report = evaluate_onnx_tflite_outputs(
+                onnx_graph=onnx_graph,
+                tflite_path=tflite_path,
+                output_report_path=report_path,
+                num_samples=eval_num_samples_local,
+                seed=0,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                rtol=eval_rtol,
+                atol=eval_atol,
+                compare_mode=eval_compare_mode,
+                fail_on_threshold=eval_fail_on_threshold_local,
+            )
+        except Exception as ex:
+            msg = (
+                'ONNX/TFLite output check failed. '
+                f'source={source_label} target={target_key} reason={ex}'
+            )
+            if required:
+                raise RuntimeError(msg) from ex
+            warn(msg)
+            return
+
+        trigger = '--eval_with_onnx' if explicit_eval else '-cotof(auto)'
+        info(
+            Color.GREEN(
+                'ONNX/TFLite output check complete! '
+                f'({report_path}) '
+                f'trigger={trigger} source={source_label} target={target_key} '
+                f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
+                f'rmse={report["overall_metrics"]["rmse"]:.6g} '
+                f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g} '
+                f'pass={report["evaluation_pass"]}'
+            )
+        )
     if flatbuffer_direct_custom_op_allowlist is not None and not flatbuffer_direct_allow_custom_ops:
         error(
             'flatbuffer_direct_custom_op_allowlist requires flatbuffer_direct_allow_custom_ops=True.'
@@ -1766,6 +1906,16 @@ def convert(
     # onnx_graph If specified, onnx_graph is processed first
     if not onnx_graph:
         onnx_graph = onnx.load(input_onnx_file_path)
+
+    ms_domain_rewrites = _supplement_microsoft_domain_for_selected_ops(
+        onnx_model=onnx_graph,
+    )
+    if ms_domain_rewrites:
+        rewrite_details = ', '.join([f'{op}:{count}' for op, count in sorted(ms_domain_rewrites.items())])
+        info(
+            f'Temporary domain supplement applied for ONNXRuntime compatibility. '
+            f'domain=com.microsoft ops=[{rewrite_details}]'
+        )
 
     if not auto_split_model and onnx_graph is not None:
         try:
@@ -2486,7 +2636,7 @@ def convert(
         if metadata_props is not None:
             onnx_graph.metadata_props.extend(metadata_props)
     except Exception as ex:
-        # Workaround for SequenceConstruct terminating abnormally with onnx_graphsurgeon
+        # Workaround for SequenceConstruct terminating abnormally with gs.py export
         pass
 
     # Check if there is an OP that can work only with CUDA
@@ -2682,6 +2832,9 @@ def convert(
             full_ops_output_names.extend(full_ops_output_names_sub)
         # Models with errors during inference in onnxruntime skip dummy inference.
         try:
+            _supplement_microsoft_domain_for_selected_ops(
+                onnx_model=onnx_graph,
+            )
             onnx_outputs_for_validation: List[np.ndarray] = \
                 dummy_onnx_inference(
                     onnx_graph=onnx_graph,
@@ -3370,50 +3523,25 @@ def convert(
                     info(
                         'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
                     )
-                if eval_with_onnx:
-                    from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
-                    eval_target_map = {
-                        'float32': 'float32_tflite_path',
-                        'float16': 'float16_tflite_path',
-                        'dynamic_range_quant': 'dynamic_range_quant_tflite_path',
-                        'integer_quant': 'integer_quant_tflite_path',
-                        'full_integer_quant': 'full_integer_quant_tflite_path',
-                        'integer_quant_with_int16_act': 'integer_quant_with_int16_act_tflite_path',
-                        'full_integer_quant_with_int16_act': 'full_integer_quant_with_int16_act_tflite_path',
-                    }
-                    eval_output_key = eval_target_map[eval_target_tflite]
-                    if eval_output_key not in direct_outputs:
-                        raise RuntimeError(
-                            f'eval_target_tflite="{eval_target_tflite}" was requested, '
-                            f'but output "{eval_output_key}" is not available in this conversion. '
-                            'Enable the corresponding quantization output option first.'
-                        )
-                    accuracy_report_path = os.path.join(
-                        output_folder_path,
-                        f'{output_file_name}_accuracy_report.json',
-                    )
-                    report = evaluate_onnx_tflite_outputs(
-                        onnx_graph=onnx_graph,
-                        tflite_path=direct_outputs[eval_output_key],
-                        output_report_path=accuracy_report_path,
-                        num_samples=eval_num_samples,
-                        seed=0,
-                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                        rtol=eval_rtol,
-                        atol=eval_atol,
-                        compare_mode=eval_compare_mode,
-                        fail_on_threshold=eval_fail_on_threshold,
-                    )
-                    info(
-                        Color.GREEN(
-                            'ONNX/TFLite accuracy report output complete! '
-                            f'({accuracy_report_path}) '
-                            f'max_abs={report["overall_metrics"]["max_abs"]:.6g} '
-                            f'rmse={report["overall_metrics"]["rmse"]:.6g} '
-                            f'cosine={report["overall_metrics"]["cosine_similarity"]:.6g} '
-                            f'pass={report["evaluation_pass"]}'
-                        )
-                    )
+                direct_eval_paths = {}
+                if 'float32_tflite_path' in direct_outputs:
+                    direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
+                if 'float16_tflite_path' in direct_outputs:
+                    direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
+                if 'dynamic_range_quant_tflite_path' in direct_outputs:
+                    direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
+                if 'integer_quant_tflite_path' in direct_outputs:
+                    direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
+                if 'full_integer_quant_tflite_path' in direct_outputs:
+                    direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
+                if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                    direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
+                if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                    direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+                _run_onnx_tflite_output_check(
+                    tflite_paths=direct_eval_paths,
+                    source_label='flatbuffer_direct',
+                )
                 if eval_split_models:
                     if 'split_manifest_path' not in direct_outputs:
                         raise RuntimeError(
@@ -3454,6 +3582,8 @@ def convert(
                     )
                 return model
 
+        tf_converter_eval_paths: Dict[str, str] = {}
+
         try:
             converter = tf.lite.TFLiteConverter.from_keras_model(model)
         except Exception as e:
@@ -3466,8 +3596,10 @@ def convert(
         ]
         converter.unfold_batchmatmul = enable_batchmatmul_unfold
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/{output_file_name}_float32.tflite', 'wb') as w:
+        float32_tflite_path = f'{output_folder_path}/{output_file_name}_float32.tflite'
+        with open(float32_tflite_path, 'wb') as w:
             w.write(tflite_model)
+        tf_converter_eval_paths['float32'] = float32_tflite_path
         if copy_onnx_input_output_names_to_tflite:
             rewrite_tflite_inout_opname(
                 output_folder_path=output_folder_path,
@@ -3479,7 +3611,7 @@ def convert(
             )
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float32.tflite',
+                extract_target_tflite_file_path=float32_tflite_path,
                 output_weights_file_path=f'{output_folder_path}/{output_file_name}_float32_weights.h5',
             )
         info(Color.GREEN(f'Float32 tflite output complete!'))
@@ -3495,8 +3627,10 @@ def convert(
             converter.target_spec._experimental_supported_accumulation_type = tf.dtypes.float16
 
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/{output_file_name}_float16.tflite', 'wb') as w:
+        float16_tflite_path = f'{output_folder_path}/{output_file_name}_float16.tflite'
+        with open(float16_tflite_path, 'wb') as w:
             w.write(tflite_model)
+        tf_converter_eval_paths['float16'] = float16_tflite_path
         if copy_onnx_input_output_names_to_tflite:
             rewrite_tflite_inout_opname(
                 output_folder_path=output_folder_path,
@@ -3508,7 +3642,7 @@ def convert(
             )
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float16.tflite',
+                extract_target_tflite_file_path=float16_tflite_path,
                 output_weights_file_path=f'{output_folder_path}/{output_file_name}_float16_weights.h5',
             )
         info(Color.GREEN(f'Float16 tflite output complete!'))
@@ -3544,8 +3678,10 @@ def convert(
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite', 'wb') as w:
+                dynamic_range_quant_tflite_path = f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite'
+                with open(dynamic_range_quant_tflite_path, 'wb') as w:
                     w.write(tflite_model)
+                tf_converter_eval_paths['dynamic_range_quant'] = dynamic_range_quant_tflite_path
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
@@ -3557,7 +3693,7 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite',
+                        extract_target_tflite_file_path=dynamic_range_quant_tflite_path,
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant_weights.h5',
                     )
                 info(Color.GREEN(f'Dynamic Range Quantization tflite output complete!'))
@@ -3717,8 +3853,10 @@ def convert(
                 converter.unfold_batchmatmul = enable_batchmatmul_unfold
                 converter.representative_dataset = representative_dataset_gen
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
+                integer_quant_tflite_path = f'{output_folder_path}/{output_file_name}_integer_quant.tflite'
+                with open(integer_quant_tflite_path, 'wb') as w:
                     w.write(tflite_model)
+                tf_converter_eval_paths['integer_quant'] = integer_quant_tflite_path
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
@@ -3730,7 +3868,7 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
+                        extract_target_tflite_file_path=integer_quant_tflite_path,
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
                     )
                 info(Color.GREEN(f'INT8 Quantization tflite output complete!'))
@@ -3766,8 +3904,10 @@ def convert(
                 converter.inference_input_type = inf_type_input
                 converter.inference_output_type = inf_type_output
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite', 'wb') as w:
+                full_integer_quant_tflite_path = f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite'
+                with open(full_integer_quant_tflite_path, 'wb') as w:
                     w.write(tflite_model)
+                tf_converter_eval_paths['full_integer_quant'] = full_integer_quant_tflite_path
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
@@ -3779,7 +3919,7 @@ def convert(
                     )
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite',
+                        extract_target_tflite_file_path=full_integer_quant_tflite_path,
                         output_weights_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant_weights.h5',
                     )
                 info(Color.GREEN(f'Full INT8 Quantization tflite output complete!'))
@@ -3804,8 +3944,12 @@ def convert(
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
+                integer_quant_with_int16_act_tflite_path = (
+                    f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite'
+                )
+                with open(integer_quant_with_int16_act_tflite_path, 'wb') as w:
                     w.write(tflite_model)
+                tf_converter_eval_paths['integer_quant_with_int16_act'] = integer_quant_with_int16_act_tflite_path
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
@@ -3837,8 +3981,14 @@ def convert(
                 converter.inference_input_type = tf.int16
                 converter.inference_output_type = tf.int16
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
+                full_integer_quant_with_int16_act_tflite_path = (
+                    f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite'
+                )
+                with open(full_integer_quant_with_int16_act_tflite_path, 'wb') as w:
                     w.write(tflite_model)
+                tf_converter_eval_paths['full_integer_quant_with_int16_act'] = (
+                    full_integer_quant_with_int16_act_tflite_path
+                )
                 if copy_onnx_input_output_names_to_tflite:
                     rewrite_tflite_inout_opname(
                         output_folder_path=output_folder_path,
@@ -3855,6 +4005,11 @@ def convert(
                 warn(
                     'Full INT8 Quantization with int16 activations tflite output failed.'
                 )
+
+        _run_onnx_tflite_output_check(
+            tflite_paths=tf_converter_eval_paths,
+            source_label='tf_converter',
+        )
 
         # Returns true if the two arrays, the output of onnx and the output of TF,
         # are elementwise equal within an acceptable range.
@@ -3928,6 +4083,9 @@ def convert(
             try:
                 # ONNX dummy inference
                 onnx_input_datas_for_validation = {}
+                _supplement_microsoft_domain_for_selected_ops(
+                    onnx_model=onnx_graph,
+                )
                 dummy_onnx_outputs: List[np.ndarray] = \
                     dummy_onnx_inference(
                         onnx_graph=onnx_graph,
@@ -4208,6 +4366,9 @@ def convert(
                 try:
                     # ONNX dummy inference
                     onnx_input_datas_for_validation = {}
+                    _supplement_microsoft_domain_for_selected_ops(
+                        onnx_model=onnx_graph,
+                    )
                     dummy_onnx_outputs: List[np.ndarray] = \
                         dummy_onnx_inference(
                             onnx_graph=onnx_graph,
@@ -5128,7 +5289,8 @@ def main():
             'dimensions are present, a situation often arises where very large index '+
             'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
-            'there are operations.'
+            'there are operations. '+
+            'In addition, final ONNX vs generated TFLite output error check is automatically executed.'
     )
     parser.add_argument(
         '-coton',

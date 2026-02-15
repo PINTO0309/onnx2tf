@@ -11,8 +11,11 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    transpose_with_flexing_deterrence,
 )
 from onnx2tf.utils.logging import *
+
+INF_INDEX_VALUE: int = 4294967296
 
 
 def _dequantize_tensor(
@@ -151,10 +154,8 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_is_dequantized = False
-    input_nhwc = False
     if isinstance(graph_node_input_1, gs.Variable):
         input_is_dequantized = tf_layers_dict.get(graph_node_input_1.name, {}).get('is_dequantized', False)
-        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
     input_tensor_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     input_tensor_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -173,23 +174,13 @@ def make_node(
         if isinstance(graph_node_input_9, gs.Variable) else graph_node_input_9
     output_quant_dtype = y_zero_point.dtype
 
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
-    spatial_size = input_tensor_rank - 2
-    input_weights_shape = input_weights.shape
-    auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
-    dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    group = graph_node.attrs.get('group', 1)
-    pads = graph_node.attrs.get('pads', [0, 0] * spatial_size)
-    strides = graph_node.attrs.get('strides', [1] * spatial_size)
-
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
         'optype': graph_node.op,
         'shape': output_tensor_shape,
         'dtype': dtype,
         'is_dequantized': True,
-        'nhwc': input_nhwc,
+        'nhwc': True,
     }
 
     # Generation of TF OP
@@ -215,6 +206,58 @@ def make_node(
         input_bias_scale = tf.cast(input_tensor_scale, tf.float32) * tf.cast(input_weights_scale, tf.float32)
         input_bias = input_bias * input_bias_scale
 
+    # Workaround to avoid as many conversion failures as possible
+    # for models with useless Transpose immediately before them.
+    # If the input geometry of the ONNX and the input geometry of the TF model match,
+    # the input geometry on the TF model side is forcibly transposed to NWC/NHWC/NDHWC.
+    # However, if all dimensions in C* axes are the same value, skip this process.
+    input_tensor_shape = input_tensor.shape
+    onnx_input_shape = [
+        dim if isinstance(dim, int) else None for dim in graph_node.inputs[0].shape
+    ] if graph_node.inputs[0].shape is not None else None
+    tf_input_shape = [
+        dim if isinstance(dim, int) else None for dim in input_tensor_shape
+    ]
+    if onnx_input_shape is not None \
+        and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
+        and onnx_input_shape == tf_input_shape:
+
+        shape_for_judging_skip = [
+            dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
+        ]
+        if shape_for_judging_skip.count(shape_for_judging_skip[0]) != len(shape_for_judging_skip):
+            if len(onnx_input_shape) == 3:
+                # 1D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 4:
+                # 2D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,1],
+                    **kwargs,
+                )
+            elif len(onnx_input_shape) == 5:
+                # 3D
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0,2,3,4,1],
+                    **kwargs,
+                )
+
+    input_tensor_shape = input_tensor.shape
+    input_tensor_rank = len(input_tensor_shape)
+    spatial_size = input_tensor_rank - 2
+    input_weights_shape = input_weights.shape
+    auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
+    dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
+    group = graph_node.attrs.get('group', 1)
+    pads = graph_node.attrs.get('pads', [0, 0] * spatial_size)
+    strides = graph_node.attrs.get('strides', [1] * spatial_size)
+
     """
     Conv1D
     Conv2D
@@ -224,8 +267,15 @@ def make_node(
     """
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
+    pads_axes_opposite_same = True
+    for axis_begin, axis_end in zip(pads[0:spatial_size:1], pads[spatial_size::1]):
+        if axis_begin != axis_end:
+            pads_axes_opposite_same = False
+            break
+
     if auto_pad == 'NOTSET':
-        if input_tensor_rank >=2 \
+        if pads_axes_opposite_same \
+            and input_tensor_rank >=2 \
             and graph_node.inputs[0].shape is not None \
             and output_tensor_shape is not None \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
