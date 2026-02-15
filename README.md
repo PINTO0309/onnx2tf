@@ -185,6 +185,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |QLinearAdd|:heavy_check_mark:|
   |QLinearConcat|:heavy_check_mark:|
   |QLinearConv|:heavy_check_mark:|
+  |QLinearGlobalAveragePool|:heavy_check_mark:|
   |QLinearLeakyRelu|:heavy_check_mark:|
   |QLinearMatMul|:heavy_check_mark:|
   |QLinearMul|:heavy_check_mark:|
@@ -271,18 +272,30 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > [!WARNING]
 > `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
+>
+> `flatbuffer_direct` now runs a layout-transpose chain optimizer during lowering.
+> For NCW/NCHW/NCDHW <-> NWC/NHWC/NDHWC conversion paths, inverse `Transpose` pairs are removed automatically when safe.
+> `Transpose -> (Quantize/Dequantize) -> inverse Transpose` and `Transpose -> Quantize -> Dequantize -> inverse Transpose` are also folded for per-tensor quantization.
+> `Transpose -> (ADD/SUB/MUL/DIV) -> inverse Transpose` is folded when both binary inputs share the same pre-transpose permutation.
+> For float outputs, terminal `QUANTIZE -> DEQUANTIZE` pairs are also removed when the pair is isolated and output-only.
 
 ### flatbuffer_direct support status for ONNX ops in this list
+
+The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model.
+
+|INT8 ONNX|INT8 TFLite(LiteRT)|
+|:-:|:-:|
+|<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="Image" src="https://github.com/user-attachments/assets/41aefe26-f243-45fb-9d21-9e16c7ef30b3" />|
 
 <details><summary>Click to Click to expand</summary>
 
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
-  - Listed ONNX ops in this README section: `205`
-  - `builtin_supported`: `38`
+  - Listed ONNX ops in this README section: `206`
+  - `builtin_supported`: `42`
   - `custom_candidate` (opt-in): `16`
-  - `explicit_error` (default): `151`
+  - `explicit_error` (default): `148`
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -314,13 +327,17 @@ Notes:
 |Neg|NEG|-|
 |PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QLinearAdd|ADD|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
+|QLinearConcat|DEQUANTIZE + CONCATENATION + QUANTIZE|`y scale/zero_point` and each input triplet (`x scale/zero_point`) must be constant, input ranks must match, `axis` must be in range|
 |QLinearConv|CONV_2D / DEPTHWISE_CONV_2D|Input/output rank=4, weight must be constant rank=4, all quantization params constant, group conv only regular/depthwise, optional bias must be constant|
+|QLinearGlobalAveragePool|AVERAGE_POOL_2D (preferred) / DEQUANTIZE + MEAN + QUANTIZE (fallback)|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant, input rank >= 3, `channels_last` must be 0 or 1. Quantized `AVERAGE_POOL_2D` path is used for rank-4 with static spatial dims and per-tensor quantization|
 |QLinearMatMul|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, all quantization params constant|
 |QLinearMul|MUL|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
+|QLinearSigmoid|DEQUANTIZE + LOGISTIC + QUANTIZE|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant|
 |QuantizeLinear|QUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
 |ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
 |Relu|RELU|-|
+|Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR|Rank-4 only, constant scales/sizes required, supported modes: `nearest`/`linear` (limited attr combinations)|
 |Reshape|RESHAPE|Shape input must be constant|
 |Sigmoid|LOGISTIC|-|
 |Softmax|SOFTMAX|`axis=last` only|
@@ -468,7 +485,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.11
+  ghcr.io/pinto0309/onnx2tf:2.0.12
 
   or
 
@@ -477,7 +494,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.11
+  docker.io/pinto0309/onnx2tf:2.0.12
 
   or
 
@@ -487,7 +504,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.11 \
+  docker.io/pinto0309/onnx2tf:2.0.12 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

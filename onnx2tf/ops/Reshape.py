@@ -26,6 +26,87 @@ from onnx2tf.utils.common_functions import (
 from typing import List, Dict, Any
 
 
+def _as_static_int_list(shape_like: Any) -> List[int] | None:
+    if shape_like is None:
+        return None
+    if isinstance(shape_like, np.ndarray):
+        values = np.asarray(shape_like).reshape(-1).tolist()
+    elif isinstance(shape_like, (list, tuple)):
+        values = list(shape_like)
+    else:
+        return None
+    static: List[int] = []
+    for dim in values:
+        if isinstance(dim, bool):
+            return None
+        if isinstance(dim, (np.integer, int)):
+            static.append(int(dim))
+        else:
+            return None
+    return static
+
+
+def _resolve_reshape_shape_with_static_dims(
+    *,
+    reshape_shape: Any,
+    output_shape: Any,
+    input_tensor: Any,
+    allowzero: bool,
+) -> Any:
+    shape_spec = _as_static_int_list(reshape_shape)
+    if shape_spec is None:
+        return reshape_shape
+
+    # When ONNX output shape is fully known, prefer it to avoid carrying -1.
+    static_output_shape = _as_static_int_list(output_shape)
+    if static_output_shape is not None \
+        and len(static_output_shape) == len(shape_spec) \
+        and all(dim >= 0 for dim in static_output_shape):
+        return [int(dim) for dim in static_output_shape]
+
+    minus_one_indices = [idx for idx, dim in enumerate(shape_spec) if int(dim) == -1]
+    if len(minus_one_indices) != 1:
+        return shape_spec
+
+    input_shape = input_tensor.shape.as_list() \
+        if hasattr(input_tensor, "shape") and hasattr(input_tensor.shape, "as_list") \
+        else list(input_tensor.shape) if hasattr(input_tensor, "shape") else None
+    if input_shape is None:
+        return shape_spec
+    static_input_shape = _as_static_int_list(input_shape)
+    if static_input_shape is None or len(static_input_shape) == 0:
+        return shape_spec
+    if any(dim <= 0 for dim in static_input_shape):
+        return shape_spec
+
+    known_product = 1
+    resolved_shape = list(shape_spec)
+    for idx, dim in enumerate(shape_spec):
+        value = int(dim)
+        if value == -1:
+            continue
+        if value == 0 and not allowzero:
+            if idx >= len(static_input_shape):
+                return shape_spec
+            value = int(static_input_shape[idx])
+            resolved_shape[idx] = value
+        if value <= 0:
+            return shape_spec
+        known_product *= int(value)
+
+    if known_product <= 0:
+        return shape_spec
+    input_product = int(np.prod(static_input_shape, dtype=np.int64))
+    if input_product <= 0 or input_product % known_product != 0:
+        return shape_spec
+    inferred = int(input_product // known_product)
+    if inferred <= 0:
+        return shape_spec
+
+    resolved_shape[minus_one_indices[0]] = inferred
+    return resolved_shape
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -220,6 +301,12 @@ def make_node(
             has_undefined_outputshape = has_none_outputshape or has_str_outputshape
         final_shape = transposed_reshape_shape \
             if (has_undefined_outputshape or shape_replaced_flg) else output_shape
+        final_shape = _resolve_reshape_shape_with_static_dims(
+            reshape_shape=final_shape,
+            output_shape=output_shape,
+            input_tensor=transposed_tensor,
+            allowzero=allowzero,
+        )
         final_shape = final_shape \
             if not isinstance(final_shape, np.ndarray) \
                 else tf.convert_to_tensor(final_shape)

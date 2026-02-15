@@ -42,13 +42,33 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
     nchw_output = output_shape
     nhwc_input_shape = [nchw_input[0], nchw_input[2], nchw_input[3], nchw_input[1]]
     nhwc_output_shape = [nchw_output[0], nchw_output[2], nchw_output[3], nchw_output[1]]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(nchw_output)
+    )
+    nhwc_output_signature = list(nhwc_output_shape)
+    if len(output_signature) == 4:
+        nhwc_output_signature = [
+            int(output_signature[0]),
+            int(output_signature[2]),
+            int(output_signature[3]),
+            int(output_signature[1]),
+        ]
 
     x_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_input_nhwc",
         dtype=ctx.get_tensor_dtype(input_name),
         shape=nhwc_input_shape,
     )
-    make_transpose(ctx, input_name, x_nhwc, [0, 2, 3, 1])
+    x_nhwc = make_transpose(
+        ctx,
+        input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
 
     in_channels = int(nchw_input[1])
     out_channels = int(weights.shape[0])
@@ -101,7 +121,8 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
                 "Grouped Conv is not supported except depthwise. "
                 f"op={node.name} group={group}"
             )
-        w_conv = np.transpose(weights, (2, 3, 1, 0))
+        # ONNX Conv weights are OIHW; TFLite CONV_2D expects OHWI.
+        w_conv = np.transpose(weights, (0, 2, 3, 1))
         w_name = ctx.add_const_tensor(
             f"{node.name}_conv_filter",
             w_conv.astype(np.float32),
@@ -137,5 +158,11 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+    ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in nhwc_output_signature]
 
-    make_transpose(ctx, y_nhwc, output_name, [0, 3, 1, 2])
+    make_transpose(
+        ctx,
+        y_nhwc,
+        output_name,
+        [0, 3, 1, 2],
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,6 +31,51 @@ def _require_tensor_indices(
             )
         indices.append(tensor_index_map[name])
     return indices
+
+
+def _prune_unused_tensors_in_place(model_ir: ModelIR) -> None:
+    used_tensor_names = set(model_ir.inputs + model_ir.outputs)
+    for op in model_ir.operators:
+        used_tensor_names.update(op.inputs)
+        used_tensor_names.update(op.outputs)
+    unused_tensor_names = [
+        name for name in model_ir.tensors.keys() if name not in used_tensor_names
+    ]
+    for tensor_name in unused_tensor_names:
+        del model_ir.tensors[tensor_name]
+
+
+def _prune_dead_operators_in_place(model_ir: ModelIR) -> None:
+    if len(model_ir.operators) == 0:
+        return
+
+    live_tensors = set(model_ir.outputs)
+    keep_flags = [False for _ in model_ir.operators]
+
+    for op_idx in range(len(model_ir.operators) - 1, -1, -1):
+        op = model_ir.operators[op_idx]
+        if len(op.outputs) == 0:
+            continue
+        if any(output_name in live_tensors for output_name in op.outputs):
+            keep_flags[op_idx] = True
+            for input_name in op.inputs:
+                live_tensors.add(input_name)
+
+    if all(keep_flags):
+        return
+
+    model_ir.operators = [
+        op for idx, op in enumerate(model_ir.operators) if keep_flags[idx]
+    ]
+
+
+def _sanitize_model_ir_for_serialization(model_ir: ModelIR) -> ModelIR:
+    # Keep serialization side-effect free because one ModelIR instance can be
+    # reused across multiple output variants.
+    sanitized_model_ir = deepcopy(model_ir)
+    _prune_dead_operators_in_place(sanitized_model_ir)
+    _prune_unused_tensors_in_place(sanitized_model_ir)
+    return sanitized_model_ir
 
 
 def _build_binary_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
@@ -140,6 +186,20 @@ def _build_pool2d_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tupl
     return _enum(schema_tflite, "BuiltinOptions", "Pool2DOptions"), options
 
 
+def _build_resize_nearest_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ResizeNearestNeighborOptionsT"]()
+    options.alignCorners = bool(op.options.get("alignCorners", False))
+    options.halfPixelCenters = bool(op.options.get("halfPixelCenters", False))
+    return _enum(schema_tflite, "BuiltinOptions", "ResizeNearestNeighborOptions"), options
+
+
+def _build_resize_bilinear_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ResizeBilinearOptionsT"]()
+    options.alignCorners = bool(op.options.get("alignCorners", False))
+    options.halfPixelCenters = bool(op.options.get("halfPixelCenters", False))
+    return _enum(schema_tflite, "BuiltinOptions", "ResizeBilinearOptions"), options
+
+
 def _build_fully_connected_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["FullyConnectedOptionsT"]()
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
@@ -189,6 +249,10 @@ def _build_builtin_options(
         return _build_depthwise_conv_options(schema_tflite, op)
     if op.op_type in ["AVERAGE_POOL_2D", "MAX_POOL_2D"]:
         return _build_pool2d_options(schema_tflite, op)
+    if op.op_type == "RESIZE_NEAREST_NEIGHBOR":
+        return _build_resize_nearest_options(schema_tflite, op)
+    if op.op_type == "RESIZE_BILINEAR":
+        return _build_resize_bilinear_options(schema_tflite, op)
     if op.op_type == "FULLY_CONNECTED":
         return _build_fully_connected_options(schema_tflite, op)
     if op.op_type in [
@@ -302,9 +366,10 @@ def build_model_object(
 
 
 def serialize_model(*, schema_tflite: Dict[str, Any], model_ir: ModelIR) -> bytes:
+    sanitized_model_ir = _sanitize_model_ir_for_serialization(model_ir)
     model = build_model_object(
         schema_tflite=schema_tflite,
-        model_ir=model_ir,
+        model_ir=sanitized_model_ir,
         with_signature_defs=True,
     )
     builder = flatbuffers.Builder(0)
