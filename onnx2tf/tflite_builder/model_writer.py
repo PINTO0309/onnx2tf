@@ -266,6 +266,8 @@ def _build_builtin_options(
         "PRELU",
         "DEQUANTIZE",
         "QUANTIZE",
+        "PAD",
+        "PADV2",
     ]:
         return _enum(schema_tflite, "BuiltinOptions", "NONE"), None
     raise NotImplementedError(

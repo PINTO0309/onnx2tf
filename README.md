@@ -183,8 +183,10 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
   |Pow|:heavy_check_mark:|
   |PRelu|:heavy_check_mark:|
   |QLinearAdd|:heavy_check_mark:|
+  |QLinearAveragePool|:heavy_check_mark:|
   |QLinearConcat|:heavy_check_mark:|
   |QLinearConv|:heavy_check_mark:|
+  |QGemm|:heavy_check_mark:|
   |QLinearGlobalAveragePool|:heavy_check_mark:|
   |QLinearLeakyRelu|:heavy_check_mark:|
   |QLinearMatMul|:heavy_check_mark:|
@@ -279,9 +281,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > `Transpose -> (ADD/SUB/MUL/DIV) -> inverse Transpose` is folded when both binary inputs share the same pre-transpose permutation.
 > For float outputs, terminal `QUANTIZE -> DEQUANTIZE` pairs are also removed when the pair is isolated and output-only.
 
-### flatbuffer_direct support status for ONNX ops in this list
+### [WIP・experimental] `flatbuffer_direct` support status for ONNX ops in this list
 
-The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model.
+The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model.By the way, if you want to generate a highly optimized quantized tflite for your ONNX model, I recommend using this package. https://github.com/NXP/eiq-onnx2tflite
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
@@ -292,8 +294,8 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
-  - Listed ONNX ops in this README section: `206`
-  - `builtin_supported`: `42`
+  - Listed ONNX ops in this README section: `208`
+  - `builtin_supported`: `44`
   - `custom_candidate` (opt-in): `16`
   - `explicit_error` (default): `148`
 
@@ -327,9 +329,11 @@ Notes:
 |Neg|NEG|-|
 |PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QLinearAdd|ADD|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
+|QLinearAveragePool|DEQUANTIZE + TRANSPOSE + AVERAGE_POOL_2D + TRANSPOSE + QUANTIZE|Input rank=4 only, all quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant, `kernel_shape/strides` must be 2D, `dilations=[1,1]`, `ceil_mode=0`, `count_include_pad=0`, and pads must satisfy flatbuffer_direct pool constraints (zero/symmetric or `auto_pad=SAME_*`)|
 |QLinearConcat|DEQUANTIZE + CONCATENATION + QUANTIZE|`y scale/zero_point` and each input triplet (`x scale/zero_point`) must be constant, input ranks must match, `axis` must be in range|
 |QLinearConv|CONV_2D / DEPTHWISE_CONV_2D|Input/output rank=4, weight must be constant rank=4, all quantization params constant, group conv only regular/depthwise, optional bias must be constant|
 |QLinearGlobalAveragePool|AVERAGE_POOL_2D (preferred) / DEQUANTIZE + MEAN + QUANTIZE (fallback)|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant, input rank >= 3, `channels_last` must be 0 or 1. Quantized `AVERAGE_POOL_2D` path is used for rank-4 with static spatial dims and per-tensor quantization|
+|QGemm|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, bias must be constant, quantization params must be constant, `transA=0`, `transB` in `{0,1}`|
 |QLinearMatMul|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, all quantization params constant|
 |QLinearMul|MUL|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
 |QLinearSigmoid|DEQUANTIZE + LOGISTIC + QUANTIZE|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant|
@@ -485,7 +489,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.12
+  ghcr.io/pinto0309/onnx2tf:2.0.13
 
   or
 
@@ -494,7 +498,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.12
+  docker.io/pinto0309/onnx2tf:2.0.13
 
   or
 
@@ -504,7 +508,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.12 \
+  docker.io/pinto0309/onnx2tf:2.0.13 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -3209,6 +3213,7 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 15. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
 16. [ai-edge-torch](https://github.com/google-ai-edge/ai-edge-torch)
 17. [LiteRT.js](https://ai.google.dev/edge/litert/web)
+18. [eiq-onnx2tflite](https://github.com/NXP/eiq-onnx2tflite)
 
 ## Acknowledgement
 1. https://github.com/onnx/models

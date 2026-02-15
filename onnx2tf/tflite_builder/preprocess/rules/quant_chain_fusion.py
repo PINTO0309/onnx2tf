@@ -94,6 +94,59 @@ def _bn_epsilon(node: onnx.NodeProto) -> float:
     return float(eps)
 
 
+def _reshape_bn_affine_for_prelu(
+    *,
+    bn_mul: np.ndarray,
+    bn_add: np.ndarray,
+    prelu: onnx.NodeProto,
+    const_map: Dict[str, np.ndarray],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Reshape BN affine terms so ONNX/NCHW broadcasting semantics are preserved
+    after fusing Dequantize->BatchNormalization->PRelu->Quantize.
+
+    For conv-like paths, PRelu slope is typically [C,1,1] or [1,C,1,1].
+    In those cases, BN affine terms must be reshaped to [1,C,1,1].
+    """
+    if len(prelu.input) < 2:
+        return bn_mul, bn_add
+
+    slope = const_map.get(str(prelu.input[1]), None)
+    if slope is None:
+        return bn_mul, bn_add
+
+    slope_arr = np.asarray(slope)
+    if slope_arr.ndim == 3:
+        # ONNX PRelu slope for NCHW conv path: [C,1,1]
+        if int(slope_arr.shape[1]) == 1 and int(slope_arr.shape[2]) == 1:
+            c = int(slope_arr.shape[0])
+            if int(bn_mul.size) == c and int(bn_add.size) == c:
+                return bn_mul.reshape(1, c, 1, 1), bn_add.reshape(1, c, 1, 1)
+    elif slope_arr.ndim == 4:
+        # Sometimes already expanded to [1,C,1,1]
+        if (
+            int(slope_arr.shape[0]) == 1
+            and int(slope_arr.shape[2]) == 1
+            and int(slope_arr.shape[3]) == 1
+        ):
+            c = int(slope_arr.shape[1])
+            if int(bn_mul.size) == c and int(bn_add.size) == c:
+                return bn_mul.reshape(1, c, 1, 1), bn_add.reshape(1, c, 1, 1)
+    elif slope_arr.ndim == 2:
+        # Rank-2 path: [1,C]
+        if int(slope_arr.shape[0]) == 1:
+            c = int(slope_arr.shape[1])
+            if int(bn_mul.size) == c and int(bn_add.size) == c:
+                return bn_mul.reshape(1, c), bn_add.reshape(1, c)
+    elif slope_arr.ndim == 1:
+        c = int(slope_arr.shape[0])
+        if int(bn_mul.size) == c and int(bn_add.size) == c:
+            # Keep [1,C] to avoid invalid trailing-dim broadcast for rank-2 paths.
+            return bn_mul.reshape(1, c), bn_add.reshape(1, c)
+
+    return bn_mul, bn_add
+
+
 def apply_quant_chain_fusion_wave3(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
     graph = onnx_graph.graph
     nodes = list(graph.node)
@@ -175,6 +228,12 @@ def apply_quant_chain_fusion_wave3(onnx_graph: onnx.ModelProto) -> Dict[str, Any
         eps = _bn_epsilon(bn)
         bn_mul = scale / np.sqrt(var + eps)
         bn_add = bias - mean * bn_mul
+        bn_mul, bn_add = _reshape_bn_affine_for_prelu(
+            bn_mul=bn_mul,
+            bn_add=bn_add,
+            prelu=prelu,
+            const_map=const_map,
+        )
 
         mul_init_name = _next_name(used_names, f"{bn.name or 'bn'}_fused_mul")
         add_init_name = _next_name(used_names, f"{bn.name or 'bn'}_fused_add")

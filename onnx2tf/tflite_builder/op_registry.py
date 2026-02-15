@@ -16,18 +16,21 @@ from onnx2tf.tflite_builder.op_builders import (
     build_flatten_op,
     build_fully_connected_from_gemm_or_matmul,
     build_gather_op,
+    build_qgemm_op,
     build_identity_op,
     build_l2_normalization_op,
     build_logistic_op,
     build_pool2d_op,
     build_prelu_op,
     build_qlinear_add_op,
+    build_qlinear_average_pool_op,
     build_qlinear_concat_op,
     build_qlinear_conv_op,
     build_qlinear_global_average_pool_op,
     build_qlinear_matmul_op,
     build_qlinear_mul_op,
     build_qlinear_sigmoid_op,
+    build_qlinear_softmax_op,
     build_quantize_linear_op,
     build_reduce_op,
     build_resize_op,
@@ -282,13 +285,23 @@ def _validate_conv(node: Any, ctx: Any) -> None:
 
 
 def _validate_pool(node: Any, ctx: Any) -> None:
-    if int(node.attrs.get("ceil_mode", 0)) != 0:
-        raise NodeValidationError(
-            reason_code="unsupported_attribute_value",
-            message="Pool ceil_mode must be 0.",
-            node_name=node.name,
-            node_op=node.op,
-        )
+    ceil_mode = int(node.attrs.get("ceil_mode", 0))
+    if node.op == "MaxPool":
+        if ceil_mode not in [0, 1]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"MaxPool ceil_mode must be 0 or 1. got={ceil_mode}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    else:
+        if ceil_mode != 0:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message="Pool ceil_mode must be 0.",
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 def _validate_fc(node: Any, ctx: Any) -> None:
@@ -705,6 +718,51 @@ def _validate_qlinear_matmul(node: Any, ctx: Any) -> None:
         _require_const_input(node, ctx, idx, f"QLinearMatMul {label}")
 
 
+def _validate_qgemm(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if input_rank not in [1, 2]:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"QGemm input rank must be 1 or 2. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    weights = _require_const_input(node, ctx, 3, "QGemm weights")
+    if weights.ndim != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_weight_rank",
+            message=f"QGemm weight rank must be 2. weight_shape={list(weights.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for idx, label in [
+        (1, "a_scale"),
+        (2, "a_zero_point"),
+        (4, "b_scale"),
+        (5, "b_zero_point"),
+        (6, "bias"),
+        (7, "y_scale"),
+        (8, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QGemm {label}")
+    trans_a = int(node.attrs.get("transA", 0))
+    trans_b = int(node.attrs.get("transB", 0))
+    if trans_a != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QGemm transA must be 0. got={trans_a}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if trans_b not in [0, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QGemm transB must be 0 or 1. got={trans_b}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_qlinear_sigmoid(node: Any, ctx: Any) -> None:
     for idx, label in [
         (1, "x_scale"),
@@ -713,6 +771,27 @@ def _validate_qlinear_sigmoid(node: Any, ctx: Any) -> None:
         (4, "y_zero_point"),
     ]:
         _require_const_input(node, ctx, idx, f"QLinearSigmoid {label}")
+
+
+def _validate_qlinear_softmax(node: Any, ctx: Any) -> None:
+    for idx, label in [
+        (1, "x_scale"),
+        (2, "x_zero_point"),
+        (3, "y_scale"),
+        (4, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearSoftmax {label}")
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    axis = int(node.attrs.get("axis", 1))
+    if axis < 0:
+        axis += len(input_shape)
+    if axis != len(input_shape) - 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearSoftmax axis must be last dimension. axis={axis} shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_qlinear_global_average_pool(node: Any, ctx: Any) -> None:
@@ -738,6 +817,87 @@ def _validate_qlinear_global_average_pool(node: Any, ctx: Any) -> None:
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
             message=f"QLinearGlobalAveragePool input rank must be >=3. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_qlinear_average_pool(node: Any, ctx: Any) -> None:
+    for idx, label in [
+        (1, "x_scale"),
+        (2, "x_zero_point"),
+        (3, "y_scale"),
+        (4, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearAveragePool {label}")
+
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    if input_shape != [1] and len(input_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"QLinearAveragePool supports rank-4 input. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    kernel = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    if len(kernel) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearAveragePool kernel_shape must be 2D. kernel_shape={kernel}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    if len(strides) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearAveragePool strides must be 2D. strides={strides}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    if dilations != [1, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearAveragePool dilations must be [1,1]. dilations={dilations}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    ceil_mode = int(node.attrs.get("ceil_mode", 0))
+    if ceil_mode not in [0, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearAveragePool ceil_mode must be 0 or 1. got={ceil_mode}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if ceil_mode == 1:
+        auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+        pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+        if len(pads) < 4:
+            pads = [0, 0, 0, 0]
+        if auto_pad not in ["NOTSET", "SAME", "SAME_UPPER", "SAME_LOWER"]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "QLinearAveragePool ceil_mode=1 supports auto_pad "
+                    "NOTSET/SAME/SAME_UPPER/SAME_LOWER only."
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if auto_pad == "NOTSET" and any(int(v) != 0 for v in pads):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message="QLinearAveragePool ceil_mode=1 with auto_pad=NOTSET requires pads=[0,0,0,0].",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    if int(node.attrs.get("count_include_pad", 0)) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message="QLinearAveragePool count_include_pad must be 0.",
             node_name=node.name,
             node_op=node.op,
         )
@@ -1053,6 +1213,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
         extra_validator=_validate_qlinear_matmul,
     ),
+    "QGemm": DispatchEntry(
+        onnx_op="QGemm",
+        tflite_ops=["FULLY_CONNECTED"],
+        builder=build_qgemm_op,
+        validation=ValidationSpec(min_inputs=9, max_inputs=9, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qgemm,
+    ),
     "QLinearSigmoid": DispatchEntry(
         onnx_op="QLinearSigmoid",
         tflite_ops=["DEQUANTIZE", "LOGISTIC", "QUANTIZE"],
@@ -1060,12 +1227,32 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
         extra_validator=_validate_qlinear_sigmoid,
     ),
+    "QLinearSoftmax": DispatchEntry(
+        onnx_op="QLinearSoftmax",
+        tflite_ops=["DEQUANTIZE", "SOFTMAX", "QUANTIZE"],
+        builder=build_qlinear_softmax_op,
+        validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_softmax,
+    ),
     "QLinearGlobalAveragePool": DispatchEntry(
         onnx_op="QLinearGlobalAveragePool",
-        tflite_ops=["AVERAGE_POOL_2D", "TRANSPOSE", "DEQUANTIZE", "MEAN", "QUANTIZE"],
+        tflite_ops=["DEQUANTIZE", "MEAN", "QUANTIZE"],
         builder=build_qlinear_global_average_pool_op,
         validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
         extra_validator=_validate_qlinear_global_average_pool,
+    ),
+    "QLinearAveragePool": DispatchEntry(
+        onnx_op="QLinearAveragePool",
+        tflite_ops=["DEQUANTIZE", "TRANSPOSE", "AVERAGE_POOL_2D", "TRANSPOSE", "QUANTIZE"],
+        builder=build_qlinear_average_pool_op,
+        validation=ValidationSpec(
+            min_inputs=5,
+            max_inputs=5,
+            min_outputs=1,
+            max_outputs=1,
+            required_attrs=["kernel_shape"],
+        ),
+        extra_validator=_validate_qlinear_average_pool,
     ),
     "BatchNormalization": DispatchEntry(
         onnx_op="BatchNormalization",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -178,6 +179,32 @@ def _quantize_for_tflite_input(data: np.ndarray, detail: Dict[str, Any]) -> np.n
     return value.astype(target_dtype)
 
 
+def _dim_matches(expected: int, actual: int) -> bool:
+    if int(expected) <= 0:
+        return True
+    return int(expected) == int(actual)
+
+
+def _adapt_input_layout_for_tflite_input(data: np.ndarray, detail: Dict[str, Any]) -> np.ndarray:
+    value = np.asarray(data)
+    target_shape = detail.get("shape_signature", None)
+    if target_shape is None:
+        target_shape = detail.get("shape", None)
+    if target_shape is None:
+        return value
+    target_shape = [int(v) for v in np.asarray(target_shape).reshape(-1).tolist()]
+    if len(target_shape) != value.ndim:
+        return value
+
+    # ONNX test data is usually NCHW, while flatbuffer_direct inputs are NHWC.
+    if value.ndim == 4:
+        n, c, h, w = [int(v) for v in value.shape]
+        nhwc_candidate = [n, h, w, c]
+        if all(_dim_matches(target_shape[i], nhwc_candidate[i]) for i in range(4)):
+            return np.transpose(value, (0, 2, 3, 1))
+    return value
+
+
 def _dequantize_tflite_output(data: np.ndarray, detail: Dict[str, Any]) -> np.ndarray:
     value = np.asarray(data)
     if np.issubdtype(value.dtype, np.floating):
@@ -207,6 +234,77 @@ def _dequantize_tflite_output(data: np.ndarray, detail: Dict[str, Any]) -> np.nd
             zero_points_view = np.zeros(shape, dtype=np.float32)
         return (value_f32 - zero_points_view) * scales_view
     return value.astype(np.float32)
+
+
+def _max_abs_error(a: np.ndarray, b: np.ndarray) -> float:
+    if a.shape != b.shape:
+        raise ValueError(
+            "max-abs error requires equal shapes. "
+            f"a={tuple(a.shape)} b={tuple(b.shape)}"
+        )
+    if a.size == 0:
+        return 0.0
+    a64 = np.asarray(a, dtype=np.float64)
+    b64 = np.asarray(b, dtype=np.float64)
+    return float(np.max(np.abs(a64 - b64)))
+
+
+def _align_output_layout_for_compare(
+    *,
+    onnx_output: np.ndarray,
+    tflite_output: np.ndarray,
+    rtol: float,
+    atol: float,
+) -> Tuple[np.ndarray, str, Optional[List[int]]]:
+    """
+    Align TFLite output layout to ONNX output layout for elementwise comparison.
+
+    Strategy:
+    1. If shapes already match, use as-is.
+    2. If ranks match, brute-force all axis permutations whose output shape matches ONNX.
+       - Prefer the first permutation that satisfies allclose.
+       - Otherwise choose the permutation with smallest max-abs error.
+    3. If no permutation fits but total elements match, fallback to reshape.
+    4. Otherwise raise shape mismatch.
+    """
+    onnx_arr = np.asarray(onnx_output)
+    tflite_arr = np.asarray(tflite_output)
+
+    if onnx_arr.shape == tflite_arr.shape:
+        return tflite_arr, "identity", None
+
+    best_candidate: Optional[np.ndarray] = None
+    best_perm: Optional[List[int]] = None
+    best_err: float = float("inf")
+    if onnx_arr.ndim == tflite_arr.ndim and onnx_arr.ndim > 0:
+        rank = int(tflite_arr.ndim)
+        for perm_tuple in itertools.permutations(range(rank)):
+            if tuple(np.asarray(tflite_arr.transpose(perm_tuple)).shape) != tuple(onnx_arr.shape):
+                continue
+            candidate = np.asarray(tflite_arr.transpose(perm_tuple))
+            if np.allclose(
+                onnx_arr,
+                candidate,
+                rtol=rtol,
+                atol=atol,
+                equal_nan=True,
+            ):
+                return candidate, "transpose", [int(v) for v in perm_tuple]
+            err = _max_abs_error(onnx_arr, candidate)
+            if err < best_err:
+                best_err = float(err)
+                best_candidate = candidate
+                best_perm = [int(v) for v in perm_tuple]
+        if best_candidate is not None:
+            return best_candidate, "transpose", best_perm
+
+    if onnx_arr.size == tflite_arr.size:
+        return np.asarray(tflite_arr).reshape(onnx_arr.shape), "reshape", None
+
+    raise ValueError(
+        "Evaluation output shape mismatch after layout alignment. "
+        f"onnx_shape={tuple(onnx_arr.shape)} tflite_shape={tuple(tflite_arr.shape)}"
+    )
 
 
 class _MetricAccumulator:
@@ -418,6 +516,20 @@ def evaluate_onnx_tflite_outputs(
         output_name: {"matched": 0, "total": 0}
         for output_name in onnx_output_names
     }
+    layout_alignment_summary = {
+        "identity": 0,
+        "transpose": 0,
+        "reshape": 0,
+    }
+    per_output_layout_alignment: Dict[str, Dict[str, Any]] = {
+        output_name: {
+            "identity": 0,
+            "transpose": 0,
+            "reshape": 0,
+            "permutation_counts": {},
+        }
+        for output_name in onnx_output_names
+    }
 
     for sample_index in range(int(num_samples)):
         onnx_inputs: Dict[str, np.ndarray] = {}
@@ -448,9 +560,13 @@ def evaluate_onnx_tflite_outputs(
 
         for input_name in onnx_input_names:
             detail = tflite_input_map[input_name]
+            adapted_input = _adapt_input_layout_for_tflite_input(
+                onnx_inputs[input_name],
+                detail,
+            )
             interpreter.set_tensor(
                 detail["index"],
-                _quantize_for_tflite_input(onnx_inputs[input_name], detail),
+                _quantize_for_tflite_input(adapted_input, detail),
             )
         interpreter.invoke()
 
@@ -463,15 +579,34 @@ def evaluate_onnx_tflite_outputs(
                 tflite_output = np.asarray(tflite_output)
 
             onnx_output = np.asarray(onnx_outputs_by_name[output_name])
-            if onnx_output.shape != tflite_output.shape:
-                if onnx_output.size == tflite_output.size:
-                    tflite_output = tflite_output.reshape(onnx_output.shape)
-                else:
-                    raise ValueError(
-                        "Evaluation output shape mismatch. "
-                        f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
-                        f"tflite_shape={tuple(tflite_output.shape)}"
+            try:
+                tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
+                    onnx_output=onnx_output,
+                    tflite_output=tflite_output,
+                    rtol=rtol,
+                    atol=atol,
+                )
+            except ValueError as ex:
+                raise ValueError(
+                    "Evaluation output shape mismatch. "
+                    f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
+                    f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
+                    f"reason={ex}"
+                ) from ex
+            layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
+            per_output_layout_alignment[output_name][align_mode] = (
+                int(per_output_layout_alignment[output_name][align_mode]) + 1
+            )
+            if align_perm is not None:
+                perm_key = ",".join(str(int(v)) for v in align_perm)
+                per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
+                    int(
+                        per_output_layout_alignment[output_name]["permutation_counts"].get(
+                            perm_key, 0
+                        )
                     )
+                    + 1
+                )
 
             total_metrics.update(onnx_output, tflite_output)
             per_output_metrics[output_name].update(onnx_output, tflite_output)
@@ -523,6 +658,11 @@ def evaluate_onnx_tflite_outputs(
             "total": int(allclose_total),
             "pass": allclose_pass,
         },
+        "layout_alignment_summary": {
+            "identity": int(layout_alignment_summary["identity"]),
+            "transpose": int(layout_alignment_summary["transpose"]),
+            "reshape": int(layout_alignment_summary["reshape"]),
+        },
         "evaluation_pass": evaluation_pass,
         "per_output_metrics": {
             output_name: {
@@ -534,6 +674,17 @@ def evaluate_onnx_tflite_outputs(
                         per_output_allclose[output_name]["matched"]
                         == per_output_allclose[output_name]["total"]
                     ),
+                },
+                "layout_alignment": {
+                    "identity": int(per_output_layout_alignment[output_name]["identity"]),
+                    "transpose": int(per_output_layout_alignment[output_name]["transpose"]),
+                    "reshape": int(per_output_layout_alignment[output_name]["reshape"]),
+                    "permutation_counts": {
+                        k: int(v)
+                        for k, v in per_output_layout_alignment[output_name][
+                            "permutation_counts"
+                        ].items()
+                    },
                 },
                 **per_output_metrics[output_name].to_dict(),
             }

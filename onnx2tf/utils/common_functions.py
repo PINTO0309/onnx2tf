@@ -4048,6 +4048,16 @@ def dummy_onnx_inference(
     new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False, **meta_data)
     if metadata_props is not None:
         new_onnx_graph.metadata_props.extend(metadata_props)
+    # gs.py export may drop non-default node domains.
+    # Re-supplement selected contrib quantized ops for ORT compatibility.
+    ms_domain_rewrite_targets = {'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearMul', 'QLinearSigmoid'}
+    rewritten_ms_domains = False
+    for node in new_onnx_graph.graph.node:
+        if node.op_type in ms_domain_rewrite_targets and node.domain in ['', 'ai.onnx']:
+            node.domain = 'com.microsoft'
+            rewritten_ms_domains = True
+    if rewritten_ms_domains and not any(opset.domain == 'com.microsoft' for opset in new_onnx_graph.opset_import):
+        new_onnx_graph.opset_import.append(onnx.helper.make_operatorsetid('com.microsoft', 1))
     tmp_onnx_path = ''
     tmp_onnx_external_weights_path =''
     try:

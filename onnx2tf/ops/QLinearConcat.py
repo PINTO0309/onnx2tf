@@ -39,7 +39,37 @@ def make_node(
     y_zero_point_list = [i for i in graph_node.inputs[1::3]]
     input_list = [i for i in graph_node.inputs[2::3]]
 
-    input_tensor_rank = len(input_list[0].shape)
+    def get_rank(shape):
+        if shape is None:
+            return None
+        if isinstance(shape, tf.TensorShape):
+            if shape == tf.TensorShape(None):
+                return None
+            return shape.rank
+        if hasattr(shape, 'rank'):
+            try:
+                rank = shape.rank
+                if rank is not None:
+                    return int(rank)
+            except Exception:
+                pass
+        if hasattr(shape, 'as_list'):
+            try:
+                shape_list = shape.as_list()
+                if shape_list is not None:
+                    return len(shape_list)
+            except Exception:
+                pass
+        try:
+            return len(shape)
+        except Exception:
+            return None
+
+    input_tensor_rank = None
+    for graph_node_input in input_list:
+        input_tensor_rank = get_rank(getattr(graph_node_input, 'shape', None))
+        if input_tensor_rank is not None:
+            break
 
     before_op_output_shape_trans = True
     for graph_node_input in input_list:
@@ -150,7 +180,8 @@ def make_node(
         new_values = []
         for same_input_shape_as_onnx, nhwc_flag, value in zip(same_input_shape_as_onnxs, nhwc_flags, got_values):
             if same_input_shape_as_onnx and not nhwc_flag:
-                if len(value.shape) == 3:
+                value_rank = get_rank(value.shape)
+                if value_rank == 3:
                     new_values.append(
                         transpose_with_flexing_deterrence(
                             input_tensor=value,
@@ -158,7 +189,7 @@ def make_node(
                             **kwargs,
                         )
                     )
-                elif len(value.shape) == 4:
+                elif value_rank == 4:
                     new_values.append(
                         transpose_with_flexing_deterrence(
                             input_tensor=value,
@@ -166,7 +197,7 @@ def make_node(
                             **kwargs,
                         )
                     )
-                elif len(value.shape) == 5:
+                elif value_rank == 5:
                     new_values.append(
                         transpose_with_flexing_deterrence(
                             input_tensor=value,
@@ -205,11 +236,18 @@ def make_node(
     # Generation of TF OP
 
     # NCHW->NHWC, NCDHW->NDHWC
-    axis = convert_axis(
-        axis=axis,
-        tensor_rank=len(shape) if shape is not None else input_tensor_rank,
-        before_op_output_shape_trans=before_op_output_shape_trans,
-    )
+    tensor_rank = len(shape) if shape is not None else input_tensor_rank
+    if tensor_rank is None:
+        for value in got_values:
+            tensor_rank = get_rank(getattr(value, 'shape', None))
+            if tensor_rank is not None:
+                break
+    if tensor_rank is not None:
+        axis = convert_axis(
+            axis=axis,
+            tensor_rank=tensor_rank,
+            before_op_output_shape_trans=before_op_output_shape_trans,
+        )
 
     # Param replacement
     before_axis = axis
@@ -229,7 +267,8 @@ def make_node(
             param_name=graph_node_input.name,
             **kwargs,
         )
-        values.append(value if len(value.shape) > 0 else tf.reshape(value, [1]))
+        value_rank = get_rank(getattr(value, 'shape', None))
+        values.append(value if value_rank != 0 else tf.reshape(value, [1]))
 
     def _infer_concat_axis(values, output_shape):
         if not values:
@@ -324,7 +363,9 @@ def make_node(
                 )
             axis = onnx_axis
         except:
-            value_rank = len(dequantized_x_list[0].shape)
+            value_rank = get_rank(getattr(dequantized_x_list[0], 'shape', None))
+            if value_rank is None:
+                raise
             succeed = False
             for idx in reversed(range(value_rank)):
                 try:
