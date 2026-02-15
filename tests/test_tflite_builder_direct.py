@@ -10,6 +10,16 @@ import onnx
 import onnx2tf
 import pytest
 from onnx import TensorProto, helper, numpy_helper
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _resolve_dynamic_reshape_shapes,
+    lower_onnx_to_ir,
+)
+from onnx2tf.tflite_builder.model_writer import serialize_model
+from onnx2tf.tflite_builder.preprocess import (
+    register_default_preprocess_rules,
+    run_preprocess_pipeline,
+)
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 
 Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
@@ -141,6 +151,23 @@ def _make_conv_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_conv_dynamic_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1, 2, 2])
+    w = numpy_helper.from_array(np.ones((1, 1, 3, 3), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((1,), dtype=np.float32), name="B")
+    node = helper.make_node(
+        "Conv",
+        ["x", "W", "B"],
+        ["y"],
+        name="ConvNodeDynamicBatch",
+        pads=[0, 0, 0, 0],
+        strides=[1, 1],
+    )
+    graph = helper.make_graph([node], "conv_dynamic_batch_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_pool_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
@@ -154,6 +181,22 @@ def _make_pool_model() -> onnx.ModelProto:
         pads=[0, 0, 0, 0],
     )
     graph = helper.make_graph([node], "pool_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_maxpool_dynamic_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1, 2, 2])
+    node = helper.make_node(
+        "MaxPool",
+        ["x"],
+        ["y"],
+        name="MaxPoolNodeDynamicBatch",
+        kernel_shape=[2, 2],
+        strides=[2, 2],
+        pads=[0, 0, 0, 0],
+    )
+    graph = helper.make_graph([node], "maxpool_dynamic_batch_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -259,6 +302,318 @@ def _make_space_to_depth_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_resize_nearest_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 8, 8])
+    roi = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="roi_empty")
+    scales = numpy_helper.from_array(np.asarray([1.0, 1.0, 2.0, 2.0], dtype=np.float32), name="resize_scales")
+    node = helper.make_node(
+        "Resize",
+        ["x", "roi_empty", "resize_scales"],
+        ["y"],
+        name="ResizeNearestNode",
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
+        nearest_mode="floor",
+    )
+    graph = helper.make_graph([node], "resize_nearest_graph", [x], [y], initializer=[roi, scales])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_sigmoid_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qsig_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qsig_x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([1.0 / 256.0], dtype=np.float32), name="qsig_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([-128], dtype=np.int8), name="qsig_y_zero")
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "qsig_x_scale", "qsig_x_zero"], ["x_q"], name="QSigQ0"),
+        helper.make_node(
+            "QLinearSigmoid",
+            ["x_q", "qsig_x_scale", "qsig_x_zero", "qsig_y_scale", "qsig_y_zero"],
+            ["y_q"],
+            name="QSigNode",
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "qsig_y_scale", "qsig_y_zero"], ["y"], name="QSigDQ0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_sigmoid_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_global_average_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="qgap_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_y_zero")
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "qgap_x_scale", "qgap_x_zero"], ["x_q"], name="QGapQ0"),
+        helper.make_node(
+            "QLinearGlobalAveragePool",
+            ["x_q", "qgap_x_scale", "qgap_x_zero", "qgap_y_scale", "qgap_y_zero"],
+            ["y_q"],
+            name="QGapNode",
+            channels_last=0,
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "qgap_y_scale", "qgap_y_zero"], ["y"], name="QGapDQ0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_global_average_pool_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_global_average_pool_dynamic_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 2, 1, 1])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_dyn_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_dyn_x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="qgap_dyn_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_dyn_y_zero")
+    nodes = [
+        helper.make_node(
+            "QuantizeLinear",
+            ["x", "qgap_dyn_x_scale", "qgap_dyn_x_zero"],
+            ["x_q"],
+            name="QGapDynQ0",
+        ),
+        helper.make_node(
+            "QLinearGlobalAveragePool",
+            ["x_q", "qgap_dyn_x_scale", "qgap_dyn_x_zero", "qgap_dyn_y_scale", "qgap_dyn_y_zero"],
+            ["y_q"],
+            name="QGapDynNode",
+            channels_last=0,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "qgap_dyn_y_scale", "qgap_dyn_y_zero"],
+            ["y"],
+            name="QGapDynDQ0",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_global_average_pool_dynamic_batch_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_qlinear_global_average_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 4, 2])
+    y = helper.make_tensor_value_info("y_q", TensorProto.INT8, [1, 2, 1, 1])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_t_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_t_x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="qgap_t_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_t_y_zero")
+    t_perm = numpy_helper.from_array(np.asarray([0, 3, 1, 2], dtype=np.int64), name="qgap_t_perm")
+    nodes = [
+        helper.make_node(
+            "QuantizeLinear",
+            ["x", "qgap_t_x_scale", "qgap_t_x_zero"],
+            ["x_q"],
+            name="QGapTQ0",
+        ),
+        helper.make_node(
+            "Transpose",
+            ["x_q", "qgap_t_perm"],
+            ["x_q_nchw"],
+            name="QGapTTranspose0",
+        ),
+        helper.make_node(
+            "QLinearGlobalAveragePool",
+            ["x_q_nchw", "qgap_t_x_scale", "qgap_t_x_zero", "qgap_t_y_scale", "qgap_t_y_zero"],
+            ["y_q"],
+            name="QGapTNode",
+            channels_last=0,
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_qlinear_global_average_pool_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero, t_perm],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_concat_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 2, 2])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qcat_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qcat_x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qcat_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qcat_y_zero")
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "qcat_x_scale", "qcat_x_zero"], ["x_q"], name="QCatQ0"),
+        helper.make_node(
+            "QLinearConcat",
+            [
+                "qcat_y_scale",
+                "qcat_y_zero",
+                "x_q",
+                "qcat_x_scale",
+                "qcat_x_zero",
+                "x_q",
+                "qcat_x_scale",
+                "qcat_x_zero",
+            ],
+            ["y_q"],
+            name="QCatNode",
+            axis=1,
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "qcat_y_scale", "qcat_y_zero"], ["y"], name="QCatDQ0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_concat_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_concat_conv_layout_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 1, 1])
+
+    in_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="qlcc_in_scale")
+    in_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_in_zero")
+    gap_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="qlcc_gap_scale")
+    gap_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_gap_zero")
+    cat_scale = numpy_helper.from_array(np.asarray([0.15], dtype=np.float32), name="qlcc_cat_scale")
+    cat_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_cat_zero")
+    conv_w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [[[1]], [[1]], [[1]], [[1]]],
+                [[[1]], [[0]], [[-1]], [[1]]],
+                [[[0]], [[1]], [[1]], [[0]]],
+            ],
+            dtype=np.int8,
+        ),
+        name="qlcc_conv_w",
+    )
+    conv_w_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qlcc_conv_w_scale")
+    conv_w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_conv_w_zero")
+    conv_y_scale = numpy_helper.from_array(np.asarray([0.12], dtype=np.float32), name="qlcc_conv_y_scale")
+    conv_y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_conv_y_zero")
+
+    nodes = [
+        helper.make_node(
+            "QuantizeLinear",
+            ["x", "qlcc_in_scale", "qlcc_in_zero"],
+            ["x_q"],
+            name="QLCatConv_Q0",
+        ),
+        helper.make_node(
+            "QLinearGlobalAveragePool",
+            ["x_q", "qlcc_in_scale", "qlcc_in_zero", "qlcc_gap_scale", "qlcc_gap_zero"],
+            ["gap_q"],
+            name="QLCatConv_GAP",
+            channels_last=0,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["x_q", "qlcc_in_scale", "qlcc_in_zero"],
+            ["x_f"],
+            name="QLCatConv_DQ0",
+        ),
+        helper.make_node(
+            "MaxPool",
+            ["x_f"],
+            ["pool_f"],
+            name="QLCatConv_MaxPool",
+            kernel_shape=[4, 4],
+            strides=[4, 4],
+            pads=[0, 0, 0, 0],
+        ),
+        helper.make_node(
+            "QuantizeLinear",
+            ["pool_f", "qlcc_in_scale", "qlcc_in_zero"],
+            ["pool_q"],
+            name="QLCatConv_QPool",
+        ),
+        helper.make_node(
+            "QLinearConcat",
+            [
+                "qlcc_cat_scale",
+                "qlcc_cat_zero",
+                "gap_q",
+                "qlcc_gap_scale",
+                "qlcc_gap_zero",
+                "pool_q",
+                "qlcc_in_scale",
+                "qlcc_in_zero",
+            ],
+            ["cat_q"],
+            name="QLCatConv_Concat",
+            axis=1,
+        ),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "cat_q",
+                "qlcc_cat_scale",
+                "qlcc_cat_zero",
+                "qlcc_conv_w",
+                "qlcc_conv_w_scale",
+                "qlcc_conv_w_zero",
+                "qlcc_conv_y_scale",
+                "qlcc_conv_y_zero",
+            ],
+            ["y_q"],
+            name="QLCatConv_Conv",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "qlcc_conv_y_scale", "qlcc_conv_y_zero"],
+            ["y"],
+            name="QLCatConv_DQ1",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_concat_conv_layout_chain_graph",
+        [x],
+        [y],
+        initializer=[
+            in_scale,
+            in_zero,
+            gap_scale,
+            gap_zero,
+            cat_scale,
+            cat_zero,
+            conv_w,
+            conv_w_scale,
+            conv_w_zero,
+            conv_y_scale,
+            conv_y_zero,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_qlinear_conv_chain_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
@@ -351,6 +706,483 @@ def _make_qlinear_conv_chain_model() -> onnx.ModelProto:
             q2_scale,
             q2_zero,
         ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_conv_pair_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="pair_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="pair_x_zero")
+    w1 = numpy_helper.from_array(np.asarray([[[[1]]]], dtype=np.int8), name="pair_w1")
+    w1_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="pair_w1_scale")
+    w1_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="pair_w1_zero")
+    y1_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="pair_y1_scale")
+    y1_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="pair_y1_zero")
+    w2 = numpy_helper.from_array(np.asarray([[[[1]]]], dtype=np.int8), name="pair_w2")
+    w2_scale = numpy_helper.from_array(np.asarray([0.3], dtype=np.float32), name="pair_w2_scale")
+    w2_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="pair_w2_zero")
+    y2_scale = numpy_helper.from_array(np.asarray([0.04], dtype=np.float32), name="pair_y2_scale")
+    y2_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="pair_y2_zero")
+
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "pair_x_scale", "pair_x_zero"], ["x_q"], name="PairQ0"),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_q",
+                "pair_x_scale",
+                "pair_x_zero",
+                "pair_w1",
+                "pair_w1_scale",
+                "pair_w1_zero",
+                "pair_y1_scale",
+                "pair_y1_zero",
+            ],
+            ["q1"],
+            name="PairQConv1",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "q1",
+                "pair_y1_scale",
+                "pair_y1_zero",
+                "pair_w2",
+                "pair_w2_scale",
+                "pair_w2_zero",
+                "pair_y2_scale",
+                "pair_y2_zero",
+            ],
+            ["q2"],
+            name="PairQConv2",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node("DequantizeLinear", ["q2", "pair_y2_scale", "pair_y2_zero"], ["y"], name="PairDQ"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_conv_pair_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zero,
+            w1,
+            w1_scale,
+            w1_zero,
+            y1_scale,
+            y1_zero,
+            w2,
+            w2_scale,
+            w2_zero,
+            y2_scale,
+            y2_zero,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_conv_multichannel_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 2, 2])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mc_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_x_zero")
+    # ONNX QLinearConv weights: OIHW
+    w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [[[1]], [[2]], [[3]]],
+                [[[1]], [[0]], [[-1]]],
+                [[[2]], [[1]], [[0]]],
+                [[[0]], [[1]], [[2]]],
+            ],
+            dtype=np.int8,
+        ),
+        name="mc_w",
+    )
+    w_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="mc_w_scale")
+    w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_w_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="mc_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_y_zero")
+
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "mc_x_scale", "mc_x_zero"], ["x_q"], name="QMC0"),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_q",
+                "mc_x_scale",
+                "mc_x_zero",
+                "mc_w",
+                "mc_w_scale",
+                "mc_w_zero",
+                "mc_y_scale",
+                "mc_y_zero",
+            ],
+            ["y_q"],
+            name="QConvMC",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "mc_y_scale", "mc_y_zero"], ["y"], name="DQMC0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_conv_multichannel_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, w, w_scale, w_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_conv_dynamic_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1, 2, 2])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="dyn_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="dyn_x_zero")
+    w = numpy_helper.from_array(np.asarray([[[[1]]]], dtype=np.int8), name="dyn_w")
+    w_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="dyn_w_scale")
+    w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="dyn_w_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="dyn_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="dyn_y_zero")
+
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "dyn_x_scale", "dyn_x_zero"], ["x_q"], name="QDyn0"),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_q",
+                "dyn_x_scale",
+                "dyn_x_zero",
+                "dyn_w",
+                "dyn_w_scale",
+                "dyn_w_zero",
+                "dyn_y_scale",
+                "dyn_y_zero",
+            ],
+            ["y_q"],
+            name="QConvDyn",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "dyn_y_scale", "dyn_y_zero"], ["y"], name="DQDyn0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_conv_dynamic_batch_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, w, w_scale, w_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_terminal_quantize_dequantize_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+    q_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="tail_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tail_q_zero")
+    nodes = [
+        helper.make_node("Relu", ["x"], ["relu_out"], name="TailRelu"),
+        helper.make_node(
+            "QuantizeLinear",
+            ["relu_out", "tail_q_scale", "tail_q_zero"],
+            ["y_q"],
+            name="TailQ",
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "tail_q_scale", "tail_q_zero"],
+            ["y"],
+            name="TailDQ",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "terminal_quantize_dequantize_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_terminal_transpose_dequantize_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT8, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4, 2])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="ttd_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="ttd_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TTD_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("DequantizeLinear", ["x_t", "ttd_q_scale", "ttd_q_zero"], ["y"], name="TTD_DQ"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "terminal_transpose_dequantize_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_quantize_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, [1, 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tqt_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tqt_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TQT_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("QuantizeLinear", ["x_t", "tqt_q_scale", "tqt_q_zero"], ["x_q"], name="TQT_Q"),
+        helper.make_node("Transpose", ["x_q"], ["y"], name="TQT_PostT", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_quantize_transpose_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_quantize_transpose_dynamic_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, ["N", 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tqtd_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tqtd_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TQTD_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("QuantizeLinear", ["x_t", "tqtd_q_scale", "tqtd_q_zero"], ["x_q"], name="TQTD_Q"),
+        helper.make_node("Transpose", ["x_q"], ["y"], name="TQTD_PostT", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_quantize_transpose_dynamic_batch_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_quantize_transpose_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tqtf_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tqtf_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TQTF_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("QuantizeLinear", ["x_t", "tqtf_q_scale", "tqtf_q_zero"], ["x_q"], name="TQTF_Q"),
+        helper.make_node("Transpose", ["x_q"], ["x_q0"], name="TQTF_PostT0", perm=[0, 3, 1, 2]),
+        helper.make_node("Transpose", ["x_q"], ["x_q1"], name="TQTF_PostT1", perm=[0, 3, 1, 2]),
+        helper.make_node("DequantizeLinear", ["x_q0", "tqtf_q_scale", "tqtf_q_zero"], ["x_f0"], name="TQTF_DQ0"),
+        helper.make_node("DequantizeLinear", ["x_q1", "tqtf_q_scale", "tqtf_q_zero"], ["x_f1"], name="TQTF_DQ1"),
+        helper.make_node("Add", ["x_f0", "x_f1"], ["y"], name="TQTF_Add"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_quantize_transpose_fanout_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_dequantize_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT8, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tdt_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tdt_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TDT_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("DequantizeLinear", ["x_t", "tdt_q_scale", "tdt_q_zero"], ["x_f"], name="TDT_DQ"),
+        helper.make_node("Transpose", ["x_f"], ["y"], name="TDT_PostT", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_dequantize_transpose_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_binary_fanout_chain_model() -> onnx.ModelProto:
+    a = helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 2, 3, 4])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 2, 3, 4])
+    c = helper.make_tensor_value_info("c", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["a"], ["a_t"], name="TBFC_PreA", perm=[0, 3, 1, 2]),
+        helper.make_node("Transpose", ["b"], ["b_t"], name="TBFC_PreB", perm=[0, 3, 1, 2]),
+        helper.make_node("Add", ["a_t", "b_t"], ["ab_t"], name="TBFC_Add0"),
+        helper.make_node("Transpose", ["ab_t"], ["ab"], name="TBFC_Post0", perm=[0, 2, 3, 1]),
+        helper.make_node("Transpose", ["c"], ["c_t"], name="TBFC_PreC", perm=[0, 3, 1, 2]),
+        helper.make_node("Add", ["ab_t", "c_t"], ["abc_t"], name="TBFC_Add1"),
+        helper.make_node("Transpose", ["abc_t"], ["abc"], name="TBFC_Post1", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["abc"], ["y"], name="TBFC_ReluY"),
+        helper.make_node("Relu", ["ab"], ["z"], name="TBFC_ReluZ"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_binary_fanout_chain_graph", [a, b, c], [y, z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_dequantize_transpose_with_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT8, [1, 2, 3, 4])
+    y1 = helper.make_tensor_value_info("y1", TensorProto.FLOAT, [1, 2, 3, 4])
+    y2 = helper.make_tensor_value_info("y2", TensorProto.FLOAT, [1, 3, 4, 2])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tdtf_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tdtf_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TDTF_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("DequantizeLinear", ["x_t", "tdtf_q_scale", "tdtf_q_zero"], ["x_f1"], name="TDTF_DQ1"),
+        helper.make_node("Transpose", ["x_f1"], ["y1"], name="TDTF_PostT", perm=[0, 3, 1, 2]),
+        helper.make_node("DequantizeLinear", ["x_t", "tdtf_q_scale", "tdtf_q_zero"], ["y2"], name="TDTF_DQ2"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_dequantize_transpose_with_fanout_graph",
+        [x],
+        [y1, y2],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_quantize_dequantize_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tqdt_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tqdt_q_zero")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TQDT_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("QuantizeLinear", ["x_t", "tqdt_q_scale", "tqdt_q_zero"], ["x_q"], name="TQDT_Q"),
+        helper.make_node("DequantizeLinear", ["x_q", "tqdt_q_scale", "tqdt_q_zero"], ["x_f"], name="TQDT_DQ"),
+        helper.make_node("Transpose", ["x_f"], ["y"], name="TQDT_PostT", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_quantize_dequantize_transpose_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_binary_transpose_model(binary_op: str) -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name=f"TBT_PreT0_{binary_op}", perm=[0, 2, 3, 1]),
+        helper.make_node("Transpose", ["y"], ["y_t"], name=f"TBT_PreT1_{binary_op}", perm=[0, 2, 3, 1]),
+        helper.make_node(binary_op, ["x_t", "y_t"], ["z_t"], name=f"TBT_{binary_op}"),
+        helper.make_node("Transpose", ["z_t"], ["z"], name=f"TBT_PostT_{binary_op}", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        f"transpose_{binary_op.lower()}_transpose_graph",
+        [x, y],
+        [z],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_binary_transpose_fanout_model(binary_op: str) -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    s = helper.make_tensor_value_info("s", TensorProto.FLOAT, [1, 4, 2, 3])
+    out_nhwc = helper.make_tensor_value_info("out_nhwc", TensorProto.FLOAT, [1, 2, 3, 4])
+    out_nchw = helper.make_tensor_value_info("out_nchw", TensorProto.FLOAT, [1, 4, 2, 3])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name=f"TBTF_PreT0_{binary_op}", perm=[0, 3, 1, 2]),
+        helper.make_node("Transpose", ["y"], ["y_t"], name=f"TBTF_PreT1_{binary_op}", perm=[0, 3, 1, 2]),
+        helper.make_node(binary_op, ["x_t", "y_t"], ["z_t"], name=f"TBTF_{binary_op}"),
+        helper.make_node("Transpose", ["z_t"], ["z"], name=f"TBTF_PostT_{binary_op}", perm=[0, 2, 3, 1]),
+        helper.make_node("Add", ["z_t", "s"], ["out_nchw"], name="TBTF_FanoutAdd"),
+        helper.make_node("Relu", ["z"], ["out_nhwc"], name="TBTF_Relu"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        f"transpose_{binary_op.lower()}_transpose_fanout_graph",
+        [x, y, s],
+        [out_nhwc, out_nchw],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_binary_no_post_transpose_model(binary_op: str) -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 4, 2, 3])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name=f"TBNP_PreT0_{binary_op}", perm=[0, 3, 1, 2]),
+        helper.make_node("Transpose", ["y"], ["y_t"], name=f"TBNP_PreT1_{binary_op}", perm=[0, 3, 1, 2]),
+        helper.make_node(binary_op, ["x_t", "y_t"], ["z_t"], name=f"TBNP_{binary_op}"),
+        helper.make_node("Relu", ["z_t"], ["z"], name=f"TBNP_Relu_{binary_op}"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        f"transpose_{binary_op.lower()}_no_post_transpose_graph",
+        [x, y],
+        [z],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_binary_single_side_transpose_model(
+    binary_op: str,
+    *,
+    transpose_on_lhs: bool,
+) -> onnx.ModelProto:
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3, 4, 2])
+
+    if transpose_on_lhs:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 2])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+        nodes = [
+            helper.make_node("Transpose", ["x"], ["x_t"], name=f"TSB_PreT0_{binary_op}", perm=[0, 3, 1, 2]),
+            helper.make_node(binary_op, ["x_t", "y"], ["z_t"], name=f"TSB_{binary_op}"),
+            helper.make_node("Transpose", ["z_t"], ["z"], name=f"TSB_PostT_{binary_op}", perm=[0, 2, 3, 1]),
+        ]
+        inputs = [x, y]
+    else:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4, 2])
+        nodes = [
+            helper.make_node("Transpose", ["y"], ["y_t"], name=f"TSB_PreT1_{binary_op}", perm=[0, 3, 1, 2]),
+            helper.make_node(binary_op, ["x", "y_t"], ["z_t"], name=f"TSB_{binary_op}"),
+            helper.make_node("Transpose", ["z_t"], ["z"], name=f"TSB_PostT_{binary_op}", perm=[0, 2, 3, 1]),
+        ]
+        inputs = [x, y]
+
+    graph = helper.make_graph(
+        nodes,
+        f"transpose_single_side_{binary_op.lower()}_transpose_graph",
+        inputs,
+        [z],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
@@ -498,6 +1330,15 @@ def _make_transpose_attr_only_model() -> onnx.ModelProto:
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
     node = helper.make_node("Transpose", ["x"], ["y"], name="TransposeAttrOnlyNode", perm=[0, 2, 1])
     graph = helper.make_graph([node], "transpose_attr_only_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reshape_minus_one_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
+    shape = numpy_helper.from_array(np.array([-1, 2], dtype=np.int64), name="reshape_shape")
+    node = helper.make_node("Reshape", ["x", "reshape_shape"], ["y"], name="ReshapeMinusOneNode")
+    graph = helper.make_graph([node], "reshape_minus_one_graph", [x], [y], initializer=[shape])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -821,6 +1662,10 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("gelu", _make_gelu_model),
         ("pow_square", _make_pow_square_model),
         ("space_to_depth", _make_space_to_depth_model),
+        ("resize_nearest", _make_resize_nearest_model),
+        ("qlinear_sigmoid", _make_qlinear_sigmoid_model),
+        ("qlinear_global_average_pool", _make_qlinear_global_average_pool_model),
+        ("qlinear_concat", _make_qlinear_concat_model),
         ("space_to_depth_chain", _make_space_to_depth_chain_model),
         ("qlinear_conv_chain", _make_qlinear_conv_chain_model),
         ("qlinear_fc_chain", _make_qlinear_fc_chain_model),
@@ -844,6 +1689,598 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         interpreter.set_tensor(input_details[0]["index"], x)
         interpreter.invoke()
         _ = interpreter.get_tensor(output_details[0]["index"])
+
+
+def test_flatbuffer_direct_transpose_chain_optimization() -> None:
+    model = _make_qlinear_conv_pair_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 1
+
+
+def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
+    model = _make_qlinear_conv_multichannel_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_conv_multichannel_layout_test",
+        optimize_layout_transpose_chains=False,
+    )
+
+    w_tensor = model_ir.tensors.get("QConvMC_conv_filter_q")
+    assert w_tensor is not None
+    assert list(w_tensor.shape) == [4, 1, 1, 3]
+
+
+def test_flatbuffer_direct_input_layout_defaults_to_nhwc_when_enabled() -> None:
+    model = _make_qlinear_conv_chain_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="input_layout_default_nhwc_test",
+        transpose_inputs_to_nhwc=True,
+    )
+    assert model_ir.inputs == ["x"]
+    assert list(model_ir.tensors["x"].shape) == [1, 2, 2, 1]
+
+
+def test_flatbuffer_direct_input_layout_respects_keep_shape_absolute() -> None:
+    model = _make_qlinear_conv_chain_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="input_layout_keep_absolute_test",
+        transpose_inputs_to_nhwc=True,
+        keep_shape_absolutely_input_names=["x"],
+    )
+    assert model_ir.inputs == ["x"]
+    assert list(model_ir.tensors["x"].shape) == [1, 1, 2, 2]
+
+
+def test_flatbuffer_direct_reshape_minus_one_resolved_to_static_shape() -> None:
+    model = _make_reshape_minus_one_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="reshape_minus_one_resolved_test",
+    )
+    reshape_ops = [op for op in model_ir.operators if str(op.op_type) == "RESHAPE"]
+    assert len(reshape_ops) == 1
+    reshape_op = reshape_ops[0]
+    assert list(reshape_op.options.get("newShape", [])) == [3, 2]
+    shape_tensor_name = reshape_op.inputs[1]
+    shape_tensor = model_ir.tensors[shape_tensor_name]
+    assert shape_tensor is not None
+    assert shape_tensor.data is not None
+    assert np.asarray(shape_tensor.data).reshape(-1).tolist() == [3, 2]
+    output_tensor = model_ir.tensors["y"]
+    assert list(output_tensor.shape) == [3, 2]
+    assert list(output_tensor.shape_signature) == [3, 2]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
+    model_ir = ModelIR(name="reshape_fixup_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT8",
+        shape=[1, 40, 40, 1],
+        shape_signature=[1, 40, 40, 1],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, -1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={"newShape": [1, -1, 1]},
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [1, 1600, 1]
+    assert list(model_ir.tensors["y"].shape) == [1, 1600, 1]
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 1600, 1]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1600, 1]
+
+
+def test_flatbuffer_direct_qlinear_global_average_pool_lowering() -> None:
+    model = _make_qlinear_global_average_pool_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_global_average_pool_lowering_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("MEAN") == 0
+    assert op_types.count("DEQUANTIZE") >= 1
+
+    y = model_ir.tensors.get("y")
+    assert y is not None
+    assert list(y.shape) == [1, 1, 1, 2]
+    assert list(y.shape_signature) == [1, 1, 1, 2]
+
+
+def test_flatbuffer_direct_qlinear_concat_lowering() -> None:
+    model = _make_qlinear_concat_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_concat_lowering_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("CONCATENATION") == 1
+    assert op_types.count("DEQUANTIZE") >= 1
+    assert op_types.count("QUANTIZE") >= 1
+
+    y = model_ir.tensors.get("y")
+    assert y is not None
+    assert list(y.shape) == [1, 2, 2, 2]
+    assert list(y.shape_signature) == [1, 2, 2, 2]
+
+
+def test_flatbuffer_direct_elides_inverse_transpose_chain_at_generation() -> None:
+    model = _make_qlinear_conv_pair_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_generation_elide_test",
+        optimize_layout_transpose_chains=False,
+    )
+    transpose_ops = [op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE"]
+    transpose_outputs = {str(op.outputs[0]) for op in transpose_ops if len(op.outputs) == 1}
+
+    # PairQConv1 output(NCHW) -> PairQConv2 input(NHWC) bridge is suppressed at generation time.
+    assert "PairQConv2_input_nhwc" not in transpose_outputs
+    assert len(transpose_ops) == 1
+
+
+def test_flatbuffer_direct_no_dead_operator_outputs_after_prune() -> None:
+    model = _make_qlinear_conv_pair_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="dead_operator_prune_test",
+        optimize_layout_transpose_chains=False,
+    )
+
+    consumed_tensors = set()
+    produced_tensors = []
+    for op in model_ir.operators:
+        for input_name in op.inputs:
+            consumed_tensors.add(str(input_name))
+        for output_name in op.outputs:
+            produced_tensors.append(str(output_name))
+
+    graph_outputs = set(str(v) for v in model_ir.outputs)
+    dead_outputs = [
+        name for name in produced_tensors
+        if name not in consumed_tensors and name not in graph_outputs
+    ]
+    assert dead_outputs == []
+
+
+def test_flatbuffer_direct_serialize_model_prunes_dead_ops() -> None:
+    model_ir = ModelIR(name="serialize_prune_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 3])
+    model_ir.tensors["tmp"] = TensorIR(name="tmp", dtype="FLOAT32", shape=[1, 3])
+    model_ir.tensors["dead_out"] = TensorIR(name="dead_out", dtype="FLOAT32", shape=[1, 3])
+    model_ir.tensors["c"] = TensorIR(
+        name="c",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        data=np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[2],
+        data=np.array([0, 1], dtype=np.int32),
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="ADD", inputs=["x", "c"], outputs=["tmp"]),
+        OperatorIR(op_type="RELU", inputs=["tmp"], outputs=["y"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["tmp", "perm"], outputs=["dead_out"]),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema_tflite = load_schema_module(tmpdir)
+        model_bytes = serialize_model(schema_tflite=schema_tflite, model_ir=model_ir)
+        model_obj = schema_tflite["Model"].GetRootAsModel(model_bytes, 0)
+        subgraph = model_obj.Subgraphs(0)
+        assert subgraph.OperatorsLength() == 2
+        tensor_names = {
+            subgraph.Tensors(i).Name().decode()
+            for i in range(subgraph.TensorsLength())
+        }
+        assert "dead_out" not in tensor_names
+        assert "perm" not in tensor_names
+
+
+def test_flatbuffer_direct_terminal_quantize_dequantize_optimization() -> None:
+    model = _make_terminal_quantize_dequantize_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="terminal_qdq_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "QUANTIZE" not in op_types
+    assert "DEQUANTIZE" not in op_types
+    assert op_types.count("RELU") == 1
+
+
+def test_flatbuffer_direct_terminal_transpose_before_dequantize_sanitization() -> None:
+    model = _make_terminal_transpose_dequantize_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="terminal_transpose_before_dequantize_sanitize_test",
+    )
+
+    dequantize_ops = [op for op in model_ir.operators if str(op.op_type) == "DEQUANTIZE"]
+    transpose_ops = [op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE"]
+    assert len(dequantize_ops) == 1
+    assert len(transpose_ops) == 0
+
+    dq_op = dequantize_ops[0]
+    assert dq_op.outputs[0] == "y"
+
+
+def test_flatbuffer_direct_transpose_quantize_transpose_optimization() -> None:
+    model = _make_transpose_quantize_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_quantize_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("QUANTIZE") == 1
+
+
+def test_flatbuffer_direct_transpose_quantize_transpose_fanout_optimization() -> None:
+    model = _make_transpose_quantize_transpose_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_quantize_transpose_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("QUANTIZE") == 1
+    assert op_types.count("DEQUANTIZE") == 2
+    assert op_types.count("ADD") == 1
+
+
+def test_flatbuffer_direct_transpose_quantize_transpose_preserves_dynamic_batch_signature() -> None:
+    model = _make_transpose_quantize_transpose_dynamic_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_quantize_transpose_dynamic_batch_opt_test",
+    )
+    quant_ops = [op for op in model_ir.operators if str(op.op_type) == "QUANTIZE"]
+    assert len(quant_ops) == 1
+    out_name = quant_ops[0].outputs[0]
+    out_tensor = model_ir.tensors[out_name]
+    assert out_tensor is not None
+    assert out_tensor.shape_signature is not None
+    assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_transpose_binary_fanout_chain_optimization() -> None:
+    model = _make_transpose_binary_fanout_chain_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_binary_fanout_chain_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("ADD") == 2
+    assert op_types.count("RELU") == 2
+
+
+def test_flatbuffer_direct_conv2d_intermediate_preserves_dynamic_batch_signature() -> None:
+    model = _make_conv_dynamic_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="conv_dynamic_batch_signature_test",
+    )
+    conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
+    assert len(conv_ops) == 1
+    out_name = conv_ops[0].outputs[0]
+    out_tensor = model_ir.tensors[out_name]
+    assert out_tensor.shape_signature is not None
+    assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_maxpool2d_intermediate_preserves_dynamic_batch_signature() -> None:
+    model = _make_maxpool_dynamic_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="maxpool_dynamic_batch_signature_test",
+    )
+    maxpool_ops = [op for op in model_ir.operators if str(op.op_type) == "MAX_POOL_2D"]
+    assert len(maxpool_ops) == 1
+    out_name = maxpool_ops[0].outputs[0]
+    out_tensor = model_ir.tensors[out_name]
+    assert out_tensor.shape_signature is not None
+    assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_qlinear_conv2d_intermediate_preserves_dynamic_batch_signature() -> None:
+    model = _make_qlinear_conv_dynamic_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_conv_dynamic_batch_signature_test",
+    )
+    conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
+    assert len(conv_ops) == 1
+    out_name = conv_ops[0].outputs[0]
+    out_tensor = model_ir.tensors[out_name]
+    assert out_tensor.quantization is not None
+    assert out_tensor.shape_signature is not None
+    assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_qlinear_global_average_pool_intermediate_preserves_dynamic_batch_signature() -> None:
+    model = _make_qlinear_global_average_pool_dynamic_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_global_average_pool_dynamic_batch_signature_test",
+    )
+
+    avg_pool_ops = [op for op in model_ir.operators if str(op.op_type) == "AVERAGE_POOL_2D"]
+    assert len(avg_pool_ops) == 1
+    avg_tensor = model_ir.tensors[avg_pool_ops[0].outputs[0]]
+    assert avg_tensor.shape_signature is not None
+    assert int(avg_tensor.shape_signature[0]) == -1
+
+    y_tensor = model_ir.tensors["y"]
+    assert y_tensor.shape_signature is not None
+    assert int(y_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_transpose_qlinear_global_average_pool_bridge_optimization() -> None:
+    model = _make_transpose_qlinear_global_average_pool_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_qlinear_global_average_pool_bridge_opt_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("MEAN") == 0
+    assert op_types.count("DEQUANTIZE") == 0
+    assert op_types.count("QUANTIZE") == 1
+
+    assert all(
+        not (str(op.op_type) == "TRANSPOSE" and len(op.outputs) == 1 and op.outputs[0] == "x_q_nchw")
+        for op in model_ir.operators
+    )
+
+    avg_pool_ops = [op for op in model_ir.operators if str(op.op_type) == "AVERAGE_POOL_2D"]
+    assert len(avg_pool_ops) == 1
+    assert avg_pool_ops[0].inputs == ["x_q"]
+
+    producer = None
+    for op in model_ir.operators:
+        if "y_q" in set(op.outputs):
+            producer = op
+            break
+    assert producer is not None
+    assert str(producer.op_type) == "TRANSPOSE"
+
+
+def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:
+    model = _make_qlinear_concat_conv_layout_chain_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_concat_conv_layout_propagation_test",
+    )
+
+    concat_ops = [op for op in model_ir.operators if str(op.op_type) == "CONCATENATION"]
+    assert len(concat_ops) == 1
+    concat_axis = int(concat_ops[0].options.get("axis", -1))
+    assert concat_axis == 3
+
+    cat_q = model_ir.tensors.get("cat_q")
+    assert cat_q is not None
+    assert list(cat_q.shape) == [1, 1, 1, 4]
+
+    assert all(
+        not (
+            str(op.op_type) == "TRANSPOSE"
+            and len(op.outputs) == 1
+            and op.outputs[0] == "QLCatConv_Conv_input_nhwc"
+        )
+        for op in model_ir.operators
+    )
+
+    # If a QUANTIZE input is already in dequantized flow, avoid redundant Q->DQ before CONCAT.
+    assert all(
+        not (
+            str(op.op_type) == "DEQUANTIZE"
+            and len(op.inputs) == 1
+            and op.inputs[0] == "pool_q"
+        )
+        for op in model_ir.operators
+    )
+    concat_inputs = list(concat_ops[0].inputs)
+    assert "QLCatConv_MaxPool_output_nhwc" in concat_inputs
+
+
+def test_flatbuffer_direct_transpose_dequantize_transpose_optimization() -> None:
+    model = _make_transpose_dequantize_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_dequantize_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("DEQUANTIZE") == 1
+
+
+def test_flatbuffer_direct_transpose_dequantize_transpose_optimization_fanout_safe() -> None:
+    model = _make_transpose_dequantize_transpose_with_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_dequantize_transpose_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DEQUANTIZE") == 2
+    assert op_types.count("TRANSPOSE") == 0
+
+
+def test_flatbuffer_direct_transpose_quantize_dequantize_transpose_optimization() -> None:
+    model = _make_transpose_quantize_dequantize_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_quantize_dequantize_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("QUANTIZE") == 1
+    assert op_types.count("DEQUANTIZE") == 1
+
+
+@pytest.mark.parametrize("binary_op", ["Add", "Sub", "Mul", "Div"])
+def test_flatbuffer_direct_transpose_binary_transpose_optimization(binary_op: str) -> None:
+    model = _make_transpose_binary_transpose_model(binary_op)
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name=f"transpose_{binary_op.lower()}_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    expected_binary = binary_op.upper()
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count(expected_binary) == 1
+
+
+@pytest.mark.parametrize("binary_op", ["Add", "Sub", "Mul", "Div"])
+def test_flatbuffer_direct_transpose_binary_transpose_fanout_optimization(binary_op: str) -> None:
+    model = _make_transpose_binary_transpose_fanout_model(binary_op)
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name=f"transpose_{binary_op.lower()}_transpose_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    expected_binary = binary_op.upper()
+    assert op_types.count("TRANSPOSE") == 1
+    expected_binary_count = 2 if expected_binary == "ADD" else 1
+    assert op_types.count(expected_binary) == expected_binary_count
+    expected_add_count = 2 if expected_binary == "ADD" else 1
+    assert op_types.count("ADD") == expected_add_count
+    assert op_types.count("RELU") == 1
+
+
+@pytest.mark.parametrize("binary_op", ["Add", "Sub", "Mul", "Div"])
+def test_flatbuffer_direct_transpose_binary_no_post_transpose_optimization(binary_op: str) -> None:
+    model = _make_transpose_binary_no_post_transpose_model(binary_op)
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name=f"transpose_{binary_op.lower()}_no_post_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    expected_binary = binary_op.upper()
+    assert op_types.count("TRANSPOSE") == 1
+    assert op_types.count(expected_binary) == 1
+    assert op_types.count("RELU") == 1
+
+
+@pytest.mark.parametrize("binary_op", ["Add", "Sub", "Mul", "Div"])
+@pytest.mark.parametrize("transpose_on_lhs", [True, False])
+def test_flatbuffer_direct_transpose_binary_single_side_transpose_optimization(
+    binary_op: str,
+    transpose_on_lhs: bool,
+) -> None:
+    model = _make_transpose_binary_single_side_transpose_model(
+        binary_op,
+        transpose_on_lhs=transpose_on_lhs,
+    )
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name=f"transpose_single_side_{binary_op.lower()}_transpose_opt_test",
+    )
+
+    expected_binary = binary_op.upper()
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count(expected_binary) == 1
+    assert op_types.count("TRANSPOSE") == 1
+
+    binary_ops = [op for op in model_ir.operators if str(op.op_type) == expected_binary]
+    assert len(binary_ops) == 1
+    binary_ir = binary_ops[0]
+    assert binary_ir.outputs == ["z"]
+
+    transpose_ops = [op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE"]
+    assert len(transpose_ops) == 1
+    assert transpose_ops[0].outputs[0] in set(binary_ir.inputs)
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")

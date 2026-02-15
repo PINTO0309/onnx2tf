@@ -87,6 +87,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         kwargs.get("auto_split_tflite_by_size", False)
     )
     report_op_coverage = bool(kwargs.get("report_op_coverage", False))
+    keep_ncw_or_nchw_or_ncdhw_input_names = kwargs.get(
+        "keep_ncw_or_nchw_or_ncdhw_input_names",
+        None,
+    )
+    keep_nwc_or_nhwc_or_ndhwc_input_names = kwargs.get(
+        "keep_nwc_or_nhwc_or_ndhwc_input_names",
+        None,
+    )
+    keep_shape_absolutely_input_names = kwargs.get(
+        "keep_shape_absolutely_input_names",
+        None,
+    )
     flatbuffer_direct_allow_custom_ops = bool(
         kwargs.get("flatbuffer_direct_allow_custom_ops", False)
     )
@@ -188,6 +200,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             output_file_name=output_file_name,
             allow_custom_ops=flatbuffer_direct_allow_custom_ops,
             custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+            transpose_inputs_to_nhwc=True,
+            keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+            keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+            keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
         )
     except Exception as ex:
         try:

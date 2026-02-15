@@ -1,10 +1,68 @@
 from __future__ import annotations
 
 from typing import Any
+import copy
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+
+
+def _resolve_reshape_shape_with_static_dims(
+    *,
+    new_shape: list[int],
+    input_tensor: Any,
+    output_tensor: Any,
+    allowzero: bool,
+) -> list[int]:
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_tensor.shape)
+    )
+    if len(output_signature) == len(new_shape) and all(int(dim) >= 0 for dim in output_signature):
+        return [int(v) for v in output_tensor.shape]
+
+    minus_one_indices = [idx for idx, dim in enumerate(new_shape) if int(dim) == -1]
+    if len(minus_one_indices) != 1:
+        return [int(v) for v in new_shape]
+
+    input_signature = (
+        list(input_tensor.shape_signature)
+        if input_tensor.shape_signature is not None
+        else list(input_tensor.shape)
+    )
+    if len(input_signature) == 0 or any(int(dim) < 0 for dim in input_signature):
+        return [int(v) for v in new_shape]
+    if any(int(dim) == 0 for dim in input_signature):
+        return [int(v) for v in new_shape]
+
+    known_product = 1
+    resolved_shape = [int(v) for v in new_shape]
+    for idx, raw_dim in enumerate(new_shape):
+        dim = int(raw_dim)
+        if dim == -1:
+            continue
+        if dim == 0 and not allowzero:
+            if idx >= len(input_signature):
+                return [int(v) for v in new_shape]
+            dim = int(input_signature[idx])
+            resolved_shape[idx] = dim
+        if dim <= 0:
+            return [int(v) for v in new_shape]
+        known_product *= dim
+    if known_product <= 0:
+        return [int(v) for v in new_shape]
+
+    input_product = int(np.prod(np.asarray(input_signature, dtype=np.int64)))
+    if input_product <= 0 or input_product % known_product != 0:
+        return [int(v) for v in new_shape]
+    inferred = int(input_product // known_product)
+    if inferred <= 0:
+        return [int(v) for v in new_shape]
+    resolved_shape[minus_one_indices[0]] = inferred
+    return resolved_shape
 
 
 def build_reshape_op(node: Any, ctx: Any) -> None:
@@ -20,6 +78,18 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
             f"Reshape shape tensor must be constant for flatbuffer_direct. op={node.name}"
         )
     new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
+    allowzero = bool(node.attrs.get("allowzero", 0))
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    new_shape = _resolve_reshape_shape_with_static_dims(
+        new_shape=new_shape,
+        input_tensor=input_tensor,
+        output_tensor=output_tensor,
+        allowzero=allowzero,
+    )
+    if len(new_shape) > 0 and all(int(dim) >= 0 for dim in new_shape):
+        output_tensor.shape = [int(dim) for dim in new_shape]
+        output_tensor.shape_signature = [int(dim) for dim in new_shape]
     shape_const = ctx.add_const_tensor(
         f"{output_name}_reshape_shape",
         np.asarray(new_shape, dtype=np.int32),
@@ -231,4 +301,166 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
             outputs=[output_name],
             options={"newShape": output_shape},
         )
+    )
+
+
+def _clone_quantization(quantization: Any) -> Any:
+    if quantization is None:
+        return None
+    if isinstance(quantization, QuantParamIR):
+        return QuantParamIR(
+            scale=list(quantization.scale),
+            zero_point=list(quantization.zero_point),
+            quantized_dimension=int(quantization.quantized_dimension),
+            min=list(quantization.min) if quantization.min is not None else None,
+            max=list(quantization.max) if quantization.max is not None else None,
+        )
+    return copy.deepcopy(quantization)
+
+
+def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tuple[int, int]:
+    def _resolve_from_sizes(arr: np.ndarray) -> tuple[int, int]:
+        values = np.asarray(arr).reshape(-1).astype(np.int64)
+        if values.size >= 4:
+            return int(values[-2]), int(values[-1])
+        if values.size == 2:
+            return int(values[0]), int(values[1])
+        raise NotImplementedError(
+            f"Resize sizes must have at least 2 values. op={node.name} sizes_shape={list(values.shape)}"
+        )
+
+    def _resolve_from_scales(arr: np.ndarray) -> tuple[int, int]:
+        values = np.asarray(arr).reshape(-1).astype(np.float32)
+        in_h = int(input_shape[2])
+        in_w = int(input_shape[3])
+        if values.size >= 4:
+            out_h = int(round(float(in_h) * float(values[-2])))
+            out_w = int(round(float(in_w) * float(values[-1])))
+            return max(out_h, 1), max(out_w, 1)
+        if values.size == 2:
+            out_h = int(round(float(in_h) * float(values[0])))
+            out_w = int(round(float(in_w) * float(values[1])))
+            return max(out_h, 1), max(out_w, 1)
+        raise NotImplementedError(
+            f"Resize scales must have at least 2 values. op={node.name} scales_shape={list(values.shape)}"
+        )
+
+    if len(node.inputs) >= 4:
+        sizes_name = node.inputs[3].name
+        if sizes_name != "":
+            sizes = ctx.get_constant_array(sizes_name)
+            if sizes is not None and int(np.asarray(sizes).size) >= 2:
+                return _resolve_from_sizes(np.asarray(sizes))
+    if len(node.inputs) >= 3:
+        scales_name = node.inputs[2].name
+        if scales_name != "":
+            scales = ctx.get_constant_array(scales_name)
+            if scales is not None and int(np.asarray(scales).size) >= 2:
+                arr = np.asarray(scales)
+                if np.issubdtype(arr.dtype, np.integer):
+                    return _resolve_from_sizes(arr)
+                return _resolve_from_scales(arr)
+    if len(node.inputs) == 2:
+        param_name = node.inputs[1].name
+        if param_name != "":
+            param = ctx.get_constant_array(param_name)
+            if param is not None and int(np.asarray(param).size) >= 2:
+                arr = np.asarray(param)
+                if np.issubdtype(arr.dtype, np.integer):
+                    return _resolve_from_sizes(arr)
+                return _resolve_from_scales(arr)
+    raise NotImplementedError(
+        f"Resize target size must be resolvable from constant sizes/scales. op={node.name}"
+    )
+
+
+def _resolve_resize_flags(node: Any) -> tuple[str, bool, bool]:
+    mode = str(node.attrs.get("mode", "nearest")).lower()
+    ctm = str(node.attrs.get("coordinate_transformation_mode", "half_pixel")).lower()
+    align_corners = bool(ctm == "align_corners")
+    half_pixel_centers = bool(ctm == "half_pixel")
+    if mode == "nearest" and ctm == "asymmetric":
+        align_corners = False
+        half_pixel_centers = False
+    return mode, align_corners, half_pixel_centers
+
+
+def build_resize_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if len(input_shape) != 4:
+        raise NotImplementedError(
+            f"Resize supports only rank-4 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
+        )
+    if len(output_shape) != 4 or output_shape == [1]:
+        out_h, out_w = _resolve_resize_target_hw(node, ctx, input_shape)
+        output_shape = [int(input_shape[0]), int(input_shape[1]), int(out_h), int(out_w)]
+        ctx.model_ir.tensors[output_name].shape = list(output_shape)
+        ctx.model_ir.tensors[output_name].shape_signature = list(output_shape)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name))
+    output_dtype = str(ctx.get_tensor_dtype(output_name))
+    if output_dtype == "FLOAT32" and input_dtype != "FLOAT32":
+        ctx.model_ir.tensors[output_name].dtype = input_dtype
+    if ctx.model_ir.tensors[output_name].quantization is None:
+        in_quant = ctx.model_ir.tensors[input_name].quantization
+        if in_quant is not None:
+            ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
+
+    mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
+    tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
+
+    nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
+    nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]
+
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=nhwc_input_shape,
+    )
+    x_quant = ctx.model_ir.tensors[input_name].quantization
+    if x_quant is not None:
+        ctx.model_ir.tensors[x_nhwc].quantization = _clone_quantization(x_quant)
+    x_nhwc = make_transpose(
+        ctx,
+        input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    size_const = ctx.add_const_tensor(
+        f"{node.name}_resize_size",
+        np.asarray([int(output_shape[2]), int(output_shape[3])], dtype=np.int32),
+    )
+    y_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_nhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=nhwc_output_shape,
+    )
+    y_quant = ctx.model_ir.tensors[output_name].quantization
+    if y_quant is not None:
+        ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(y_quant)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type=tflite_op,
+            inputs=[x_nhwc, size_const],
+            outputs=[y_nhwc],
+            options={
+                "alignCorners": bool(align_corners),
+                "halfPixelCenters": bool(half_pixel_centers),
+            },
+        )
+    )
+    make_transpose(
+        ctx,
+        y_nhwc,
+        output_name,
+        [0, 3, 1, 2],
     )

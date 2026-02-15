@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.op_builders.shape import (
     build_concat_op,
     build_flatten_op,
     build_identity_op,
+    build_resize_op,
     build_reshape_op,
     build_space_to_depth_op,
     build_squeeze_op,
@@ -41,9 +42,12 @@ from onnx2tf.tflite_builder.op_builders.custom import (
 from onnx2tf.tflite_builder.op_builders.quantized import (
     build_dequantize_linear_op,
     build_qlinear_add_op,
+    build_qlinear_concat_op,
     build_qlinear_conv_op,
+    build_qlinear_global_average_pool_op,
     build_qlinear_matmul_op,
     build_qlinear_mul_op,
+    build_qlinear_sigmoid_op,
     build_quantize_linear_op,
 )
 
@@ -57,6 +61,7 @@ __all__ = [
     "build_concat_op",
     "build_flatten_op",
     "build_identity_op",
+    "build_resize_op",
     "build_reshape_op",
     "build_space_to_depth_op",
     "build_squeeze_op",
@@ -72,8 +77,11 @@ __all__ = [
     "build_custom_passthrough_op",
     "build_dequantize_linear_op",
     "build_qlinear_add_op",
+    "build_qlinear_concat_op",
     "build_qlinear_conv_op",
+    "build_qlinear_global_average_pool_op",
     "build_qlinear_matmul_op",
     "build_qlinear_mul_op",
+    "build_qlinear_sigmoid_op",
     "build_quantize_linear_op",
 ]

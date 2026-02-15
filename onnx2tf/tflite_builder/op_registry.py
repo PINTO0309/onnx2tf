@@ -22,11 +22,15 @@ from onnx2tf.tflite_builder.op_builders import (
     build_pool2d_op,
     build_prelu_op,
     build_qlinear_add_op,
+    build_qlinear_concat_op,
     build_qlinear_conv_op,
+    build_qlinear_global_average_pool_op,
     build_qlinear_matmul_op,
     build_qlinear_mul_op,
+    build_qlinear_sigmoid_op,
     build_quantize_linear_op,
     build_reduce_op,
+    build_resize_op,
     build_reshape_op,
     build_space_to_depth_op,
     build_squeeze_op,
@@ -585,6 +589,46 @@ def _validate_qlinear_binary(node: Any, ctx: Any) -> None:
         _require_const_input(node, ctx, idx, f"{node.op} {label}")
 
 
+def _validate_qlinear_concat(node: Any, ctx: Any) -> None:
+    if len(node.inputs) < 5 or (len(node.inputs) - 2) % 3 != 0:
+        raise NodeValidationError(
+            reason_code="invalid_input_count",
+            message=(
+                "QLinearConcat expects [y_scale, y_zero_point, (x, x_scale, x_zero_point)+]. "
+                f"input_count={len(node.inputs)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    _require_const_input(node, ctx, 0, "QLinearConcat y_scale")
+    _require_const_input(node, ctx, 1, "QLinearConcat y_zero_point")
+
+    first_input_shape = ctx.get_tensor_shape(node.inputs[2].name)
+    rank = len(first_input_shape)
+    axis = int(node.attrs.get("axis", 1))
+    _ = _normalize_axis_for_rank(axis=axis, rank=rank, node=node)
+
+    for group_idx in range((len(node.inputs) - 2) // 3):
+        base = 2 + group_idx * 3
+        x_name = node.inputs[base].name
+        x_scale_name = node.inputs[base + 1].name
+        x_zero_name = node.inputs[base + 2].name
+        _require_const_input(node, ctx, base + 1, f"QLinearConcat input[{group_idx}] scale")
+        _require_const_input(node, ctx, base + 2, f"QLinearConcat input[{group_idx}] zero_point")
+        shape_i = ctx.get_tensor_shape(x_name)
+        if len(shape_i) != rank:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    f"QLinearConcat input ranks must match. "
+                    f"input={x_name} shape={shape_i} expected_rank={rank}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _validate_qlinear_conv(node: Any, ctx: Any) -> None:
     input_shape = ctx.get_tensor_shape(node.inputs[0].name)
     output_shape = ctx.get_tensor_shape(node.outputs[0].name)
@@ -659,6 +703,128 @@ def _validate_qlinear_matmul(node: Any, ctx: Any) -> None:
         (7, "y_zero_point"),
     ]:
         _require_const_input(node, ctx, idx, f"QLinearMatMul {label}")
+
+
+def _validate_qlinear_sigmoid(node: Any, ctx: Any) -> None:
+    for idx, label in [
+        (1, "x_scale"),
+        (2, "x_zero_point"),
+        (3, "y_scale"),
+        (4, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearSigmoid {label}")
+
+
+def _validate_qlinear_global_average_pool(node: Any, ctx: Any) -> None:
+    for idx, label in [
+        (1, "x_scale"),
+        (2, "x_zero_point"),
+        (3, "y_scale"),
+        (4, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearGlobalAveragePool {label}")
+
+    channels_last = int(node.attrs.get("channels_last", 0))
+    if channels_last not in [0, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"QLinearGlobalAveragePool channels_last must be 0 or 1. got={channels_last}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    if input_shape != [1] and len(input_shape) < 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"QLinearGlobalAveragePool input rank must be >=3. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_resize(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if input_shape != [1] and len(input_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Resize supports rank-4 input. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_shape != [1] and len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_output_rank",
+            message=f"Resize supports rank-4 output. output_shape={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    mode = str(node.attrs.get("mode", "nearest")).lower()
+    if mode not in ["nearest", "linear"]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Resize mode must be nearest or linear. got={mode}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    ctm = str(node.attrs.get("coordinate_transformation_mode", "half_pixel")).lower()
+    if mode == "nearest":
+        if ctm not in ["asymmetric", "half_pixel"]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Resize(nearest) supports coordinate_transformation_mode "
+                    f"asymmetric/half_pixel only. got={ctm}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        nearest_mode = str(node.attrs.get("nearest_mode", "round_prefer_floor")).lower()
+        if nearest_mode not in ["floor", "round_prefer_floor"]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"Resize nearest_mode must be floor or round_prefer_floor. got={nearest_mode}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    else:
+        if ctm not in ["half_pixel", "asymmetric", "align_corners"]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Resize(linear) supports coordinate_transformation_mode "
+                    f"half_pixel/asymmetric/align_corners only. got={ctm}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    has_const_param = False
+    if len(node.inputs) >= 4:
+        tensor_name = node.inputs[3].name
+        if tensor_name != "":
+            arr = _require_const_input(node, ctx, 3, "Resize sizes")
+            if int(np.asarray(arr).size) > 0:
+                has_const_param = True
+    if len(node.inputs) >= 3:
+        tensor_name = node.inputs[2].name
+        if tensor_name != "":
+            arr = _require_const_input(node, ctx, 2, "Resize scales")
+            if int(np.asarray(arr).size) > 0:
+                has_const_param = True
+    if len(node.inputs) == 2:
+        arr = _require_const_input(node, ctx, 1, "Resize scales/sizes")
+        if int(np.asarray(arr).size) > 0:
+            has_const_param = True
+    if not has_const_param:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="Resize requires non-empty constant scales or sizes.",
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_prelu(node: Any, ctx: Any) -> None:
@@ -854,6 +1020,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
         extra_validator=_validate_qlinear_binary,
     ),
+    "QLinearConcat": DispatchEntry(
+        onnx_op="QLinearConcat",
+        tflite_ops=["DEQUANTIZE", "CONCATENATION", "QUANTIZE"],
+        builder=build_qlinear_concat_op,
+        validation=ValidationSpec(min_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_concat,
+    ),
     "QLinearMul": DispatchEntry(
         onnx_op="QLinearMul",
         tflite_ops=["MUL"],
@@ -879,6 +1052,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_qlinear_matmul_op,
         validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
         extra_validator=_validate_qlinear_matmul,
+    ),
+    "QLinearSigmoid": DispatchEntry(
+        onnx_op="QLinearSigmoid",
+        tflite_ops=["DEQUANTIZE", "LOGISTIC", "QUANTIZE"],
+        builder=build_qlinear_sigmoid_op,
+        validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_sigmoid,
+    ),
+    "QLinearGlobalAveragePool": DispatchEntry(
+        onnx_op="QLinearGlobalAveragePool",
+        tflite_ops=["AVERAGE_POOL_2D", "TRANSPOSE", "DEQUANTIZE", "MEAN", "QUANTIZE"],
+        builder=build_qlinear_global_average_pool_op,
+        validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_global_average_pool,
     ),
     "BatchNormalization": DispatchEntry(
         onnx_op="BatchNormalization",
@@ -1019,6 +1206,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_identity_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),
+    "Resize": DispatchEntry(
+        onnx_op="Resize",
+        tflite_ops=["RESIZE_NEAREST_NEIGHBOR", "RESIZE_BILINEAR"],
+        builder=build_resize_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=4, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_resize,
+    ),
     "SpaceToDepth": DispatchEntry(
         onnx_op="SpaceToDepth",
         tflite_ops=["SPACE_TO_DEPTH"],
@@ -1058,7 +1252,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             max_outputs=1,
             required_attrs=["kernel_shape"],
             input_rank={0: [4]},
-            output_rank={0: [4]},
+            output_rank={0: [1, 4]},
         ),
         extra_validator=_validate_pool,
     ),
@@ -1073,7 +1267,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             max_outputs=1,
             required_attrs=["kernel_shape"],
             input_rank={0: [4]},
-            output_rank={0: [4]},
+            output_rank={0: [1, 4]},
         ),
         extra_validator=_validate_pool,
     ),

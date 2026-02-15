@@ -3225,6 +3225,9 @@ def convert(
                     report_op_coverage=report_op_coverage,
                     flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
                     flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                    keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                    keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                    keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                     tflite_split_max_bytes=tflite_split_max_bytes,
                     tflite_split_target_bytes=tflite_split_target_bytes,
                 )
