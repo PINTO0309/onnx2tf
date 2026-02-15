@@ -1,0 +1,557 @@
+from __future__ import annotations
+
+from typing import Any, List, Tuple
+
+import numpy as np
+
+from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose, resolve_padding
+
+
+def _as_flat_float_list(value: Any) -> List[float]:
+    return [float(v) for v in np.asarray(value).reshape(-1).tolist()]
+
+
+def _as_flat_int_list(value: Any) -> List[int]:
+    return [int(v) for v in np.asarray(value).reshape(-1).tolist()]
+
+
+def _normalize_axis(axis: int, rank: int) -> int:
+    if rank <= 0:
+        return 0
+    a = int(axis)
+    if a < 0:
+        a += int(rank)
+    if a < 0 or a >= int(rank):
+        return 0
+    return a
+
+
+def _normalize_quant_params(
+    *,
+    scale: Any,
+    zero_point: Any,
+) -> Tuple[List[float], List[int]]:
+    scales = _as_flat_float_list(scale)
+    if len(scales) == 0:
+        scales = [1.0]
+    zps = _as_flat_int_list(zero_point)
+    if len(zps) == 0:
+        zps = [0]
+    if len(zps) == 1 and len(scales) > 1:
+        zps = [int(zps[0]) for _ in range(len(scales))]
+    if len(scales) == 1 and len(zps) > 1:
+        scales = [float(scales[0]) for _ in range(len(zps))]
+    if len(scales) != len(zps):
+        raise NotImplementedError(
+            "scale and zero_point sizes must match or be broadcastable. "
+            f"scale_len={len(scales)} zero_point_len={len(zps)}"
+        )
+    return scales, zps
+
+
+def _tflite_dtype_from_numpy_dtype(np_dtype: np.dtype) -> str:
+    dt = np.dtype(np_dtype)
+    if dt == np.dtype(np.int8):
+        return "INT8"
+    if dt == np.dtype(np.uint8):
+        return "UINT8"
+    if dt == np.dtype(np.int16):
+        return "INT16"
+    if dt == np.dtype(np.uint16):
+        return "UINT16"
+    if dt == np.dtype(np.int32):
+        return "INT32"
+    if dt == np.dtype(np.uint32):
+        return "UINT32"
+    if dt == np.dtype(np.float16):
+        return "FLOAT16"
+    if dt == np.dtype(np.float32):
+        return "FLOAT32"
+    raise NotImplementedError(f"Unsupported dtype for flatbuffer_direct quantized builder: {dt}")
+
+
+def _set_tensor_dtype_from_array(ctx: Any, tensor_name: str, array: np.ndarray) -> None:
+    ctx.ensure_tensor(tensor_name)
+    tensor = ctx.model_ir.tensors[tensor_name]
+    new_dtype = _tflite_dtype_from_numpy_dtype(np.asarray(array).dtype)
+    if tensor.dtype == "FLOAT32" and new_dtype != "FLOAT32":
+        tensor.dtype = new_dtype
+
+
+def _set_tensor_quantization(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    scale: Any,
+    zero_point: Any,
+    quantized_dimension: int,
+) -> None:
+    ctx.ensure_tensor(tensor_name)
+    scales, zps = _normalize_quant_params(scale=scale, zero_point=zero_point)
+    ctx.model_ir.tensors[tensor_name].quantization = QuantParamIR(
+        scale=[float(v) for v in scales],
+        zero_point=[int(v) for v in zps],
+        quantized_dimension=int(quantized_dimension),
+    )
+
+
+def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:
+    ctx.ensure_tensor(src_tensor_name)
+    ctx.ensure_tensor(dst_tensor_name)
+    src = ctx.model_ir.tensors[src_tensor_name]
+    dst = ctx.model_ir.tensors[dst_tensor_name]
+    if dst.shape == [1] and src.shape != [1]:
+        dst.shape = list(src.shape)
+        dst.shape_signature = (
+            list(src.shape_signature)
+            if src.shape_signature is not None
+            else list(src.shape)
+        )
+
+
+def _require_const(ctx: Any, tensor_name: str, label: str) -> np.ndarray:
+    value = ctx.get_constant_array(tensor_name)
+    if value is None:
+        raise NotImplementedError(
+            f"{label} must be constant for flatbuffer_direct. tensor={tensor_name}"
+        )
+    return np.asarray(value)
+
+
+def build_quantize_linear_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    y_scale_name = node.inputs[1].name
+    y_zero_point_name = node.inputs[2].name if len(node.inputs) >= 3 else ""
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    y_scale = _require_const(ctx, y_scale_name, "QuantizeLinear scale")
+    if y_zero_point_name != "":
+        y_zero_point = _require_const(ctx, y_zero_point_name, "QuantizeLinear zero_point")
+    else:
+        y_zero_point = np.zeros_like(y_scale, dtype=np.int32)
+    _set_tensor_dtype_from_array(ctx, output_name, y_zero_point)
+
+    output_rank = len(ctx.get_tensor_shape(output_name))
+    axis = int(node.attrs.get("axis", 1))
+    qdim = _normalize_axis(axis, output_rank)
+    if np.asarray(y_scale).size <= 1:
+        qdim = 0
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=output_name,
+        scale=y_scale,
+        zero_point=y_zero_point,
+        quantized_dimension=qdim,
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=[input_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def build_dequantize_linear_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    x_scale_name = node.inputs[1].name
+    x_zero_point_name = node.inputs[2].name if len(node.inputs) >= 3 else ""
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    x_scale = _require_const(ctx, x_scale_name, "DequantizeLinear scale")
+    if x_zero_point_name != "":
+        x_zero_point = _require_const(ctx, x_zero_point_name, "DequantizeLinear zero_point")
+    else:
+        x_zero_point = np.zeros_like(x_scale, dtype=np.int32)
+    _set_tensor_dtype_from_array(ctx, input_name, x_zero_point)
+    ctx.model_ir.tensors[output_name].dtype = "FLOAT32"
+
+    input_rank = len(ctx.get_tensor_shape(input_name))
+    axis = int(node.attrs.get("axis", 1))
+    qdim = _normalize_axis(axis, input_rank)
+    if np.asarray(x_scale).size <= 1:
+        qdim = 0
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=input_name,
+        scale=x_scale,
+        zero_point=x_zero_point,
+        quantized_dimension=qdim,
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DEQUANTIZE",
+            inputs=[input_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
+    a_name = node.inputs[0].name
+    a_scale_name = node.inputs[1].name
+    a_zero_name = node.inputs[2].name
+    b_name = node.inputs[3].name
+    b_scale_name = node.inputs[4].name
+    b_zero_name = node.inputs[5].name
+    c_scale_name = node.inputs[6].name
+    c_zero_name = node.inputs[7].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, a_name, output_name)
+
+    a_scale = _require_const(ctx, a_scale_name, f"{node.op} input-a scale")
+    a_zero = _require_const(ctx, a_zero_name, f"{node.op} input-a zero_point")
+    b_scale = _require_const(ctx, b_scale_name, f"{node.op} input-b scale")
+    b_zero = _require_const(ctx, b_zero_name, f"{node.op} input-b zero_point")
+    c_scale = _require_const(ctx, c_scale_name, f"{node.op} output scale")
+    c_zero = _require_const(ctx, c_zero_name, f"{node.op} output zero_point")
+    _set_tensor_dtype_from_array(ctx, a_name, a_zero)
+    _set_tensor_dtype_from_array(ctx, b_name, b_zero)
+    _set_tensor_dtype_from_array(ctx, output_name, c_zero)
+
+    a_rank = len(ctx.get_tensor_shape(a_name))
+    b_rank = len(ctx.get_tensor_shape(b_name))
+    out_rank = len(ctx.get_tensor_shape(output_name))
+
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=a_name,
+        scale=a_scale,
+        zero_point=a_zero,
+        quantized_dimension=0 if np.asarray(a_scale).size <= 1 else _normalize_axis(1, a_rank),
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=b_name,
+        scale=b_scale,
+        zero_point=b_zero,
+        quantized_dimension=0 if np.asarray(b_scale).size <= 1 else _normalize_axis(1, b_rank),
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=output_name,
+        scale=c_scale,
+        zero_point=c_zero,
+        quantized_dimension=0 if np.asarray(c_scale).size <= 1 else _normalize_axis(1, out_rank),
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type=op_type,
+            inputs=[a_name, b_name],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+
+def build_qlinear_add_op(node: Any, ctx: Any) -> None:
+    _build_qlinear_binary_op(node, ctx, "ADD")
+
+
+def build_qlinear_mul_op(node: Any, ctx: Any) -> None:
+    _build_qlinear_binary_op(node, ctx, "MUL")
+
+
+def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
+    x_name = node.inputs[0].name
+    x_scale_name = node.inputs[1].name
+    x_zero_name = node.inputs[2].name
+    w_name = node.inputs[3].name
+    w_scale_name = node.inputs[4].name
+    w_zero_name = node.inputs[5].name
+    y_scale_name = node.inputs[6].name
+    y_zero_name = node.inputs[7].name
+    bias_name = node.inputs[8].name if len(node.inputs) >= 9 else ""
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(x_name)
+    ctx.ensure_tensor(w_name)
+    ctx.ensure_tensor(output_name)
+
+    x_scale = _require_const(ctx, x_scale_name, "QLinearConv input scale")
+    x_zero = _require_const(ctx, x_zero_name, "QLinearConv input zero_point")
+    w_scale = _require_const(ctx, w_scale_name, "QLinearConv weight scale")
+    w_zero = _require_const(ctx, w_zero_name, "QLinearConv weight zero_point")
+    y_scale = _require_const(ctx, y_scale_name, "QLinearConv output scale")
+    y_zero = _require_const(ctx, y_zero_name, "QLinearConv output zero_point")
+    _set_tensor_dtype_from_array(ctx, x_name, x_zero)
+    _set_tensor_dtype_from_array(ctx, output_name, y_zero)
+
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=x_name,
+        scale=x_scale,
+        zero_point=x_zero,
+        quantized_dimension=0 if np.asarray(x_scale).size <= 1 else _normalize_axis(1, len(ctx.get_tensor_shape(x_name))),
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=output_name,
+        scale=y_scale,
+        zero_point=y_zero,
+        quantized_dimension=0 if np.asarray(y_scale).size <= 1 else _normalize_axis(1, len(ctx.get_tensor_shape(output_name))),
+    )
+
+    weights = _require_const(ctx, w_name, "QLinearConv weights")
+    if weights.ndim != 4:
+        raise NotImplementedError(
+            f"QLinearConv weight rank must be 4. op={node.name} weight_shape={list(weights.shape)}"
+        )
+    input_shape = ctx.get_tensor_shape(x_name)
+    output_shape = ctx.get_tensor_shape(output_name)
+    if len(output_shape) != 4 and len(input_shape) == 4:
+        inferred_output_shape = [
+            int(input_shape[0]),
+            int(weights.shape[0]),
+            int(input_shape[2]),
+            int(input_shape[3]),
+        ]
+        ctx.model_ir.tensors[output_name].shape = inferred_output_shape
+        ctx.model_ir.tensors[output_name].shape_signature = list(inferred_output_shape)
+        output_shape = inferred_output_shape
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NotImplementedError(
+            "QLinearConv supports only rank-4 tensors in flatbuffer_direct. "
+            f"input_shape={input_shape} output_shape={output_shape} op={node.name}"
+        )
+
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    group = int(node.attrs.get("group", 1))
+    padding = resolve_padding(node)
+
+    nchw_input = input_shape
+    nchw_output = output_shape
+    nhwc_input_shape = [nchw_input[0], nchw_input[2], nchw_input[3], nchw_input[1]]
+    nhwc_output_shape = [nchw_output[0], nchw_output[2], nchw_output[3], nchw_output[1]]
+
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=ctx.get_tensor_dtype(x_name),
+        shape=nhwc_input_shape,
+    )
+    ctx.model_ir.tensors[x_nhwc].quantization = ctx.model_ir.tensors[x_name].quantization
+    make_transpose(ctx, x_name, x_nhwc, [0, 2, 3, 1])
+
+    in_channels = int(nchw_input[1])
+    out_channels = int(weights.shape[0])
+    is_depthwise = group == in_channels and int(weights.shape[1]) == 1 and group > 1
+
+    if is_depthwise:
+        depth_multiplier = out_channels // in_channels
+        w_dw = weights.reshape(out_channels, int(weights.shape[2]), int(weights.shape[3]))
+        w_dw = np.transpose(w_dw, (1, 2, 0))
+        w_dw = np.expand_dims(w_dw, axis=0)
+        w_q_name = ctx.add_const_tensor(
+            f"{node.name}_depthwise_filter_q",
+            np.asarray(w_dw, dtype=weights.dtype),
+        )
+        _set_tensor_quantization(
+            ctx=ctx,
+            tensor_name=w_q_name,
+            scale=w_scale,
+            zero_point=w_zero,
+            quantized_dimension=(len(ctx.model_ir.tensors[w_q_name].shape) - 1) if np.asarray(w_scale).size > 1 else 0,
+        )
+    else:
+        if group != 1:
+            raise NotImplementedError(
+                "QLinearConv grouped convolution is supported only for depthwise. "
+                f"op={node.name} group={group}"
+            )
+        w_conv = np.transpose(weights, (2, 3, 1, 0))
+        w_q_name = ctx.add_const_tensor(
+            f"{node.name}_conv_filter_q",
+            np.asarray(w_conv, dtype=weights.dtype),
+        )
+        _set_tensor_quantization(
+            ctx=ctx,
+            tensor_name=w_q_name,
+            scale=w_scale,
+            zero_point=w_zero,
+            quantized_dimension=(len(ctx.model_ir.tensors[w_q_name].shape) - 1) if np.asarray(w_scale).size > 1 else 0,
+        )
+
+    if bias_name != "":
+        bias_values = _require_const(ctx, bias_name, "QLinearConv bias")
+        bias_values = np.asarray(bias_values, dtype=np.int32).reshape(-1)
+    else:
+        bias_values = np.zeros((out_channels,), dtype=np.int32)
+    bias_q_name = ctx.add_const_tensor(
+        f"{node.name}_conv_bias_q",
+        bias_values,
+    )
+    x_scales, _ = _normalize_quant_params(scale=x_scale, zero_point=x_zero)
+    w_scales, _ = _normalize_quant_params(scale=w_scale, zero_point=w_zero)
+    if len(w_scales) == 1:
+        bias_scales = [float(x_scales[0] * w_scales[0])]
+    else:
+        bias_scales = [float(x_scales[0] * ws) for ws in w_scales]
+    ctx.model_ir.tensors[bias_q_name].quantization = QuantParamIR(
+        scale=bias_scales,
+        zero_point=[0 for _ in range(len(bias_scales))],
+        quantized_dimension=0,
+    )
+
+    y_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_nhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=nhwc_output_shape,
+    )
+    ctx.model_ir.tensors[y_nhwc].quantization = ctx.model_ir.tensors[output_name].quantization
+
+    if is_depthwise:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEPTHWISE_CONV_2D",
+                inputs=[x_nhwc, w_q_name, bias_q_name],
+                outputs=[y_nhwc],
+                options={
+                    "padding": padding,
+                    "strideH": int(strides[0]),
+                    "strideW": int(strides[1]),
+                    "dilationHFactor": int(dilations[0]),
+                    "dilationWFactor": int(dilations[1]),
+                    "depthMultiplier": int(depth_multiplier),
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+    else:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONV_2D",
+                inputs=[x_nhwc, w_q_name, bias_q_name],
+                outputs=[y_nhwc],
+                options={
+                    "padding": padding,
+                    "strideH": int(strides[0]),
+                    "strideW": int(strides[1]),
+                    "dilationHFactor": int(dilations[0]),
+                    "dilationWFactor": int(dilations[1]),
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+
+    make_transpose(ctx, y_nhwc, output_name, [0, 3, 1, 2])
+
+
+def build_qlinear_matmul_op(node: Any, ctx: Any) -> None:
+    a_name = node.inputs[0].name
+    a_scale_name = node.inputs[1].name
+    a_zero_name = node.inputs[2].name
+    b_name = node.inputs[3].name
+    b_scale_name = node.inputs[4].name
+    b_zero_name = node.inputs[5].name
+    y_scale_name = node.inputs[6].name
+    y_zero_name = node.inputs[7].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+
+    a_scale = _require_const(ctx, a_scale_name, "QLinearMatMul input-a scale")
+    a_zero = _require_const(ctx, a_zero_name, "QLinearMatMul input-a zero_point")
+    b_scale = _require_const(ctx, b_scale_name, "QLinearMatMul input-b scale")
+    b_zero = _require_const(ctx, b_zero_name, "QLinearMatMul input-b zero_point")
+    y_scale = _require_const(ctx, y_scale_name, "QLinearMatMul output scale")
+    y_zero = _require_const(ctx, y_zero_name, "QLinearMatMul output zero_point")
+    _set_tensor_dtype_from_array(ctx, a_name, a_zero)
+    _set_tensor_dtype_from_array(ctx, output_name, y_zero)
+
+    input_shape = ctx.get_tensor_shape(a_name)
+    if len(input_shape) != 2:
+        output_shape = ctx.get_tensor_shape(output_name)
+        if len(output_shape) == 2:
+            inferred_shape = [int(output_shape[0]), int(_require_const(ctx, b_name, "QLinearMatMul weights").shape[0])]
+        else:
+            inferred_shape = [1, int(_require_const(ctx, b_name, "QLinearMatMul weights").shape[0])]
+        ctx.model_ir.tensors[a_name].shape = inferred_shape
+        ctx.model_ir.tensors[a_name].shape_signature = list(inferred_shape)
+        input_shape = inferred_shape
+
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=a_name,
+        scale=a_scale,
+        zero_point=a_zero,
+        quantized_dimension=0 if np.asarray(a_scale).size <= 1 else 1,
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=output_name,
+        scale=y_scale,
+        zero_point=y_zero,
+        quantized_dimension=0 if np.asarray(y_scale).size <= 1 else 1,
+    )
+
+    weights = _require_const(ctx, b_name, "QLinearMatMul weights")
+    if weights.ndim != 2:
+        raise NotImplementedError(
+            f"QLinearMatMul weight rank must be 2. op={node.name} weight_shape={list(weights.shape)}"
+        )
+    fc_weights = np.asarray(weights.T, dtype=weights.dtype)
+    if ctx.model_ir.tensors[output_name].shape == [1]:
+        ctx.model_ir.tensors[output_name].shape = [int(input_shape[0]), int(fc_weights.shape[0])]
+        ctx.model_ir.tensors[output_name].shape_signature = [int(input_shape[0]), int(fc_weights.shape[0])]
+    w_q_name = ctx.add_const_tensor(
+        f"{node.name}_fc_weights_q",
+        fc_weights,
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=w_q_name,
+        scale=b_scale,
+        zero_point=b_zero,
+        quantized_dimension=0 if np.asarray(b_scale).size <= 1 else 0,
+    )
+
+    out_features = int(fc_weights.shape[0])
+    bias_values = np.zeros((out_features,), dtype=np.int32)
+    bias_q_name = ctx.add_const_tensor(
+        f"{node.name}_fc_bias_q",
+        bias_values,
+    )
+    a_scales, _ = _normalize_quant_params(scale=a_scale, zero_point=a_zero)
+    b_scales, _ = _normalize_quant_params(scale=b_scale, zero_point=b_zero)
+    if len(b_scales) == 1:
+        bias_scales = [float(a_scales[0] * b_scales[0])]
+    else:
+        bias_scales = [float(a_scales[0] * bs) for bs in b_scales]
+    ctx.model_ir.tensors[bias_q_name].quantization = QuantParamIR(
+        scale=bias_scales,
+        zero_point=[0 for _ in range(len(bias_scales))],
+        quantized_dimension=0,
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="FULLY_CONNECTED",
+            inputs=[a_name, w_q_name, bias_q_name],
+            outputs=[output_name],
+            options={
+                "fusedActivationFunction": "NONE",
+                "weightsFormat": "DEFAULT",
+                "keepNumDims": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )

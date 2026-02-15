@@ -211,3 +211,24 @@ def build_space_to_depth_op(node: Any, ctx: Any) -> None:
             options={"blockSize": int(block_size)},
         )
     )
+
+
+def build_flatten_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    shape_const = ctx.add_const_tensor(
+        f"{output_name}_flatten_shape",
+        np.asarray(output_shape, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_const],
+            outputs=[output_name],
+            options={"newShape": output_shape},
+        )
+    )

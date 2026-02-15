@@ -6,17 +6,26 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.op_builders import (
+    build_batch_normalization_op,
     build_binary_op,
     build_clip_op,
     build_concat_op,
     build_conv2d_or_depthwise_op,
     build_custom_passthrough_op,
+    build_dequantize_linear_op,
+    build_flatten_op,
     build_fully_connected_from_gemm_or_matmul,
     build_gather_op,
     build_identity_op,
     build_l2_normalization_op,
     build_logistic_op,
     build_pool2d_op,
+    build_prelu_op,
+    build_qlinear_add_op,
+    build_qlinear_conv_op,
+    build_qlinear_matmul_op,
+    build_qlinear_mul_op,
+    build_quantize_linear_op,
     build_reduce_op,
     build_reshape_op,
     build_space_to_depth_op,
@@ -524,6 +533,173 @@ def _validate_space_to_depth(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_batch_norm(node: Any, ctx: Any) -> None:
+    for idx, label in enumerate(["scale", "bias", "mean", "var"], start=1):
+        _require_const_input(node, ctx, idx, f"BatchNormalization {label}")
+    if len(node.inputs) < 5:
+        raise NodeValidationError(
+            reason_code="invalid_input_count",
+            message="BatchNormalization expects 5 inputs.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_flatten(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if input_rank < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Flatten input rank must be >= 1. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_quantize_dequantize_linear(node: Any, ctx: Any) -> None:
+    scale = _require_const_input(node, ctx, 1, f"{node.op} scale")
+    if len(node.inputs) >= 3:
+        _require_const_input(node, ctx, 2, f"{node.op} zero_point")
+    if int(np.asarray(scale).size) <= 1:
+        return
+    axis = int(node.attrs.get("axis", 1))
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if input_rank <= 1:
+        return
+    _ = _normalize_axis_for_rank(
+        axis=axis,
+        rank=input_rank,
+        node=node,
+    )
+
+
+def _validate_qlinear_binary(node: Any, ctx: Any) -> None:
+    for idx, label in [
+        (1, "a_scale"),
+        (2, "a_zero_point"),
+        (4, "b_scale"),
+        (5, "b_zero_point"),
+        (6, "c_scale"),
+        (7, "c_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"{node.op} {label}")
+
+
+def _validate_qlinear_conv(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if len(input_shape) not in [1, 4] or len(output_shape) not in [1, 4]:
+        raise NodeValidationError(
+            reason_code="unsupported_tensor_rank",
+            message=(
+                "QLinearConv supports only rank-4 tensors. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    weights = _require_const_input(node, ctx, 3, "QLinearConv weights")
+    if weights.ndim != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_weight_rank",
+            message=f"QLinearConv weight rank must be 4. weight_shape={list(weights.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for idx, label in [
+        (1, "x_scale"),
+        (2, "x_zero_point"),
+        (4, "w_scale"),
+        (5, "w_zero_point"),
+        (6, "y_scale"),
+        (7, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearConv {label}")
+    group = int(node.attrs.get("group", 1))
+    if len(input_shape) == 4:
+        in_channels = int(input_shape[1])
+        is_depthwise = group == in_channels and int(weights.shape[1]) == 1 and group > 1
+        if group != 1 and not is_depthwise:
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=(
+                    "QLinearConv supports only regular or depthwise group conv. "
+                    f"group={group} in_channels={in_channels}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+    if len(node.inputs) >= 9:
+        _require_const_input(node, ctx, 8, "QLinearConv bias")
+
+
+def _validate_qlinear_matmul(node: Any, ctx: Any) -> None:
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if input_rank not in [1, 2]:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"QLinearMatMul input rank must be 2. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    weights = _require_const_input(node, ctx, 3, "QLinearMatMul weights")
+    if weights.ndim != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_weight_rank",
+            message=f"QLinearMatMul weight rank must be 2. weight_shape={list(weights.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for idx, label in [
+        (1, "a_scale"),
+        (2, "a_zero_point"),
+        (4, "b_scale"),
+        (5, "b_zero_point"),
+        (6, "y_scale"),
+        (7, "y_zero_point"),
+    ]:
+        _require_const_input(node, ctx, idx, f"QLinearMatMul {label}")
+
+
+def _validate_prelu(node: Any, ctx: Any) -> None:
+    slope = _require_const_input(node, ctx, 1, "PRelu slope")
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    input_rank = len(input_shape)
+    slope_size = int(np.asarray(slope).size)
+    if slope_size <= 1:
+        return
+    if input_shape == [1] or input_rank <= 1:
+        # Unknown/placeholder shape. Defer broadcast validation to runtime.
+        return
+    if input_rank in [2, 4] and len(input_shape) >= 2:
+        channels = int(input_shape[1])
+        if slope_size == channels:
+            return
+    raise NodeValidationError(
+        reason_code="unsupported_attribute_value",
+        message=(
+            "PRelu slope supports scalar or per-channel only in flatbuffer_direct. "
+            f"input_shape={input_shape} slope_size={slope_size}"
+        ),
+        node_name=node.name,
+        node_op=node.op,
+    )
+
+
+def _normalize_axis_for_rank(*, axis: int, rank: int, node: Any) -> int:
+    a = int(axis)
+    if a < 0:
+        a += int(rank)
+    if a < 0 or a >= int(rank):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"axis out of range. axis={axis} normalized={a} rank={rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    return a
+
+
 def _make_binary_builder(tflite_op: str) -> Callable[[Any, Any], None]:
     def _builder(node: Any, ctx: Any) -> None:
         build_binary_op(node, ctx, tflite_op)
@@ -657,6 +833,60 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=_make_binary_builder("DIV"),
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
     ),
+    "QuantizeLinear": DispatchEntry(
+        onnx_op="QuantizeLinear",
+        tflite_ops=["QUANTIZE"],
+        builder=build_quantize_linear_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_quantize_dequantize_linear,
+    ),
+    "DequantizeLinear": DispatchEntry(
+        onnx_op="DequantizeLinear",
+        tflite_ops=["DEQUANTIZE"],
+        builder=build_dequantize_linear_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_quantize_dequantize_linear,
+    ),
+    "QLinearAdd": DispatchEntry(
+        onnx_op="QLinearAdd",
+        tflite_ops=["ADD"],
+        builder=build_qlinear_add_op,
+        validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_binary,
+    ),
+    "QLinearMul": DispatchEntry(
+        onnx_op="QLinearMul",
+        tflite_ops=["MUL"],
+        builder=build_qlinear_mul_op,
+        validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_binary,
+    ),
+    "QLinearConv": DispatchEntry(
+        onnx_op="QLinearConv",
+        tflite_ops=["CONV_2D", "DEPTHWISE_CONV_2D"],
+        builder=build_qlinear_conv_op,
+        validation=ValidationSpec(
+            min_inputs=8,
+            max_inputs=9,
+            min_outputs=1,
+            max_outputs=1,
+        ),
+        extra_validator=_validate_qlinear_conv,
+    ),
+    "QLinearMatMul": DispatchEntry(
+        onnx_op="QLinearMatMul",
+        tflite_ops=["FULLY_CONNECTED"],
+        builder=build_qlinear_matmul_op,
+        validation=ValidationSpec(min_inputs=8, max_inputs=8, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_qlinear_matmul,
+    ),
+    "BatchNormalization": DispatchEntry(
+        onnx_op="BatchNormalization",
+        tflite_ops=["MUL", "ADD"],
+        builder=build_batch_normalization_op,
+        validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_batch_norm,
+    ),
     "ReduceMean": DispatchEntry(
         onnx_op="ReduceMean",
         tflite_ops=["MEAN"],
@@ -707,6 +937,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=_make_unary_builder("NEG"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),
+    "PRelu": DispatchEntry(
+        onnx_op="PRelu",
+        tflite_ops=["PRELU"],
+        builder=build_prelu_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_prelu,
+    ),
     "Clip": DispatchEntry(
         onnx_op="Clip",
         tflite_ops=["RELU", "RELU6"],
@@ -734,6 +971,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_reshape_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reshape,
+    ),
+    "Flatten": DispatchEntry(
+        onnx_op="Flatten",
+        tflite_ops=["RESHAPE"],
+        builder=build_flatten_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_flatten,
     ),
     "Transpose": DispatchEntry(
         onnx_op="Transpose",

@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.preprocess import (
     CONSTANT_FOLD_RULE_ID,
     NORMALIZE_ATTRS_RULE_ID,
     PATTERN_FUSION_WAVE2_RULE_ID,
+    QUANT_CHAIN_FUSION_WAVE3_RULE_ID,
     clear_preprocess_rules,
     register_default_preprocess_rules,
     run_preprocess_pipeline,
@@ -149,6 +150,50 @@ def _make_reduce_axes_concat_const_model() -> onnx.ModelProto:
     n0 = helper.make_node("Concat", ["c0", "c1"], ["axes"], name="AxesConcatNode", axis=0)
     n1 = helper.make_node("ReduceSum", ["x", "axes"], ["y"], name="ReduceConstFoldNode", keepdims=1)
     graph = helper.make_graph([n0, n1], "reduce_axes_concat_const_graph", [x], [y], [c0, c1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_dq_bn_prelu_q_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT8, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, [1, 2])
+
+    x_scale = helper.make_tensor("x_scale", TensorProto.FLOAT, [1], [0.1])
+    x_zp = helper.make_tensor("x_zp", TensorProto.INT8, [1], [0])
+    bn_scale = helper.make_tensor("bn_scale", TensorProto.FLOAT, [2], [1.2, 0.7])
+    bn_bias = helper.make_tensor("bn_bias", TensorProto.FLOAT, [2], [0.1, -0.2])
+    bn_mean = helper.make_tensor("bn_mean", TensorProto.FLOAT, [2], [0.3, -0.4])
+    bn_var = helper.make_tensor("bn_var", TensorProto.FLOAT, [2], [1.0, 1.5])
+    prelu_slope = helper.make_tensor("prelu_slope", TensorProto.FLOAT, [2], [0.25, 0.1])
+    y_scale = helper.make_tensor("y_scale", TensorProto.FLOAT, [1], [0.2])
+    y_zp = helper.make_tensor("y_zp", TensorProto.INT8, [1], [0])
+
+    n0 = helper.make_node("DequantizeLinear", ["x", "x_scale", "x_zp"], ["x_dq"], name="DQNode")
+    n1 = helper.make_node(
+        "BatchNormalization",
+        ["x_dq", "bn_scale", "bn_bias", "bn_mean", "bn_var"],
+        ["x_bn"],
+        name="BNNode",
+        epsilon=1e-5,
+    )
+    n2 = helper.make_node("PRelu", ["x_bn", "prelu_slope"], ["x_prelu"], name="PReluNode")
+    n3 = helper.make_node("QuantizeLinear", ["x_prelu", "y_scale", "y_zp"], ["y"], name="QNode")
+    graph = helper.make_graph(
+        [n0, n1, n2, n3],
+        "dq_bn_prelu_q_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zp,
+            bn_scale,
+            bn_bias,
+            bn_mean,
+            bn_var,
+            prelu_slope,
+            y_scale,
+            y_zp,
+        ],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -295,3 +340,16 @@ def test_constant_fold_rewrites_concat_axes_to_constant() -> None:
     ops = [str(node.op_type) for node in preprocessed.graph.node]
     assert ops[0] == "Constant"
     assert "ReduceSum" in ops
+
+
+def test_quant_chain_fusion_wave3_rewrites_dq_bn_prelu_q_chain() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_dq_bn_prelu_q_chain_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[QUANT_CHAIN_FUSION_WAVE3_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["DequantizeLinear", "Mul", "Add", "PRelu", "QuantizeLinear"]

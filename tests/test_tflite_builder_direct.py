@@ -259,6 +259,228 @@ def _make_space_to_depth_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_qlinear_conv_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="x_zero")
+    mul_const = numpy_helper.from_array(np.asarray([1], dtype=np.int8), name="mul_const")
+    mul_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mul_scale")
+    mul_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mul_zero")
+    mul_out_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mul_out_scale")
+    conv_w = numpy_helper.from_array(np.asarray([[[[1]]]], dtype=np.int8), name="conv_w")
+    conv_w_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="conv_w_scale")
+    conv_w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="conv_w_zero")
+    conv_out_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="conv_out_scale")
+    conv_out_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="conv_out_zero")
+    bn_scale = numpy_helper.from_array(np.asarray([1.1], dtype=np.float32), name="bn_scale")
+    bn_bias = numpy_helper.from_array(np.asarray([0.0], dtype=np.float32), name="bn_bias")
+    bn_mean = numpy_helper.from_array(np.asarray([0.0], dtype=np.float32), name="bn_mean")
+    bn_var = numpy_helper.from_array(np.asarray([1.0], dtype=np.float32), name="bn_var")
+    prelu_slope = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="prelu_slope")
+    q2_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="q2_scale")
+    q2_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="q2_zero")
+
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "x_scale", "x_zero"], ["x_q"], name="Q0"),
+        helper.make_node(
+            "QLinearMul",
+            ["x_q", "x_scale", "x_zero", "mul_const", "mul_scale", "mul_zero", "mul_out_scale", "mul_zero"],
+            ["x_mul_q"],
+            name="QMul0",
+        ),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_mul_q",
+                "mul_out_scale",
+                "mul_zero",
+                "conv_w",
+                "conv_w_scale",
+                "conv_w_zero",
+                "conv_out_scale",
+                "conv_out_zero",
+            ],
+            ["conv_q"],
+            name="QConv0",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["conv_q", "conv_out_scale", "conv_out_zero"],
+            ["conv_f"],
+            name="DQ0",
+        ),
+        helper.make_node(
+            "BatchNormalization",
+            ["conv_f", "bn_scale", "bn_bias", "bn_mean", "bn_var"],
+            ["bn_out"],
+            name="BN0",
+            epsilon=1e-5,
+        ),
+        helper.make_node("PRelu", ["bn_out", "prelu_slope"], ["prelu_out"], name="PRelu0"),
+        helper.make_node("QuantizeLinear", ["prelu_out", "q2_scale", "q2_zero"], ["q2"], name="Q1"),
+        helper.make_node("DequantizeLinear", ["q2", "q2_scale", "q2_zero"], ["y"], name="DQ1"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_conv_chain_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zero,
+            mul_const,
+            mul_scale,
+            mul_zero,
+            mul_out_scale,
+            conv_w,
+            conv_w_scale,
+            conv_w_zero,
+            conv_out_scale,
+            conv_out_zero,
+            bn_scale,
+            bn_bias,
+            bn_mean,
+            bn_var,
+            prelu_slope,
+            q2_scale,
+            q2_zero,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_fc_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="x_scale_fc")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="x_zero_fc")
+    mul_const = numpy_helper.from_array(np.asarray([2], dtype=np.int8), name="mul_const_fc")
+    mul_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mul_scale_fc")
+    mul_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mul_zero_fc")
+    mul_out_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="mul_out_scale_fc")
+    bn_scale = numpy_helper.from_array(np.asarray([1.0, 0.9, 1.1, 1.2], dtype=np.float32), name="bn_scale_fc")
+    bn_bias = numpy_helper.from_array(np.asarray([0.0, 0.0, 0.0, 0.0], dtype=np.float32), name="bn_bias_fc")
+    bn_mean = numpy_helper.from_array(np.asarray([0.0, 0.0, 0.0, 0.0], dtype=np.float32), name="bn_mean_fc")
+    bn_var = numpy_helper.from_array(np.asarray([1.0, 1.0, 1.0, 1.0], dtype=np.float32), name="bn_var_fc")
+    prelu_slope = numpy_helper.from_array(np.asarray([0.1, 0.1, 0.1, 0.1], dtype=np.float32), name="prelu_slope_fc")
+    q_mid_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="q_mid_scale_fc")
+    q_mid_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="q_mid_zero_fc")
+    mm_w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [1, 0],
+                [0, 1],
+                [1, 0],
+                [0, 1],
+            ],
+            dtype=np.int8,
+        ),
+        name="mm_w_fc",
+    )
+    mm_w_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mm_w_scale_fc")
+    mm_w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mm_w_zero_fc")
+    mm_out_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="mm_out_scale_fc")
+    mm_out_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mm_out_zero_fc")
+    add_b = numpy_helper.from_array(np.asarray([[1, -1]], dtype=np.int8), name="add_b_fc")
+    add_b_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="add_b_scale_fc")
+
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "x_scale_fc", "x_zero_fc"], ["x_q"], name="Q0FC"),
+        helper.make_node(
+            "QLinearMul",
+            [
+                "x_q",
+                "x_scale_fc",
+                "x_zero_fc",
+                "mul_const_fc",
+                "mul_scale_fc",
+                "mul_zero_fc",
+                "mul_out_scale_fc",
+                "mul_zero_fc",
+            ],
+            ["x_mul_q"],
+            name="QMulFC",
+        ),
+        helper.make_node("DequantizeLinear", ["x_mul_q", "mul_out_scale_fc", "mul_zero_fc"], ["x_dq"], name="DQ0FC"),
+        helper.make_node(
+            "BatchNormalization",
+            ["x_dq", "bn_scale_fc", "bn_bias_fc", "bn_mean_fc", "bn_var_fc"],
+            ["x_bn"],
+            name="BNFC",
+            epsilon=1e-5,
+        ),
+        helper.make_node("PRelu", ["x_bn", "prelu_slope_fc"], ["x_prelu"], name="PReluFC"),
+        helper.make_node("QuantizeLinear", ["x_prelu", "q_mid_scale_fc", "q_mid_zero_fc"], ["x_mid_q"], name="Q1FC"),
+        helper.make_node(
+            "QLinearMatMul",
+            [
+                "x_mid_q",
+                "q_mid_scale_fc",
+                "q_mid_zero_fc",
+                "mm_w_fc",
+                "mm_w_scale_fc",
+                "mm_w_zero_fc",
+                "mm_out_scale_fc",
+                "mm_out_zero_fc",
+            ],
+            ["mm_q"],
+            name="QMMFC",
+        ),
+        helper.make_node(
+            "QLinearAdd",
+            [
+                "mm_q",
+                "mm_out_scale_fc",
+                "mm_out_zero_fc",
+                "add_b_fc",
+                "add_b_scale_fc",
+                "mm_out_zero_fc",
+                "mm_out_scale_fc",
+                "mm_out_zero_fc",
+            ],
+            ["y_q"],
+            name="QAddFC",
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "mm_out_scale_fc", "mm_out_zero_fc"], ["y"], name="DQ1FC"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_fc_chain_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zero,
+            mul_const,
+            mul_scale,
+            mul_zero,
+            mul_out_scale,
+            bn_scale,
+            bn_bias,
+            bn_mean,
+            bn_var,
+            prelu_slope,
+            q_mid_scale,
+            q_mid_zero,
+            mm_w,
+            mm_w_scale,
+            mm_w_zero,
+            mm_out_scale,
+            mm_out_zero,
+            add_b,
+            add_b_scale,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_space_to_depth_chain_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
@@ -488,6 +710,29 @@ def _collect_custom_codes(tflite_path: str) -> list[str]:
     return custom_codes
 
 
+def _collect_builtin_op_names(tflite_path: str) -> list[str]:
+    output_dir = os.path.dirname(tflite_path)
+    schema = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model = schema["ModelT"].InitFromObj(schema["Model"].GetRootAs(model_bytes, 0))
+    subgraph = model.subgraphs[0]
+    op_enum = schema["BuiltinOperator"]
+    op_names: list[str] = []
+    for op in subgraph.operators:
+        op_code = model.operatorCodes[int(op.opcodeIndex)]
+        builtin_code = int(op_code.builtinCode)
+        resolved = str(builtin_code)
+        for attr in dir(op_enum):
+            if not attr.isupper():
+                continue
+            if int(getattr(op_enum, attr)) == builtin_code:
+                resolved = attr
+                break
+        op_names.append(resolved)
+    return op_names
+
+
 def test_tflite_backend_matrix_add() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -577,6 +822,8 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("pow_square", _make_pow_square_model),
         ("space_to_depth", _make_space_to_depth_model),
         ("space_to_depth_chain", _make_space_to_depth_chain_model),
+        ("qlinear_conv_chain", _make_qlinear_conv_chain_model),
+        ("qlinear_fc_chain", _make_qlinear_fc_chain_model),
         ("transpose_attr_only", _make_transpose_attr_only_model),
         ("softmax_axis_non_last", _make_softmax_axis_non_last_model),
         ("reduce_axes_concat_const", _make_reduce_axes_concat_const_model),
@@ -621,6 +868,17 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
             rtol=0.0,
             atol=1e-6,
         )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_prelu_model()
+        model_path = _save_model(tmpdir, "prelu_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+        op_names = _collect_builtin_op_names(tflite_path)
+        assert "PRELU" in op_names
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
