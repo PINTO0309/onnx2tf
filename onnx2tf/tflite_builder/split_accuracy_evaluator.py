@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _MetricAccumulator,
     _build_tflite_detail_map,
     _collect_onnx_input_specs,
+    _create_tflite_interpreter,
     _dequantize_tflite_output,
     _extract_sample_from_custom,
     _FLOAT_METRIC_THRESHOLDS,
@@ -84,8 +85,6 @@ def _run_split_partitions(
     sample_inputs: Dict[str, np.ndarray],
     compare_mode: str,
 ) -> Dict[str, np.ndarray]:
-    from ai_edge_litert.interpreter import Interpreter
-
     partitions = list(split_manifest.get("partitions", []))
     if len(partitions) == 0:
         raise ValueError("Split manifest contains no partitions.")
@@ -99,7 +98,7 @@ def _run_split_partitions(
             raise FileNotFoundError(
                 f"Split partition tflite does not exist. path={part_path}"
             )
-        interpreter = Interpreter(model_path=part_path)
+        interpreter = _create_tflite_interpreter(model_path=part_path)
         interpreter.allocate_tensors()
         part_inputs = list(partition.get("inputs", []))
         part_outputs = list(partition.get("outputs", []))
@@ -220,7 +219,6 @@ def evaluate_split_manifest_outputs(
     metric_thresholds: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     import onnxruntime as ort
-    from ai_edge_litert.interpreter import Interpreter
 
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
@@ -259,7 +257,7 @@ def evaluate_split_manifest_outputs(
             raise FileNotFoundError(
                 f"Reference tflite does not exist. path={reference_tflite_path}"
             )
-        ref_interpreter = Interpreter(model_path=reference_tflite_path)
+        ref_interpreter = _create_tflite_interpreter(model_path=reference_tflite_path)
         ref_interpreter.allocate_tensors()
         has_quantized_outputs = any(
             np.issubdtype(np.dtype(detail["dtype"]), np.integer)

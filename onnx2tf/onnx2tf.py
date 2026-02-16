@@ -84,6 +84,7 @@ _TEMP_MICROSOFT_DOMAIN_OPS = {
     'QLinearConcat',
     'QLinearGlobalAveragePool',
     'QLinearMul',
+    'QLinearSoftmax',
     'QLinearSigmoid',
 }
 
@@ -1663,6 +1664,125 @@ def convert(
                 f'pass={report["evaluation_pass"]}'
             )
         )
+
+    def _run_flatbuffer_direct_op_error_report(
+        *,
+        tflite_path: Optional[str],
+        tensor_correspondence_report_path: Optional[str] = None,
+    ) -> None:
+        if tflite_path is None or not os.path.exists(str(tflite_path)):
+            warn(
+                'OP error report generation was skipped because float32 TFLite output is unavailable.'
+            )
+            return
+
+        generate_fn = None
+        try:
+            from onnx2tf.utils.flatbuffer_direct_op_error_report import generate_op_error_report
+            generate_fn = generate_op_error_report
+        except Exception:
+            # Fallback for environments where package import resolution is unavailable.
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            script_path = os.path.join(
+                repo_root,
+                'onnx2tf',
+                'utils',
+                'flatbuffer_direct_op_error_report.py',
+            )
+            if os.path.exists(script_path):
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        'onnx2tf_op_error_report_script',
+                        script_path,
+                    )
+                    if spec is not None and spec.loader is not None:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        generate_fn = getattr(module, 'generate_op_error_report', None)
+                except Exception:
+                    generate_fn = None
+        if generate_fn is None:
+            warn(
+                'OP error report generation was skipped because report generator could not be loaded.'
+            )
+            return
+
+        temp_onnx_path = None
+        report_onnx_path = input_onnx_file_path
+        if not report_onnx_path or not os.path.exists(str(report_onnx_path)):
+            if onnx_graph is None:
+                warn(
+                    'OP error report generation was skipped because ONNX graph is unavailable.'
+                )
+                return
+            try:
+                fd, temp_onnx_path = tempfile.mkstemp(suffix='.onnx')
+                os.close(fd)
+                _supplement_microsoft_domain_for_selected_ops(
+                    onnx_model=onnx_graph,
+                )
+                onnx.save(
+                    proto=onnx_graph,
+                    f=temp_onnx_path,
+                )
+                report_onnx_path = temp_onnx_path
+            except Exception as ex:
+                warn(
+                    'OP error report generation was skipped because temporary ONNX export failed. '
+                    f'reason={ex}'
+                )
+                if temp_onnx_path and os.path.exists(temp_onnx_path):
+                    os.remove(temp_onnx_path)
+                return
+
+        output_json_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_op_error_report.json',
+        )
+        output_csv_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_op_error_report.csv',
+        )
+        try:
+            op_error_result = generate_fn(
+                onnx_path=str(report_onnx_path),
+                tflite_path=str(tflite_path),
+                output_dir=str(output_folder_path),
+                output_json=str(output_json_path),
+                output_csv=str(output_csv_path),
+                tensor_correspondence_report=tensor_correspondence_report_path,
+                top=30,
+                rtol=0.0,
+                atol=1.0e-4,
+                verbose=False,
+            )
+            summary = op_error_result.get('summary', {})
+            info(
+                Color.GREEN(
+                    'OP error report output complete! '
+                    f'({op_error_result.get("output_json_path", output_json_path)}) '
+                    f'compared={summary.get("compared_count", 0)}/'
+                    f'{summary.get("total_targets", 0)} '
+                    f'skipped={summary.get("skipped_count", 0)} '
+                    f'allclose_pass={summary.get("allclose_pass_count", 0)}/'
+                    f'{summary.get("compared_count", 0)}'
+                )
+            )
+            info(
+                Color.GREEN(
+                    'OP error CSV output complete! '
+                    f'({op_error_result.get("output_csv_path", output_csv_path)})'
+                )
+            )
+        except Exception as ex:
+            warn(
+                'OP error report generation failed. '
+                f'reason={ex}'
+            )
+        finally:
+            if temp_onnx_path and os.path.exists(temp_onnx_path):
+                os.remove(temp_onnx_path)
+
     if flatbuffer_direct_custom_op_allowlist is not None and not flatbuffer_direct_allow_custom_ops:
         error(
             'flatbuffer_direct_custom_op_allowlist requires flatbuffer_direct_allow_custom_ops=True.'
@@ -3460,6 +3580,13 @@ def convert(
                             f'({direct_outputs["op_coverage_report_path"]})'
                         )
                     )
+                if 'tensor_correspondence_report_path' in direct_outputs:
+                    info(
+                        Color.GREEN(
+                            f'Tensor correspondence report output complete! '
+                            f'({direct_outputs["tensor_correspondence_report_path"]})'
+                        )
+                    )
                 if int(direct_outputs.get('custom_op_count', 0)) > 0:
                     info(
                         Color.YELLOW(
@@ -3523,6 +3650,13 @@ def convert(
                     info(
                         'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
                     )
+                _run_flatbuffer_direct_op_error_report(
+                    tflite_path=direct_outputs.get('float32_tflite_path', None),
+                    tensor_correspondence_report_path=direct_outputs.get(
+                        'tensor_correspondence_report_path',
+                        None,
+                    ),
+                )
                 direct_eval_paths = {}
                 if 'float32_tflite_path' in direct_outputs:
                     direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']

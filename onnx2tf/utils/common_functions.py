@@ -486,6 +486,24 @@ def inverted_operation_enable_disable(func):
         tf_layers_dict = kwargs.get('tf_layers_dict', None)
         batch_size = kwargs.get('batch_size', None)
         output_shape_trans = False
+        inherited_output_shape_trans = False
+        if graph_node is not None and tf_layers_dict is not None:
+            for graph_node_input in graph_node.inputs:
+                inherited_output_shape_trans = (
+                    inherited_output_shape_trans
+                    or bool(
+                        tf_layers_dict.get(graph_node_input.name, {}).get(
+                            'before_op_output_shape_trans',
+                            False,
+                        )
+                    )
+                )
+        # Some dynamic-shape ops (notably Resize) rely on NCHW-based 1D constants
+        # such as scales/sizes. If ONNX shape metadata is completely unknown, keep
+        # inherited transposition state only for these ops.
+        inherit_when_unknown_shape = bool(
+            graph_node is not None and graph_node.op in {'Resize'}
+        )
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
@@ -504,15 +522,21 @@ def inverted_operation_enable_disable(func):
                 ]
             tf_node_output_shape = tf_layers_dict[onnx_node_output.name]['tf_node'].shape
 
-            trans_judge = (onnx_node_output_shape != tf_node_output_shape)
-            # Avoiding patterns of misjudgment when the second and subsequent dimensions are all the same value
-            if tf_node_output_shape != tf.TensorShape(None) \
-                and len(tf_node_output_shape) >= 3:
-                base_shape = tf_node_output_shape[1]
-                if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
-                    and (onnx_node_output_shape == tf_node_output_shape) \
-                    and graph_node.op != 'MatMul':
-                    trans_judge = True
+            # When ONNX output shape is fully unknown, do not infer transposition
+            # from shape mismatch; this causes false positives on dynamic branches.
+            trans_judge = bool(inherited_output_shape_trans) if inherit_when_unknown_shape else False
+            if onnx_node_output_shape is not None \
+                and len(onnx_node_output_shape) > 0 \
+                and onnx_node_output_shape.count(None) != len(onnx_node_output_shape):
+                trans_judge = (onnx_node_output_shape != tf_node_output_shape)
+                # Avoiding patterns of misjudgment when the second and subsequent dimensions are all the same value
+                if tf_node_output_shape != tf.TensorShape(None) \
+                    and len(tf_node_output_shape) >= 3:
+                    base_shape = tf_node_output_shape[1]
+                    if len(tf_node_output_shape)-1 == sum([1 if base_shape == s else 0 for s in tf_node_output_shape[1:]]) \
+                        and (onnx_node_output_shape == tf_node_output_shape) \
+                        and graph_node.op != 'MatMul':
+                        trans_judge = True
             output_shape_trans = output_shape_trans or trans_judge
             tf_layers_dict[onnx_node_output.name]['before_op_output_shape_trans'] = output_shape_trans
 
@@ -4050,7 +4074,7 @@ def dummy_onnx_inference(
         new_onnx_graph.metadata_props.extend(metadata_props)
     # gs.py export may drop non-default node domains.
     # Re-supplement selected contrib quantized ops for ORT compatibility.
-    ms_domain_rewrite_targets = {'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearMul', 'QLinearSigmoid'}
+    ms_domain_rewrite_targets = {'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
     rewritten_ms_domains = False
     for node in new_onnx_graph.graph.node:
         if node.op_type in ms_domain_rewrite_targets and node.domain in ['', 'ai.onnx']:

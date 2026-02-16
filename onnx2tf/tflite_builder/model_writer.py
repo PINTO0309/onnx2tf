@@ -268,6 +268,7 @@ def _build_builtin_options(
         "QUANTIZE",
         "PAD",
         "PADV2",
+        "SLICE",
     ]:
         return _enum(schema_tflite, "BuiltinOptions", "NONE"), None
     raise NotImplementedError(

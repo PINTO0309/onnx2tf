@@ -35,6 +35,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_reduce_op,
     build_resize_op,
     build_reshape_op,
+    build_slice_op,
     build_space_to_depth_op,
     build_squeeze_op,
     build_softmax_op,
@@ -231,6 +232,75 @@ def _validate_softmax(node: Any, ctx: Any) -> None:
 
 def _validate_reshape(node: Any, ctx: Any) -> None:
     _require_const_input(node, ctx, 1, "reshape shape")
+
+
+def _validate_slice(node: Any, ctx: Any) -> None:
+    starts = _require_const_input(node, ctx, 1, "slice starts")
+    ends = _require_const_input(node, ctx, 2, "slice ends")
+    starts_values = [int(v) for v in np.asarray(starts).reshape(-1).tolist()]
+    ends_values = [int(v) for v in np.asarray(ends).reshape(-1).tolist()]
+    if len(starts_values) != len(ends_values):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                f"Slice starts/ends length mismatch. "
+                f"starts_len={len(starts_values)} ends_len={len(ends_values)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axes = _extract_axes(
+        node=node,
+        ctx=ctx,
+        input_index=3,
+        attr_name="axes",
+        default_if_missing=[int(v) for v in range(len(starts_values))],
+    )
+    normalized_axes = _normalize_axes_for_rank(axes=axes, rank=rank, node=node)
+    if len(normalized_axes) != len(starts_values):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                f"Slice starts/axes length mismatch. "
+                f"starts_len={len(starts_values)} axes_len={len(normalized_axes)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if len(node.inputs) >= 5:
+        steps_arr = _require_const_input(node, ctx, 4, "slice steps")
+        steps = [int(v) for v in np.asarray(steps_arr).reshape(-1).tolist()]
+    elif "steps" in node.attrs:
+        attr_steps = node.attrs.get("steps")
+        if isinstance(attr_steps, (list, tuple, np.ndarray)):
+            steps = [int(v) for v in np.asarray(attr_steps).reshape(-1).tolist()]
+        elif attr_steps is None:
+            steps = [1 for _ in range(len(starts_values))]
+        else:
+            steps = [int(attr_steps)]
+    else:
+        steps = [1 for _ in range(len(starts_values))]
+
+    if len(steps) != len(starts_values):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                f"Slice starts/steps length mismatch. "
+                f"starts_len={len(starts_values)} steps_len={len(steps)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(step) != 1 for step in steps):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Slice steps must all be 1. steps={steps}",
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_transpose(node: Any, ctx: Any) -> None:
@@ -1386,6 +1456,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_gather_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_gather,
+    ),
+    "Slice": DispatchEntry(
+        onnx_op="Slice",
+        tflite_ops=["SLICE"],
+        builder=build_slice_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_slice,
     ),
     "Identity": DispatchEntry(
         onnx_op="Identity",

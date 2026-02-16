@@ -43,6 +43,7 @@ class ModelIR:
     operators: List[OperatorIR] = field(default_factory=list)
     inputs: List[str] = field(default_factory=list)
     outputs: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 def normalize_dim_to_shape_and_signature(dim: Any) -> Tuple[int, int]:
@@ -71,6 +72,7 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
     clone = ModelIR(
         name=model_ir.name,
         description=model_ir.description,
+        metadata=dict(model_ir.metadata),
     )
     clone.inputs = list(model_ir.inputs)
     clone.outputs = list(model_ir.outputs)

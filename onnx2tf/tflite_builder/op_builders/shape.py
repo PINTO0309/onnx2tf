@@ -9,6 +9,149 @@ from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
+def _normalize_axis(axis: int, rank: int, *, op_name: str) -> int:
+    normalized = int(axis)
+    if normalized < 0:
+        normalized += int(rank)
+    if normalized < 0 or normalized >= int(rank):
+        raise NotImplementedError(
+            f"Slice axis out of range in flatbuffer_direct. op={op_name} axis={axis} rank={rank}"
+        )
+    return normalized
+
+
+def _parse_slice_axes_or_steps(
+    *,
+    node: Any,
+    ctx: Any,
+    input_index: int,
+    attr_name: str,
+    default_values: list[int],
+    label: str,
+) -> list[int]:
+    values: list[int] | None = None
+    if len(node.inputs) > input_index:
+        arr = ctx.get_constant_array(node.inputs[input_index].name)
+        if arr is None:
+            raise NotImplementedError(
+                f"Slice {label} must be constant for flatbuffer_direct. op={node.name}"
+            )
+        values = [int(v) for v in np.asarray(arr).reshape(-1).tolist()]
+    elif attr_name in node.attrs:
+        attr_val = node.attrs.get(attr_name)
+        if isinstance(attr_val, (list, tuple, np.ndarray)):
+            values = [int(v) for v in np.asarray(attr_val).reshape(-1).tolist()]
+        elif attr_val is None:
+            values = []
+        else:
+            values = [int(attr_val)]
+    if values is None:
+        values = [int(v) for v in default_values]
+    return [int(v) for v in values]
+
+
+def build_slice_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    starts_arr = ctx.get_constant_array(node.inputs[1].name)
+    ends_arr = ctx.get_constant_array(node.inputs[2].name)
+    if starts_arr is None or ends_arr is None:
+        raise NotImplementedError(
+            f"Slice starts/ends must be constant for flatbuffer_direct. op={node.name}"
+        )
+    starts = [int(v) for v in np.asarray(starts_arr).reshape(-1).tolist()]
+    ends = [int(v) for v in np.asarray(ends_arr).reshape(-1).tolist()]
+    if len(starts) != len(ends):
+        raise NotImplementedError(
+            f"Slice starts and ends length mismatch. op={node.name} "
+            f"starts_len={len(starts)} ends_len={len(ends)}"
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    rank = len(input_shape)
+    axes = _parse_slice_axes_or_steps(
+        node=node,
+        ctx=ctx,
+        input_index=3,
+        attr_name="axes",
+        default_values=[int(v) for v in range(len(starts))],
+        label="axes",
+    )
+    steps = _parse_slice_axes_or_steps(
+        node=node,
+        ctx=ctx,
+        input_index=4,
+        attr_name="steps",
+        default_values=[1 for _ in range(len(starts))],
+        label="steps",
+    )
+    if len(axes) != len(starts) or len(steps) != len(starts):
+        raise NotImplementedError(
+            f"Slice starts/axes/steps length mismatch. op={node.name} "
+            f"starts_len={len(starts)} axes_len={len(axes)} steps_len={len(steps)}"
+        )
+
+    begin = [0 for _ in range(rank)]
+    size = [int(dim) if int(dim) > 0 else -1 for dim in input_shape]
+    large_int = int(np.iinfo(np.int64).max // 2)
+
+    for idx, axis_raw in enumerate(axes):
+        axis = _normalize_axis(axis_raw, rank, op_name=node.name)
+        step = int(steps[idx])
+        if step != 1:
+            raise NotImplementedError(
+                f"Slice step must be 1 for flatbuffer_direct. op={node.name} step={step}"
+            )
+        start = int(starts[idx])
+        end = int(ends[idx])
+        dim = int(input_shape[axis]) if axis < len(input_shape) else -1
+
+        if dim > 0:
+            if start < 0:
+                start += dim
+            if end < 0:
+                end += dim
+            start = max(0, min(start, dim))
+            end = max(0, min(end, dim))
+            begin[axis] = int(start)
+            size[axis] = int(max(end - start, 0))
+        else:
+            if start < 0:
+                raise NotImplementedError(
+                    f"Slice with negative start on unknown dimension is not supported. "
+                    f"op={node.name} axis={axis} start={start}"
+                )
+            begin[axis] = int(start)
+            if end >= large_int:
+                size[axis] = -1
+            elif end < 0:
+                raise NotImplementedError(
+                    f"Slice with negative end on unknown dimension is not supported. "
+                    f"op={node.name} axis={axis} end={end}"
+                )
+            else:
+                size[axis] = int(max(end - start, 0))
+
+    begin_name = ctx.add_const_tensor(
+        f"{output_name}_slice_begin",
+        np.asarray(begin, dtype=np.int32),
+    )
+    size_name = ctx.add_const_tensor(
+        f"{output_name}_slice_size",
+        np.asarray(size, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[input_name, begin_name, size_name],
+            outputs=[output_name],
+        )
+    )
+
+
 def _resolve_reshape_shape_with_static_dims(
     *,
     new_shape: list[int],
@@ -16,51 +159,61 @@ def _resolve_reshape_shape_with_static_dims(
     output_tensor: Any,
     allowzero: bool,
 ) -> list[int]:
-    output_signature = (
-        list(output_tensor.shape_signature)
-        if output_tensor.shape_signature is not None
-        else list(output_tensor.shape)
-    )
-    if len(output_signature) == len(new_shape) and all(int(dim) >= 0 for dim in output_signature):
-        return [int(v) for v in output_tensor.shape]
-
-    minus_one_indices = [idx for idx, dim in enumerate(new_shape) if int(dim) == -1]
-    if len(minus_one_indices) != 1:
-        return [int(v) for v in new_shape]
-
     input_signature = (
         list(input_tensor.shape_signature)
         if input_tensor.shape_signature is not None
         else list(input_tensor.shape)
     )
-    if len(input_signature) == 0 or any(int(dim) < 0 for dim in input_signature):
-        return [int(v) for v in new_shape]
-    if any(int(dim) == 0 for dim in input_signature):
-        return [int(v) for v in new_shape]
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_tensor.shape)
+    )
+    if len(output_signature) == len(new_shape) and all(int(dim) > 0 for dim in output_signature):
+        if len(input_signature) > 0 and all(int(dim) > 0 for dim in input_signature):
+            output_product = int(np.prod(np.asarray(output_signature, dtype=np.int64)))
+            input_product = int(np.prod(np.asarray(input_signature, dtype=np.int64)))
+            if output_product == input_product:
+                return [int(v) for v in output_tensor.shape]
+        else:
+            return [int(v) for v in output_tensor.shape]
+
+    minus_one_indices = [idx for idx, dim in enumerate(new_shape) if int(dim) == -1]
+    resolved_shape = [int(v) for v in new_shape]
+
+    if not allowzero:
+        for idx, dim in enumerate(resolved_shape):
+            if int(dim) != 0:
+                continue
+            if idx >= len(input_signature):
+                return [int(v) for v in new_shape]
+            in_dim = int(input_signature[idx])
+            if in_dim <= 0:
+                return [int(v) for v in new_shape]
+            resolved_shape[idx] = in_dim
+
+    if len(minus_one_indices) != 1:
+        return [int(v) for v in resolved_shape]
+    if len(input_signature) == 0 or any(int(dim) <= 0 for dim in input_signature):
+        return [int(v) for v in resolved_shape]
 
     known_product = 1
-    resolved_shape = [int(v) for v in new_shape]
-    for idx, raw_dim in enumerate(new_shape):
+    for idx, raw_dim in enumerate(resolved_shape):
         dim = int(raw_dim)
         if dim == -1:
             continue
-        if dim == 0 and not allowzero:
-            if idx >= len(input_signature):
-                return [int(v) for v in new_shape]
-            dim = int(input_signature[idx])
-            resolved_shape[idx] = dim
         if dim <= 0:
-            return [int(v) for v in new_shape]
+            return [int(v) for v in resolved_shape]
         known_product *= dim
     if known_product <= 0:
-        return [int(v) for v in new_shape]
+        return [int(v) for v in resolved_shape]
 
     input_product = int(np.prod(np.asarray(input_signature, dtype=np.int64)))
     if input_product <= 0 or input_product % known_product != 0:
-        return [int(v) for v in new_shape]
+        return [int(v) for v in resolved_shape]
     inferred = int(input_product // known_product)
     if inferred <= 0:
-        return [int(v) for v in new_shape]
+        return [int(v) for v in resolved_shape]
     resolved_shape[minus_one_indices[0]] = inferred
     return resolved_shape
 

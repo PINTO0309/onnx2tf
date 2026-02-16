@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    nhwc_determination_of_output_value_of_binary_input_op,
 )
 
 
@@ -97,6 +98,12 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': \
+            nhwc_determination_of_output_value_of_binary_input_op(
+                graph_node_input_1=graph_node_input_1,
+                graph_node_input_2=graph_node_input_4,
+                tf_layers_dict=tf_layers_dict,
+            ),
     }
 
     # Generation of TF OP
