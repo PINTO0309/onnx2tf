@@ -61,6 +61,9 @@ def make_node(
 
     x = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
     x_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     x_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -76,6 +79,7 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': input_nhwc,
     }
 
     # Generation of TF OP

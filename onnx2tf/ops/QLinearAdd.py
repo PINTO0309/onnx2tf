@@ -9,6 +9,7 @@ from onnx2tf.utils.common_functions import (
     print_node_info,
     inverted_operation_enable_disable,
     make_tf_node_info,
+    pre_explicit_broadcast,
     nhwc_determination_of_output_value_of_binary_input_op,
 )
 
@@ -118,6 +119,10 @@ def make_node(
     # dequantize a and b
     dequantized_a = tf.multiply(a_scale, tf.subtract(a, a_zero_point))
     dequantized_b = tf.multiply(b_scale, tf.subtract(b, b_zero_point))
+    dequantized_a, dequantized_b = pre_explicit_broadcast(
+        input_tensor_1=dequantized_a,
+        input_tensor_2=dequantized_b,
+    )
     dequantized_ab = tf.add(dequantized_a, dequantized_b)
     dequantized_abc = tf.add(tf.divide(dequantized_ab, c_scale), c_zero_point)
 

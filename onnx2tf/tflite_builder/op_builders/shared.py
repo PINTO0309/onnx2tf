@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 from typing import Any, List, Optional
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
 
 
 def _read_transpose_perm(ctx: Any, op: OperatorIR) -> Optional[List[int]]:
@@ -33,6 +34,84 @@ def _is_inverse_perm(perm_a: List[int], perm_b: List[int]) -> bool:
         if perm_b[value] != idx:
             return False
     return True
+
+
+def _clone_quantization(quantization: Any) -> Any:
+    if quantization is None:
+        return None
+    if isinstance(quantization, QuantParamIR):
+        return QuantParamIR(
+            scale=list(quantization.scale),
+            zero_point=list(quantization.zero_point),
+            quantized_dimension=int(quantization.quantized_dimension),
+            min=list(quantization.min) if quantization.min is not None else None,
+            max=list(quantization.max) if quantization.max is not None else None,
+        )
+    return copy.deepcopy(quantization)
+
+
+def _quant_param_scale_count(quantization: Any) -> int:
+    if quantization is None:
+        return 0
+    if isinstance(quantization, QuantParamIR):
+        return int(len(list(quantization.scale)))
+    if isinstance(quantization, dict):
+        scale = quantization.get("scale", [])
+        if isinstance(scale, np.ndarray):
+            return int(scale.size)
+        if isinstance(scale, (list, tuple)):
+            return int(len(scale))
+    return 0
+
+
+def _get_quantized_dimension(quantization: Any) -> Optional[int]:
+    if quantization is None:
+        return None
+    if isinstance(quantization, QuantParamIR):
+        return int(quantization.quantized_dimension)
+    if isinstance(quantization, dict) and "quantized_dimension" in quantization:
+        try:
+            return int(quantization.get("quantized_dimension", 0))
+        except Exception:
+            return None
+    return None
+
+
+def _set_quantized_dimension(quantization: Any, qdim: int) -> None:
+    if quantization is None:
+        return
+    if isinstance(quantization, QuantParamIR):
+        quantization.quantized_dimension = int(qdim)
+        return
+    if isinstance(quantization, dict):
+        quantization["quantized_dimension"] = int(qdim)
+
+
+def _invert_perm(perm: List[int]) -> Optional[List[int]]:
+    rank = len(list(perm))
+    if sorted(int(v) for v in perm) != [int(i) for i in range(rank)]:
+        return None
+    inv = [0] * rank
+    for out_axis, in_axis in enumerate(perm):
+        inv[int(in_axis)] = int(out_axis)
+    return inv
+
+
+def _remap_quantized_dimension_for_transpose(quantization: Any, perm_values: List[int]) -> Any:
+    if quantization is None:
+        return None
+    scale_count = _quant_param_scale_count(quantization)
+    if scale_count <= 1:
+        return quantization
+    qdim = _get_quantized_dimension(quantization)
+    if qdim is None:
+        return quantization
+    inv = _invert_perm([int(v) for v in list(perm_values)])
+    if inv is None:
+        return quantization
+    if 0 <= int(qdim) < len(inv):
+        _set_quantized_dimension(quantization, int(inv[int(qdim)]))
+    return quantization
 
 
 def resolve_padding(node: Any) -> str:
@@ -126,4 +205,9 @@ def make_transpose(
         )
         if len(input_signature) == len(perm):
             output_tensor.shape_signature = [int(input_signature[int(axis)]) for axis in perm]
+        output_tensor.quantization = _clone_quantization(input_tensor.quantization)
+        output_tensor.quantization = _remap_quantized_dimension_for_transpose(
+            output_tensor.quantization,
+            perm,
+        )
     return output_name

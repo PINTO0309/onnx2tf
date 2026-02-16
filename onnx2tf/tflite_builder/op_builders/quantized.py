@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
@@ -148,13 +148,39 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
     ctx.ensure_tensor(dst_tensor_name)
     src = ctx.model_ir.tensors[src_tensor_name]
     dst = ctx.model_ir.tensors[dst_tensor_name]
+    src_signature = (
+        list(src.shape_signature)
+        if src.shape_signature is not None
+        else list(src.shape)
+    )
     if dst.shape == [1] and src.shape != [1]:
         dst.shape = list(src.shape)
-        dst.shape_signature = (
-            list(src.shape_signature)
-            if src.shape_signature is not None
-            else list(src.shape)
-        )
+        dst.shape_signature = list(src_signature)
+    elif len(list(dst.shape)) == len(list(src.shape)) and list(dst.shape) == list(src.shape):
+        dst.shape_signature = list(src_signature)
+
+
+def _infer_rank4_conv_output_signature(
+    *,
+    input_signature_nchw: List[int],
+    output_shape_nchw: List[int],
+    existing_output_signature_nchw: Optional[List[int]] = None,
+) -> List[int]:
+    signature = [int(v) for v in list(output_shape_nchw)]
+    if len(signature) != 4:
+        return signature
+    if existing_output_signature_nchw is not None and len(existing_output_signature_nchw) == 4:
+        for axis in range(4):
+            if int(existing_output_signature_nchw[axis]) < 0:
+                signature[axis] = -1
+    if len(input_signature_nchw) == 4:
+        if int(input_signature_nchw[0]) < 0:
+            signature[0] = -1
+        if int(input_signature_nchw[2]) < 0:
+            signature[2] = -1
+        if int(input_signature_nchw[3]) < 0:
+            signature[3] = -1
+    return [int(v) for v in signature]
 
 
 def _require_const(ctx: Any, tensor_name: str, label: str) -> np.ndarray:
@@ -461,30 +487,38 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         )
     input_shape = ctx.get_tensor_shape(x_name)
     output_shape = ctx.get_tensor_shape(output_name)
+    input_tensor = ctx.model_ir.tensors[x_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_signature = (
+        list(input_tensor.shape_signature)
+        if input_tensor.shape_signature is not None
+        else list(input_shape)
+    )
+    existing_output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) == 4
+        else None
+    )
     if len(output_shape) != 4 and len(input_shape) == 4:
-        input_tensor = ctx.model_ir.tensors[x_name]
-        input_signature = (
-            list(input_tensor.shape_signature)
-            if input_tensor.shape_signature is not None
-            else list(input_shape)
-        )
         inferred_output_shape = [
             int(input_shape[0]),
             int(weights.shape[0]),
             int(input_shape[2]),
             int(input_shape[3]),
         ]
-        inferred_output_signature = list(inferred_output_shape)
-        if len(input_signature) == 4:
-            inferred_output_signature[0] = int(input_signature[0])
         ctx.model_ir.tensors[output_name].shape = inferred_output_shape
-        ctx.model_ir.tensors[output_name].shape_signature = list(inferred_output_signature)
         output_shape = inferred_output_shape
     if len(input_shape) != 4 or len(output_shape) != 4:
         raise NotImplementedError(
             "QLinearConv supports only rank-4 tensors in flatbuffer_direct. "
             f"input_shape={input_shape} output_shape={output_shape} op={node.name}"
         )
+    inferred_output_signature = _infer_rank4_conv_output_signature(
+        input_signature_nchw=input_signature,
+        output_shape_nchw=output_shape,
+        existing_output_signature_nchw=existing_output_signature,
+    )
+    output_tensor.shape_signature = [int(v) for v in inferred_output_signature]
 
     nchw_input = input_shape
     nchw_output = output_shape
@@ -499,7 +533,6 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
 
     nhwc_input_shape = [nchw_input[0], nchw_input[2], nchw_input[3], nchw_input[1]]
     nhwc_output_shape = [nchw_output[0], nchw_output[2], nchw_output[3], nchw_output[1]]
-    output_tensor = ctx.model_ir.tensors[output_name]
     output_signature = (
         list(output_tensor.shape_signature)
         if output_tensor.shape_signature is not None
@@ -1441,6 +1474,86 @@ def build_qlinear_sigmoid_op(node: Any, ctx: Any) -> None:
         OperatorIR(
             op_type="QUANTIZE",
             inputs=[sig_out],
+            outputs=[output_name],
+        )
+    )
+
+
+def build_qlinear_leaky_relu_op(node: Any, ctx: Any) -> None:
+    x_name = node.inputs[0].name
+    x_scale_name = node.inputs[1].name
+    x_zero_name = node.inputs[2].name
+    y_scale_name = node.inputs[3].name
+    y_zero_name = node.inputs[4].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(x_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, x_name, output_name)
+
+    x_scale = _require_const(ctx, x_scale_name, "QLinearLeakyRelu input scale")
+    x_zero = _require_const(ctx, x_zero_name, "QLinearLeakyRelu input zero_point")
+    y_scale = _require_const(ctx, y_scale_name, "QLinearLeakyRelu output scale")
+    y_zero = _require_const(ctx, y_zero_name, "QLinearLeakyRelu output zero_point")
+
+    _set_tensor_dtype_from_array(ctx, x_name, x_zero)
+    _set_tensor_dtype_from_array(ctx, output_name, y_zero)
+    _promote_internal_uint8_tensor_to_int8(ctx, x_name)
+    _promote_internal_uint8_tensor_to_int8(ctx, output_name)
+
+    input_rank = len(ctx.get_tensor_shape(x_name))
+    output_rank = len(ctx.get_tensor_shape(output_name))
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=x_name,
+        scale=x_scale,
+        zero_point=x_zero,
+        quantized_dimension=0 if np.asarray(x_scale).size <= 1 else _normalize_axis(1, input_rank),
+    )
+    _set_tensor_quantization(
+        ctx=ctx,
+        tensor_name=output_name,
+        scale=y_scale,
+        zero_point=y_zero,
+        quantized_dimension=0 if np.asarray(y_scale).size <= 1 else _normalize_axis(1, output_rank),
+    )
+
+    dq_out = ctx.add_intermediate_tensor(
+        f"{node.name}_dq_out",
+        dtype="FLOAT32",
+        shape=ctx.get_tensor_shape(x_name),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DEQUANTIZE",
+            inputs=[x_name],
+            outputs=[dq_out],
+        )
+    )
+
+    alpha = float(node.attrs.get("alpha", 0.01))
+    alpha_name = ctx.add_const_tensor(
+        f"{node.name}_alpha",
+        np.asarray([alpha], dtype=np.float32),
+    )
+
+    prelu_out = ctx.add_intermediate_tensor(
+        f"{node.name}_prelu_out",
+        dtype="FLOAT32",
+        shape=ctx.get_tensor_shape(x_name),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="PRELU",
+            inputs=[dq_out, alpha_name],
+            outputs=[prelu_out],
+        )
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=[prelu_out],
             outputs=[output_name],
         )
     )

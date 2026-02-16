@@ -98,9 +98,8 @@ def make_node(
         'optype': graph_node.op,
         'shape': shape,
         'dtype': dtype,
+        'nhwc': True,
     }
-    if x_nhwc:
-        tf_layers_dict[graph_node_output.name]['nhwc'] = True
 
     # Generation of TF OP
     x = tf.cast(x, tf.float32)

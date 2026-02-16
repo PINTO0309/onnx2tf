@@ -2721,8 +2721,10 @@ def shape_unmatched_special_avoidance_workaround(
     nhwc_flag_1 = False
     same_input_shape_as_onnx_1 = False
     if isinstance(graph_node_input_1, gs.Variable):
-        nhwc_flag_1 = tf_layers_dict[graph_node_input_1.name]['nhwc'] \
-            if 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
+        nhwc_flag_1 = _is_output_nhwc_assumed(
+            graph_node_input=graph_node_input_1,
+            tf_layers_dict=tf_layers_dict,
+        )
         if graph_node_input_1.shape is not None:
             graph_node_input_1_shape = [
                 dim if not isinstance(dim, str) else None for dim in graph_node_input_1.shape
@@ -2748,8 +2750,10 @@ def shape_unmatched_special_avoidance_workaround(
     nhwc_flag_2 = False
     same_input_shape_as_onnx_2 = False
     if isinstance(graph_node_input_2, gs.Variable):
-        nhwc_flag_2 = tf_layers_dict[graph_node_input_2.name]['nhwc'] \
-            if 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
+        nhwc_flag_2 = _is_output_nhwc_assumed(
+            graph_node_input=graph_node_input_2,
+            tf_layers_dict=tf_layers_dict,
+        )
         if graph_node_input_2.shape is not None:
             graph_node_input_2_shape = [
                 dim if not isinstance(dim, str) else None for dim in graph_node_input_2.shape
@@ -4061,20 +4065,137 @@ def dummy_onnx_inference(
                 )
             )
 
+    # Build fallback dtype map from ONNX metadata.
+    inferred_output_dtype_by_name: Dict[str, Any] = {}
+    producer_op_type_by_output_name: Dict[str, str] = {}
+    initializer_dtype_by_name: Dict[str, Any] = {}
+    value_info_dtype_by_name: Dict[str, Any] = {}
+    for initializer in onnx_graph.graph.initializer:
+        try:
+            initializer_dtype_by_name[initializer.name] = np.asarray(
+                onnx.numpy_helper.to_array(initializer)
+            ).dtype
+        except Exception:
+            continue
+    for value_info in list(onnx_graph.graph.value_info) + list(onnx_graph.graph.output) + list(onnx_graph.graph.input):
+        try:
+            tensor_type = value_info.type.tensor_type
+            if int(tensor_type.elem_type) != 0:
+                value_info_dtype_by_name[value_info.name] = onnx.helper.tensor_dtype_to_np_dtype(
+                    int(tensor_type.elem_type)
+                )
+        except Exception:
+            continue
+
+    def _resolve_dtype_from_tensor_name(tensor_name: str) -> Optional[Any]:
+        if tensor_name in initializer_dtype_by_name:
+            return initializer_dtype_by_name[tensor_name]
+        if tensor_name in value_info_dtype_by_name:
+            return value_info_dtype_by_name[tensor_name]
+        return None
+
+    def _resolve_qlinear_output_zero_point_input_index(node_op_type: str, input_count: int) -> Optional[int]:
+        if node_op_type == "QuantizeLinear":
+            return 2 if input_count >= 3 else None
+        if node_op_type == "QLinearConcat":
+            return 1 if input_count >= 2 else None
+        if node_op_type in {"QLinearConv", "QLinearMatMul", "QLinearAdd", "QLinearMul"}:
+            return 7 if input_count >= 8 else None
+        if node_op_type == "QGemm":
+            return 8 if input_count >= 9 else None
+        if node_op_type in {
+            "QLinearLeakyRelu",
+            "QLinearSigmoid",
+            "QLinearSoftmax",
+            "QLinearAveragePool",
+            "QLinearGlobalAveragePool",
+        }:
+            return 4 if input_count >= 5 else None
+        if node_op_type.startswith("QLinear") and input_count >= 1:
+            # Conservative fallback for other QLinear* ops.
+            return input_count - 1
+        return None
+
+    for node in onnx_graph.graph.node:
+        node_op_type = str(node.op_type)
+        zp_index = _resolve_qlinear_output_zero_point_input_index(
+            node_op_type=node_op_type,
+            input_count=len(node.input),
+        )
+        zero_point_dtype = None
+        if zp_index is not None:
+            zero_point_dtype = _resolve_dtype_from_tensor_name(str(node.input[zp_index]))
+        for node_output_name in node.output:
+            if not node_output_name:
+                continue
+            producer_op_type_by_output_name[node_output_name] = node_op_type
+            if zero_point_dtype is not None:
+                inferred_output_dtype_by_name[node_output_name] = zero_point_dtype
+            elif node_output_name in value_info_dtype_by_name:
+                inferred_output_dtype_by_name[node_output_name] = value_info_dtype_by_name[node_output_name]
+
+    passthrough_ops = {
+        "Transpose",
+        "Reshape",
+        "Split",
+        "Resize",
+        "Identity",
+        "Squeeze",
+        "Unsqueeze",
+        "Flatten",
+        "Slice",
+        "Pad",
+    }
+    known_dtype_by_tensor: Dict[str, Any] = {}
+    known_dtype_by_tensor.update(initializer_dtype_by_name)
+    known_dtype_by_tensor.update(value_info_dtype_by_name)
+    known_dtype_by_tensor.update(inferred_output_dtype_by_name)
+    changed = True
+    while changed:
+        changed = False
+        for node in onnx_graph.graph.node:
+            node_op_type = str(node.op_type)
+            if node_op_type not in passthrough_ops or len(node.input) == 0:
+                continue
+            src_name = str(node.input[0])
+            src_dtype = known_dtype_by_tensor.get(src_name, None)
+            if src_dtype is None:
+                continue
+            for node_output_name in node.output:
+                if not node_output_name:
+                    continue
+                prev_dtype = known_dtype_by_tensor.get(node_output_name, None)
+                if prev_dtype is None:
+                    known_dtype_by_tensor[node_output_name] = src_dtype
+                    changed = True
+    for tensor_name, tensor_dtype in known_dtype_by_tensor.items():
+        if tensor_name not in inferred_output_dtype_by_name:
+            inferred_output_dtype_by_name[tensor_name] = tensor_dtype
+
     # instead, modify onnx graph manually
     gs_graph.outputs = []
     for graph_node in gs_graph.nodes:
         for node_output in graph_node.outputs:
             if node_output.name in output_names:
-                if node_output.dtype is not None:
-                    gs_graph.outputs.append(node_output)
+                if node_output.dtype is None:
+                    inferred_dtype = inferred_output_dtype_by_name.get(node_output.name, None)
+                    if inferred_dtype is None:
+                        producer_op_type = producer_op_type_by_output_name.get(node_output.name, "")
+                        if producer_op_type == "DequantizeLinear":
+                            inferred_dtype = np.float32
+                        elif producer_op_type == "QuantizeLinear" or producer_op_type.startswith("QLinear") or producer_op_type == "QGemm":
+                            inferred_dtype = np.int8
+                        else:
+                            inferred_dtype = np.float32
+                    node_output.dtype = inferred_dtype
+                gs_graph.outputs.append(node_output)
 
     new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False, **meta_data)
     if metadata_props is not None:
         new_onnx_graph.metadata_props.extend(metadata_props)
     # gs.py export may drop non-default node domains.
     # Re-supplement selected contrib quantized ops for ORT compatibility.
-    ms_domain_rewrite_targets = {'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
+    ms_domain_rewrite_targets = {'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearLeakyRelu', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
     rewritten_ms_domains = False
     for node in new_onnx_graph.graph.node:
         if node.op_type in ms_domain_rewrite_targets and node.domain in ['', 'ai.onnx']:
@@ -4275,9 +4396,9 @@ def dummy_onnx_inference(
             f'The tool skipped dummy inference to avoid SWAP processing because the total size of the tensor of inference results exceeded about {mem_available} GB. (results: {total_output_size_gb} GB)'
         )
 
+    output_names_order = [out.name for out in gs_graph.outputs]
     if use_memmap_outputs:
         output_shapes = []
-        output_names_order = [out.name for out in gs_graph.outputs]
         for out in gs_graph.outputs:
             shape = out.shape
             if shape is None or any(not isinstance(s, (int, np.integer)) for s in shape):
@@ -4338,7 +4459,10 @@ def dummy_onnx_inference(
         for idx, (output_name, output_shape) in enumerate(zip(output_names_order, output_shapes)):
             safe_output_name = re.sub(r'[^0-9A-Za-z._-]+', '_', output_name)
             memmap_path = os.path.join(memmap_dir, f'ort_output_{idx}_{safe_output_name}.mmap')
-            output_dtype = np.dtype(gs_graph.outputs[idx].dtype)
+            output_dtype = gs_graph.outputs[idx].dtype
+            if output_dtype is None:
+                output_dtype = inferred_output_dtype_by_name.get(output_name, np.float32)
+            output_dtype = np.dtype(output_dtype)
             memmap_array = np.memmap(
                 memmap_path,
                 dtype=output_dtype,
@@ -4362,7 +4486,7 @@ def dummy_onnx_inference(
 
         outputs = [memmap_outputs[name] for name in output_names_order]
     else:
-        outputs = onnx_session.run(None, input_datas)
+        outputs = onnx_session.run(output_names_order, input_datas)
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)
         os.remove(tmp_onnx_external_weights_path)
@@ -6783,17 +6907,157 @@ def nhwc_determination_of_output_value_of_binary_input_op(
         True: "NHWC"
         False: not "NHWC"
     """
-    is_output_nhwc_1 = \
-        tf_layers_dict[graph_node_input_1.name]['nhwc'] \
-            if isinstance(graph_node_input_1, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
-
-    is_output_nhwc_2 = \
-        tf_layers_dict[graph_node_input_2.name]['nhwc'] \
-            if isinstance(graph_node_input_2, gs.Variable) \
-                and 'nhwc' in tf_layers_dict[graph_node_input_2.name].keys() else False
+    is_output_nhwc_1 = _is_output_nhwc_assumed(
+        graph_node_input=graph_node_input_1,
+        tf_layers_dict=tf_layers_dict,
+    )
+    is_output_nhwc_2 = _is_output_nhwc_assumed(
+        graph_node_input=graph_node_input_2,
+        tf_layers_dict=tf_layers_dict,
+    )
 
     return is_output_nhwc_1 or is_output_nhwc_2
+
+
+def _is_output_nhwc_assumed(
+    *,
+    graph_node_input: Any,
+    tf_layers_dict: Dict,
+) -> bool:
+    if not isinstance(graph_node_input, gs.Variable):
+        return False
+
+    memo: Dict[str, bool] = {}
+    visiting: set = set()
+
+    # Output is definitively channel-last.
+    assumed_channel_last_ops = {
+        'Conv',
+        'QLinearConv',
+        'ConvInteger',
+        'AveragePool',
+        'QLinearAveragePool',
+        'GlobalAveragePool',
+        'QLinearGlobalAveragePool',
+        'MaxPool',
+        'GlobalMaxPool',
+        'LpPool',
+        'GlobalLpPool',
+        'MaxRoiPool',
+    }
+    # Layout-preserving ops that inherit layout from first input.
+    propagate_from_first_input_ops = {
+        'Relu',
+        'LeakyRelu',
+        'Sigmoid',
+        'HardSigmoid',
+        'Tanh',
+        'Elu',
+        'Selu',
+        'Softplus',
+        'Softsign',
+        'Exp',
+        'Sqrt',
+        'Neg',
+        'Abs',
+        'Sign',
+        'Clip',
+        'Identity',
+        'Cast',
+        'Floor',
+        'Ceil',
+        'Round',
+        'PRelu',
+        'BatchNormalization',
+        'Dropout',
+        'QLinearSigmoid',
+        'QLinearLeakyRelu',
+        'QLinearGlobalAveragePool',
+        'QLinearAveragePool',
+        'QuantizeLinear',
+        'DequantizeLinear',
+    }
+    # Layout-preserving binary ops.
+    propagate_from_any_input_ops = {
+        'Add',
+        'Sub',
+        'Mul',
+        'Div',
+        'Min',
+        'Max',
+        'Where',
+        'And',
+        'Or',
+        'Xor',
+        'QLinearAdd',
+        'QLinearMul',
+    }
+    # Concat keeps layout only when all variable inputs keep it.
+    propagate_from_all_inputs_ops = {
+        'Concat',
+        'QLinearConcat',
+    }
+
+    def _producer_node(var: gs.Variable) -> Any:
+        try:
+            if hasattr(var, 'inputs') and len(var.inputs) > 0:
+                return var.inputs[0]
+        except Exception:
+            pass
+        return None
+
+    def _producer_optype(var: gs.Variable) -> str:
+        node_info = tf_layers_dict.get(var.name, {})
+        optype = str(node_info.get('optype', ''))
+        if optype != '':
+            return optype
+        producer = _producer_node(var)
+        return str(getattr(producer, 'op', ''))
+
+    def _variable_inputs(node: Any) -> List[Any]:
+        try:
+            return [inp for inp in getattr(node, 'inputs', []) if isinstance(inp, gs.Variable)]
+        except Exception:
+            return []
+
+    def _assume(var: Any) -> bool:
+        if not isinstance(var, gs.Variable):
+            return False
+        name = str(var.name)
+        if name in memo:
+            return memo[name]
+        if name in visiting:
+            return False
+        visiting.add(name)
+
+        node_info = tf_layers_dict.get(name, {})
+        if bool(node_info.get('nhwc', False)):
+            memo[name] = True
+            visiting.remove(name)
+            return True
+
+        producer = _producer_node(var)
+        producer_optype = _producer_optype(var)
+
+        result = False
+        if producer_optype in assumed_channel_last_ops:
+            result = True
+        elif producer is not None and producer_optype in propagate_from_first_input_ops:
+            variable_inputs = _variable_inputs(producer)
+            if len(variable_inputs) > 0:
+                result = _assume(variable_inputs[0])
+        elif producer is not None and producer_optype in propagate_from_any_input_ops:
+            variable_inputs = _variable_inputs(producer)
+            result = any(_assume(inp) for inp in variable_inputs)
+        elif producer is not None and producer_optype in propagate_from_all_inputs_ops:
+            variable_inputs = _variable_inputs(producer)
+            result = len(variable_inputs) > 0 and all(_assume(inp) for inp in variable_inputs)
+
+        memo[name] = bool(result)
+        visiting.remove(name)
+        return memo[name]
+
+    return _assume(graph_node_input)
 
 
 def shape_is_equal_ignore_order(

@@ -385,16 +385,17 @@ def _filter_dummy_onnx_inferable_outputs(
     onnx_graph: onnx.ModelProto,
     candidate_names: List[str],
 ) -> List[str]:
-    # dummy_onnx_inference only exposes outputs with known dtype in GS graph.
+    # Inferability is determined by whether the tensor exists as a node output.
+    # dummy_onnx_inference now applies dtype fallback for missing GS dtypes.
     gs_graph = gs.import_onnx(onnx_graph)
-    dtype_by_name: Dict[str, Any] = {}
+    available_output_names: set[str] = set()
     for node in gs_graph.nodes:
         for node_output in node.outputs:
-            dtype_by_name[node_output.name] = node_output.dtype
+            available_output_names.add(node_output.name)
     return [
         name
         for name in candidate_names
-        if name in dtype_by_name and dtype_by_name[name] is not None
+        if name in available_output_names
     ]
 
 
@@ -450,6 +451,17 @@ def _load_correspondence_map(
     return mapped
 
 
+def _is_channel_last_layout_name(tensor_name: str) -> bool:
+    normalized_name = _normalize_tensor_name(str(tensor_name)).lower()
+    if normalized_name == "":
+        return False
+    return (
+        "_nwc" in normalized_name
+        or "_nhwc" in normalized_name
+        or "_ndhwc" in normalized_name
+    )
+
+
 def _get_onnx_eval_outputs(
     *,
     onnx_graph: onnx.ModelProto,
@@ -461,6 +473,11 @@ def _get_onnx_eval_outputs(
         output_names=target_output_names,
         input_datas_for_validation=onnx_input_datas_for_validation,
     )
+    if len(outputs) != len(target_output_names):
+        raise RuntimeError(
+            "dummy_onnx_inference output count mismatch. "
+            f"requested={len(target_output_names)} actual={len(outputs)}"
+        )
     onnx_outputs = {
         output_name: np.asarray(output_value)
         for output_name, output_value in zip(target_output_names, outputs)
@@ -509,7 +526,17 @@ def _compare_tensor_pair(
     tflite_detail: Dict[str, Any],
     rtol: float,
     atol: float,
+    assume_channel_last_layout: bool = False,
 ) -> Dict[str, Any]:
+    def _channel_last_perm(rank: int) -> Optional[List[int]]:
+        if rank == 3:
+            return [0, 2, 1]
+        if rank == 4:
+            return [0, 2, 3, 1]
+        if rank == 5:
+            return [0, 2, 3, 4, 1]
+        return None
+
     tflite_for_compare = np.asarray(tflite_tensor_raw)
     if _is_integer_or_bool_dtype(np.dtype(tflite_for_compare.dtype)):
         tflite_for_compare = _dequantize_tflite_output(
@@ -520,6 +547,15 @@ def _compare_tensor_pair(
         np.asarray(onnx_tensor),
         onnx_quant_param_map.get(str(onnx_tensor_name), None),
     )
+
+    layout_hint_applied = False
+    if bool(assume_channel_last_layout):
+        perm = _channel_last_perm(int(onnx_for_compare.ndim))
+        if perm is not None:
+            candidate = np.transpose(onnx_for_compare, axes=perm)
+            if tuple(candidate.shape) == tuple(tflite_for_compare.shape):
+                onnx_for_compare = np.asarray(candidate)
+                layout_hint_applied = True
 
     aligned_tflite, align_mode, align_perm = _align_output_layout_for_compare(
         onnx_output=onnx_for_compare,
@@ -548,6 +584,8 @@ def _compare_tensor_pair(
         "mean_abs": float(metric_values["mean_abs"]),
         "rmse": float(metric_values["rmse"]),
         "cosine_similarity": float(metric_values["cosine_similarity"]),
+        "onnx_shape_for_compare": list(np.asarray(onnx_for_compare).shape),
+        "layout_hint_applied": bool(layout_hint_applied),
     }
 
 
@@ -761,6 +799,11 @@ def generate_op_error_report(
         record["tflite_dtype_raw"] = str(tflite_raw.dtype)
 
         try:
+            resolved_name_for_layout = (
+                mapped_tflite_name
+                if mapped_tflite_name != ""
+                else str(detail.get("name", ""))
+            )
             compare_result = _compare_tensor_pair(
                 onnx_tensor_name=tensor_name,
                 onnx_tensor=np.asarray(onnx_outputs[tensor_name]),
@@ -769,6 +812,9 @@ def generate_op_error_report(
                 tflite_detail=detail,
                 rtol=float(rtol),
                 atol=float(atol),
+                assume_channel_last_layout=_is_channel_last_layout_name(
+                    resolved_name_for_layout
+                ),
             )
         except Exception as ex:
             record["reason"] = f"compare_failed: {ex}"
@@ -776,6 +822,10 @@ def generate_op_error_report(
             continue
 
         record.update(compare_result)
+        if bool(compare_result.get("layout_hint_applied", False)):
+            compared_shape = compare_result.get("onnx_shape_for_compare", None)
+            if isinstance(compared_shape, list) and len(compared_shape) > 0:
+                record["onnx_shape"] = compared_shape
         records.append(record)
 
     compared = [r for r in records if r["status"] == "compared"]

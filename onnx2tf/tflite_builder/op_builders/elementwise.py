@@ -14,13 +14,16 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
     ctx.ensure_tensor(dst_tensor_name)
     src = ctx.model_ir.tensors[src_tensor_name]
     dst = ctx.model_ir.tensors[dst_tensor_name]
+    src_signature = (
+        list(src.shape_signature)
+        if src.shape_signature is not None
+        else list(src.shape)
+    )
     if dst.shape == [1] and src.shape != [1]:
         dst.shape = list(src.shape)
-        dst.shape_signature = (
-            list(src.shape_signature)
-            if src.shape_signature is not None
-            else list(src.shape)
-        )
+        dst.shape_signature = list(src_signature)
+    elif len(list(dst.shape)) == len(list(src.shape)) and list(dst.shape) == list(src.shape):
+        dst.shape_signature = list(src_signature)
 
 
 def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
@@ -54,6 +57,106 @@ def build_logistic_op(node: Any, ctx: Any) -> None:
             op_type="LOGISTIC",
             inputs=[input_name],
             outputs=[output_name],
+        )
+    )
+
+
+def build_hardsigmoid_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    alpha = float(node.attrs.get("alpha", 0.2))
+    beta = float(node.attrs.get("beta", 0.5))
+
+    input_shape = list(ctx.get_tensor_shape(input_name))
+    input_signature = (
+        list(ctx.model_ir.tensors[input_name].shape_signature)
+        if ctx.model_ir.tensors[input_name].shape_signature is not None
+        else list(input_shape)
+    )
+    tensor_dtype = str(ctx.get_tensor_dtype(input_name))
+    output_dtype = str(ctx.get_tensor_dtype(output_name))
+    if tensor_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NotImplementedError(
+            "HardSigmoid currently supports FLOAT16/FLOAT32 input in flatbuffer_direct. "
+            f"op={node.name} input_dtype={tensor_dtype}"
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NotImplementedError(
+            "HardSigmoid currently supports FLOAT16/FLOAT32 output in flatbuffer_direct. "
+            f"op={node.name} output_dtype={output_dtype}"
+        )
+
+    const_dtype = np.float16 if output_dtype == "FLOAT16" else np.float32
+    alpha_name = ctx.add_const_tensor(
+        f"{node.name}_hardsigmoid_alpha",
+        np.asarray(alpha, dtype=const_dtype),
+    )
+    beta_name = ctx.add_const_tensor(
+        f"{node.name}_hardsigmoid_beta",
+        np.asarray(beta, dtype=const_dtype),
+    )
+    zero_name = ctx.add_const_tensor(
+        f"{node.name}_hardsigmoid_zero",
+        np.asarray(0.0, dtype=const_dtype),
+    )
+    one_name = ctx.add_const_tensor(
+        f"{node.name}_hardsigmoid_one",
+        np.asarray(1.0, dtype=const_dtype),
+    )
+
+    mul_out = ctx.add_intermediate_tensor(
+        f"{node.name}_hardsigmoid_mul_out",
+        dtype=output_dtype,
+        shape=input_shape,
+    )
+    add_out = ctx.add_intermediate_tensor(
+        f"{node.name}_hardsigmoid_add_out",
+        dtype=output_dtype,
+        shape=input_shape,
+    )
+    max_out = ctx.add_intermediate_tensor(
+        f"{node.name}_hardsigmoid_max_out",
+        dtype=output_dtype,
+        shape=input_shape,
+    )
+    ctx.model_ir.tensors[mul_out].shape_signature = [int(v) for v in list(input_signature)]
+    ctx.model_ir.tensors[add_out].shape_signature = [int(v) for v in list(input_signature)]
+    ctx.model_ir.tensors[max_out].shape_signature = [int(v) for v in list(input_signature)]
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[input_name, alpha_name],
+            outputs=[mul_out],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[mul_out, beta_name],
+            outputs=[add_out],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MAXIMUM",
+            inputs=[add_out, zero_name],
+            outputs=[max_out],
+            options={},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MINIMUM",
+            inputs=[max_out, one_name],
+            outputs=[output_name],
+            options={},
         )
     )
 
@@ -97,22 +200,90 @@ def build_clip_op(node: Any, ctx: Any) -> None:
 
     clip_min = _get_clip_bound_value(node.attrs.get("min", None), float("-inf"))
     clip_max = _get_clip_bound_value(node.attrs.get("max", None), float("inf"))
+    min_arr = None
+    max_arr = None
     if len(node.inputs) >= 2:
         min_const = ctx.get_constant_array(node.inputs[1].name)
-        clip_min = _get_clip_bound_value(min_const, clip_min)
+        if min_const is not None:
+            min_arr = np.asarray(min_const, dtype=np.float32)
+            clip_min = _get_clip_bound_value(min_arr, clip_min)
     if len(node.inputs) >= 3:
         max_const = ctx.get_constant_array(node.inputs[2].name)
-        clip_max = _get_clip_bound_value(max_const, clip_max)
+        if max_const is not None:
+            max_arr = np.asarray(max_const, dtype=np.float32)
+            clip_max = _get_clip_bound_value(max_arr, clip_max)
 
-    if abs(clip_min - 0.0) <= 1e-6 and abs(clip_max - 6.0) <= 1e-6:
+    if min_arr is None and np.isfinite(clip_min):
+        min_arr = np.asarray(clip_min, dtype=np.float32)
+    if max_arr is None and np.isfinite(clip_max):
+        max_arr = np.asarray(clip_max, dtype=np.float32)
+
+    if abs(clip_min - 0.0) <= 1e-6 and abs(clip_max - 6.0) <= 1e-6 and min_arr is not None and max_arr is not None:
         op_type = "RELU6"
-    elif abs(clip_min - 0.0) <= 1e-6 and math.isinf(clip_max) and clip_max > 0.0:
+    elif abs(clip_min - 0.0) <= 1e-6 and math.isinf(clip_max) and clip_max > 0.0 and min_arr is not None and max_arr is None:
         op_type = "RELU"
     else:
-        raise NotImplementedError(
-            "Clip is supported only for relu-style ranges: "
-            f"min=0,max=6 or min=0,max=+inf. op={node.name} min={clip_min} max={clip_max}"
-        )
+        output_dtype = ctx.get_tensor_dtype(output_name)
+        output_shape = ctx.get_tensor_shape(output_name)
+        current_name = input_name
+        if min_arr is not None:
+            min_name = ctx.add_const_tensor(
+                f"{node.name}_clip_min",
+                np.asarray(min_arr, dtype=np.float32),
+            )
+            min_output_name = output_name
+            if max_arr is not None:
+                min_output_name = ctx.add_intermediate_tensor(
+                    f"{node.name}_clip_min_out",
+                    dtype=output_dtype,
+                    shape=output_shape,
+                )
+                output_signature = (
+                    list(ctx.model_ir.tensors[output_name].shape_signature)
+                    if ctx.model_ir.tensors[output_name].shape_signature is not None
+                    else list(output_shape)
+                )
+                ctx.model_ir.tensors[min_output_name].shape_signature = [
+                    int(v) for v in list(output_signature)
+                ]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MAXIMUM",
+                    inputs=[current_name, min_name],
+                    outputs=[min_output_name],
+                    options={},
+                )
+            )
+            current_name = min_output_name
+        if max_arr is not None:
+            max_name = ctx.add_const_tensor(
+                f"{node.name}_clip_max",
+                np.asarray(max_arr, dtype=np.float32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MINIMUM",
+                    inputs=[current_name, max_name],
+                    outputs=[output_name],
+                    options={},
+                )
+            )
+        if min_arr is None and max_arr is None:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[
+                        input_name,
+                        ctx.add_const_tensor(
+                            f"{node.name}_identity_shape",
+                            np.asarray(output_shape, dtype=np.int32),
+                        ),
+                    ],
+                    outputs=[output_name],
+                    options={"newShape": [int(v) for v in output_shape]},
+                )
+            )
+        return
 
     ctx.add_operator(
         OperatorIR(

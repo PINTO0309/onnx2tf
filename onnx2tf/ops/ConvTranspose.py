@@ -54,9 +54,46 @@ def make_node(
     input_tensor = tf_layers_dict[input_tensor.name]['tf_node'] \
         if isinstance(input_tensor, gs.Variable) else input_tensor
     input_tensor_shape = input_tensor.shape
-    graph_node_input_shape = graph_node_input.shape
     input_tensor_rank = len(input_tensor_shape)
     spatial_size = input_tensor_rank - 2
+
+    def _normalize_shape(shape):
+        if shape is None:
+            return None
+        if isinstance(shape, tf.TensorShape):
+            shape = shape.as_list()
+        elif hasattr(shape, 'as_list'):
+            try:
+                shape = shape.as_list()
+            except Exception:
+                pass
+        if shape is None:
+            return None
+        if not isinstance(shape, (list, tuple)):
+            try:
+                shape = list(shape)
+            except TypeError:
+                return None
+        normalized_shape = []
+        for dim in shape:
+            if hasattr(dim, 'value'):
+                dim = dim.value
+            if isinstance(dim, np.generic):
+                dim = dim.item()
+            if isinstance(dim, str):
+                normalized_shape.append(None)
+            else:
+                try:
+                    normalized_shape.append(int(dim) if dim is not None else None)
+                except Exception:
+                    normalized_shape.append(None)
+        return normalized_shape
+
+    graph_node_input_shape = _normalize_shape(graph_node_input.shape)
+    if graph_node_input_shape is None or len(graph_node_input_shape) != input_tensor_rank:
+        graph_node_input_shape = _normalize_shape(input_tensor_shape)
+    if graph_node_input_shape is None or len(graph_node_input_shape) != input_tensor_rank:
+        graph_node_input_shape = [None] * input_tensor_rank
 
     # ONNX weight input
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
@@ -114,12 +151,35 @@ def make_node(
                 sys.exit(1)
 
     # get ONNX convolution output shape
-    graph_node_output_shape = graph_node.attrs.get('output_shape', graph_node_output.shape)
+    graph_node_output_shape = _normalize_shape(
+        graph_node.attrs.get('output_shape', graph_node_output.shape)
+    )
+    if graph_node_output_shape is None:
+        graph_node_output_shape = [None] * input_tensor_rank
+    elif len(graph_node_output_shape) != input_tensor_rank:
+        graph_node_output_shape = \
+            (graph_node_output_shape + [None] * input_tensor_rank)[:input_tensor_rank]
     output_padding = graph_node.attrs.get('output_padding', [0] * spatial_size)
-    if graph_node_output_shape is None and output_shape_ is None:
-        graph_node_output_shape = [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
-            [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
-                1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
+    if all(dim is None for dim in graph_node_output_shape) and output_shape_ is None:
+        can_estimate_output_shape = \
+            len(kernel_shape) == spatial_size \
+            and len(strides) == spatial_size \
+            and len(dilations) == spatial_size \
+            and len(output_padding) == spatial_size \
+            and len(pads) == (2 * spatial_size) \
+            and all(graph_node_input_shape[i + 2] is not None for i in range(spatial_size))
+        if can_estimate_output_shape:
+            graph_node_output_shape = \
+                [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
+                [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
+                    1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
+        else:
+            weight_shape_onnx = _normalize_shape(graph_node.inputs[1].shape)
+            output_channels = None
+            if weight_shape_onnx is not None and len(weight_shape_onnx) > 0:
+                output_channels = weight_shape_onnx[0]
+            graph_node_output_shape = \
+                [graph_node_input_shape[0], output_channels] + [None] * spatial_size
 
     # convert ONNX convolution output shape to TF convolution output shape
     converted_axis = []
@@ -148,6 +208,10 @@ def make_node(
             dim for dim in graph_node_input_shape[2:] \
                 if isinstance(dim, str) or dim is None
         ]) > 0
+        disable_calc_output_shape_conv_transpose = \
+            disable_calc_output_shape_conv_transpose \
+            or graph_node_output_shape[0] is None \
+            or graph_node_output_shape[1] is None
         # If the spartial shape is an undefined dimension, skip the process.
         # Instead, run inference with dummy input tensors in onnxruntime to try to estimate the output shape.
         if not disable_calc_output_shape_conv_transpose:
@@ -181,9 +245,11 @@ def make_node(
                     use_cuda=use_cuda,
                 )[0]
             onnx_output_shape = list(convtranspose_output.shape)
+            graph_node_output_shape = onnx_output_shape
             tf_output_shape = []
             for idx in range(input_tensor_rank):
                 tf_output_shape.append(onnx_output_shape[converted_axis[idx]])
+            conv_output_shape = list(tf_output_shape)
 
     if auto_pad == 'NOTSET':
         # pad_mode SAME generates flex operation, use VALID always

@@ -289,15 +289,15 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
 |:-:|:-:|
 |<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="image" src="https://github.com/user-attachments/assets/7ffeaa53-4c83-4a9e-b5b4-17ea11c93b20" />|
 
-<details><summary>Click to Click to expand</summary>
+<details><summary>Click to expand</summary>
 
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
   - Listed ONNX ops in this README section: `208`
-  - `builtin_supported`: `44`
+  - `builtin_supported`: `51`
   - `custom_candidate` (opt-in): `16`
-  - `explicit_error` (default): `148`
+  - `explicit_error` (default): `141`
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -311,9 +311,10 @@ Notes:
 |Add|ADD|-|
 |AveragePool|AVERAGE_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
 |BatchNormalization|MUL + ADD|All parameter inputs (`scale`, `bias`, `mean`, `var`) must be constant|
-|Clip|RELU / RELU6|Only `min=0,max=+inf` (ReLU) or `min=0,max=6` (ReLU6)|
+|Clip|RELU / RELU6 / MAXIMUM + MINIMUM|General constant clip ranges are supported via `MAXIMUM`/`MINIMUM` decomposition. ReLU fast-path: `min=0,max=+inf`; ReLU6 fast-path: `min=0,max=6`|
 |Concat|CONCATENATION|-|
 |Conv|CONV_2D / DEPTHWISE_CONV_2D|2D only (rank=4), weights must be constant, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`|
+|ConvTranspose|TRANSPOSE_CONV (+ optional ADD bias)|2D only (input rank=4), weight must be constant rank=4, `group=1`, `dilations=[1,1]`, `output_padding=[0,0]`, and padding must be `auto_pad=SAME_*` or zero pads (`auto_pad` in `{NOTSET,VALID}`)|
 |DequantizeLinear|DEQUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |Div|DIV|-|
 |Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
@@ -321,12 +322,14 @@ Notes:
 |Flatten|RESHAPE|Input rank must be >= 1|
 |Gather|GATHER|`batch_dims=0` only|
 |Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
+|HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
 |Identity|RESHAPE|-|
 |LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
-|MatMul|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant|
+|MatMul|BATCH_MATMUL|Input rank >= 2. Dynamic rhs input is supported (no constant-weight requirement)|
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
 |Mul|MUL|-|
 |Neg|NEG|-|
+|Pad|PAD|`mode=constant` only, `pads` must be constant, constant pad value (if provided) must be zero|
 |PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QLinearAdd|ADD|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
 |QLinearAveragePool|DEQUANTIZE + TRANSPOSE + AVERAGE_POOL_2D + TRANSPOSE + QUANTIZE|Input rank=4 only, all quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant, `kernel_shape/strides` must be 2D, `dilations=[1,1]`, `ceil_mode=0`, `count_include_pad=0`, and pads must satisfy flatbuffer_direct pool constraints (zero/symmetric or `auto_pad=SAME_*`)|
@@ -406,6 +409,7 @@ Notes:
    - `HardSwish`, `LeakyRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
 4. `constant_fold_a5`
    - Limited constant folding for shape/axes and arithmetic helper chains
+   - Includes `DequantizeLinear` (axis/block-size aware) and downstream `Reshape` folding for constant-weight subgraphs
 5. `normalize_attrs_a5`
    - Normalize `perm`/`axes`/negative-axis forms and softmax-axis bridge rewrites
 
@@ -489,7 +493,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.14
+  ghcr.io/pinto0309/onnx2tf:2.0.15
 
   or
 
@@ -498,7 +502,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.14
+  docker.io/pinto0309/onnx2tf:2.0.15
 
   or
 
@@ -508,7 +512,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.14 \
+  docker.io/pinto0309/onnx2tf:2.0.15 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1855,7 +1859,7 @@ optional arguments:
        `CONCATENATION`, `GATHER`,
        `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`,
        `SOFTMAX`, `L2_NORMALIZATION`,
-       `CONV_2D`, `DEPTHWISE_CONV_2D`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
+       `CONV_2D`, `DEPTHWISE_CONV_2D`, `TRANSPOSE_CONV`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`,
        `DEQUANTIZE`, `QUANTIZE`.
     6. Unsupported OPs fail explicitly with `NotImplementedError`.
     7. Custom OP policy (opt-in):
