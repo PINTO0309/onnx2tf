@@ -236,6 +236,7 @@ def make_node(
     # Generation of TF OP
 
     # NCHW->NHWC, NCDHW->NDHWC
+    axis_transpose_required = before_op_output_shape_trans or nhwc_judge
     tensor_rank = len(shape) if shape is not None else input_tensor_rank
     if tensor_rank is None:
         for value in got_values:
@@ -246,7 +247,7 @@ def make_node(
         axis = convert_axis(
             axis=axis,
             tensor_rank=tensor_rank,
-            before_op_output_shape_trans=before_op_output_shape_trans,
+            before_op_output_shape_trans=axis_transpose_required,
         )
 
     # Param replacement

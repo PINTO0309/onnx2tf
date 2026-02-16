@@ -57,23 +57,33 @@ def _resolve_reshape_shape_with_static_dims(
     if shape_spec is None:
         return reshape_shape
 
+    input_shape = input_tensor.shape.as_list() \
+        if hasattr(input_tensor, "shape") and hasattr(input_tensor.shape, "as_list") \
+        else list(input_tensor.shape) if hasattr(input_tensor, "shape") else None
+    static_input_shape = _as_static_int_list(input_shape) if input_shape is not None else None
+
     # When ONNX output shape is fully known, prefer it to avoid carrying -1.
     static_output_shape = _as_static_int_list(output_shape)
     if static_output_shape is not None \
         and len(static_output_shape) == len(shape_spec) \
         and all(dim >= 0 for dim in static_output_shape):
-        return [int(dim) for dim in static_output_shape]
+        # Guard against stale/incorrect inferred output shapes in partially-known graphs.
+        if static_input_shape is not None \
+            and len(static_input_shape) > 0 \
+            and all(dim > 0 for dim in static_input_shape):
+            input_product = int(np.prod(static_input_shape, dtype=np.int64))
+            output_product = int(np.prod(static_output_shape, dtype=np.int64))
+            if input_product == output_product:
+                return [int(dim) for dim in static_output_shape]
+        else:
+            return [int(dim) for dim in static_output_shape]
 
     minus_one_indices = [idx for idx, dim in enumerate(shape_spec) if int(dim) == -1]
     if len(minus_one_indices) != 1:
         return shape_spec
 
-    input_shape = input_tensor.shape.as_list() \
-        if hasattr(input_tensor, "shape") and hasattr(input_tensor.shape, "as_list") \
-        else list(input_tensor.shape) if hasattr(input_tensor, "shape") else None
     if input_shape is None:
         return shape_spec
-    static_input_shape = _as_static_int_list(input_shape)
     if static_input_shape is None or len(static_input_shape) == 0:
         return shape_spec
     if any(dim <= 0 for dim in static_input_shape):

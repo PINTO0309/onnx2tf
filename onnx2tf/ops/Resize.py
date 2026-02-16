@@ -149,6 +149,23 @@ def make_node(
     sizes = tf_layers_dict[sizes.name]['tf_node'] \
         if isinstance(sizes, gs.Variable) else sizes
 
+    # Dynamic-shape QAT models can lose layout hints and keep NCHW-ordered
+    # Resize constants. Repair common rank-4 constants to NHWC order when
+    # patterns are unambiguous.
+    if input_tensor_rank == 4:
+        if isinstance(scales, np.ndarray):
+            scales_arr = np.asarray(scales).reshape(-1)
+            if scales_arr.size == 4:
+                if np.isclose(float(scales_arr[1]), 1.0) and not np.isclose(float(scales_arr[3]), 1.0):
+                    scales = scales_arr[[0, 2, 3, 1]]
+        if isinstance(sizes, np.ndarray):
+            sizes_arr = np.asarray(sizes).reshape(-1)
+            if sizes_arr.size == 4 \
+                and input_tensor_shape[-1] is not None \
+                and int(sizes_arr[1]) == int(input_tensor_shape[-1]) \
+                and int(sizes_arr[3]) != int(input_tensor_shape[-1]):
+                sizes = sizes_arr[[0, 2, 3, 1]]
+
     coordinate_transformation_mode = graph_node.attrs.get('coordinate_transformation_mode', 'half_pixel')
     extrapolation_value = graph_node.attrs.get('extrapolation_value', 0.0)
     mode = graph_node.attrs.get('mode', 'nearest')

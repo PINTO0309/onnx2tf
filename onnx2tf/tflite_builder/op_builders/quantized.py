@@ -568,20 +568,15 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
                     dtype=np.int32,
                 ),
             )
-            pad_value = 0
-            if isinstance(x_tensor.quantization, QuantParamIR) and len(x_tensor.quantization.zero_point) > 0:
-                pad_value = int(x_tensor.quantization.zero_point[0])
-            pad_value_name = ctx.add_const_tensor(
-                f"{node.name}_pad_value",
-                np.asarray(
-                    [pad_value],
-                    dtype=_numpy_dtype_from_tflite_dtype(ctx.get_tensor_dtype(x_nhwc_conv)),
-                ),
-            )
+            # NOTE:
+            # For quantized activation tensors, TFLite PAD uses tensor quantization
+            # parameters and pads with the quantized representation of real-value 0.
+            # QLinearConv explicit padding requires padding by input zero_point,
+            # so PAD is the semantically-correct choice here.
             ctx.add_operator(
                 OperatorIR(
-                    op_type="PADV2",
-                    inputs=[x_nhwc_conv, pads_name, pad_value_name],
+                    op_type="PAD",
+                    inputs=[x_nhwc_conv, pads_name],
                     outputs=[x_nhwc_padded],
                 )
             )

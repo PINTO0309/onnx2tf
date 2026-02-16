@@ -396,24 +396,35 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
                     dtype=np.int32,
                 ),
             )
-            pad_value = _max_pool_pad_value_for_tensor(
-                tensor_dtype=ctx.get_tensor_dtype(x_nhwc_pool),
-                tensor_quant=x_tensor.quantization,
-            )
-            pad_value_name = ctx.add_const_tensor(
-                f"{node.name}_pad_value",
-                np.asarray(
-                    [pad_value],
-                    dtype=_numpy_dtype_from_tflite_dtype(ctx.get_tensor_dtype(x_nhwc_pool)),
-                ),
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="PADV2",
-                    inputs=[x_nhwc_pool, pads_name, pad_value_name],
-                    outputs=[x_nhwc_padded],
+            # Use PAD for quantized tensors so the runtime pads with the
+            # tensor quantization zero-point (real-value 0) consistently.
+            if x_tensor.quantization is not None:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="PAD",
+                        inputs=[x_nhwc_pool, pads_name],
+                        outputs=[x_nhwc_padded],
+                    )
                 )
-            )
+            else:
+                pad_value = _max_pool_pad_value_for_tensor(
+                    tensor_dtype=ctx.get_tensor_dtype(x_nhwc_pool),
+                    tensor_quant=x_tensor.quantization,
+                )
+                pad_value_name = ctx.add_const_tensor(
+                    f"{node.name}_pad_value",
+                    np.asarray(
+                        [pad_value],
+                        dtype=_numpy_dtype_from_tflite_dtype(ctx.get_tensor_dtype(x_nhwc_pool)),
+                    ),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="PADV2",
+                        inputs=[x_nhwc_pool, pads_name, pad_value_name],
+                        outputs=[x_nhwc_padded],
+                    )
+                )
             x_nhwc_pool = x_nhwc_padded
 
     y_nhwc = ctx.add_intermediate_tensor(

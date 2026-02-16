@@ -6,8 +6,10 @@ from typing import Any, Dict
 from onnx2tf.tflite_builder.ir import clone_model_ir_with_float16
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     build_op_coverage_report,
+    build_tensor_correspondence_report,
     lower_onnx_to_ir,
     write_op_coverage_report,
+    write_tensor_correspondence_report,
 )
 from onnx2tf.tflite_builder.model_writer import write_model_file
 from onnx2tf.tflite_builder.quantization import (
@@ -211,6 +213,19 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         except Exception:
             pass
         raise
+
+    tensor_correspondence_report_path = os.path.join(
+        output_folder_path,
+        f"{output_file_name}_tensor_correspondence_report.json",
+    )
+    tensor_correspondence_report = build_tensor_correspondence_report(
+        onnx_graph=preprocessed_onnx_graph,
+        model_ir=model_ir,
+    )
+    write_tensor_correspondence_report(
+        report=tensor_correspondence_report,
+        output_report_path=tensor_correspondence_report_path,
+    )
 
     _write_coverage_report(None)
     custom_ops_used = sorted(
@@ -467,6 +482,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["split_partition_count"] = int(split_partition_count)
     if op_coverage_report_path is not None:
         outputs["op_coverage_report_path"] = op_coverage_report_path
+    outputs["tensor_correspondence_report_path"] = tensor_correspondence_report_path
     outputs["custom_op_count"] = int(len(custom_ops_used))
     if len(custom_ops_used) > 0:
         outputs["custom_ops_used"] = custom_ops_used

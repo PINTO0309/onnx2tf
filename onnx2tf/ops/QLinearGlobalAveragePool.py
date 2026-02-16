@@ -62,6 +62,9 @@ def make_node(
 
     x = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
+    x_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        x_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
     x_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     x_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -74,6 +77,10 @@ def make_node(
 
     tensor_rank = len(x.shape)
     channels_last = int(graph_node.attrs.get('channels_last', 0))
+    axis_transpose_required = before_op_output_shape_trans
+    if channels_last == 0 and x_nhwc:
+        # Quantized branches can carry NHWC tensors even when shape metadata is unknown.
+        axis_transpose_required = True
     onnx_spatial_axes = \
         [dim for dim in range(1, tensor_rank - 1)] \
         if channels_last != 0 else [dim for dim in range(2, tensor_rank)]
@@ -81,7 +88,7 @@ def make_node(
         convert_axis(
             axis=axis,
             tensor_rank=tensor_rank,
-            before_op_output_shape_trans=before_op_output_shape_trans,
+            before_op_output_shape_trans=axis_transpose_required if channels_last == 0 else False,
         )
         for axis in onnx_spatial_axes
     ]
@@ -92,6 +99,8 @@ def make_node(
         'shape': shape,
         'dtype': dtype,
     }
+    if x_nhwc:
+        tf_layers_dict[graph_node_output.name]['nhwc'] = True
 
     # Generation of TF OP
     x = tf.cast(x, tf.float32)
@@ -130,7 +139,7 @@ def make_node(
             channel_dim = x.shape[-1] if len(x.shape) > 1 else None
             inferred_shape = [batch_dim] + [None for _ in range(max(0, tensor_rank - 2))] + [channel_dim]
         else:
-            if before_op_output_shape_trans:
+            if axis_transpose_required:
                 channel_dim = x.shape[-1] if len(x.shape) > 1 else None
             else:
                 channel_dim = x.shape[1] if len(x.shape) > 1 else None
