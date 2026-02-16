@@ -287,7 +287,7 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
-|<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="Image" src="https://github.com/user-attachments/assets/41aefe26-f243-45fb-9d21-9e16c7ef30b3" />|
+|<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="image" src="https://github.com/user-attachments/assets/7ffeaa53-4c83-4a9e-b5b4-17ea11c93b20" />|
 
 <details><summary>Click to Click to expand</summary>
 
