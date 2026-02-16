@@ -13,6 +13,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     pre_process_transpose,
     post_process_transpose,
+    _is_output_nhwc_assumed,
 )
 
 def _expand_scale_or_zero_point(
@@ -104,7 +105,10 @@ def make_node(
     input_nhwc = False
     if isinstance(graph_node_input_1, gs.Variable):
         input_is_dequantized = tf_layers_dict.get(graph_node_input_1.name, {}).get('is_dequantized', False)
-        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
+        input_nhwc = _is_output_nhwc_assumed(
+            graph_node_input=graph_node_input_1,
+            tf_layers_dict=tf_layers_dict,
+        )
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(

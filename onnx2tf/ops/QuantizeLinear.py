@@ -10,6 +10,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     convert_axis,
+    _is_output_nhwc_assumed,
 )
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
@@ -105,7 +106,10 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_nhwc = False
     if isinstance(graph_node_input_1, gs.Variable):
-        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
+        input_nhwc = _is_output_nhwc_assumed(
+            graph_node_input=graph_node_input_1,
+            tf_layers_dict=tf_layers_dict,
+        )
     input_tensor_rank = len(input_tensor.shape)
     y_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2

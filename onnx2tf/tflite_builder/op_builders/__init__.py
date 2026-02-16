@@ -1,6 +1,7 @@
 from onnx2tf.tflite_builder.op_builders.elementwise import (
     build_binary_op,
     build_clip_op,
+    build_hardsigmoid_op,
     build_logistic_op,
     build_prelu_op,
     build_softmax_op,
@@ -10,9 +11,11 @@ from onnx2tf.tflite_builder.op_builders.shape import (
     build_concat_op,
     build_flatten_op,
     build_identity_op,
+    build_pad_op,
     build_resize_op,
     build_reshape_op,
     build_slice_op,
+    build_split_op,
     build_space_to_depth_op,
     build_squeeze_op,
     build_transpose_op,
@@ -20,12 +23,14 @@ from onnx2tf.tflite_builder.op_builders.shape import (
 )
 from onnx2tf.tflite_builder.op_builders.conv import (
     build_conv2d_or_depthwise_op,
+    build_conv_transpose_op,
 )
 from onnx2tf.tflite_builder.op_builders.pool import (
     build_pool2d_op,
 )
 from onnx2tf.tflite_builder.op_builders.fc import (
     build_fully_connected_from_gemm_or_matmul,
+    build_matmul_op,
 )
 from onnx2tf.tflite_builder.op_builders.reduce import (
     build_reduce_op,
@@ -48,6 +53,7 @@ from onnx2tf.tflite_builder.op_builders.quantized import (
     build_qlinear_concat_op,
     build_qlinear_conv_op,
     build_qlinear_global_average_pool_op,
+    build_qlinear_leaky_relu_op,
     build_qlinear_matmul_op,
     build_qlinear_mul_op,
     build_qlinear_sigmoid_op,
@@ -58,6 +64,7 @@ from onnx2tf.tflite_builder.op_builders.quantized import (
 __all__ = [
     "build_binary_op",
     "build_clip_op",
+    "build_hardsigmoid_op",
     "build_logistic_op",
     "build_prelu_op",
     "build_softmax_op",
@@ -65,16 +72,20 @@ __all__ = [
     "build_concat_op",
     "build_flatten_op",
     "build_identity_op",
+    "build_pad_op",
     "build_resize_op",
     "build_reshape_op",
     "build_slice_op",
+    "build_split_op",
     "build_space_to_depth_op",
     "build_squeeze_op",
     "build_transpose_op",
     "build_unsqueeze_op",
     "build_conv2d_or_depthwise_op",
+    "build_conv_transpose_op",
     "build_pool2d_op",
     "build_fully_connected_from_gemm_or_matmul",
+    "build_matmul_op",
     "build_reduce_op",
     "build_gather_op",
     "build_batch_normalization_op",
@@ -87,6 +98,7 @@ __all__ = [
     "build_qlinear_concat_op",
     "build_qlinear_conv_op",
     "build_qlinear_global_average_pool_op",
+    "build_qlinear_leaky_relu_op",
     "build_qlinear_matmul_op",
     "build_qlinear_mul_op",
     "build_qlinear_sigmoid_op",

@@ -16,11 +16,19 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
 
     input_shape = ctx.get_tensor_shape(input_name)
-    if len(input_shape) != 2:
-        raise NotImplementedError(
-            "Only rank-2 FullyConnected conversion is supported. "
-            f"op={node.name} input_shape={input_shape}"
-        )
+    input_rank = len(input_shape)
+    if node.op == "Gemm":
+        if input_rank != 2:
+            raise NotImplementedError(
+                "Gemm conversion supports only rank-2 input. "
+                f"op={node.name} input_shape={input_shape}"
+            )
+    else:
+        if input_rank < 2:
+            raise NotImplementedError(
+                "FullyConnected conversion supports rank >= 2 input for MatMul/Einsum. "
+                f"op={node.name} input_shape={input_shape}"
+            )
 
     weights = ctx.get_constant_array(weight_name)
     if weights is None:
@@ -75,7 +83,29 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
             options={
                 "fusedActivationFunction": "NONE",
                 "weightsFormat": "DEFAULT",
-                "keepNumDims": False,
+                "keepNumDims": bool(node.op != "Gemm" and input_rank > 2),
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+
+def build_matmul_op(node: Any, ctx: Any) -> None:
+    a_name = node.inputs[0].name
+    b_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[a_name, b_name],
+            outputs=[output_name],
+            options={
+                "adjX": False,
+                "adjY": False,
                 "asymmetricQuantizeInputs": False,
             },
         )

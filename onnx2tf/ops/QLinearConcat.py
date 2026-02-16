@@ -6,6 +6,7 @@ import tensorflow as tf
 import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
     convert_axis,
+    _is_output_nhwc_assumed,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -127,7 +128,10 @@ def make_node(
         if isinstance(const_or_var, gs.Variable):
             got_values.append(tf_layers_dict[const_or_var.name]['tf_node'])
             nhwc_flags.append(
-                tf_layers_dict[const_or_var.name].get('nhwc', False)
+                _is_output_nhwc_assumed(
+                    graph_node_input=const_or_var,
+                    tf_layers_dict=tf_layers_dict,
+                )
             )
             same_input_shape_as_onnxs.append(
                 is_same_shape(
@@ -172,7 +176,8 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    axis = graph_node.attrs.get('axis', 0)
+    onnx_axis = int(graph_node.attrs.get('axis', 0))
+    axis = onnx_axis
 
     # Shape Unmatched Special Avoidance Workaround
     if True in same_input_shape_as_onnxs and True in nhwc_flags:
@@ -215,7 +220,10 @@ def make_node(
     nhwc_judge = True
     for graph_node_input in input_list:
         if isinstance(graph_node_input, gs.Variable) \
-            and tf_layers_dict.get(graph_node_input.name, {}).get('nhwc', False):
+            and _is_output_nhwc_assumed(
+                graph_node_input=graph_node_input,
+                tf_layers_dict=tf_layers_dict,
+            ):
             nhwc_judge = nhwc_judge and True
         elif isinstance(graph_node_input, gs.Constant) \
             and hasattr(graph_node_input, 'values') \
@@ -270,6 +278,70 @@ def make_node(
         )
         value_rank = get_rank(getattr(value, 'shape', None))
         values.append(value if value_rank != 0 else tf.reshape(value, [1]))
+
+    def _shape_list(tensor):
+        shape = getattr(tensor, 'shape', None)
+        if shape is None or shape == tf.TensorShape(None):
+            return None
+        shape = list(shape)
+        normalized = []
+        for dim in shape:
+            try:
+                normalized.append(int(dim) if dim is not None else None)
+            except Exception:
+                normalized.append(None)
+        return normalized
+
+    def _shape_matches_with_perm(src_shape, dst_shape, perm):
+        if src_shape is None or dst_shape is None:
+            return False
+        if len(src_shape) != len(dst_shape) or len(src_shape) != len(perm):
+            return False
+        for dst_axis, src_axis in enumerate(perm):
+            src_dim = src_shape[src_axis]
+            dst_dim = dst_shape[dst_axis]
+            if src_dim is not None and dst_dim is not None and src_dim != dst_dim:
+                return False
+        return True
+
+    # If mixed NCHW/NHWC tensors are fed into one Concat, align them to the
+    # first tensor layout when the transpose relation is unambiguous.
+    if len(values) >= 2:
+        ref_shape = _shape_list(values[0])
+        if ref_shape is not None and len(ref_shape) == 4:
+            aligned_values = [values[0]]
+            aligned = False
+            for value in values[1:]:
+                value_shape = _shape_list(value)
+                if value_shape is None or len(value_shape) != 4:
+                    aligned_values.append(value)
+                    continue
+                if _shape_matches_with_perm(value_shape, ref_shape, [0, 1, 2, 3]):
+                    aligned_values.append(value)
+                    continue
+                if _shape_matches_with_perm(value_shape, ref_shape, [0, 3, 1, 2]):
+                    aligned_values.append(
+                        transpose_with_flexing_deterrence(
+                            input_tensor=value,
+                            perm=[0, 3, 1, 2],
+                            **kwargs,
+                        )
+                    )
+                    aligned = True
+                    continue
+                if _shape_matches_with_perm(value_shape, ref_shape, [0, 2, 3, 1]):
+                    aligned_values.append(
+                        transpose_with_flexing_deterrence(
+                            input_tensor=value,
+                            perm=[0, 2, 3, 1],
+                            **kwargs,
+                        )
+                    )
+                    aligned = True
+                    continue
+                aligned_values.append(value)
+            if aligned:
+                values = aligned_values
 
     def _infer_concat_axis(values, output_shape):
         if not values:
@@ -346,6 +418,21 @@ def make_node(
             )
             dequantized_x_list.append(dequantized_value)
 
+    # Apply delayed axis conversion when early conversion was skipped because
+    # rank information was unavailable at attribute parsing time.
+    if axis_transpose_required and axis == onnx_axis and len(dequantized_x_list) > 0:
+        dequantized_rank = None
+        for dequantized_x in dequantized_x_list:
+            dequantized_rank = get_rank(getattr(dequantized_x, 'shape', None))
+            if dequantized_rank is not None:
+                break
+        if dequantized_rank is not None:
+            axis = convert_axis(
+                axis=onnx_axis,
+                tensor_rank=dequantized_rank,
+                before_op_output_shape_trans=True,
+            )
+
     try:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.concat(
@@ -355,14 +442,22 @@ def make_node(
             )
     except:
         try:
-            onnx_axis = int(graph_node.attrs.get('axis', 0))
+            fallback_axis = onnx_axis
+            fallback_rank = get_rank(getattr(dequantized_x_list[0], 'shape', None)) \
+                if len(dequantized_x_list) > 0 else None
+            if axis_transpose_required and fallback_rank is not None:
+                fallback_axis = convert_axis(
+                    axis=onnx_axis,
+                    tensor_rank=fallback_rank,
+                    before_op_output_shape_trans=True,
+                )
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.concat(
                     values=dequantized_x_list,
-                    axis=onnx_axis,
+                    axis=fallback_axis,
                     name=graph_node.name,
                 )
-            axis = onnx_axis
+            axis = fallback_axis
         except:
             value_rank = get_rank(getattr(dequantized_x_list[0], 'shape', None))
             if value_rank is None:

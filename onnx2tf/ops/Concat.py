@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     replace_parameter,
     convert_axis,
+    _is_output_nhwc_assumed,
     get_constant_or_variable,
     print_node_info,
     inverted_operation_enable_disable,
@@ -100,8 +101,10 @@ def make_node(
         if isinstance(const_or_var, gs.Variable):
             values.append(tf_layers_dict[const_or_var.name]['tf_node'])
             nhwc_flags.append(
-                tf_layers_dict[const_or_var.name]['nhwc'] \
-                    if 'nhwc' in tf_layers_dict[const_or_var.name].keys() else False
+                _is_output_nhwc_assumed(
+                    graph_node_input=const_or_var,
+                    tf_layers_dict=tf_layers_dict,
+                )
             )
             same_input_shape_as_onnxs.append(
                 is_same_shape(
@@ -212,8 +215,10 @@ def make_node(
     nhwc_judge = True
     for graph_node_input in graph_node.inputs:
         if isinstance(graph_node_input, gs.Variable) \
-            and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() \
-            and tf_layers_dict[graph_node_input.name]['nhwc'] == True:
+            and _is_output_nhwc_assumed(
+                graph_node_input=graph_node_input,
+                tf_layers_dict=tf_layers_dict,
+            ):
                 nhwc_judge = nhwc_judge and True
         elif isinstance(graph_node_input, gs.Constant) \
             and hasattr(graph_node_input, 'values') \

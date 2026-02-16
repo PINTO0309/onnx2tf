@@ -12,6 +12,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     transpose_with_flexing_deterrence,
+    _is_output_nhwc_assumed,
 )
 from onnx2tf.utils.logging import *
 
@@ -154,8 +155,13 @@ def make_node(
     input_tensor = tf_layers_dict[graph_node_input_1.name]['tf_node'] \
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_is_dequantized = False
+    input_nhwc_assumed = False
     if isinstance(graph_node_input_1, gs.Variable):
         input_is_dequantized = tf_layers_dict.get(graph_node_input_1.name, {}).get('is_dequantized', False)
+        input_nhwc_assumed = _is_output_nhwc_assumed(
+            graph_node_input=graph_node_input_1,
+            tf_layers_dict=tf_layers_dict,
+        )
     input_tensor_scale = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
     input_tensor_zero_point = tf_layers_dict[graph_node_input_3.name]['tf_node'] \
@@ -220,7 +226,8 @@ def make_node(
     ]
     if onnx_input_shape is not None \
         and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
-        and onnx_input_shape == tf_input_shape:
+        and onnx_input_shape == tf_input_shape \
+        and not input_nhwc_assumed:
 
         shape_for_judging_skip = [
             dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
@@ -252,6 +259,48 @@ def make_node(
     input_tensor_rank = len(input_tensor_shape)
     spatial_size = input_tensor_rank - 2
     input_weights_shape = input_weights.shape
+
+    def _to_static_int_dim(dim):
+        if isinstance(dim, int):
+            return int(dim)
+        try:
+            if dim is not None:
+                return int(dim)
+        except Exception:
+            pass
+        return None
+
+    # Additional layout guard:
+    # Some quantized model branches (e.g. split/reshape/transpose chains with
+    # unknown ONNX shapes) may reach QLinearConv with NCHW-like tensors even
+    # though tf.nn.convolution/depthwise_conv2d expects NHWC.
+    #
+    # Detect and fix only when the channel mismatch is unambiguous:
+    #   input NHWC-channel axis does not match expected in-channels
+    #   input NCHW-channel axis matches expected in-channels
+    #
+    # expected_in_channels:
+    #   = (weights HWIO input-channel dim) * group
+    # This covers both normal/grouped and depthwise-like cases.
+    if input_tensor_rank == 4 and len(input_weights_shape) == 4:
+        group = graph_node.attrs.get('group', 1)
+        group = _to_static_int_dim(group)
+        if group is None or group <= 0:
+            group = 1
+        tf_in_ch = _to_static_int_dim(input_tensor_shape[-1])
+        nchw_in_ch = _to_static_int_dim(input_tensor_shape[1])
+        filt_in_ch_per_group = _to_static_int_dim(input_weights_shape[-2])
+        expected_in_ch = None
+        if filt_in_ch_per_group is not None:
+            expected_in_ch = int(filt_in_ch_per_group) * int(group)
+        if tf_in_ch is not None and nchw_in_ch is not None and expected_in_ch is not None:
+            if tf_in_ch != expected_in_ch and nchw_in_ch == expected_in_ch:
+                input_tensor = transpose_with_flexing_deterrence(
+                    input_tensor=input_tensor,
+                    perm=[0, 2, 3, 1],
+                    **kwargs,
+                )
+                input_tensor_shape = input_tensor.shape
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
     group = graph_node.attrs.get('group', 1)

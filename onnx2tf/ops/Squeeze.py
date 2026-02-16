@@ -61,6 +61,9 @@ def make_node(
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape) \
         if input_tensor_shape != tf.TensorShape(None) else 1
+    input_nhwc = False
+    if isinstance(graph_node_input_1, gs.Variable):
+        input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)
 
     axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
@@ -70,20 +73,21 @@ def make_node(
     axes = graph_node.attrs.get('axes', axes)
     # axes for determining the deletion of unnecessary squeeze/unsqueeze combinations
     non_transpose_axes = copy.deepcopy(axes)
+    axes_convert_required = bool(before_op_output_shape_trans or input_nhwc)
 
     if isinstance(axes, list) or (isinstance(axes, np.ndarray) and len(axes.shape) > 0):
         axes = [
             convert_axis(
                 axis=idx,
                 tensor_rank=tensor_rank,
-                before_op_output_shape_trans=before_op_output_shape_trans,
+                before_op_output_shape_trans=axes_convert_required,
             ) for idx in axes
         ]
     elif axes is not None and isinstance(axes, np.ndarray) and len(axes.shape) == 0:
         axes = convert_axis(
             axis=axes,
             tensor_rank=tensor_rank,
-            before_op_output_shape_trans=before_op_output_shape_trans,
+            before_op_output_shape_trans=axes_convert_required,
         )
 
     # Preserving Graph Structure (Dict)
