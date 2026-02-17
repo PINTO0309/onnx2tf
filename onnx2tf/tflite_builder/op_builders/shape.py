@@ -611,6 +611,210 @@ def build_identity_op(node: Any, ctx: Any) -> None:
     )
 
 
+def build_eyelike_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+    if len(output_shape) != 2:
+        raise NotImplementedError(
+            f"EyeLike requires rank-2 output shape in flatbuffer_direct. op={node.name} output_shape={output_shape}"
+        )
+    if any(int(v) <= 0 for v in output_shape) or any(int(v) < 0 for v in output_signature):
+        raise NotImplementedError(
+            "EyeLike requires fully static positive shape in flatbuffer_direct. "
+            f"op={node.name} output_shape={output_shape} output_signature={output_signature}"
+        )
+
+    rows = int(output_shape[0])
+    cols = int(output_shape[1])
+    k = int(node.attrs.get("k", 0))
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_np_dtype = _numpy_dtype_from_tflite_dtype(output_dtype)
+    eye_const_name = ctx.add_const_tensor(
+        f"{output_name}_eyelike_const",
+        np.eye(rows, cols, k=k, dtype=output_np_dtype),
+    )
+    shape_const_name = ctx.add_const_tensor(
+        f"{output_name}_eyelike_shape",
+        np.asarray(output_shape, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[eye_const_name, shape_const_name],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in output_shape]},
+        )
+    )
+    output_tensor.shape = [int(v) for v in output_shape]
+    output_tensor.shape_signature = [int(v) for v in output_signature]
+    output_tensor.quantization = None
+
+
+def build_trilu_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_dtype_and_quantization(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+    _propagate_passthrough_shape_signature(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 2:
+        raise NotImplementedError(
+            f"Trilu requires rank >= 2 in flatbuffer_direct. op={node.name} input_shape={input_shape}"
+        )
+    m = int(input_shape[-2])
+    n = int(input_shape[-1])
+    if m <= 0 or n <= 0:
+        raise NotImplementedError(
+            "Trilu requires static positive matrix dimensions in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape}"
+        )
+    k = 0
+    if len(node.inputs) >= 2 and node.inputs[1].name != "":
+        k_arr = ctx.get_constant_array(node.inputs[1].name)
+        if k_arr is None:
+            raise NotImplementedError(
+                f"Trilu k input must be constant for flatbuffer_direct. op={node.name}"
+            )
+        k_flat = np.asarray(k_arr).reshape(-1)
+        if int(k_flat.size) > 0:
+            k = int(k_flat[0])
+
+    upper = int(node.attrs.get("upper", 1)) != 0
+    if upper:
+        mask_2d = np.triu(np.ones((m, n), dtype=np.int32), k=int(k))
+    else:
+        mask_2d = np.tril(np.ones((m, n), dtype=np.int32), k=int(k))
+
+    broadcast_shape = [1] * (len(input_shape) - 2) + [int(m), int(n)]
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    mask_name = ""
+    op_type = "MUL"
+    op_options: dict[str, Any] = {"fusedActivationFunction": "NONE"}
+    if input_dtype == "BOOL":
+        mask_name = ctx.add_const_tensor(
+            f"{output_name}_trilu_mask",
+            np.reshape(mask_2d.astype(np.bool_), broadcast_shape),
+        )
+        op_type = "LOGICAL_AND"
+        op_options = {}
+    else:
+        mask_name = ctx.add_const_tensor(
+            f"{output_name}_trilu_mask",
+            np.reshape(
+                mask_2d.astype(_numpy_dtype_from_tflite_dtype(input_dtype)),
+                broadcast_shape,
+            ),
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type=op_type,
+            inputs=[input_name, mask_name],
+            outputs=[output_name],
+            options=op_options,
+        )
+    )
+
+
+def build_range_op(node: Any, ctx: Any) -> None:
+    start_name = node.inputs[0].name
+    limit_name = node.inputs[1].name
+    delta_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(start_name)
+    ctx.ensure_tensor(limit_name)
+    ctx.ensure_tensor(delta_name)
+    ctx.ensure_tensor(output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if output_dtype not in {
+        "INT8", "INT16", "INT32", "INT64",
+        "UINT8", "UINT16", "UINT32", "UINT64",
+        "FLOAT16", "FLOAT32",
+    }:
+        raise NotImplementedError(
+            f"Range output dtype is not supported in flatbuffer_direct. op={node.name} dtype={output_dtype}"
+        )
+
+    converted_inputs: list[str] = []
+    for src_name, label in [
+        (start_name, "start"),
+        (limit_name, "limit"),
+        (delta_name, "delta"),
+    ]:
+        src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+        if src_dtype == output_dtype:
+            converted_inputs.append(src_name)
+            continue
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_range_{label}_{output_dtype.lower()}",
+            dtype=output_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[src_name],
+                outputs=[cast_name],
+                options={
+                    "inDataType": src_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+        converted_inputs.append(cast_name)
+
+    scalar_inputs: list[str] = []
+    for idx, src_name in enumerate(converted_inputs):
+        src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
+        if len(src_shape) != 1 or int(src_shape[0]) != 1:
+            raise NotImplementedError(
+                "Range expects scalar-like inputs represented as shape [1] in flatbuffer_direct. "
+                f"op={node.name} input_index={idx} input_shape={src_shape}"
+            )
+        scalar_name = ctx.add_intermediate_tensor(
+            f"{output_name}_range_scalar_{idx}",
+            dtype=output_dtype,
+            shape=[1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[src_name],
+                outputs=[scalar_name],
+                options={"squeezeDims": [0]},
+            )
+        )
+        scalar_inputs.append(scalar_name)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RANGE",
+            inputs=scalar_inputs,
+            outputs=[output_name],
+        )
+    )
+
+
 def _normalize_shape_slice_index(index: int, rank: int) -> int:
     normalized = int(index)
     if normalized < 0:
@@ -1066,16 +1270,195 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    _ = _resolve_axes_from_attr_or_input(node, ctx)
+    axes = _resolve_axes_from_attr_or_input(node, ctx)
+    input_rank = len(ctx.get_tensor_shape(input_name))
+    normalized_axes: list[int] = []
+    for axis in axes:
+        a = int(axis)
+        if a < 0:
+            a += input_rank + 1
+        if a < 0 or a > input_rank:
+            raise NotImplementedError(
+                f"Unsqueeze axis out of range in flatbuffer_direct. op={node.name} axis={axis} rank={input_rank}"
+            )
+        if a not in normalized_axes:
+            normalized_axes.append(a)
+    normalized_axes = sorted([int(v) for v in normalized_axes])
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor.shape_signature is not None
+        else [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    )
+    if (
+        input_rank == 1
+        and len(normalized_axes) == 1
+        and any(int(v) < 0 for v in input_signature)
+    ):
+        axis = int(normalized_axes[0])
+        if axis not in (0, 1):
+            raise NotImplementedError(
+                f"Unsqueeze axis out of range for dynamic rank-1 input in flatbuffer_direct. "
+                f"op={node.name} axis={axis}"
+            )
+        reshape_shape = [1, -1] if axis == 0 else [-1, 1]
+        inferred_signature = (
+            [1, int(input_signature[0])] if axis == 0 else [int(input_signature[0]), 1]
+        )
+        output_tensor.shape_signature = [int(v) for v in inferred_signature]
+        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in inferred_signature]
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_shape",
+            np.asarray(reshape_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, reshape_shape_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in reshape_shape]},
+            )
+        )
+        return
+
     output_shape = ctx.get_tensor_shape(output_name)
-    shape_const = ctx.add_const_tensor(
-        f"{output_name}_unsqueeze_shape",
-        np.asarray(output_shape, dtype=np.int32),
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+    has_dynamic_dim = any(int(v) < 0 for v in output_signature)
+
+    if all(int(v) >= 0 for v in input_signature):
+        inferred_shape: list[int] = []
+        src_dim_idx = 0
+        output_rank = int(input_rank + len(normalized_axes))
+        axes_set = set(int(v) for v in normalized_axes)
+        for out_axis in range(output_rank):
+            if out_axis in axes_set:
+                inferred_shape.append(1)
+            else:
+                inferred_shape.append(int(input_signature[src_dim_idx]))
+                src_dim_idx += 1
+        output_tensor.shape = [int(v) for v in inferred_shape]
+        output_tensor.shape_signature = [int(v) for v in inferred_shape]
+        shape_const = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_shape",
+            np.asarray(inferred_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, shape_const],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in inferred_shape]},
+            )
+        )
+        return
+
+    if not has_dynamic_dim:
+        shape_const = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_shape",
+            np.asarray(output_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, shape_const],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+        return
+
+    input_shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_unsqueeze_input_shape",
+        dtype="INT32",
+        shape=[input_rank],
     )
     ctx.add_operator(
         OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[input_shape_name],
+            options={"outType": "INT32"},
+        )
+    )
+
+    current_shape_name = input_shape_name
+    current_rank = int(input_rank)
+    for axis in normalized_axes:
+        prefix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_unsqueeze_prefix_{axis}",
+            dtype="INT32",
+            shape=[max(int(axis), 0)],
+        )
+        prefix_begin_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_prefix_begin_{axis}",
+            np.asarray([0], dtype=np.int32),
+        )
+        prefix_size_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_prefix_size_{axis}",
+            np.asarray([int(axis)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[current_shape_name, prefix_begin_name, prefix_size_name],
+                outputs=[prefix_name],
+            )
+        )
+
+        suffix_len = int(max(current_rank - int(axis), 0))
+        suffix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_unsqueeze_suffix_{axis}",
+            dtype="INT32",
+            shape=[suffix_len],
+        )
+        suffix_begin_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_suffix_begin_{axis}",
+            np.asarray([int(axis)], dtype=np.int32),
+        )
+        suffix_size_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_suffix_size_{axis}",
+            np.asarray([suffix_len], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[current_shape_name, suffix_begin_name, suffix_size_name],
+                outputs=[suffix_name],
+            )
+        )
+
+        one_dim_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_one_{axis}",
+            np.asarray([1], dtype=np.int32),
+        )
+        merged_shape_name = ctx.add_intermediate_tensor(
+            f"{output_name}_unsqueeze_shape_merged_{axis}",
+            dtype="INT32",
+            shape=[current_rank + 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[prefix_name, one_dim_name, suffix_name],
+                outputs=[merged_shape_name],
+                options={
+                    "axis": 0,
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+        current_shape_name = merged_shape_name
+        current_rank += 1
+
+    ctx.add_operator(
+        OperatorIR(
             op_type="RESHAPE",
-            inputs=[input_name, shape_const],
+            inputs=[input_name, current_shape_name],
             outputs=[output_name],
             options={"newShape": [int(v) for v in output_shape]},
         )

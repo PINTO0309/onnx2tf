@@ -295,9 +295,8 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
   - Listed ONNX ops in this README section: `208`
-  - `builtin_supported`: `63`
-  - `custom_candidate` (opt-in): `16`
-  - `explicit_error` (default): `129`
+  - Policy counts are generated in `*_op_coverage_report.json` (`schema_policy_counts`).
+  - Check each conversion run with `--report_op_coverage` for the latest numbers.
 
 Notes:
 - `flatbuffer_direct` supports only a subset of ONNX ops as TFLite builtins.
@@ -372,6 +371,55 @@ Notes:
 |Tanh|TANH|-|
 |Transpose|TRANSPOSE|Permutation input must be constant|
 |Unsqueeze|RESHAPE|Axes must be constant and in range|
+|Abs|ABS|-|
+|Acos|MUL + SUB + SQRT + ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Acosh|SUB + ADD + SQRT + MUL + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|And|LOGICAL_AND|-|
+|ArgMin|ARG_MIN (+ optional RESHAPE for keepdims)|`axis` must be in range, `keepdims` must be `0` or `1`, `select_last_index=0`, output dtype must be `INT32` or `INT64`|
+|Asin|MUL + SUB + SQRT + ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Asinh|MUL + ADD + SQRT + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Atan|ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Atanh|ADD + SUB + DIV + LOG + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|BitShift|RIGHT_SHIFT (RIGHT) or MUL-based (LEFT)|LHS/RHS must be integer tensors, `direction` must be `LEFT` or `RIGHT`; `LEFT` requires constant shift input|
+|BitwiseAnd|LOGICAL_AND|BOOL tensors only|
+|BitwiseNot|LOGICAL_NOT / SUB + CAST|Input dtype must be BOOL or integer|
+|BitwiseOr|LOGICAL_OR|BOOL tensors only|
+|BitwiseXor|BITWISE_XOR|Input dtypes must match and be BOOL/integer|
+|Ceil|CEIL|-|
+|Celu|MAXIMUM + MINIMUM + DIV + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Cos|COS|-|
+|Cosh|SUB + EXP + ADD + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Elu|ELU|-|
+|Equal|EQUAL|-|
+|EyeLike|RESHAPE (from const eye)|Output must be rank-2 with fully static positive shape|
+|Floor|FLOOR|-|
+|GatherND|CAST + GATHER_ND|`batch_dims=0` only; indices must be integer type; indices last dim must be static positive and `<= params_rank`|
+|Gelu|GELU|-|
+|Greater|GREATER|-|
+|GRU|TRANSPOSE + SLICE + SQUEEZE + BATCH_MATMUL + ADD + MUL + SUB + LOGISTIC + TANH + RESHAPE + CONCATENATION + EXPAND_DIMS|`layout=0`; `direction` in `{forward, reverse, bidirectional}`; `sequence_lens` unsupported; `W/R` must be constant rank-3; `linear_before_reset` in `{0,1}`; activations `[Sigmoid,Tanh]`; `clip=0`|
+|Hardmax|TRANSPOSE + ARG_MAX + ONE_HOT|`axis` must be in range; target axis size must be static positive|
+|Less|LESS|-|
+|LessOrEqual|LESS_EQUAL|-|
+|Mish|EXP + ADD + LOG + TANH + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|NonMaxSuppression|ARG_MAX + REDUCE_MAX + SQUEEZE + NON_MAX_SUPPRESSION_V4 + SLICE + GATHER + SUB + CAST + RESHAPE + CONCATENATION|Rank-3 boxes/scores only; `center_point_box=0`; currently `batch=1`; class dim `>1` requires `--output_nms_with_argmax`; optional thresholds/max_output must be scalar constants|
+|NonZero|NOT_EQUAL + WHERE + TRANSPOSE + CAST|Input rank must be `>=1`; output rank must be `2`|
+|Not|LOGICAL_NOT|-|
+|Or|LOGICAL_OR|-|
+|Range|CAST + SQUEEZE + RANGE|Each of `start/limit/delta` must be scalar-like rank-1 length-1 tensor|
+|ReduceL1|ABS + SUM|Reduce axes must be constant when provided via input tensor|
+|ReduceL2|MUL + SUM + SQRT + CAST|Reduce axes must be constant when provided via input tensor|
+|RNN|UNIDIRECTIONAL_SEQUENCE_RNN + TRANSPOSE + EXPAND_DIMS + SLICE + RESHAPE|`direction=forward`, `layout=0`; `sequence_lens` unsupported; `W/R` must be constant rank-3 with `num_directions=1`; activations in `{tanh,relu,sigmoid}`; `clip=0`|
+|Round|ROUND|-|
+|Selu|MAXIMUM + MINIMUM + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Sign|SIGN|-|
+|Sin|SIN|-|
+|Sinh|SUB + EXP + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Softplus|EXP + ADD + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Softsign|ABS + ADD + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Tan|SIN + COS + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Trilu|MUL / LOGICAL_AND|Input rank must be `>=2`; matrix dims must be static positive; optional `k` input must be constant|
+|Where|CAST + SELECT|Condition input dtype must be BOOL or numeric|
+|Xor|NOT_EQUAL|-|
 
 </div></details>
 
@@ -383,7 +431,6 @@ Notes:
 |GridSample|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |If|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|NonMaxSuppression|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |RoiAlign|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Scan|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |ScatterElements|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
@@ -402,8 +449,16 @@ Notes:
 - `QLinearConv` is treated as `builtin_supported` for regular/depthwise patterns; unsupported grouped patterns may still fallback to `CUSTOM` when custom-op mode is enabled.
 - `LogSoftmax` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `LSTM` is now treated as `builtin_supported` for constrained bidirectional patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `NonMaxSuppression` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
+- Newly added builtin-covered ops in this update include:
+  `Abs`, `Acos`, `Acosh`, `And`, `ArgMin`, `Asin`, `Asinh`, `Atan`, `Atanh`, `BitShift`,
+  `BitwiseAnd`, `BitwiseNot`, `BitwiseOr`, `BitwiseXor`, `Ceil`, `Celu`, `Cos`, `Cosh`,
+  `Elu`, `Equal`, `EyeLike`, `Floor`, `GatherND`, `Gelu`, `Greater`, `GRU`, `Hardmax`,
+  `Less`, `LessOrEqual`, `Mish`, `NonZero`, `Not`, `Or`, `Range`, `ReduceL1`, `ReduceL2`,
+  `RNN`, `Round`, `Selu`, `Sign`, `Sin`, `Sinh`, `Softplus`, `Softsign`, `Tan`, `Trilu`,
+  `Where`, and `Xor`.
 - `Resize` builtin path now accepts dynamic rank-1 integer `sizes` input in addition to constant `scales/sizes`.
 
 ### tf_converter vs flatbuffer_direct (operational differences)
@@ -515,7 +570,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.17
+  ghcr.io/pinto0309/onnx2tf:2.0.18
 
   or
 
@@ -524,7 +579,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.17
+  docker.io/pinto0309/onnx2tf:2.0.18
 
   or
 
@@ -534,7 +589,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.17 \
+  docker.io/pinto0309/onnx2tf:2.0.18 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

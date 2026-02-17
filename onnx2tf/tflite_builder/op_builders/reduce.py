@@ -84,3 +84,156 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
             options={"keepDims": keepdims},
         )
     )
+
+
+def _build_sum_reduce_from_input(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+) -> None:
+    input_shape = ctx.get_tensor_shape(input_name)
+    output_shape = ctx.get_tensor_shape(output_name)
+    axes = _resolve_reduce_axes(node, ctx, len(input_shape))
+    if len(axes) == 0 and int(node.attrs.get("noop_with_empty_axes", 0)) == 1:
+        shape_const = ctx.add_const_tensor(
+            f"{output_name}_reduce_noop_shape",
+            np.asarray(output_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, shape_const],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+        return
+    axes_const = ctx.add_const_tensor(
+        f"{output_name}_sum_axes",
+        np.asarray(axes, dtype=np.int32),
+    )
+    keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUM",
+            inputs=[input_name, axes_const],
+            outputs=[output_name],
+            options={"keepDims": keepdims},
+        )
+    )
+
+
+def build_reduce_l1_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    abs_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_l1_abs",
+        dtype=str(ctx.get_tensor_dtype(input_name)).upper(),
+        shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ABS",
+            inputs=[input_name],
+            outputs=[abs_name],
+        )
+    )
+    _build_sum_reduce_from_input(
+        node=node,
+        ctx=ctx,
+        input_name=abs_name,
+        output_name=output_name,
+    )
+
+
+def build_reduce_l2_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+
+    square_input_name = input_name
+    if input_dtype != compute_dtype:
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_l2_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[cast_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+        square_input_name = cast_name
+
+    squared_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_l2_squared",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[square_input_name, square_input_name],
+            outputs=[squared_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    sum_name = output_name
+    if output_dtype != compute_dtype:
+        sum_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_l2_sum",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+    _build_sum_reduce_from_input(
+        node=node,
+        ctx=ctx,
+        input_name=squared_name,
+        output_name=sum_name,
+    )
+
+    sqrt_name = output_name
+    if output_dtype != compute_dtype:
+        sqrt_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_l2_sqrt",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[sum_name],
+            outputs=[sqrt_name],
+        )
+    )
+
+    if sqrt_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[sqrt_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )

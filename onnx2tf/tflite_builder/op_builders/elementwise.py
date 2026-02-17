@@ -44,6 +44,122 @@ def _axis_to_last_permutations(axis: int, rank: int) -> tuple[list[int], list[in
     return perm_to_last, perm_from_last
 
 
+_FLOAT_TENSOR_DTYPES = {"FLOAT16", "FLOAT32"}
+
+
+def _compute_dtype_for_output(output_dtype: str) -> str:
+    return "FLOAT16" if str(output_dtype).upper() == "FLOAT16" else "FLOAT32"
+
+
+def _require_float_input_output(node: Any, ctx: Any) -> tuple[str, str, str]:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype not in _FLOAT_TENSOR_DTYPES or output_dtype not in _FLOAT_TENSOR_DTYPES:
+        raise NotImplementedError(
+            "This op currently supports FLOAT16/FLOAT32 only in flatbuffer_direct. "
+            f"op={node.name} input_dtype={input_dtype} output_dtype={output_dtype}"
+        )
+    _propagate_shape(ctx, input_name, output_name)
+    return input_name, output_name, _compute_dtype_for_output(output_dtype)
+
+
+def _add_scalar_const(ctx: Any, base_name: str, value: float, dtype: str) -> str:
+    np_dtype = np.float16 if str(dtype).upper() == "FLOAT16" else np.float32
+    return ctx.add_const_tensor(
+        base_name,
+        np.asarray(value, dtype=np_dtype),
+    )
+
+
+def _cast_tensor_if_needed(
+    *,
+    ctx: Any,
+    src_name: str,
+    dst_dtype: str,
+    base_name: str,
+) -> str:
+    src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+    if src_dtype == str(dst_dtype).upper():
+        return src_name
+    src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
+    cast_name = ctx.add_intermediate_tensor(
+        base_name,
+        dtype=str(dst_dtype).upper(),
+        shape=src_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[src_name],
+            outputs=[cast_name],
+            options={
+                "inDataType": src_dtype,
+                "outDataType": str(dst_dtype).upper(),
+            },
+        )
+    )
+    return cast_name
+
+
+def _prepare_float_compute(
+    node: Any,
+    ctx: Any,
+    *,
+    tag: str,
+) -> tuple[str, str, str, str, str, list[int]]:
+    input_name, output_name, compute_dtype = _require_float_input_output(node, ctx)
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    compute_input_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=input_name,
+        dst_dtype=compute_dtype,
+        base_name=f"{output_name}_{tag}_input_cast",
+    )
+    compute_output_name = output_name
+    if output_dtype != compute_dtype:
+        compute_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{tag}_out",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+    return (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        output_shape,
+    )
+
+
+def _finalize_float_compute_output(
+    *,
+    ctx: Any,
+    compute_output_name: str,
+    output_name: str,
+    compute_dtype: str,
+    output_dtype: str,
+) -> None:
+    if compute_output_name == output_name:
+        return
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[compute_output_name],
+            outputs=[output_name],
+            options={
+                "inDataType": compute_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+
+
 def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name
@@ -454,6 +570,1071 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
             inputs=[input_name],
             outputs=[output_name],
         )
+    )
+
+
+def build_where_op(node: Any, ctx: Any) -> None:
+    condition_name = node.inputs[0].name
+    x_name = node.inputs[1].name
+    y_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(condition_name)
+    ctx.ensure_tensor(x_name)
+    ctx.ensure_tensor(y_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, x_name, output_name)
+
+    condition_dtype = str(ctx.get_tensor_dtype(condition_name)).upper()
+    cond_for_select = condition_name
+    if condition_dtype != "BOOL":
+        cond_shape = [int(v) for v in ctx.get_tensor_shape(condition_name)]
+        cond_for_select = ctx.add_intermediate_tensor(
+            f"{output_name}_where_condition_bool",
+            dtype="BOOL",
+            shape=cond_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[condition_name],
+                outputs=[cond_for_select],
+                options={
+                    "inDataType": condition_dtype,
+                    "outDataType": "BOOL",
+                },
+            )
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT",
+            inputs=[cond_for_select, x_name, y_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def build_bitwise_not_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype == "BOOL":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOGICAL_NOT",
+                inputs=[input_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    dtype_to_np = {
+        "INT8": np.int8,
+        "INT16": np.int16,
+        "INT32": np.int32,
+        "INT64": np.int64,
+        "UINT8": np.uint8,
+        "UINT16": np.uint16,
+        "UINT32": np.uint32,
+        "UINT64": np.uint64,
+    }
+    if input_dtype not in dtype_to_np:
+        raise NotImplementedError(
+            "BitwiseNot currently supports integer/bool only in flatbuffer_direct. "
+            f"op={node.name} input_dtype={input_dtype}"
+        )
+
+    compute_input_name = input_name
+    if output_dtype != input_dtype:
+        compute_input_name = _cast_tensor_if_needed(
+            ctx=ctx,
+            src_name=input_name,
+            dst_dtype=input_dtype,
+            base_name=f"{output_name}_bitwise_not_input_cast",
+        )
+
+    not_out_name = output_name
+    if output_dtype != input_dtype:
+        not_out_name = ctx.add_intermediate_tensor(
+            f"{output_name}_bitwise_not_out",
+            dtype=input_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+
+    np_dtype = dtype_to_np[input_dtype]
+    if np.issubdtype(np_dtype, np.signedinteger):
+        zero_name = ctx.add_const_tensor(
+            f"{output_name}_bitwise_not_zero",
+            np.asarray(0, dtype=np_dtype),
+        )
+        one_name = ctx.add_const_tensor(
+            f"{output_name}_bitwise_not_one",
+            np.asarray(1, dtype=np_dtype),
+        )
+        neg_name = ctx.add_intermediate_tensor(
+            f"{output_name}_bitwise_not_neg",
+            dtype=input_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(compute_input_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[zero_name, compute_input_name],
+                outputs=[neg_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[neg_name, one_name],
+                outputs=[not_out_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+    else:
+        max_name = ctx.add_const_tensor(
+            f"{output_name}_bitwise_not_max",
+            np.asarray(np.iinfo(np_dtype).max, dtype=np_dtype),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[max_name, compute_input_name],
+                outputs=[not_out_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+    if not_out_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[not_out_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+
+def build_bitshift_op(node: Any, ctx: Any) -> None:
+    lhs_name = node.inputs[0].name
+    rhs_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(lhs_name)
+    ctx.ensure_tensor(rhs_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, lhs_name, output_name)
+
+    lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
+    if lhs_dtype not in {
+        "INT8", "INT16", "INT32", "INT64", "UINT8", "UINT16", "UINT32", "UINT64",
+    }:
+        raise NotImplementedError(
+            "BitShift currently supports integer input only in flatbuffer_direct. "
+            f"op={node.name} input_dtype={lhs_dtype}"
+        )
+
+    direction = str(node.attrs.get("direction", "RIGHT")).upper()
+    if direction == "RIGHT":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RIGHT_SHIFT",
+                inputs=[lhs_name, rhs_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    if direction != "LEFT":
+        raise NotImplementedError(
+            f"BitShift direction must be LEFT or RIGHT in flatbuffer_direct. op={node.name} direction={direction}"
+        )
+
+    rhs_const = ctx.get_constant_array(rhs_name)
+    if rhs_const is None:
+        raise NotImplementedError(
+            "BitShift LEFT currently requires constant shift tensor in flatbuffer_direct. "
+            f"op={node.name}"
+        )
+    shift_arr = np.asarray(rhs_const).astype(np.int64)
+    if np.any(shift_arr < 0):
+        raise NotImplementedError(
+            f"BitShift LEFT requires non-negative shifts in flatbuffer_direct. op={node.name}"
+        )
+    np_dtype_map = {
+        "INT8": np.int8,
+        "INT16": np.int16,
+        "INT32": np.int32,
+        "INT64": np.int64,
+        "UINT8": np.uint8,
+        "UINT16": np.uint16,
+        "UINT32": np.uint32,
+        "UINT64": np.uint64,
+    }
+    multiplier = np.left_shift(
+        np.ones_like(shift_arr, dtype=np.int64),
+        shift_arr,
+    ).astype(np_dtype_map[lhs_dtype], copy=False)
+    multiplier_name = ctx.add_const_tensor(
+        f"{output_name}_bitshift_left_multiplier",
+        multiplier,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[lhs_name, multiplier_name],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+
+def build_atan_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, _ = (
+        _prepare_float_compute(node, ctx, tag="atan")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_atan_one", 1.0, compute_dtype)
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ATAN2",
+            inputs=[compute_input_name, one_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_asin_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="asin")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_asin_one", 1.0, compute_dtype)
+    x_sq_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asin_x_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    one_minus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asin_one_minus_x_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    denom_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asin_denom",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[compute_input_name, compute_input_name],
+            outputs=[x_sq_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[one_name, x_sq_name],
+            outputs=[one_minus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[one_minus_name],
+            outputs=[denom_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ATAN2",
+            inputs=[compute_input_name, denom_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_acos_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="acos")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_acos_one", 1.0, compute_dtype)
+    x_sq_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acos_x_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    one_minus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acos_one_minus_x_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    numer_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acos_numer",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[compute_input_name, compute_input_name],
+            outputs=[x_sq_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[one_name, x_sq_name],
+            outputs=[one_minus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[one_minus_name],
+            outputs=[numer_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ATAN2",
+            inputs=[numer_name, compute_input_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_asinh_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="asinh")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_asinh_one", 1.0, compute_dtype)
+    x_sq_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asinh_x_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    x_sq_plus_one_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asinh_x_sq_plus_one",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sqrt_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asinh_sqrt",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_asinh_sum",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[compute_input_name, compute_input_name],
+            outputs=[x_sq_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[x_sq_name, one_name],
+            outputs=[x_sq_plus_one_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[x_sq_plus_one_name],
+            outputs=[sqrt_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[compute_input_name, sqrt_name],
+            outputs=[sum_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[sum_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_acosh_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="acosh")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_acosh_one", 1.0, compute_dtype)
+    x_minus_one_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_x_minus_one",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    x_plus_one_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_x_plus_one",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sqrt_lhs_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_sqrt_lhs",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sqrt_rhs_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_sqrt_rhs",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    prod_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_prod",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_acosh_sum",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[compute_input_name, one_name],
+            outputs=[x_minus_one_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[compute_input_name, one_name],
+            outputs=[x_plus_one_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[x_minus_one_name],
+            outputs=[sqrt_lhs_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[x_plus_one_name],
+            outputs=[sqrt_rhs_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[sqrt_lhs_name, sqrt_rhs_name],
+            outputs=[prod_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[compute_input_name, prod_name],
+            outputs=[sum_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[sum_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_atanh_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="atanh")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_atanh_one", 1.0, compute_dtype)
+    half_name = _add_scalar_const(ctx, f"{output_name}_atanh_half", 0.5, compute_dtype)
+    one_plus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_atanh_one_plus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    one_minus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_atanh_one_minus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    div_name = ctx.add_intermediate_tensor(
+        f"{output_name}_atanh_div",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    log_name = ctx.add_intermediate_tensor(
+        f"{output_name}_atanh_log",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[one_name, compute_input_name],
+            outputs=[one_plus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[one_name, compute_input_name],
+            outputs=[one_minus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[one_plus_name, one_minus_name],
+            outputs=[div_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[div_name],
+            outputs=[log_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[log_name, half_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_cosh_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="cosh")
+    )
+    half_name = _add_scalar_const(ctx, f"{output_name}_cosh_half", 0.5, compute_dtype)
+    neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cosh_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_pos_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cosh_exp_pos",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cosh_exp_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cosh_sum",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[_add_scalar_const(ctx, f"{output_name}_cosh_zero", 0.0, compute_dtype), compute_input_name],
+            outputs=[neg_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[compute_input_name], outputs=[exp_pos_name]))
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[neg_name], outputs=[exp_neg_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[exp_pos_name, exp_neg_name],
+            outputs=[sum_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[sum_name, half_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_sinh_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="sinh")
+    )
+    half_name = _add_scalar_const(ctx, f"{output_name}_sinh_half", 0.5, compute_dtype)
+    zero_name = _add_scalar_const(ctx, f"{output_name}_sinh_zero", 0.0, compute_dtype)
+    neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_sinh_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_pos_name = ctx.add_intermediate_tensor(
+        f"{output_name}_sinh_exp_pos",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_sinh_exp_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    diff_name = ctx.add_intermediate_tensor(
+        f"{output_name}_sinh_diff",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[zero_name, compute_input_name],
+            outputs=[neg_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[compute_input_name], outputs=[exp_pos_name]))
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[neg_name], outputs=[exp_neg_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[exp_pos_name, exp_neg_name],
+            outputs=[diff_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[diff_name, half_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_tan_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="tan")
+    )
+    sin_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tan_sin",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    cos_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tan_cos",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="SIN", inputs=[compute_input_name], outputs=[sin_name]))
+    ctx.add_operator(OperatorIR(op_type="COS", inputs=[compute_input_name], outputs=[cos_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[sin_name, cos_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_softplus_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="softplus")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_softplus_one", 1.0, compute_dtype)
+    exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_softplus_exp",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_softplus_sum",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[compute_input_name], outputs=[exp_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[exp_name, one_name],
+            outputs=[sum_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[sum_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_softsign_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="softsign")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_softsign_one", 1.0, compute_dtype)
+    abs_name = ctx.add_intermediate_tensor(
+        f"{output_name}_softsign_abs",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    denom_name = ctx.add_intermediate_tensor(
+        f"{output_name}_softsign_denom",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="ABS", inputs=[compute_input_name], outputs=[abs_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[abs_name, one_name],
+            outputs=[denom_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[compute_input_name, denom_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_celu_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="celu")
+    )
+    alpha = float(node.attrs.get("alpha", 1.0))
+    if alpha <= 0.0:
+        raise NotImplementedError(
+            f"Celu alpha must be > 0 in flatbuffer_direct. op={node.name} alpha={alpha}"
+        )
+    alpha_name = _add_scalar_const(ctx, f"{output_name}_celu_alpha", alpha, compute_dtype)
+    zero_name = _add_scalar_const(ctx, f"{output_name}_celu_zero", 0.0, compute_dtype)
+    one_name = _add_scalar_const(ctx, f"{output_name}_celu_one", 1.0, compute_dtype)
+    pos_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_pos",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    neg_div_alpha_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_neg_div_alpha",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_exp",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_minus_one_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_exp_minus_one",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    scaled_neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_celu_scaled_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="MAXIMUM", inputs=[compute_input_name, zero_name], outputs=[pos_name]))
+    ctx.add_operator(OperatorIR(op_type="MINIMUM", inputs=[compute_input_name, zero_name], outputs=[neg_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[neg_name, alpha_name],
+            outputs=[neg_div_alpha_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[neg_div_alpha_name], outputs=[exp_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[exp_name, one_name],
+            outputs=[exp_minus_one_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[alpha_name, exp_minus_one_name],
+            outputs=[scaled_neg_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[pos_name, scaled_neg_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_selu_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="selu")
+    )
+    alpha = float(node.attrs.get("alpha", 1.6732631921768188))
+    gamma = float(node.attrs.get("gamma", 1.0507009873554805))
+    alpha_name = _add_scalar_const(ctx, f"{output_name}_selu_alpha", alpha, compute_dtype)
+    gamma_name = _add_scalar_const(ctx, f"{output_name}_selu_gamma", gamma, compute_dtype)
+    zero_name = _add_scalar_const(ctx, f"{output_name}_selu_zero", 0.0, compute_dtype)
+    one_name = _add_scalar_const(ctx, f"{output_name}_selu_one", 1.0, compute_dtype)
+    pos_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_pos",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_exp_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_neg_minus_one_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_exp_neg_minus_one",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    scaled_neg_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_scaled_neg",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    elu_alpha_name = ctx.add_intermediate_tensor(
+        f"{output_name}_selu_elu_alpha",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="MAXIMUM", inputs=[compute_input_name, zero_name], outputs=[pos_name]))
+    ctx.add_operator(OperatorIR(op_type="MINIMUM", inputs=[compute_input_name, zero_name], outputs=[neg_name]))
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[neg_name], outputs=[exp_neg_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[exp_neg_name, one_name],
+            outputs=[exp_neg_minus_one_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[alpha_name, exp_neg_minus_one_name],
+            outputs=[scaled_neg_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[pos_name, scaled_neg_name],
+            outputs=[elu_alpha_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[gamma_name, elu_alpha_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_mish_op(node: Any, ctx: Any) -> None:
+    compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
+        _prepare_float_compute(node, ctx, tag="mish")
+    )
+    one_name = _add_scalar_const(ctx, f"{output_name}_mish_one", 1.0, compute_dtype)
+    exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_mish_exp",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    softplus_sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_mish_softplus_sum",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    softplus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_mish_softplus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    tanh_name = ctx.add_intermediate_tensor(
+        f"{output_name}_mish_tanh",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(OperatorIR(op_type="EXP", inputs=[compute_input_name], outputs=[exp_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[exp_name, one_name],
+            outputs=[softplus_sum_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(OperatorIR(op_type="LOG", inputs=[softplus_sum_name], outputs=[softplus_name]))
+    ctx.add_operator(OperatorIR(op_type="TANH", inputs=[softplus_name], outputs=[tanh_name]))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[compute_input_name, tanh_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
     )
 
 

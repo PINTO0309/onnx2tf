@@ -89,6 +89,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         kwargs.get("auto_split_tflite_by_size", False)
     )
     report_op_coverage = bool(kwargs.get("report_op_coverage", False))
+    output_nms_with_argmax = bool(kwargs.get("output_nms_with_argmax", False))
     keep_ncw_or_nchw_or_ncdhw_input_names = kwargs.get(
         "keep_ncw_or_nchw_or_ncdhw_input_names",
         None,
@@ -179,6 +180,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             allow_custom_ops=flatbuffer_direct_allow_custom_ops,
             custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
             preprocess_report=preprocess_report,
+            output_nms_with_argmax=output_nms_with_argmax,
         )
         write_op_coverage_report(
             report=report,
@@ -206,6 +208,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
             keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
             keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+            output_nms_with_argmax=output_nms_with_argmax,
         )
     except Exception as ex:
         try:
