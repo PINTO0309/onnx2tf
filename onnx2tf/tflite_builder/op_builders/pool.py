@@ -321,6 +321,10 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
 
     input_tensor = ctx.model_ir.tensors[input_name]
     output_tensor = ctx.model_ir.tensors[output_name]
+    input_dtype = str(input_tensor.dtype).upper()
+    if input_dtype in {"INT8", "UINT8"} and str(output_tensor.dtype).upper() != input_dtype:
+        # TFLite quantized pooling requires input/output tensor types to be identical.
+        output_tensor.dtype = input_dtype
     if output_tensor.quantization is None and input_tensor.quantization is not None:
         output_tensor.quantization = _clone_quantization(input_tensor.quantization)
 

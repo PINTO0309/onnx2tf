@@ -12,25 +12,34 @@ from onnx2tf.tflite_builder.op_builders import (
     build_cast_op,
     build_clip_op,
     build_concat_op,
+    build_constant_of_shape_op,
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
     build_custom_passthrough_op,
     build_dequantize_linear_op,
+    build_dynamic_quantize_linear_op,
     build_div_op,
     build_expand_op,
     build_flatten_op,
+    build_fused_matmul_op,
     build_fully_connected_from_gemm_or_matmul,
     build_matmul_op,
     build_gather_op,
     build_gather_elements_op,
     build_hardsigmoid_op,
+    build_logsoftmax_op,
     build_qgemm_op,
     build_identity_op,
+    build_lstm_op,
     build_pad_op,
     build_mod_op,
+    build_one_hot_op,
     build_l2_normalization_op,
+    build_lrn_op,
     build_logistic_op,
+    build_matmul_integer_op,
     build_pool2d_op,
+    build_pow_op,
     build_prelu_op,
     build_qlinear_add_op,
     build_qlinear_average_pool_op,
@@ -44,8 +53,10 @@ from onnx2tf.tflite_builder.op_builders import (
     build_qlinear_softmax_op,
     build_quantize_linear_op,
     build_reduce_op,
+    build_reciprocal_op,
     build_resize_op,
     build_reshape_op,
+    build_shape_op,
     build_slice_op,
     build_split_op,
     build_space_to_depth_op,
@@ -230,16 +241,246 @@ def _require_const_input(node: Any, ctx: Any, input_index: int, input_label: str
     return np.asarray(const_value)
 
 
+def _get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
+    onnx_model = getattr(ctx, "onnx_model", None)
+    if onnx_model is None:
+        return [str(v.name) for v in node.inputs]
+    for graph_node in onnx_model.graph.node:
+        graph_node_name = str(graph_node.name) if str(graph_node.name) != "" else str(graph_node.op_type)
+        if graph_node_name == str(node.name) and str(graph_node.op_type) == str(node.op):
+            return [str(v) for v in graph_node.input]
+    return [str(v.name) for v in node.inputs]
+
+
+def _is_tensor_consumed_or_graph_output(ctx: Any, tensor_name: str) -> bool:
+    normalized_name = str(tensor_name)
+    if normalized_name == "":
+        return False
+    graph_outputs = getattr(ctx, "graph_output_names", set())
+    if normalized_name in graph_outputs:
+        return True
+    consumer_count = int(getattr(ctx, "tensor_consumer_count", {}).get(normalized_name, 0))
+    return consumer_count > 0
+
+
+def _validate_lstm(node: Any, ctx: Any) -> None:
+    direction = str(node.attrs.get("direction", "forward")).lower()
+    if direction != "bidirectional":
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LSTM direction must be bidirectional for builtin lowering. direction={direction}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    layout = int(node.attrs.get("layout", 0))
+    if layout != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LSTM layout must be 0 (time-major). layout={layout}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_forget = int(node.attrs.get("input_forget", 0))
+    if input_forget != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LSTM input_forget=1 is not supported in builtin lowering. input_forget={input_forget}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    original_inputs = _get_original_node_inputs(node, ctx)
+
+    def _input_name(index: int) -> str:
+        if index < 0 or index >= len(original_inputs):
+            return ""
+        return str(original_inputs[index])
+
+    sequence_lens_name = _input_name(4)
+    if sequence_lens_name != "":
+        raise NodeValidationError(
+            reason_code="unsupported_input",
+            message="LSTM sequence_lens is not supported in flatbuffer_direct builtin lowering.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    peephole_name = _input_name(7)
+    if peephole_name != "":
+        raise NodeValidationError(
+            reason_code="unsupported_input",
+            message="LSTM peephole weights input P is not supported in flatbuffer_direct builtin lowering.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    for output_index in [1, 2]:
+        if output_index < len(node.outputs):
+            output_name = str(node.outputs[output_index].name)
+            if _is_tensor_consumed_or_graph_output(ctx, output_name):
+                raise NodeValidationError(
+                    reason_code="unsupported_output_usage",
+                    message=(
+                        "LSTM output_state/cell_state outputs are not supported by builtin lowering "
+                        f"when consumed. output_name={output_name}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+
+    w_name = _input_name(1)
+    r_name = _input_name(2)
+    if w_name == "" or r_name == "":
+        raise NodeValidationError(
+            reason_code="missing_required_input",
+            message="LSTM requires W and R inputs.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    W = ctx.get_constant_array(w_name)
+    R = ctx.get_constant_array(r_name)
+    if W is None or R is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="LSTM W and R must be constant tensors for builtin lowering.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    W = np.asarray(W)
+    R = np.asarray(R)
+    if W.ndim != 3 or R.ndim != 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"LSTM W/R must be rank-3. W_shape={list(W.shape)} R_shape={list(R.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(W.shape[0]) != 2 or int(R.shape[0]) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "LSTM builtin lowering expects bidirectional weights with num_directions=2. "
+                f"W_shape={list(W.shape)} R_shape={list(R.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    hidden_size_attr = int(node.attrs.get("hidden_size", 0))
+    hidden_size = int(hidden_size_attr) if hidden_size_attr > 0 else int(W.shape[1] // 4)
+    if int(W.shape[1]) != 4 * hidden_size or int(R.shape[1]) != 4 * hidden_size:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "LSTM hidden_size mismatch in W/R. "
+                f"hidden_size={hidden_size} W_shape={list(W.shape)} R_shape={list(R.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(R.shape[2]) != hidden_size:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "LSTM projection is not supported in builtin lowering. "
+                f"recurrent_output_size={int(R.shape[2])} hidden_size={hidden_size}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    b_name = _input_name(3)
+    if b_name != "":
+        B = ctx.get_constant_array(b_name)
+        if B is None:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message="LSTM B must be constant when provided.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        B = np.asarray(B)
+        if B.ndim != 2 or int(B.shape[0]) != 2 or int(B.shape[1]) != 8 * hidden_size:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "LSTM B must have shape [2, 8*hidden_size]. "
+                    f"B_shape={list(B.shape)} hidden_size={hidden_size}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    initial_h_name = _input_name(5)
+    initial_c_name = _input_name(6)
+    if initial_h_name == "" or initial_c_name == "":
+        raise NodeValidationError(
+            reason_code="missing_required_input",
+            message="LSTM builtin lowering requires initial_h and initial_c inputs.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    initial_h = ctx.get_constant_array(initial_h_name)
+    initial_c = ctx.get_constant_array(initial_c_name)
+    if initial_h is None or initial_c is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="LSTM initial_h and initial_c must be constant tensors for builtin lowering.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    initial_h = np.asarray(initial_h)
+    initial_c = np.asarray(initial_c)
+    if initial_h.ndim != 3 or initial_c.ndim != 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "LSTM initial_h and initial_c must be rank-3 with shape [2, batch, hidden]. "
+                f"initial_h_shape={list(initial_h.shape)} initial_c_shape={list(initial_c.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(initial_h.shape[0]) != 2 or int(initial_c.shape[0]) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "LSTM initial_h and initial_c first dimension must be 2. "
+                f"initial_h_shape={list(initial_h.shape)} initial_c_shape={list(initial_c.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not np.allclose(initial_h, 0.0, rtol=0.0, atol=1e-7) \
+        or not np.allclose(initial_c, 0.0, rtol=0.0, atol=1e-7):
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=(
+                "LSTM builtin lowering currently supports zero-initialized initial_h/initial_c only."
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_softmax(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     input_shape = ctx.get_tensor_shape(input_name)
+    rank = len(input_shape)
+    if rank <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"Softmax requires rank >= 1. shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
     axis = int(node.attrs.get("axis", 1))
     if axis < 0:
-        axis += len(input_shape)
-    if axis != len(input_shape) - 1:
+        axis += int(rank)
+    if axis < 0 or axis >= int(rank):
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
-            message=f"Softmax axis must be last dimension. axis={axis} shape={input_shape}",
+            message=f"Softmax axis is out of range. axis={axis} rank={rank} shape={input_shape}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -552,6 +793,322 @@ def _validate_matmul(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_fused_matmul(node: Any, ctx: Any) -> None:
+    _validate_matmul(node, ctx)
+
+    a_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    b_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    y_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    supported_dtypes = {"FLOAT16", "FLOAT32"}
+    if a_dtype not in supported_dtypes or b_dtype not in supported_dtypes or y_dtype not in supported_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_dtype",
+            message=(
+                "FusedMatMul currently supports FLOAT16/FLOAT32 tensors only in flatbuffer_direct. "
+                f"a_dtype={a_dtype} b_dtype={b_dtype} y_dtype={y_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    trans_a = int(node.attrs.get("transA", 0))
+    trans_b = int(node.attrs.get("transB", 0))
+    if trans_a not in [0, 1] or trans_b not in [0, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "FusedMatMul transA/transB must be 0 or 1. "
+                f"transA={trans_a} transB={trans_b}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    alpha = float(node.attrs.get("alpha", 1.0))
+    if not np.isfinite(alpha):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"FusedMatMul alpha must be finite. alpha={alpha}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_shape(node: Any, ctx: Any) -> None:
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"INT32", "INT64"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"Shape output dtype must be INT32 or INT64. got={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    try:
+        start = int(node.attrs.get("start", 0))
+        end = int(node.attrs.get("end", input_rank))
+    except Exception as ex:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Shape start/end attributes must be integer values when provided. "
+                f"start={node.attrs.get('start', None)} end={node.attrs.get('end', None)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        ) from ex
+    if not np.isfinite(float(start)) or not np.isfinite(float(end)):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Shape start/end must be finite integers. start={start} end={end}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_constant_of_shape(node: Any, ctx: Any) -> None:
+    shape_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    supported_shape_dtypes = {
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }
+    if shape_dtype not in supported_shape_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "ConstantOfShape input shape tensor must be integer dtype. "
+                f"shape_dtype={shape_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    shape_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    if shape_rank != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"ConstantOfShape shape input rank must be 1. got={shape_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    supported_output_dtypes = {
+        "BOOL",
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+        "FLOAT16",
+        "FLOAT32",
+        "FLOAT64",
+    }
+    if output_dtype not in supported_output_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "ConstantOfShape output dtype is not supported in flatbuffer_direct builtin lowering. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    value_attr = node.attrs.get("value", None)
+    if value_attr is None:
+        return
+    if hasattr(value_attr, "values"):
+        value_arr = np.asarray(getattr(value_attr, "values"))
+    else:
+        value_arr = np.asarray(value_attr)
+    if int(value_arr.size) > 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "ConstantOfShape value attribute must be scalar or single-element tensor. "
+                f"value_shape={list(value_arr.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_matmul_integer(node: Any, ctx: Any) -> None:
+    a_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    b_shape = ctx.get_tensor_shape(node.inputs[1].name)
+    a_rank = len(a_shape)
+    b_rank = len(b_shape)
+    # Unknown-rank placeholders can appear as rank=1 in partially inferred graphs.
+    if a_rank < 2 and a_rank != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "MatMulInteger requires A rank >= 2 (or rank=1 unknown placeholder) "
+                f"in flatbuffer_direct. a_shape={a_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if b_rank < 2 and b_rank != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "MatMulInteger requires B rank >= 2 (or rank=1 unknown placeholder) "
+                f"in flatbuffer_direct. b_shape={b_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    supported_input_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32"}
+    a_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    b_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    if a_dtype not in supported_input_dtypes or b_dtype not in supported_input_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "MatMulInteger input dtypes must be integer tensor types. "
+                f"a_dtype={a_dtype} b_dtype={b_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"INT32", "INT64"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"MatMulInteger output dtype must be INT32 or INT64. got={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    a_row_dim = int(a_shape[-2]) if len(a_shape) >= 2 else -1
+    b_col_dim = int(b_shape[-1]) if len(b_shape) >= 2 else -1
+    for idx, label, expected_dim in [
+        (2, "a_zero_point", a_row_dim),
+        (3, "b_zero_point", b_col_dim),
+    ]:
+        if idx >= len(node.inputs):
+            continue
+        zp_shape = ctx.get_tensor_shape(node.inputs[idx].name)
+        if len(zp_shape) > 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    f"MatMulInteger {label} must be scalar or 1D tensor. "
+                    f"shape={zp_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if len(zp_shape) == 1 and int(zp_shape[0]) > 1 and int(expected_dim) > 1 and int(zp_shape[0]) != int(expected_dim):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    f"MatMulInteger {label} length mismatch. "
+                    f"shape={zp_shape} expected={expected_dim}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if label == "a_zero_point" and len(zp_shape) == 1 and int(zp_shape[0]) > 1 and len(a_shape) != 2:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "MatMulInteger vector a_zero_point currently supports rank-2 A only. "
+                    f"a_shape={a_shape} a_zero_shape={zp_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_reciprocal(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    supported = {"FLOAT16", "FLOAT32"}
+    if input_dtype not in supported or output_dtype not in supported:
+        raise NodeValidationError(
+            reason_code="unsupported_dtype",
+            message=(
+                "Reciprocal currently supports FLOAT16/FLOAT32 input and output in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_pow(node: Any, ctx: Any) -> None:
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "Pow currently supports FLOAT16/FLOAT32 output in flatbuffer_direct. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_onehot(node: Any, ctx: Any) -> None:
+    depth = _require_const_input(node, ctx, 1, "OneHot depth")
+    depth_arr = np.asarray(depth).reshape(-1)
+    if int(depth_arr.size) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"OneHot depth must be scalar. depth_shape={list(np.asarray(depth).shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    depth_value = int(depth_arr[0])
+    if depth_value <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=f"OneHot depth must be > 0. depth={depth_value}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    values = _require_const_input(node, ctx, 2, "OneHot values")
+    values_arr = np.asarray(values).reshape(-1)
+    if int(values_arr.size) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "OneHot values must contain exactly two elements [off_value, on_value]. "
+                f"values_shape={list(np.asarray(values).shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    axis = int(node.attrs.get("axis", -1))
+    if axis < 0:
+        axis += int(input_rank + 1)
+    if axis < 0 or axis > int(input_rank):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"OneHot axis out of range. axis={axis} rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
 def _extract_axes(
     *,
     node: Any,
@@ -789,6 +1346,25 @@ def _validate_l2_norm(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_lrn(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    if len(input_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"LRN supports rank-4 input only in flatbuffer_direct. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    size = int(node.attrs.get("size", 0))
+    if size <= 0 or size % 2 == 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LRN size must be a positive odd integer. size={size}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_einsum(node: Any, ctx: Any) -> None:
     equation = str(node.attrs.get("equation", "")).replace(" ", "")
     if equation == "":
@@ -900,6 +1476,72 @@ def _validate_quantize_dequantize_linear(node: Any, ctx: Any) -> None:
         rank=input_rank,
         node=node,
     )
+
+
+def _validate_dynamic_quantize_linear(node: Any, ctx: Any) -> None:
+    x_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    if x_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "DynamicQuantizeLinear input dtype must be FLOAT16 or FLOAT32 for builtin lowering. "
+                f"input_dtype={x_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    y_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    scale_dtype = str(ctx.get_tensor_dtype(node.outputs[1].name)).upper()
+    zero_dtype = str(ctx.get_tensor_dtype(node.outputs[2].name)).upper()
+    if y_dtype != "UINT8":
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "DynamicQuantizeLinear output[0] dtype must be UINT8 for builtin lowering. "
+                f"output_dtype={y_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if scale_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "DynamicQuantizeLinear output[1] dtype must be FLOAT16 or FLOAT32 for builtin lowering. "
+                f"output_dtype={scale_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if zero_dtype != "UINT8":
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "DynamicQuantizeLinear output[2] dtype must be UINT8 for builtin lowering. "
+                f"output_dtype={zero_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    for output_index in [1, 2]:
+        output_name = node.outputs[output_index].name
+        shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+        # Accept scalar or scalar-like placeholder [1] only.
+        if len(shape) == 0:
+            continue
+        if len(shape) == 1 and int(shape[0]) == 1:
+            continue
+        raise NodeValidationError(
+            reason_code="unsupported_output_shape",
+            message=(
+                "DynamicQuantizeLinear scale/zero_point outputs must be scalar for builtin lowering. "
+                f"output_index={output_index} shape={shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_qlinear_binary(node: Any, ctx: Any) -> None:
@@ -1293,12 +1935,53 @@ def _validate_resize(node: Any, ctx: Any) -> None:
             )
 
     has_const_param = False
+    has_dynamic_sizes_param = False
     if len(node.inputs) >= 4:
         tensor_name = node.inputs[3].name
         if tensor_name != "":
-            arr = _require_const_input(node, ctx, 3, "Resize sizes")
-            if int(np.asarray(arr).size) > 0:
-                has_const_param = True
+            sizes_arr = ctx.get_constant_array(tensor_name)
+            if sizes_arr is not None:
+                if int(np.asarray(sizes_arr).size) > 0:
+                    has_const_param = True
+            else:
+                has_dynamic_sizes_param = True
+                sizes_shape = ctx.get_tensor_shape(tensor_name)
+                if sizes_shape != [1] and len(sizes_shape) != 1:
+                    raise NodeValidationError(
+                        reason_code="unsupported_input_rank",
+                        message=(
+                            "Resize dynamic sizes input must be rank-1. "
+                            f"sizes_shape={sizes_shape}"
+                        ),
+                        node_name=node.name,
+                        node_op=node.op,
+                    )
+                if len(sizes_shape) == 1:
+                    sizes_len = int(sizes_shape[0])
+                    if sizes_len == 1:
+                        # Placeholder length from symbolic shape inference.
+                        sizes_len = -1
+                    if sizes_len > 0 and sizes_len not in [2, 4]:
+                        raise NodeValidationError(
+                            reason_code="unsupported_input_shape",
+                            message=(
+                                "Resize dynamic sizes input length must be 2 or 4. "
+                                f"sizes_shape={sizes_shape}"
+                            ),
+                            node_name=node.name,
+                            node_op=node.op,
+                        )
+                sizes_dtype = str(ctx.get_tensor_dtype(tensor_name)).upper()
+                if sizes_dtype not in {"INT32", "INT64"}:
+                    raise NodeValidationError(
+                        reason_code="unsupported_input_dtype",
+                        message=(
+                            "Resize dynamic sizes input must be INT32/INT64. "
+                            f"sizes_dtype={sizes_dtype}"
+                        ),
+                        node_name=node.name,
+                        node_op=node.op,
+                    )
     if len(node.inputs) >= 3:
         tensor_name = node.inputs[2].name
         if tensor_name != "":
@@ -1309,10 +1992,10 @@ def _validate_resize(node: Any, ctx: Any) -> None:
         arr = _require_const_input(node, ctx, 1, "Resize scales/sizes")
         if int(np.asarray(arr).size) > 0:
             has_const_param = True
-    if not has_const_param:
+    if not has_const_param and not has_dynamic_sizes_param:
         raise NodeValidationError(
             reason_code="requires_constant_input",
-            message="Resize requires non-empty constant scales or sizes.",
+            message="Resize requires non-empty constant scales/sizes or dynamic sizes input.",
             node_name=node.name,
             node_op=node.op,
         )
@@ -1507,6 +2190,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_div_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
     ),
+    "Reciprocal": DispatchEntry(
+        onnx_op="Reciprocal",
+        tflite_ops=["DIV"],
+        builder=build_reciprocal_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reciprocal,
+    ),
     "Mod": DispatchEntry(
         onnx_op="Mod",
         tflite_ops=["FLOOR_MOD"],
@@ -1534,6 +2224,22 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_quantize_linear_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_quantize_dequantize_linear,
+    ),
+    "DynamicQuantizeLinear": DispatchEntry(
+        onnx_op="DynamicQuantizeLinear",
+        tflite_ops=[
+            "NEG",
+            "REDUCE_MAX",
+            "MINIMUM",
+            "MAXIMUM",
+            "SUB",
+            "DIV",
+            "ADD",
+            "CAST",
+        ],
+        builder=build_dynamic_quantize_linear_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=3, max_outputs=3),
+        extra_validator=_validate_dynamic_quantize_linear,
     ),
     "DequantizeLinear": DispatchEntry(
         onnx_op="DequantizeLinear",
@@ -1700,6 +2406,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=_make_unary_builder("NEG"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),
+    "Pow": DispatchEntry(
+        onnx_op="Pow",
+        tflite_ops=["POW"],
+        builder=build_pow_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_pow,
+    ),
     "Pad": DispatchEntry(
         onnx_op="Pad",
         tflite_ops=["PAD"],
@@ -1727,6 +2440,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_l2_norm,
     ),
+    "LRN": DispatchEntry(
+        onnx_op="LRN",
+        tflite_ops=["LOCAL_RESPONSE_NORMALIZATION"],
+        builder=build_lrn_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_lrn,
+    ),
     "Softmax": DispatchEntry(
         onnx_op="Softmax",
         tflite_ops=["SOFTMAX"],
@@ -1734,12 +2454,33 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_softmax,
     ),
+    "LogSoftmax": DispatchEntry(
+        onnx_op="LogSoftmax",
+        tflite_ops=["SOFTMAX", "LOG"],
+        builder=build_logsoftmax_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_softmax,
+    ),
+    "Shape": DispatchEntry(
+        onnx_op="Shape",
+        tflite_ops=["SHAPE", "SLICE"],
+        builder=build_shape_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_shape,
+    ),
     "Reshape": DispatchEntry(
         onnx_op="Reshape",
         tflite_ops=["RESHAPE"],
         builder=build_reshape_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reshape,
+    ),
+    "ConstantOfShape": DispatchEntry(
+        onnx_op="ConstantOfShape",
+        tflite_ops=["CAST", "FILL"],
+        builder=build_constant_of_shape_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_constant_of_shape,
     ),
     "Flatten": DispatchEntry(
         onnx_op="Flatten",
@@ -1788,6 +2529,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_gather_elements_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_gather_elements,
+    ),
+    "OneHot": DispatchEntry(
+        onnx_op="OneHot",
+        tflite_ops=["CAST", "ADD", "FLOOR_MOD", "ONE_HOT"],
+        builder=build_one_hot_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_onehot,
     ),
     "ArgMax": DispatchEntry(
         onnx_op="ArgMax",
@@ -1906,6 +2654,33 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_matmul_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_matmul,
+    ),
+    "FusedMatMul": DispatchEntry(
+        onnx_op="FusedMatMul",
+        tflite_ops=["BATCH_MATMUL", "MUL"],
+        builder=build_fused_matmul_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_fused_matmul,
+    ),
+    "MatMulInteger": DispatchEntry(
+        onnx_op="MatMulInteger",
+        tflite_ops=["CAST", "SUB", "BATCH_MATMUL"],
+        builder=build_matmul_integer_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=4, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_matmul_integer,
+    ),
+    "LSTM": DispatchEntry(
+        onnx_op="LSTM",
+        tflite_ops=[
+            "BIDIRECTIONAL_SEQUENCE_LSTM",
+            "SPLIT",
+            "EXPAND_DIMS",
+            "RESHAPE",
+            "CONCATENATION",
+        ],
+        builder=build_lstm_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=None, min_outputs=1, max_outputs=3),
+        extra_validator=_validate_lstm,
     ),
     "Einsum": DispatchEntry(
         onnx_op="Einsum",

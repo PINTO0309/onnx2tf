@@ -22,6 +22,147 @@ def _make_softmax_axis_non_last_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_dynamic_quantize_linear_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.UINT8, [2, 3])
+    y_scale = helper.make_tensor_value_info("y_scale", TensorProto.FLOAT, [])
+    y_zero = helper.make_tensor_value_info("y_zero", TensorProto.UINT8, [])
+    node = helper.make_node(
+        "DynamicQuantizeLinear",
+        ["x"],
+        ["y", "y_scale", "y_zero"],
+        name="DynamicQuantizeLinearNode",
+    )
+    graph = helper.make_graph([node], "dynamic_quantize_linear_graph", [x], [y, y_scale, y_zero])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_shape_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2])
+    node = helper.make_node(
+        "Shape",
+        ["x"],
+        ["y"],
+        name="ShapeNode",
+        start=1,
+        end=3,
+    )
+    graph = helper.make_graph([node], "shape_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 15)])
+
+
+def _make_constant_of_shape_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    shape = numpy_helper.from_array(np.asarray([2, 3], dtype=np.int64), name="cos_shape")
+    value = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="cos_value")
+    node = helper.make_node(
+        "ConstantOfShape",
+        ["cos_shape"],
+        ["y"],
+        name="ConstantOfShapeNode",
+        value=value,
+    )
+    graph = helper.make_graph([node], "constant_of_shape_graph", [], [y], initializer=[shape])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_fused_matmul_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])
+    w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [7.0, 8.0, 9.0],
+                [10.0, 11.0, 12.0],
+            ],
+            dtype=np.float32,
+        ),
+        name="fmm_w",
+    )
+    node = helper.make_node(
+        "FusedMatMul",
+        ["x", "fmm_w"],
+        ["y"],
+        name="FusedMatMulNode",
+        alpha=0.125,
+        transA=0,
+        transB=1,
+    )
+    graph = helper.make_graph([node], "fused_matmul_graph", [x], [y], initializer=[w])
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
+def _make_qlinear_concat_slice_softmax_unknown_rank_model() -> onnx.ModelProto:
+    x0_q = helper.make_tensor_value_info("x0_q", TensorProto.UINT8, [])
+    x1_q = helper.make_tensor_value_info("x1_q", TensorProto.UINT8, [])
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, [1, 4, 2])
+    part = helper.make_tensor_value_info("part", TensorProto.FLOAT, [1, 4, 1])
+
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([128], dtype=np.uint8), name="x_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([128], dtype=np.uint8), name="y_zero")
+    starts = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="starts")
+    ends = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="ends")
+    axes = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="axes")
+    steps = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="steps")
+
+    nodes = [
+        helper.make_node(
+            "QLinearConcat",
+            [
+                "y_scale",
+                "y_zero",
+                "x0_q",
+                "x_scale",
+                "x_zero",
+                "x1_q",
+                "x_scale",
+                "x_zero",
+            ],
+            ["y_q"],
+            name="QCatUnknownRank",
+            axis=1,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "y_scale", "y_zero"],
+            ["y"],
+            name="DQUnknownRank",
+        ),
+        helper.make_node(
+            "Softmax",
+            ["y"],
+            ["scores"],
+            name="SoftmaxUnknownRank",
+            axis=2,
+        ),
+        helper.make_node(
+            "Slice",
+            ["y", "starts", "ends", "axes", "steps"],
+            ["part"],
+            name="SliceUnknownRank",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_concat_slice_softmax_unknown_rank_graph",
+        [x0_q, x1_q],
+        [scores, part],
+        initializer=[x_scale, x_zero, y_scale, y_zero, starts, ends, axes, steps],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_axes_nonconst_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     axes = helper.make_tensor_value_info("axes", TensorProto.INT64, [1])
@@ -134,9 +275,11 @@ def test_op_coverage_reason_code_snapshot_validation_failures() -> None:
         onnx_graph=_make_softmax_axis_non_last_model(),
         output_file_name="softmax_reason_snapshot",
     )
-    assert softmax_report["unsupported_reason_counts"] == {"unsupported_attribute_value": 1}
-    assert softmax_report["unsupported_nodes"][0]["reason_code"] == "unsupported_attribute_value"
-    assert softmax_report["unsupported_nodes"][0]["onnx_op"] == "Softmax"
+    assert softmax_report["unsupported_reason_counts"] == {}
+    assert softmax_report["graph_summary"]["unsupported_nodes"] == 0
+    assert softmax_report["graph_summary"]["supported_nodes"] == 1
+    assert softmax_report["graph_node_reports"][0]["onnx_op"] == "Softmax"
+    assert softmax_report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
 
     reduce_report = build_op_coverage_report(
         onnx_graph=_make_reduce_axes_nonconst_model(),
@@ -145,6 +288,69 @@ def test_op_coverage_reason_code_snapshot_validation_failures() -> None:
     assert reduce_report["unsupported_reason_counts"] == {"requires_constant_input": 1}
     assert reduce_report["unsupported_nodes"][0]["reason_code"] == "requires_constant_input"
     assert reduce_report["unsupported_nodes"][0]["onnx_op"] == "ReduceSum"
+
+
+def test_op_coverage_dynamic_quantize_linear_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_dynamic_quantize_linear_model(),
+        output_file_name="dynamic_quantize_linear_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_node_reports"][0]["onnx_op"] == "DynamicQuantizeLinear"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_shape_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_shape_model(),
+        output_file_name="shape_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_node_reports"][0]["onnx_op"] == "Shape"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_constant_of_shape_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_constant_of_shape_model(),
+        output_file_name="constant_of_shape_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_node_reports"][0]["onnx_op"] == "ConstantOfShape"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_fused_matmul_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_fused_matmul_model(),
+        output_file_name="fused_matmul_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_node_reports"][0]["onnx_op"] == "FusedMatMul"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_axis_rank_inference_avoids_custom_fallback_on_unknown_shapes() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_qlinear_concat_slice_softmax_unknown_rank_model(),
+        output_file_name="axis_rank_inference_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert report["graph_custom_ops"] == []
+    assert all(
+        node.get("dispatch_mode") == "builtin"
+        for node in report["graph_node_reports"]
+    )
 
 
 def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
