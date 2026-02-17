@@ -13,47 +13,7 @@ from onnx2tf.utils.common_functions import (
     inverted_operation_enable_disable,
     make_tf_node_info,
     transpose_with_flexing_deterrence,
-    _is_output_nhwc_assumed,
 )
-
-
-_LAYOUT_PRESERVING_CONSUMER_OPS = {
-    'Add',
-    'Sub',
-    'Mul',
-    'Div',
-    'Min',
-    'Max',
-    'Where',
-    'Relu',
-    'Clip',
-    'HardSwish',
-    'LeakyRelu',
-    'Sigmoid',
-    'Tanh',
-    'Exp',
-    'Sqrt',
-    'Neg',
-    'Abs',
-    'Sign',
-    'Floor',
-    'Ceil',
-    'Round',
-    'Identity',
-    'Cast',
-}
-
-
-def _channel_first_to_last_perm(rank: int):
-    if rank <= 2:
-        return [i for i in range(rank)]
-    return [0] + [i for i in range(2, rank)] + [1]
-
-
-def _channel_last_to_first_perm(rank: int):
-    if rank <= 2:
-        return [i for i in range(rank)]
-    return [0, rank - 1] + [i for i in range(1, rank - 1)]
 
 
 @print_node_info
@@ -92,14 +52,6 @@ def make_node(
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape)
-    identity_perm = [i for i in range(tensor_rank)]
-    cfirst_to_clast = _channel_first_to_last_perm(tensor_rank)
-    clast_to_cfirst = _channel_last_to_first_perm(tensor_rank)
-    input_nhwc_assumed = \
-        _is_output_nhwc_assumed(
-            graph_node_input=graph_node_input,
-            tf_layers_dict=tf_layers_dict,
-        ) if isinstance(graph_node_input, gs.Variable) else False
 
     perm = graph_node.attrs.get('perm', [idx for idx in reversed(range(tensor_rank))])
 
@@ -207,35 +159,17 @@ def make_node(
                                     break
                     perm = new_perm
 
-    perm = list(perm) if perm is not None else identity_perm
-
-    # Suppress redundant layout flips around layout-preserving ops.
-    # Case 1: input is already channel-last and perm asks C-first->C-last.
-    #         This transpose is redundant and can be identity.
-    if input_nhwc_assumed and perm == cfirst_to_clast:
-        perm = identity_perm
-    # Case 2: input is channel-last and perm asks C-last->C-first.
-    #         Keep identity only when all direct consumers are layout-preserving.
-    elif input_nhwc_assumed and perm == clast_to_cfirst:
-        try:
-            direct_consumers = list(graph_node_output.outputs)
-        except Exception:
-            direct_consumers = []
-        if len(direct_consumers) > 0 and all(
-            str(getattr(consumer, 'op', '')) in _LAYOUT_PRESERVING_CONSUMER_OPS
-            for consumer in direct_consumers
-        ):
-            perm = identity_perm
-
     # Preserving Graph Structure (Dict)
+    nwhc = False
     if nwc_nhwc_ndhwc_keep:
         nhwc = True
-    elif perm == identity_perm:
-        nhwc = bool(input_nhwc_assumed)
-    elif perm == cfirst_to_clast:
-        nhwc = True
-    elif perm == clast_to_cfirst:
-        nhwc = False
+    elif isinstance(graph_node_input, gs.Variable) \
+        and 'nhwc' in tf_layers_dict[graph_node_input.name].keys():
+        nhwc = tf_layers_dict[graph_node_input.name]['nhwc']
+        if nhwc and not before_op_output_shape_trans and perm == [i for i in range(len(input_tensor_shape))]:
+            nhwc = True
+        else:
+            nhwc = False
     else:
         nhwc = False
 
@@ -246,6 +180,8 @@ def make_node(
         'nhwc': nhwc,
         'nwc_nhwc_ndhwc_keep': nwc_nhwc_ndhwc_keep,
     }
+
+    perm = list(perm) if perm is not None else None
 
     if not enable_space_to_depth:
         # Transpose

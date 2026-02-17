@@ -304,6 +304,37 @@ def make_node(
             **kwargs,
         )
 
+    # Canonicalize NMS tensor layouts:
+    # boxes:  [batch, num_boxes, 4]
+    # scores: [batch, num_classes, num_boxes]
+    def _static_int(dim):
+        return int(dim) if isinstance(dim, (int, np.integer)) else None
+
+    boxes_rank = boxes.shape.rank if hasattr(boxes.shape, 'rank') else len(boxes.shape)
+    scores_rank = scores.shape.rank if hasattr(scores.shape, 'rank') else len(scores.shape)
+    if boxes_rank == 3 and scores_rank == 3:
+        boxes_shape = [_static_int(dim) for dim in list(boxes.shape)]
+        scores_shape = [_static_int(dim) for dim in list(scores.shape)]
+
+        # Fix [batch, 4, num_boxes] -> [batch, num_boxes, 4]
+        if boxes_shape[2] != 4 and boxes_shape[1] == 4:
+            boxes = transpose_with_flexing_deterrence(
+                input_tensor=boxes,
+                perm=[0, 2, 1],
+                **kwargs,
+            )
+            boxes_shape = [_static_int(dim) for dim in list(boxes.shape)]
+
+        # Fix [batch, num_boxes, num_classes] -> [batch, num_classes, num_boxes]
+        num_boxes_dim = boxes_shape[1]
+        if num_boxes_dim is not None:
+            if scores_shape[2] != num_boxes_dim and scores_shape[1] == num_boxes_dim:
+                scores = transpose_with_flexing_deterrence(
+                    input_tensor=scores,
+                    perm=[0, 2, 1],
+                    **kwargs,
+                )
+
     scores_argmax_classes = None
     if output_nms_with_argmax:
         scores_rank = scores.shape.rank if hasattr(scores.shape, 'rank') else len(scores.shape)

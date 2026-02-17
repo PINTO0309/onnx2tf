@@ -617,10 +617,18 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
 
     in_channels = int(nchw_input[1])
     out_channels = int(weights.shape[0])
-    is_depthwise = group == in_channels and int(weights.shape[1]) == 1 and group > 1
+    weight_in_channels_per_group = int(weights.shape[1])
+    # Keep depthwise detection aligned with op_registry validator:
+    # rely on group/weight shape rather than potentially stale input metadata.
+    is_depthwise = (
+        group > 1
+        and weight_in_channels_per_group == 1
+        and (out_channels % group) == 0
+    )
 
     if is_depthwise:
-        depth_multiplier = out_channels // in_channels
+        # For ONNX depthwise-style QLinearConv, logical input channels are `group`.
+        depth_multiplier = out_channels // group
         w_dw = weights.reshape(out_channels, int(weights.shape[2]), int(weights.shape[3]))
         w_dw = np.transpose(w_dw, (1, 2, 0))
         w_dw = np.expand_dims(w_dw, axis=0)
@@ -639,6 +647,29 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         )
     else:
         if group != 1:
+            allow_custom = bool(getattr(ctx, "allow_custom_ops", False))
+            if allow_custom:
+                allowlist_raw = getattr(ctx, "custom_op_allowlist", None)
+                allow_qlinearconv_custom = True
+                if allowlist_raw is not None:
+                    if isinstance(allowlist_raw, (str, bytes)):
+                        allow_items = [str(allowlist_raw)]
+                    else:
+                        try:
+                            allow_items = [str(v) for v in list(allowlist_raw)]
+                        except Exception:
+                            allow_items = [str(allowlist_raw)]
+                    allow_set = {
+                        str(v).strip().upper() for v in allow_items if str(v).strip() != ""
+                    }
+                    if len(allow_set) > 0 and "QLINEARCONV" not in allow_set:
+                        allow_qlinearconv_custom = False
+                if allow_qlinearconv_custom:
+                    # Keep TF/common path untouched; escape grouped QLinearConv to
+                    # flatbuffer_direct CUSTOM flow when requested.
+                    from onnx2tf.tflite_builder.op_builders.custom import build_custom_passthrough_op
+                    build_custom_passthrough_op(node, ctx)
+                    return
             raise NotImplementedError(
                 "QLinearConv grouped convolution is supported only for depthwise. "
                 f"op={node.name} group={group}"

@@ -6,22 +6,28 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.op_builders import (
+    build_argmax_op,
     build_batch_normalization_op,
     build_binary_op,
+    build_cast_op,
     build_clip_op,
     build_concat_op,
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
     build_custom_passthrough_op,
     build_dequantize_linear_op,
+    build_div_op,
+    build_expand_op,
     build_flatten_op,
     build_fully_connected_from_gemm_or_matmul,
     build_matmul_op,
     build_gather_op,
+    build_gather_elements_op,
     build_hardsigmoid_op,
     build_qgemm_op,
     build_identity_op,
     build_pad_op,
+    build_mod_op,
     build_l2_normalization_op,
     build_logistic_op,
     build_pool2d_op,
@@ -121,6 +127,9 @@ _CUSTOM_OP_CANDIDATES = {
     "Unique",
     "TopK",
     "NonMaxSuppression",
+    "LSTM",
+    "QLinearConv",
+    "LogSoftmax",
 }
 
 
@@ -662,6 +671,97 @@ def _validate_gather(node: Any, ctx: Any) -> None:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"Gather batch_dims must be 0. batch_dims={int(node.attrs.get('batch_dims', 0))}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_argmax(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    input_rank = len(input_shape)
+    axis = int(node.attrs.get("axis", 0))
+    if axis < 0:
+        axis += input_rank
+    if axis < 0 or axis >= input_rank:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"ArgMax axis out of range. axis={axis} rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    select_last_index = int(node.attrs.get("select_last_index", 0))
+    if select_last_index != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"ArgMax select_last_index must be 0. got={select_last_index}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_gather_elements(node: Any, ctx: Any) -> None:
+    data_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    indices_shape = ctx.get_tensor_shape(node.inputs[1].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if len(data_shape) != len(indices_shape):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                "GatherElements requires data and indices with same rank. "
+                f"data_shape={data_shape} indices_shape={indices_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(indices_shape) != len(output_shape):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "GatherElements requires output rank equal to indices rank. "
+                f"indices_shape={indices_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    rank = len(data_shape)
+    axis = int(node.attrs.get("axis", 0))
+    if axis < 0:
+        axis += rank
+    if axis < 0 or axis >= rank:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"GatherElements axis out of range. axis={axis} rank={rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_cast(node: Any, _ctx: Any) -> None:
+    to_value = node.attrs.get("to", None)
+    if to_value is None:
+        return
+    try:
+        _ = int(to_value)
+    except Exception as ex:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Cast 'to' attribute must be integer enum. got={to_value}",
+            node_name=node.name,
+            node_op=node.op,
+        ) from ex
+
+
+def _validate_expand(node: Any, _ctx: Any) -> None:
+    # Expand is lowered via static-shape MUL-broadcast path in op_builders.shape.
+    return
+
+
+def _validate_mod(node: Any, _ctx: Any) -> None:
+    fmod = int(node.attrs.get("fmod", 0))
+    if fmod != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Mod with fmod=1 is not supported by FLOOR_MOD lowering. fmod={fmod}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -1333,6 +1433,25 @@ def _resolve_custom_candidate(node: Any, ctx: Any) -> Optional[DispatchResolutio
     )
 
 
+def _resolve_generic_custom_fallback(node: Any, ctx: Any) -> Optional[DispatchResolution]:
+    if str(node.op) in {"ArgMax", "Cast", "Expand", "GatherElements", "Mod"}:
+        return None
+    allow_custom_ops = bool(getattr(ctx, "allow_custom_ops", False))
+    if not allow_custom_ops:
+        return None
+    allowlist = _normalize_custom_op_allowlist(
+        getattr(ctx, "custom_op_allowlist", None)
+    )
+    if len(allowlist) > 0 and str(node.op).upper() not in allowlist:
+        return None
+    return DispatchResolution(
+        entry=_custom_dispatch_entry_for_node(str(node.op)),
+        dispatch_mode="custom",
+        reason_code="custom_op_lowered_generic",
+        message=f"Lowered as CUSTOM op with customCode=ONNX_{str(node.op).upper()}",
+    )
+
+
 def _validate_clip(node: Any, ctx: Any) -> None:
     min_value = node.attrs.get("min", float("-inf"))
     max_value = node.attrs.get("max", float("inf"))
@@ -1384,9 +1503,30 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Div": DispatchEntry(
         onnx_op="Div",
-        tflite_ops=["DIV"],
-        builder=_make_binary_builder("DIV"),
+        tflite_ops=["DIV", "MUL"],
+        builder=build_div_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+    ),
+    "Mod": DispatchEntry(
+        onnx_op="Mod",
+        tflite_ops=["FLOOR_MOD"],
+        builder=build_mod_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_mod,
+    ),
+    "Cast": DispatchEntry(
+        onnx_op="Cast",
+        tflite_ops=["CAST"],
+        builder=build_cast_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_cast,
+    ),
+    "Expand": DispatchEntry(
+        onnx_op="Expand",
+        tflite_ops=["RESHAPE", "MUL", "CAST"],
+        builder=build_expand_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_expand,
     ),
     "QuantizeLinear": DispatchEntry(
         onnx_op="QuantizeLinear",
@@ -1508,6 +1648,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         onnx_op="ReduceSum",
         tflite_ops=["SUM"],
         builder=lambda node, ctx: build_reduce_op(node, ctx, "SUM"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reduce,
+    ),
+    "ReduceMax": DispatchEntry(
+        onnx_op="ReduceMax",
+        tflite_ops=["REDUCE_MAX"],
+        builder=lambda node, ctx: build_reduce_op(node, ctx, "REDUCE_MAX"),
         validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reduce,
     ),
@@ -1634,6 +1781,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_gather_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_gather,
+    ),
+    "GatherElements": DispatchEntry(
+        onnx_op="GatherElements",
+        tflite_ops=["CAST", "RESHAPE", "CONCATENATION", "GATHER_ND"],
+        builder=build_gather_elements_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_gather_elements,
+    ),
+    "ArgMax": DispatchEntry(
+        onnx_op="ArgMax",
+        tflite_ops=["ARG_MAX", "RESHAPE"],
+        builder=build_argmax_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_argmax,
     ),
     "Slice": DispatchEntry(
         onnx_op="Slice",
@@ -1787,6 +1948,9 @@ def resolve_node_dispatch(node: Any, ctx: Any) -> DispatchResolution:
             _validate_attrs(node, entry.validation)
             _validate_rank_constraints(node, ctx, entry.validation)
             return custom_resolution
+        generic_custom_resolution = _resolve_generic_custom_fallback(node, ctx)
+        if generic_custom_resolution is not None:
+            return generic_custom_resolution
         raise NodeValidationError(
             reason_code="unsupported_onnx_op",
             message=f"ONNX op is not supported by flatbuffer_direct: {node.op}",
@@ -1808,6 +1972,9 @@ def resolve_node_dispatch(node: Any, ctx: Any) -> DispatchResolution:
             custom_resolution = _resolve_custom_candidate(node, ctx)
             if custom_resolution is not None:
                 return custom_resolution
+        generic_custom_resolution = _resolve_generic_custom_fallback(node, ctx)
+        if generic_custom_resolution is not None:
+            return generic_custom_resolution
         raise ve
 
 

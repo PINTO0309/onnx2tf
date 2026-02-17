@@ -3313,6 +3313,96 @@ def convert(
                     'Conversion failed. Automatic JSON generation on error is disabled by default.\n' +
                     'Re-run with --auto_generate_json_on_error or provide a parameter replacement JSON file.'
                 )
+            if tflite_backend == 'flatbuffer_direct':
+                warn(
+                    Color.YELLOW(
+                        'TF conversion path failed. '
+                        'Attempting flatbuffer_direct-only conversion. '
+                        f'reason={ex}'
+                    )
+                )
+                try:
+                    from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
+                    direct_outputs = None
+                    direct_error = None
+                    for direct_allow_custom_ops in (
+                        [flatbuffer_direct_allow_custom_ops]
+                        if flatbuffer_direct_allow_custom_ops
+                        else [False, True]
+                    ):
+                        try:
+                            direct_outputs = export_tflite_model_flatbuffer_direct(
+                                onnx_graph=onnx_graph,
+                                output_folder_path=output_folder_path,
+                                output_file_name=output_file_name,
+                                output_weights=output_weights,
+                                quant_type=quant_type,
+                                input_quant_dtype=input_quant_dtype,
+                                output_quant_dtype=output_quant_dtype,
+                                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                                output_integer_quantized_tflite=output_integer_quantized_tflite,
+                                auto_split_tflite_by_size=auto_split_tflite_by_size,
+                                report_op_coverage=report_op_coverage,
+                                flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
+                                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                                tflite_split_max_bytes=tflite_split_max_bytes,
+                                tflite_split_target_bytes=tflite_split_target_bytes,
+                            )
+                            if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
+                                warn(
+                                    Color.YELLOW(
+                                        'Retrying flatbuffer_direct with custom-op lowering enabled '
+                                        'after TF conversion failure.'
+                                    )
+                                )
+                            direct_error = None
+                            break
+                        except Exception as retry_ex:
+                            direct_error = retry_ex
+                            direct_outputs = None
+                            continue
+                    if direct_error is not None:
+                        raise direct_error
+                    if direct_outputs is not None:
+                        _run_flatbuffer_direct_op_error_report(
+                            tflite_path=direct_outputs.get('float32_tflite_path', None),
+                            tensor_correspondence_report_path=direct_outputs.get(
+                                'tensor_correspondence_report_path',
+                                None,
+                            ),
+                        )
+                        direct_eval_paths = {}
+                        if 'float32_tflite_path' in direct_outputs:
+                            direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
+                        if 'float16_tflite_path' in direct_outputs:
+                            direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
+                        if 'dynamic_range_quant_tflite_path' in direct_outputs:
+                            direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
+                        if 'integer_quant_tflite_path' in direct_outputs:
+                            direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
+                        if 'full_integer_quant_tflite_path' in direct_outputs:
+                            direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
+                        if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                            direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
+                        if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                            direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+                        _run_onnx_tflite_output_check(
+                            tflite_paths=direct_eval_paths,
+                            source_label='flatbuffer_direct',
+                        )
+                    return None
+                except Exception as direct_ex:
+                    if not flatbuffer_direct_fallback_to_tf_converter:
+                        raise direct_ex
+                    warn(
+                        Color.YELLOW(
+                            'flatbuffer_direct-only conversion attempt failed after TF conversion failure. '
+                            f'reason={direct_ex}'
+                        )
+                    )
             # Re-raise the original error
             raise ex
 
@@ -3519,6 +3609,11 @@ def convert(
                                     )
                                     matches = re.findall(r"'([^']*)'", s)
                                     error(f'{matches[0]}')
+                                    if tflite_backend == 'flatbuffer_direct':
+                                        warn(
+                                            'Skipping saved_model export and continuing with flatbuffer_direct flow.'
+                                        )
+                                        break
                                     error(
                                         f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                                     )
@@ -3541,6 +3636,11 @@ def convert(
                             )
                             matches = re.findall(r"'([^']*)'", s)
                             error(f'{matches[0]}')
+                            if tflite_backend == 'flatbuffer_direct':
+                                warn(
+                                    'Skipping saved_model export and continuing with flatbuffer_direct flow.'
+                                )
+                                break
                             error(
                                 f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                             )
@@ -3598,26 +3698,47 @@ def convert(
             direct_outputs = None
             try:
                 from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
-                direct_outputs = export_tflite_model_flatbuffer_direct(
-                    onnx_graph=onnx_graph,
-                    output_folder_path=output_folder_path,
-                    output_file_name=output_file_name,
-                    output_weights=output_weights,
-                    quant_type=quant_type,
-                    input_quant_dtype=input_quant_dtype,
-                    output_quant_dtype=output_quant_dtype,
-                    output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                    output_integer_quantized_tflite=output_integer_quantized_tflite,
-                    auto_split_tflite_by_size=auto_split_tflite_by_size,
-                    report_op_coverage=report_op_coverage,
-                    flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
-                    flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                    keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
-                    keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
-                    keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
-                    tflite_split_max_bytes=tflite_split_max_bytes,
-                    tflite_split_target_bytes=tflite_split_target_bytes,
-                )
+                direct_error = None
+                for direct_allow_custom_ops in (
+                    [flatbuffer_direct_allow_custom_ops]
+                    if flatbuffer_direct_allow_custom_ops
+                    else [False, True]
+                ):
+                    try:
+                        direct_outputs = export_tflite_model_flatbuffer_direct(
+                            onnx_graph=onnx_graph,
+                            output_folder_path=output_folder_path,
+                            output_file_name=output_file_name,
+                            output_weights=output_weights,
+                            quant_type=quant_type,
+                            input_quant_dtype=input_quant_dtype,
+                            output_quant_dtype=output_quant_dtype,
+                            output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                            output_integer_quantized_tflite=output_integer_quantized_tflite,
+                            auto_split_tflite_by_size=auto_split_tflite_by_size,
+                            report_op_coverage=report_op_coverage,
+                            flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
+                            flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                            keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                            keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                            keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                            tflite_split_max_bytes=tflite_split_max_bytes,
+                            tflite_split_target_bytes=tflite_split_target_bytes,
+                        )
+                        if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
+                            warn(
+                                Color.YELLOW(
+                                    'Retrying flatbuffer_direct with custom-op lowering enabled.'
+                                )
+                            )
+                        direct_error = None
+                        break
+                    except Exception as retry_ex:
+                        direct_error = retry_ex
+                        direct_outputs = None
+                        continue
+                if direct_error is not None:
+                    raise direct_error
             except Exception as ex:
                 if not flatbuffer_direct_fallback_to_tf_converter:
                     raise

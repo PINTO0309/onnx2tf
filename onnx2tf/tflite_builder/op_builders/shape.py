@@ -9,6 +9,37 @@ from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
+def _numpy_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
+    dt = str(tflite_dtype).upper()
+    if dt == "BOOL":
+        return np.dtype(np.bool_)
+    if dt == "INT8":
+        return np.dtype(np.int8)
+    if dt == "UINT8":
+        return np.dtype(np.uint8)
+    if dt == "INT16":
+        return np.dtype(np.int16)
+    if dt == "UINT16":
+        return np.dtype(np.uint16)
+    if dt == "INT32":
+        return np.dtype(np.int32)
+    if dt == "UINT32":
+        return np.dtype(np.uint32)
+    if dt == "INT64":
+        return np.dtype(np.int64)
+    if dt == "UINT64":
+        return np.dtype(np.uint64)
+    if dt == "FLOAT16":
+        return np.dtype(np.float16)
+    if dt == "FLOAT32":
+        return np.dtype(np.float32)
+    if dt == "FLOAT64":
+        return np.dtype(np.float64)
+    raise NotImplementedError(
+        f"Unsupported TFLite dtype in shape builder: {tflite_dtype}"
+    )
+
+
 def _normalize_axis(axis: int, rank: int, *, op_name: str) -> int:
     normalized = int(axis)
     if normalized < 0:
@@ -541,6 +572,161 @@ def build_identity_op(node: Any, ctx: Any) -> None:
             options={"newShape": [int(v) for v in output_shape]},
         )
     )
+
+
+def build_cast_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[output_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+
+
+def build_expand_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    shape_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_dtype_and_quantization(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    _ = shape_name
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if len(output_shape) < len(input_shape):
+        raise NotImplementedError(
+            f"Expand output rank must be >= input rank in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    if any(int(v) <= 0 for v in output_shape):
+        raise NotImplementedError(
+            f"Expand requires static positive output shape for MUL-broadcast lowering in flatbuffer_direct. "
+            f"op={node.name} output_shape={output_shape}"
+        )
+
+    rank_pad = int(len(output_shape) - len(input_shape))
+    aligned_input_shape = [1] * rank_pad + [int(v) for v in input_shape]
+    if any(int(v) <= 0 for v in aligned_input_shape):
+        raise NotImplementedError(
+            f"Expand requires static positive input shape for MUL-broadcast lowering in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape}"
+        )
+
+    for in_dim, out_dim in zip(aligned_input_shape, output_shape):
+        if int(in_dim) == int(out_dim):
+            continue
+        if int(in_dim) == 1 and int(out_dim) > 0:
+            continue
+        raise NotImplementedError(
+            f"Expand shape is not broadcast-compatible for MUL-broadcast lowering in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    mul_input_name = input_name
+    if aligned_input_shape != input_shape:
+        reshaped_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_expand_input_reshape",
+            dtype=ctx.get_tensor_dtype(input_name),
+            shape=[int(v) for v in aligned_input_shape],
+        )
+        reshape_shape = ctx.add_const_tensor(
+            f"{output_name}_expand_input_shape",
+            np.asarray(aligned_input_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, reshape_shape],
+                outputs=[reshaped_input_name],
+                options={"newShape": [int(v) for v in aligned_input_shape]},
+            )
+        )
+        mul_input_name = reshaped_input_name
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    mul_input_dtype = str(ctx.get_tensor_dtype(mul_input_name)).upper()
+    mul_lhs_name = mul_input_name
+    mul_lhs_dtype = mul_input_dtype
+
+    # tf backend Expand path also realizes broadcast via multiply-by-ones.
+    # For BOOL, emulate tf behavior by int32 multiply then cast back.
+    if output_dtype == "BOOL":
+        if mul_lhs_dtype == "BOOL":
+            mul_lhs_i32_name = ctx.add_intermediate_tensor(
+                f"{output_name}_expand_input_i32",
+                dtype="INT32",
+                shape=[int(v) for v in aligned_input_shape],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[mul_lhs_name],
+                    outputs=[mul_lhs_i32_name],
+                    options={
+                        "inDataType": "BOOL",
+                        "outDataType": "INT32",
+                    },
+                )
+            )
+            mul_lhs_name = mul_lhs_i32_name
+            mul_lhs_dtype = "INT32"
+        else:
+            raise NotImplementedError(
+                f"Expand BOOL output expects BOOL input in flatbuffer_direct. "
+                f"op={node.name} input_dtype={mul_lhs_dtype} output_dtype={output_dtype}"
+            )
+
+    ones_dtype = _numpy_dtype_from_tflite_dtype(mul_lhs_dtype)
+    ones_name = ctx.add_const_tensor(
+        f"{output_name}_expand_ones",
+        np.ones(output_shape, dtype=ones_dtype),
+    )
+
+    mul_output_name = output_name
+    if output_dtype == "BOOL":
+        mul_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_expand_mul_out",
+            dtype=mul_lhs_dtype,
+            shape=[int(v) for v in output_shape],
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[mul_lhs_name, ones_name],
+            outputs=[mul_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if output_dtype == "BOOL":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[mul_output_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": mul_lhs_dtype,
+                    "outDataType": "BOOL",
+                },
+            )
+        )
 
 
 def build_pad_op(node: Any, ctx: Any) -> None:
