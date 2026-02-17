@@ -25,11 +25,18 @@ def _require_tensor_indices(
 ) -> List[int]:
     indices: List[int] = []
     for name in tensor_names:
-        if name not in tensor_index_map:
+        if name is None:
+            indices.append(-1)
+            continue
+        normalized_name = str(name)
+        if normalized_name == "":
+            indices.append(-1)
+            continue
+        if normalized_name not in tensor_index_map:
             raise KeyError(
-                f"Tensor index is missing for {tensor_role}: name={name}, op={op_type}"
+                f"Tensor index is missing for {tensor_role}: name={normalized_name}, op={op_type}"
             )
-        indices.append(tensor_index_map[name])
+        indices.append(tensor_index_map[normalized_name])
     return indices
 
 
@@ -150,6 +157,13 @@ def _build_argmax_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tupl
     return _enum(schema_tflite, "BuiltinOptions", "ArgMaxOptions"), options
 
 
+def _build_one_hot_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["OneHotOptionsT"]()
+    if hasattr(options, "axis"):
+        options.axis = int(op.options.get("axis", -1))
+    return _enum(schema_tflite, "BuiltinOptions", "OneHotOptions"), options
+
+
 def _build_cast_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["CastOptionsT"]()
     in_dtype = str(op.options.get("inDataType", "FLOAT32")).upper()
@@ -184,6 +198,15 @@ def _build_l2_norm_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tup
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
     options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
     return _enum(schema_tflite, "BuiltinOptions", "L2NormOptions"), options
+
+
+def _build_lrn_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["LocalResponseNormalizationOptionsT"]()
+    options.radius = int(op.options.get("radius", 0))
+    options.bias = float(op.options.get("bias", 1.0))
+    options.alpha = float(op.options.get("alpha", 0.0))
+    options.beta = float(op.options.get("beta", 0.0))
+    return _enum(schema_tflite, "BuiltinOptions", "LocalResponseNormalizationOptions"), options
 
 
 def _build_space_to_depth_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
@@ -259,6 +282,34 @@ def _build_shape_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple
     return _enum(schema_tflite, "BuiltinOptions", "ShapeOptions"), options
 
 
+def _build_split_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["SplitOptionsT"]()
+    options.numSplits = int(op.options.get("numSplits", len(op.outputs)))
+    return _enum(schema_tflite, "BuiltinOptions", "SplitOptions"), options
+
+
+def _build_expand_dims_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ExpandDimsOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "ExpandDimsOptions"), options
+
+
+def _build_bidirectional_sequence_lstm_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["BidirectionalSequenceLSTMOptionsT"]()
+    fused = str(op.options.get("fusedActivationFunction", "TANH"))
+    options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
+    options.cellClip = float(op.options.get("cellClip", 0.0))
+    options.projClip = float(op.options.get("projClip", 0.0))
+    options.mergeOutputs = bool(op.options.get("mergeOutputs", True))
+    options.timeMajor = bool(op.options.get("timeMajor", True))
+    options.asymmetricQuantizeInputs = bool(
+        op.options.get("asymmetricQuantizeInputs", False)
+    )
+    return _enum(schema_tflite, "BuiltinOptions", "BidirectionalSequenceLSTMOptions"), options
+
+
 def _build_fully_connected_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["FullyConnectedOptionsT"]()
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
@@ -327,6 +378,8 @@ def _build_builtin_options(
         return _build_gather_options(schema_tflite, op)
     if op.op_type == "ARG_MAX":
         return _build_argmax_options(schema_tflite, op)
+    if op.op_type == "ONE_HOT":
+        return _build_one_hot_options(schema_tflite, op)
     if op.op_type == "CAST":
         return _build_cast_options(schema_tflite, op)
     if op.op_type == "GATHER_ND":
@@ -339,6 +392,8 @@ def _build_builtin_options(
         return _build_tile_options(schema_tflite, op)
     if op.op_type == "L2_NORMALIZATION":
         return _build_l2_norm_options(schema_tflite, op)
+    if op.op_type == "LOCAL_RESPONSE_NORMALIZATION":
+        return _build_lrn_options(schema_tflite, op)
     if op.op_type == "SPACE_TO_DEPTH":
         return _build_space_to_depth_options(schema_tflite, op)
     if op.op_type == "CONV_2D":
@@ -355,10 +410,16 @@ def _build_builtin_options(
         return _build_resize_bilinear_options(schema_tflite, op)
     if op.op_type == "SHAPE":
         return _build_shape_options(schema_tflite, op)
+    if op.op_type == "SPLIT":
+        return _build_split_options(schema_tflite, op)
+    if op.op_type == "EXPAND_DIMS":
+        return _build_expand_dims_options(schema_tflite, op)
     if op.op_type == "FULLY_CONNECTED":
         return _build_fully_connected_options(schema_tflite, op)
     if op.op_type == "BATCH_MATMUL":
         return _build_batch_matmul_options(schema_tflite, op)
+    if op.op_type == "BIDIRECTIONAL_SEQUENCE_LSTM":
+        return _build_bidirectional_sequence_lstm_options(schema_tflite, op)
     if op.op_type == "STRIDED_SLICE":
         return _build_strided_slice_options(schema_tflite, op)
     if op.op_type in [
@@ -366,15 +427,18 @@ def _build_builtin_options(
         "RELU",
         "RELU6",
         "TANH",
+        "LOG",
         "EXP",
         "SQRT",
         "NEG",
+        "POW",
         "PRELU",
         "DEQUANTIZE",
         "QUANTIZE",
         "PAD",
         "PADV2",
         "SLICE",
+        "FILL",
     ]:
         return _enum(schema_tflite, "BuiltinOptions", "NONE"), None
     raise NotImplementedError(

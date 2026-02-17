@@ -125,6 +125,7 @@ _SIZE_WITH_UNIT_PATTERN = re.compile(
 )
 
 _TEMP_MICROSOFT_DOMAIN_OPS = {
+    'FusedMatMul',
     'QGemm',
     'QLinearAdd',
     'QLinearAveragePool',
@@ -143,7 +144,7 @@ def _supplement_microsoft_domain_for_selected_ops(
     target_ops: Optional[set] = None,
 ) -> Dict[str, int]:
     """
-    Supplement node domains for selected quantized ops that are often exported
+    Supplement node domains for selected contrib ops that are often exported
     as default-domain custom ops, but are registered in ORT contrib under
     `com.microsoft`.
 

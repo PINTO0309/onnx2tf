@@ -98,11 +98,57 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(b_name)
     ctx.ensure_tensor(output_name)
 
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+
+    a_dtype = str(ctx.get_tensor_dtype(a_name)).upper()
+    b_dtype = str(ctx.get_tensor_dtype(b_name)).upper()
+    a_compute = a_name
+    b_compute = b_name
+    compute_dtype = "FLOAT32"
+
+    if a_dtype != compute_dtype:
+        a_compute = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_a_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(a_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[a_name],
+                outputs=[a_compute],
+                options={"inDataType": a_dtype, "outDataType": compute_dtype},
+            )
+        )
+    if b_dtype != compute_dtype:
+        b_compute = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_b_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(b_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[b_name],
+                outputs=[b_compute],
+                options={"inDataType": b_dtype, "outDataType": compute_dtype},
+            )
+        )
+
+    matmul_out = output_name
+    if output_dtype != compute_dtype:
+        matmul_out = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_f32",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+
     ctx.add_operator(
         OperatorIR(
             op_type="BATCH_MATMUL",
-            inputs=[a_name, b_name],
-            outputs=[output_name],
+            inputs=[a_compute, b_compute],
+            outputs=[matmul_out],
             options={
                 "adjX": False,
                 "adjY": False,
@@ -110,3 +156,262 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
             },
         )
     )
+
+    if matmul_out != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[matmul_out],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
+        )
+
+
+def build_fused_matmul_op(node: Any, ctx: Any) -> None:
+    a_name = node.inputs[0].name
+    b_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+
+    trans_a = int(node.attrs.get("transA", 0))
+    trans_b = int(node.attrs.get("transB", 0))
+    alpha = float(node.attrs.get("alpha", 1.0))
+
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT32"
+
+    a_dtype = str(ctx.get_tensor_dtype(a_name)).upper()
+    b_dtype = str(ctx.get_tensor_dtype(b_name)).upper()
+    a_compute = a_name
+    b_compute = b_name
+    if a_dtype != compute_dtype:
+        a_compute = ctx.add_intermediate_tensor(
+            f"{output_name}_fusedmatmul_a_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(a_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[a_name],
+                outputs=[a_compute],
+                options={"inDataType": a_dtype, "outDataType": compute_dtype},
+            )
+        )
+    if b_dtype != compute_dtype:
+        b_compute = ctx.add_intermediate_tensor(
+            f"{output_name}_fusedmatmul_b_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(b_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[b_name],
+                outputs=[b_compute],
+                options={"inDataType": b_dtype, "outDataType": compute_dtype},
+            )
+        )
+
+    matmul_output_name = output_name
+    if abs(alpha - 1.0) > 1e-12 or output_dtype != compute_dtype:
+        matmul_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_fusedmatmul_matmul",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[a_compute, b_compute],
+            outputs=[matmul_output_name],
+            options={
+                "adjX": bool(trans_a),
+                "adjY": bool(trans_b),
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    scaled_output_name = matmul_output_name
+    if abs(alpha - 1.0) > 1e-12:
+        alpha_np_dtype = np.float32
+        alpha_name = ctx.add_const_tensor(
+            f"{output_name}_fusedmatmul_alpha",
+            np.asarray(alpha, dtype=alpha_np_dtype),
+        )
+        scaled_output_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+            f"{output_name}_fusedmatmul_scaled",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[matmul_output_name, alpha_name],
+                outputs=[scaled_output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[scaled_output_name],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
+        )
+
+
+def build_matmul_integer_op(node: Any, ctx: Any) -> None:
+    a_name = node.inputs[0].name
+    b_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+
+    a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+    b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+
+    a_dtype = str(ctx.get_tensor_dtype(a_name)).upper()
+    b_dtype = str(ctx.get_tensor_dtype(b_name)).upper()
+    compute_dtype = (
+        "INT16"
+        if a_dtype in {"INT8", "UINT8", "INT16"} and b_dtype in {"INT8", "UINT8", "INT16"}
+        else "FLOAT32"
+    )
+    matmul_output_dtype = "INT32" if compute_dtype == "INT16" else "FLOAT32"
+
+    def _cast_to_dtype(src_name: str, hint: str, shape: list[int], target_dtype: str) -> str:
+        src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+        if src_dtype == target_dtype:
+            return src_name
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{hint}_{str(target_dtype).lower()}",
+            dtype=target_dtype,
+            shape=shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[src_name],
+                outputs=[cast_name],
+                options={
+                    "inDataType": src_dtype,
+                    "outDataType": target_dtype,
+                },
+            )
+        )
+        return cast_name
+
+    a_compute = _cast_to_dtype(a_name, "matmulinteger_a", a_shape, compute_dtype)
+    b_compute = _cast_to_dtype(b_name, "matmulinteger_b", b_shape, compute_dtype)
+
+    if len(node.inputs) >= 3:
+        a_zp_name = node.inputs[2].name
+        ctx.ensure_tensor(a_zp_name)
+        a_zp_shape = [int(v) for v in ctx.get_tensor_shape(a_zp_name)]
+        a_zp_compute = _cast_to_dtype(a_zp_name, "matmulinteger_a_zero_point", a_zp_shape, compute_dtype)
+        if len(a_zp_shape) == 1 and int(a_zp_shape[0]) > 1:
+            if len(a_shape) != 2:
+                raise NotImplementedError(
+                    "MatMulInteger with vector a_zero_point currently supports rank-2 A only "
+                    "in flatbuffer_direct. "
+                    f"op={node.name} a_shape={a_shape} a_zero_shape={a_zp_shape}"
+                )
+            a_zp_reshaped = ctx.add_intermediate_tensor(
+                f"{output_name}_matmulinteger_a_zero_point_reshaped",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), 1],
+            )
+            a_zp_shape_const = ctx.add_const_tensor(
+                f"{output_name}_matmulinteger_a_zero_point_shape",
+                np.asarray([int(a_shape[0]), 1], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[a_zp_i32, a_zp_shape_const],
+                    outputs=[a_zp_reshaped],
+                    options={"newShape": [int(a_shape[0]), 1]},
+                )
+            )
+            a_zp_compute = a_zp_reshaped
+        a_sub_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmulinteger_a_sub",
+            dtype=compute_dtype,
+            shape=a_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[a_compute, a_zp_compute],
+                outputs=[a_sub_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        a_compute = a_sub_name
+
+    if len(node.inputs) >= 4:
+        b_zp_name = node.inputs[3].name
+        ctx.ensure_tensor(b_zp_name)
+        b_zp_shape = [int(v) for v in ctx.get_tensor_shape(b_zp_name)]
+        b_zp_compute = _cast_to_dtype(b_zp_name, "matmulinteger_b_zero_point", b_zp_shape, compute_dtype)
+        b_sub_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmulinteger_b_sub",
+            dtype=compute_dtype,
+            shape=b_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[b_compute, b_zp_compute],
+                outputs=[b_sub_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        b_compute = b_sub_name
+
+    matmul_output_name = output_name
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if output_dtype != matmul_output_dtype:
+        matmul_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmulinteger_compute",
+            dtype=matmul_output_dtype,
+            shape=output_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[a_compute, b_compute],
+            outputs=[matmul_output_name],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    if matmul_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[matmul_output_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": matmul_output_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )

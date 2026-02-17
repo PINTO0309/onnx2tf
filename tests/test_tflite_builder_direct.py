@@ -12,6 +12,7 @@ import pytest
 from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _reconcile_static_tensor_shapes,
     _resolve_dynamic_reshape_shapes,
     lower_onnx_to_ir,
 )
@@ -287,6 +288,167 @@ def _make_pow_square_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_pow_general_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    exponent = numpy_helper.from_array(np.array([1.25], dtype=np.float32), name="pow_general_exp")
+    node = helper.make_node("Pow", ["x", "pow_general_exp"], ["y"], name="PowGeneralNode")
+    graph = helper.make_graph([node], "pow_general_graph", [x], [y], initializer=[exponent])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_reciprocal_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    node = helper.make_node("Reciprocal", ["x"], ["y"], name="ReciprocalNode")
+    graph = helper.make_graph([node], "reciprocal_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_onehot_model() -> onnx.ModelProto:
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3])
+    output = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    depth = numpy_helper.from_array(np.array([4], dtype=np.int64), name="onehot_depth")
+    values = numpy_helper.from_array(np.array([0.0, 1.0], dtype=np.float32), name="onehot_values")
+    node = helper.make_node(
+        "OneHot",
+        ["indices", "onehot_depth", "onehot_values"],
+        ["y"],
+        name="OneHotNode",
+        axis=-1,
+    )
+    graph = helper.make_graph(
+        [node],
+        "onehot_graph",
+        [indices],
+        [output],
+        initializer=[depth, values],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_matmul_integer_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.UINT8, [2, 3])
+    a_zero = helper.make_tensor_value_info("a_zero", TensorProto.UINT8, [])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [2, 4])
+    w = numpy_helper.from_array(
+        np.array(
+            [
+                [1, -2, 3, -4],
+                [5, -6, 7, -8],
+                [9, -10, 11, -12],
+            ],
+            dtype=np.int8,
+        ),
+        name="mmi_w",
+    )
+    b_zero = numpy_helper.from_array(np.zeros((4,), dtype=np.int8), name="mmi_b_zero")
+    node = helper.make_node(
+        "MatMulInteger",
+        ["x", "mmi_w", "a_zero", "mmi_b_zero"],
+        ["y"],
+        name="MatMulIntegerNode",
+    )
+    graph = helper.make_graph(
+        [node],
+        "matmul_integer_graph",
+        [x, a_zero],
+        [y],
+        initializer=[w, b_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_dynamic_quantize_linear_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.UINT8, [2, 3])
+    y_scale = helper.make_tensor_value_info("y_scale", TensorProto.FLOAT, [])
+    y_zero = helper.make_tensor_value_info("y_zero", TensorProto.UINT8, [])
+    node = helper.make_node(
+        "DynamicQuantizeLinear",
+        ["x"],
+        ["y", "y_scale", "y_zero"],
+        name="DynamicQuantizeLinearNode",
+    )
+    graph = helper.make_graph(
+        [node],
+        "dynamic_quantize_linear_graph",
+        [x],
+        [y, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_shape_slice_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2])
+    node = helper.make_node(
+        "Shape",
+        ["x"],
+        ["y"],
+        name="ShapeSliceNode",
+        start=1,
+        end=3,
+    )
+    graph = helper.make_graph([node], "shape_slice_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 15)])
+
+
+def _make_constant_of_shape_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    shape = numpy_helper.from_array(np.array([2, 3], dtype=np.int64), name="cos_shape")
+    value = numpy_helper.from_array(np.array([0.25], dtype=np.float32), name="cos_value")
+    node = helper.make_node(
+        "ConstantOfShape",
+        ["cos_shape"],
+        ["y"],
+        name="ConstantOfShapeNode",
+        value=value,
+    )
+    graph = helper.make_graph(
+        [node],
+        "constant_of_shape_graph",
+        [],
+        [y],
+        initializer=[shape],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_fused_matmul_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])
+    w = numpy_helper.from_array(
+        np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [7.0, 8.0, 9.0],
+                [10.0, 11.0, 12.0],
+            ],
+            dtype=np.float32,
+        ),
+        name="fmm_w",
+    )
+    node = helper.make_node(
+        "FusedMatMul",
+        ["x", "fmm_w"],
+        ["y"],
+        name="FusedMatMulNode",
+        alpha=0.125,
+        transA=0,
+        transB=1,
+    )
+    graph = helper.make_graph([node], "fused_matmul_graph", [x], [y], initializer=[w])
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
 def _make_space_to_depth_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
@@ -317,6 +479,34 @@ def _make_resize_nearest_model() -> onnx.ModelProto:
         nearest_mode="floor",
     )
     graph = helper.make_graph([node], "resize_nearest_graph", [x], [y], initializer=[roi, scales])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_resize_dynamic_sizes_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 3, "H", "W"])
+    ref = helper.make_tensor_value_info("ref", TensorProto.FLOAT, ["N", 3, "RH", "RW"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 3, "RH", "RW"])
+    roi = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="resize_dyn_roi_empty")
+    scales = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="resize_dyn_scales_empty")
+    nodes = [
+        helper.make_node("Shape", ["ref"], ["resize_dyn_sizes"], name="ResizeDynShapeRef"),
+        helper.make_node(
+            "Resize",
+            ["x", "resize_dyn_roi_empty", "resize_dyn_scales_empty", "resize_dyn_sizes"],
+            ["y"],
+            name="ResizeDynSizesNode",
+            mode="linear",
+            coordinate_transformation_mode="pytorch_half_pixel",
+            nearest_mode="floor",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "resize_dynamic_sizes_graph",
+        [x, ref],
+        [y],
+        initializer=[roi, scales],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -1091,6 +1281,29 @@ def _make_transpose_quantize_dequantize_transpose_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_transpose_dequantize_relu6_quantize_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, [1, 2, 3, 4])
+    q_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="tdrqt_q_scale")
+    q_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="tdrqt_q_zero")
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "tdrqt_q_scale", "tdrqt_q_zero"], ["x_q_src"], name="TDRQT_Q0"),
+        helper.make_node("Transpose", ["x_q_src"], ["x_t"], name="TDRQT_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("DequantizeLinear", ["x_t", "tdrqt_q_scale", "tdrqt_q_zero"], ["x_f"], name="TDRQT_DQ"),
+        helper.make_node("Clip", ["x_f"], ["x_r6"], name="TDRQT_Relu6", min=0.0, max=6.0),
+        helper.make_node("QuantizeLinear", ["x_r6", "tdrqt_q_scale", "tdrqt_q_zero"], ["x_q"], name="TDRQT_Q1"),
+        helper.make_node("Transpose", ["x_q"], ["y"], name="TDRQT_PostT", perm=[0, 3, 1, 2]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_dequantize_relu6_quantize_transpose_graph",
+        [x],
+        [y],
+        initializer=[q_scale, q_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_transpose_binary_transpose_model(binary_op: str) -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
@@ -1107,6 +1320,76 @@ def _make_transpose_binary_transpose_model(binary_op: str) -> onnx.ModelProto:
         [x, y],
         [z],
     )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_relu6_transpose_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y0 = helper.make_tensor_value_info("y0", TensorProto.FLOAT, [1, 2, 3, 4])
+    y1 = helper.make_tensor_value_info("y1", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TRTF_PreT", perm=[0, 2, 3, 1]),
+        helper.make_node("Clip", ["x_t"], ["r_t"], name="TRTF_Relu6", min=0.0, max=6.0),
+        helper.make_node("Transpose", ["r_t"], ["r0"], name="TRTF_PostT0", perm=[0, 3, 1, 2]),
+        helper.make_node("Transpose", ["r_t"], ["r1"], name="TRTF_PostT1", perm=[0, 3, 1, 2]),
+        helper.make_node("Relu", ["r0"], ["y0"], name="TRTF_Relu0"),
+        helper.make_node("Neg", ["r1"], ["y1"], name="TRTF_Neg1"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_relu6_transpose_fanout_graph", [x], [y0, y1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_relu6_transpose_mixed_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    s = helper.make_tensor_value_info("s", TensorProto.FLOAT, [1, 4, 2, 3])
+    y0 = helper.make_tensor_value_info("y0", TensorProto.FLOAT, [1, 2, 3, 4])
+    y1 = helper.make_tensor_value_info("y1", TensorProto.FLOAT, [1, 4, 2, 3])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TRTMF_PreT", perm=[0, 3, 1, 2]),
+        helper.make_node("Clip", ["x_t"], ["r_t"], name="TRTMF_Relu6", min=0.0, max=6.0),
+        helper.make_node("Transpose", ["r_t"], ["r0"], name="TRTMF_PostT", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["r0"], ["y0"], name="TRTMF_Relu0"),
+        helper.make_node("Add", ["r_t", "s"], ["y1"], name="TRTMF_LegacyAdd"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_relu6_transpose_mixed_fanout_graph", [x, s], [y0, y1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_relu6_binary_transpose_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    o0 = helper.make_tensor_value_info("o0", TensorProto.FLOAT, [1, 2, 3, 4])
+    o1 = helper.make_tensor_value_info("o1", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TRBTF_PreX", perm=[0, 3, 1, 2]),
+        helper.make_node("Clip", ["x_t"], ["x_r6_t"], name="TRBTF_Relu6", min=0.0, max=6.0),
+        helper.make_node("Transpose", ["y"], ["y_t"], name="TRBTF_PreY", perm=[0, 3, 1, 2]),
+        helper.make_node("Add", ["x_r6_t", "y_t"], ["z_t"], name="TRBTF_Add"),
+        helper.make_node("Transpose", ["z_t"], ["z0"], name="TRBTF_Post0", perm=[0, 2, 3, 1]),
+        helper.make_node("Transpose", ["z_t"], ["z1"], name="TRBTF_Post1", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["z0"], ["o0"], name="TRBTF_Relu0"),
+        helper.make_node("Neg", ["z1"], ["o1"], name="TRBTF_Neg1"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_relu6_binary_transpose_fanout_graph", [x, y], [o0, o1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_relu6_binary_mixed_fanout_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    s = helper.make_tensor_value_info("s", TensorProto.FLOAT, [1, 4, 2, 3])
+    o0 = helper.make_tensor_value_info("o0", TensorProto.FLOAT, [1, 2, 3, 4])
+    o1 = helper.make_tensor_value_info("o1", TensorProto.FLOAT, [1, 4, 2, 3])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TRBMF_PreX", perm=[0, 3, 1, 2]),
+        helper.make_node("Clip", ["x_t"], ["x_r6_t"], name="TRBMF_Relu6", min=0.0, max=6.0),
+        helper.make_node("Transpose", ["y"], ["y_t"], name="TRBMF_PreY", perm=[0, 3, 1, 2]),
+        helper.make_node("Add", ["x_r6_t", "y_t"], ["z_t"], name="TRBMF_Add"),
+        helper.make_node("Transpose", ["z_t"], ["z"], name="TRBMF_Post", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["z"], ["o0"], name="TRBMF_Relu0"),
+        helper.make_node("Add", ["z_t", "s"], ["o1"], name="TRBMF_LegacyAdd"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_relu6_binary_mixed_fanout_graph", [x, y, s], [o0, o1])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -1350,6 +1633,14 @@ def _make_softmax_axis_non_last_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_logsoftmax_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node("LogSoftmax", ["x"], ["y"], name="LogSoftmaxNode", axis=2)
+    graph = helper.make_graph([node], "logsoftmax_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_axes_concat_const_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
@@ -1430,6 +1721,23 @@ def _make_l2_norm_model() -> onnx.ModelProto:
         p=2,
     )
     graph = helper.make_graph([node], "l2norm_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_lrn_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 5, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 5, 5])
+    node = helper.make_node(
+        "LRN",
+        ["x"],
+        ["y"],
+        name="LRNNode",
+        size=3,
+        alpha=1e-4,
+        beta=0.75,
+        bias=1.0,
+    )
+    graph = helper.make_graph([node], "lrn_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -1651,6 +1959,7 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("unsqueeze", _make_unsqueeze_model),
         ("gather", _make_gather_model),
         ("l2_norm", _make_l2_norm_model),
+        ("lrn", _make_lrn_model),
         ("relu", lambda: _make_unary_model("Relu", name="relu")),
         ("tanh", lambda: _make_unary_model("Tanh", name="tanh")),
         ("exp", lambda: _make_unary_model("Exp", name="exp")),
@@ -1661,6 +1970,9 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("prelu", _make_prelu_model),
         ("gelu", _make_gelu_model),
         ("pow_square", _make_pow_square_model),
+        ("dynamic_quantize_linear", _make_dynamic_quantize_linear_model),
+        ("shape_slice", _make_shape_slice_model),
+        ("fused_matmul", _make_fused_matmul_model),
         ("space_to_depth", _make_space_to_depth_model),
         ("resize_nearest", _make_resize_nearest_model),
         ("qlinear_sigmoid", _make_qlinear_sigmoid_model),
@@ -1671,6 +1983,7 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("qlinear_fc_chain", _make_qlinear_fc_chain_model),
         ("transpose_attr_only", _make_transpose_attr_only_model),
         ("softmax_axis_non_last", _make_softmax_axis_non_last_model),
+        ("logsoftmax", _make_logsoftmax_model),
         ("reduce_axes_concat_const", _make_reduce_axes_concat_const_model),
         ("einsum_fc_const", _make_einsum_fc_const_model),
     ],
@@ -1807,6 +2120,582 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1600, 1]
 
 
+def test_flatbuffer_direct_logsoftmax_lowering() -> None:
+    model = _make_logsoftmax_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="logsoftmax_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("SOFTMAX") == 1
+    assert op_types.count("LOG") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_lrn_lowering() -> None:
+    model = _make_lrn_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="lrn_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("LOCAL_RESPONSE_NORMALIZATION") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_pow_lowering() -> None:
+    model = _make_pow_general_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="pow_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("POW") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_reciprocal_lowering() -> None:
+    model = _make_reciprocal_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="reciprocal_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DIV") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_onehot_lowering() -> None:
+    model = _make_onehot_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="onehot_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("ONE_HOT") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_matmul_integer_lowering() -> None:
+    model = _make_matmul_integer_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="matmul_integer_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("BATCH_MATMUL") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_matmul_integer_batch_matmul_runtime_dtypes() -> None:
+    model = _make_matmul_integer_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="matmul_integer_runtime_dtype_test",
+        allow_custom_ops=False,
+    )
+    allowed = {"FLOAT32", "INT8", "INT16"}
+    for op in model_ir.operators:
+        if str(op.op_type) != "BATCH_MATMUL":
+            continue
+        in_dtypes = [str(model_ir.tensors[name].dtype).upper() for name in op.inputs]
+        assert all(dtype in allowed for dtype in in_dtypes), in_dtypes
+
+
+def test_flatbuffer_direct_dynamic_quantize_linear_lowering() -> None:
+    model = _make_dynamic_quantize_linear_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="dynamic_quantize_linear_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("REDUCE_MAX") == 2
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_shape_lowering() -> None:
+    model = _make_shape_slice_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="shape_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("SHAPE") == 1
+    assert op_types.count("SLICE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_resize_dynamic_sizes_lowering() -> None:
+    model = _make_resize_dynamic_sizes_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="resize_dynamic_sizes_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("RESIZE_BILINEAR") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    resize_op = next(op for op in model_ir.operators if str(op.op_type) == "RESIZE_BILINEAR")
+    size_input_name = str(resize_op.inputs[1])
+    size_tensor = model_ir.tensors[size_input_name]
+    assert str(size_tensor.dtype).upper() == "INT32"
+    assert size_tensor.data is None
+
+
+def test_flatbuffer_direct_constant_of_shape_lowering() -> None:
+    model = _make_constant_of_shape_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="constant_of_shape_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("FILL") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_fused_matmul_lowering() -> None:
+    model = _make_fused_matmul_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="fused_matmul_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("BATCH_MATMUL") == 1
+    assert op_types.count("MUL") == 1
+    assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_pass() -> None:
+    model_ir = ModelIR(name="reshape_zero_copy_fixup_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 256],
+        shape_signature=[1, 1, 2, 256],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, 0, -1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [0, 0, -1],
+                "onnxRawNewShape": [0, 0, -1],
+                "allowZero": False,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [1, 1, 512]
+    assert list(model_ir.tensors["y"].shape) == [1, 1, 512]
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, 512]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1, 512]
+
+
+def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_dims() -> None:
+    model_ir = ModelIR(name="reshape_zero_copy_bilstm_chain_fixup_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[25, 1, 512],
+        shape_signature=[25, 1, 512],
+    )
+    model_ir.tensors["merged"] = TensorIR(
+        name="merged",
+        dtype="FLOAT32",
+        shape=[1, 1, 512],
+        shape_signature=[1, 1, 512],
+    )
+    model_ir.tensors["split_axis"] = TensorIR(
+        name="split_axis",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2], dtype=np.int32),
+    )
+    model_ir.tensors["fw"] = TensorIR(
+        name="fw",
+        dtype="FLOAT32",
+        shape=[1, 1, 256],
+        shape_signature=[1, 1, 256],
+    )
+    model_ir.tensors["bw"] = TensorIR(
+        name="bw",
+        dtype="FLOAT32",
+        shape=[1, 1, 256],
+        shape_signature=[1, 1, 256],
+    )
+    model_ir.tensors["expand_axis"] = TensorIR(
+        name="expand_axis",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+    model_ir.tensors["fw_expanded"] = TensorIR(
+        name="fw_expanded",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 256],
+        shape_signature=[1, 1, 1, 256],
+    )
+    model_ir.tensors["bw_expanded"] = TensorIR(
+        name="bw_expanded",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 256],
+        shape_signature=[1, 1, 1, 256],
+    )
+    model_ir.tensors["lstm_y"] = TensorIR(
+        name="lstm_y",
+        dtype="FLOAT32",
+        shape=[1, 2, 1, 256],
+        shape_signature=[1, 2, 1, 256],
+    )
+    model_ir.tensors["transpose_perm"] = TensorIR(
+        name="transpose_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 1, 3], dtype=np.int32),
+    )
+    model_ir.tensors["transpose_out"] = TensorIR(
+        name="transpose_out",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 256],
+        shape_signature=[1, 1, 2, 256],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, 0, -1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 512],
+        shape_signature=[1, 1, 512],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="BIDIRECTIONAL_SEQUENCE_LSTM",
+                inputs=["x"],
+                outputs=["merged"],
+                options={"timeMajor": True},
+            ),
+            OperatorIR(
+                op_type="SPLIT",
+                inputs=["split_axis", "merged"],
+                outputs=["fw", "bw"],
+                options={"numSplits": 2},
+            ),
+            OperatorIR(
+                op_type="EXPAND_DIMS",
+                inputs=["fw", "expand_axis"],
+                outputs=["fw_expanded"],
+            ),
+            OperatorIR(
+                op_type="EXPAND_DIMS",
+                inputs=["bw", "expand_axis"],
+                outputs=["bw_expanded"],
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["fw_expanded", "bw_expanded"],
+                outputs=["lstm_y"],
+                options={"axis": 1},
+            ),
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=["lstm_y", "transpose_perm"],
+                outputs=["transpose_out"],
+            ),
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["transpose_out", "reshape_shape"],
+                outputs=["y"],
+                options={
+                    "newShape": [0, 0, -1],
+                    "onnxRawNewShape": [0, 0, -1],
+                    "allowZero": False,
+                },
+            ),
+        ]
+    )
+
+    stats_reconcile = _reconcile_static_tensor_shapes(model_ir)
+    stats_resolve = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats_reconcile["reconciled_static_tensor_shapes"] > 0
+    assert stats_resolve["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.tensors["transpose_out"].shape) == [25, 1, 2, 256]
+    assert list(model_ir.tensors["y"].shape) == [25, 1, 512]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [25, 1, 512]
+
+
+def test_flatbuffer_direct_reconcile_cast_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_cast_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT32",
+        shape=[1, 2],
+        shape_signature=[-1, 2],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2],
+        shape_signature=[1, 2],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CAST",
+            inputs=["x"],
+            outputs=["y"],
+            options={"inDataType": "INT32", "outDataType": "FLOAT32"},
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 2]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2]
+
+
+def test_flatbuffer_direct_reconcile_neg_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_neg_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2],
+        shape_signature=[-1, 2],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2],
+        shape_signature=[1, 2],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="NEG",
+            inputs=["x"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 2]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2]
+
+
+def test_flatbuffer_direct_reconcile_floor_mod_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_floor_mod_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["c"] = TensorIR(
+        name="c",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="FLOOR_MOD",
+            inputs=["x", "c"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1]
+
+
+def test_flatbuffer_direct_reconcile_maximum_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_maximum_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 1],
+        shape_signature=[-1, 3, 1],
+    )
+    model_ir.tensors["c"] = TensorIR(
+        name="c",
+        dtype="FLOAT32",
+        shape=[1, 1, 4],
+        shape_signature=[1, 1, 4],
+        data=np.asarray([[[0.0, 0.0, 0.0, 0.0]]], dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 4],
+        shape_signature=[1, 3, 4],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MAXIMUM",
+            inputs=["x", "c"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 3, 4]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 3, 4]
+
+
+def test_flatbuffer_direct_reconcile_minimum_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_minimum_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 1],
+        shape_signature=[-1, 3, 1],
+    )
+    model_ir.tensors["c"] = TensorIR(
+        name="c",
+        dtype="FLOAT32",
+        shape=[1, 1, 4],
+        shape_signature=[1, 1, 4],
+        data=np.asarray([[[1.0, 1.0, 1.0, 1.0]]], dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 4],
+        shape_signature=[1, 3, 4],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MINIMUM",
+            inputs=["x", "c"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 3, 4]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 3, 4]
+
+
+def test_flatbuffer_direct_reconcile_batch_matmul_propagates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_batch_matmul_shape_signature_test")
+    model_ir.inputs = ["a", "b"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["a"] = TensorIR(
+        name="a",
+        dtype="FLOAT32",
+        shape=[1, 2, 4],
+        shape_signature=[-1, 2, 4],
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[1, 4, 3],
+        shape_signature=[-1, 4, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3],
+        shape_signature=[1, 2, 3],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=["a", "b"],
+            outputs=["y"],
+            options={"adjX": False, "adjY": False},
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 2, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2, 3]
+
+
 def test_flatbuffer_direct_qlinear_global_average_pool_lowering() -> None:
     model = _make_qlinear_global_average_pool_model()
     register_default_preprocess_rules()
@@ -1926,6 +2815,107 @@ def test_flatbuffer_direct_serialize_model_prunes_dead_ops() -> None:
         }
         assert "dead_out" not in tensor_names
         assert "perm" not in tensor_names
+
+
+def test_flatbuffer_direct_serialize_model_supports_one_hot() -> None:
+    model_ir = ModelIR(name="serialize_one_hot_test")
+    model_ir.inputs = ["indices"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["indices"] = TensorIR(name="indices", dtype="INT32", shape=[2])
+    model_ir.tensors["depth"] = TensorIR(
+        name="depth",
+        dtype="INT32",
+        shape=[1],
+        data=np.asarray(3, dtype=np.int32),
+    )
+    model_ir.tensors["on"] = TensorIR(
+        name="on",
+        dtype="FLOAT32",
+        shape=[1],
+        data=np.asarray(1.0, dtype=np.float32),
+    )
+    model_ir.tensors["off"] = TensorIR(
+        name="off",
+        dtype="FLOAT32",
+        shape=[1],
+        data=np.asarray(0.0, dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[2, 3])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="ONE_HOT",
+            inputs=["indices", "depth", "on", "off"],
+            outputs=["y"],
+            options={"axis": -1},
+        ),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema_tflite = load_schema_module(tmpdir)
+        model_bytes = serialize_model(schema_tflite=schema_tflite, model_ir=model_ir)
+        model_obj = schema_tflite["Model"].GetRootAsModel(model_bytes, 0)
+        subgraph = model_obj.Subgraphs(0)
+        assert subgraph.OperatorsLength() == 1
+
+
+def test_flatbuffer_direct_serialize_model_supports_pow() -> None:
+    model_ir = ModelIR(name="serialize_pow_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
+    model_ir.tensors["exp"] = TensorIR(
+        name="exp",
+        dtype="FLOAT32",
+        shape=[1],
+        data=np.asarray(1.25, dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 3])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="POW",
+            inputs=["x", "exp"],
+            outputs=["y"],
+        ),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema_tflite = load_schema_module(tmpdir)
+        model_bytes = serialize_model(schema_tflite=schema_tflite, model_ir=model_ir)
+        model_obj = schema_tflite["Model"].GetRootAsModel(model_bytes, 0)
+        subgraph = model_obj.Subgraphs(0)
+        assert subgraph.OperatorsLength() == 1
+
+
+def test_flatbuffer_direct_serialize_model_supports_fill() -> None:
+    model_ir = ModelIR(name="serialize_fill_test")
+    model_ir.outputs = ["y"]
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+    )
+    model_ir.tensors["value"] = TensorIR(
+        name="value",
+        dtype="FLOAT32",
+        shape=[],
+        data=np.asarray(0.25, dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[2, 3])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="FILL",
+            inputs=["shape", "value"],
+            outputs=["y"],
+        ),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema_tflite = load_schema_module(tmpdir)
+        model_bytes = serialize_model(schema_tflite=schema_tflite, model_ir=model_ir)
+        model_obj = schema_tflite["Model"].GetRootAsModel(model_bytes, 0)
+        subgraph = model_obj.Subgraphs(0)
+        assert subgraph.OperatorsLength() == 1
 
 
 def test_flatbuffer_direct_terminal_quantize_dequantize_optimization() -> None:
@@ -2199,6 +3189,82 @@ def test_flatbuffer_direct_transpose_quantize_dequantize_transpose_optimization(
     assert op_types.count("TRANSPOSE") == 0
     assert op_types.count("QUANTIZE") == 1
     assert op_types.count("DEQUANTIZE") == 1
+
+
+def test_flatbuffer_direct_transpose_dequantize_relu6_quantize_transpose_optimization() -> None:
+    model = _make_transpose_dequantize_relu6_quantize_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_dequantize_relu6_quantize_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("DEQUANTIZE") == 1
+    assert op_types.count("RELU6") == 1
+    assert op_types.count("QUANTIZE") == 2
+
+
+def test_flatbuffer_direct_transpose_relu6_transpose_fanout_optimization() -> None:
+    model = _make_transpose_relu6_transpose_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_relu6_transpose_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("RELU6") == 1
+    assert op_types.count("RELU") == 1
+    assert op_types.count("NEG") == 1
+
+
+def test_flatbuffer_direct_transpose_relu6_transpose_mixed_fanout_optimization() -> None:
+    model = _make_transpose_relu6_transpose_mixed_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_relu6_transpose_mixed_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 1
+    assert op_types.count("RELU6") == 1
+    assert op_types.count("RELU") == 1
+    assert op_types.count("ADD") == 1
+
+
+def test_flatbuffer_direct_transpose_relu6_binary_transpose_fanout_optimization() -> None:
+    model = _make_transpose_relu6_binary_transpose_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_relu6_binary_transpose_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("RELU6") == 1
+    assert op_types.count("ADD") == 1
+    assert op_types.count("RELU") == 1
+    assert op_types.count("NEG") == 1
+
+
+def test_flatbuffer_direct_transpose_relu6_binary_mixed_fanout_optimization() -> None:
+    model = _make_transpose_relu6_binary_mixed_fanout_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_relu6_binary_mixed_fanout_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 1
+    assert op_types.count("RELU6") == 1
+    assert op_types.count("ADD") == 2
+    assert op_types.count("RELU") == 1
 
 
 @pytest.mark.parametrize("binary_op", ["Add", "Sub", "Mul", "Div"])

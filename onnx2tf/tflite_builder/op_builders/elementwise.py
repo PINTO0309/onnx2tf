@@ -7,6 +7,7 @@ import copy
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:
@@ -24,6 +25,23 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         dst.shape_signature = list(src_signature)
     elif len(list(dst.shape)) == len(list(src.shape)) and list(dst.shape) == list(src.shape):
         dst.shape_signature = list(src_signature)
+
+
+def _normalize_axis_for_rank(axis: int, rank: int) -> int:
+    a = int(axis)
+    if a < 0:
+        a += int(rank)
+    if a < 0 or a >= int(rank):
+        raise NotImplementedError(f"axis is out of range. axis={axis} normalized={a} rank={rank}")
+    return int(a)
+
+
+def _axis_to_last_permutations(axis: int, rank: int) -> tuple[list[int], list[int]]:
+    perm_to_last = [int(v) for v in range(rank) if int(v) != int(axis)] + [int(axis)]
+    perm_from_last = [0] * int(rank)
+    for out_axis, in_axis in enumerate(perm_to_last):
+        perm_from_last[int(in_axis)] = int(out_axis)
+    return perm_to_last, perm_from_last
 
 
 def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
@@ -44,6 +62,93 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             options=options,
         )
     )
+
+
+def build_pow_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    if len(input_names) > 0:
+        _propagate_shape(ctx, input_names[0], output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+
+    lhs_name = input_names[0]
+    lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
+    if lhs_dtype != compute_dtype:
+        lhs_shape = [int(v) for v in ctx.get_tensor_shape(lhs_name)]
+        lhs_cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_pow_lhs_cast",
+            dtype=compute_dtype,
+            shape=lhs_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[lhs_name],
+                outputs=[lhs_cast_name],
+                options={
+                    "inDataType": lhs_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+        lhs_name = lhs_cast_name
+
+    rhs_name = input_names[1]
+    rhs_dtype = str(ctx.get_tensor_dtype(rhs_name)).upper()
+    if rhs_dtype != compute_dtype:
+        rhs_shape = [int(v) for v in ctx.get_tensor_shape(rhs_name)]
+        rhs_cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_pow_rhs_cast",
+            dtype=compute_dtype,
+            shape=rhs_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[rhs_name],
+                outputs=[rhs_cast_name],
+                options={
+                    "inDataType": rhs_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+        rhs_name = rhs_cast_name
+
+    pow_output_name = output_name
+    if output_dtype != compute_dtype:
+        output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+        pow_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_pow_out",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="POW",
+            inputs=[lhs_name, rhs_name],
+            outputs=[pow_output_name],
+        )
+    )
+
+    if pow_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[pow_output_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def build_div_op(node: Any, ctx: Any) -> None:
@@ -132,6 +237,76 @@ def build_div_op(node: Any, ctx: Any) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
+
+
+def build_reciprocal_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+    np_compute_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
+
+    denom_name = input_name
+    if input_dtype != compute_dtype:
+        input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+        denom_cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reciprocal_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[denom_cast_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+        denom_name = denom_cast_name
+
+    one_name = ctx.add_const_tensor(
+        f"{node.name}_reciprocal_one",
+        np.asarray(1.0, dtype=np_compute_dtype),
+    )
+
+    div_output_name = output_name
+    if output_dtype != compute_dtype:
+        output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+        div_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reciprocal_out",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[one_name, denom_name],
+            outputs=[div_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if div_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[div_output_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def build_mod_op(node: Any, ctx: Any) -> None:
@@ -405,23 +580,151 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
 
     input_shape = ctx.get_tensor_shape(input_name)
+    rank = len(input_shape)
+    if rank <= 0:
+        raise NotImplementedError(f"Softmax requires rank >= 1. op={node.name} shape={input_shape}")
     axis = int(node.attrs.get("axis", 1))
-    if axis < 0:
-        axis += len(input_shape)
-    if axis != len(input_shape) - 1:
-        raise NotImplementedError(
-            f"Softmax axis != last dim is not supported in flatbuffer_direct. "
-            f"op={node.name} axis={axis} shape={input_shape}"
+    axis = _normalize_axis_for_rank(axis=axis, rank=rank)
+
+    if axis == rank - 1:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SOFTMAX",
+                inputs=[input_name],
+                outputs=[output_name],
+                options={"beta": float(node.attrs.get("beta", 1.0))},
+            )
         )
+        return
+
+    perm_to_last, perm_from_last = _axis_to_last_permutations(axis=axis, rank=rank)
+    axis_last_shape = [int(input_shape[int(v)]) for v in perm_to_last]
+    input_axis_last_name = ctx.add_intermediate_tensor(
+        f"{node.name}_softmax_input_axis_last",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=axis_last_shape,
+    )
+    input_axis_last_name = make_transpose(
+        ctx,
+        input_name,
+        input_axis_last_name,
+        perm_to_last,
+    )
+    output_axis_last_name = ctx.add_intermediate_tensor(
+        f"{node.name}_softmax_output_axis_last",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=list(axis_last_shape),
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SOFTMAX",
+            inputs=[input_axis_last_name],
+            outputs=[output_axis_last_name],
+            options={"beta": float(node.attrs.get("beta", 1.0))},
+        )
+    )
+    make_transpose(
+        ctx,
+        output_axis_last_name,
+        output_name,
+        perm_from_last,
+    )
+
+
+def build_logsoftmax_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    input_shape = ctx.get_tensor_shape(input_name)
+    rank = len(input_shape)
+    if rank <= 0:
+        raise NotImplementedError(f"LogSoftmax requires rank >= 1. op={node.name} shape={input_shape}")
+    axis = int(node.attrs.get("axis", 1))
+    axis = _normalize_axis_for_rank(axis=axis, rank=rank)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name))
+    if axis != rank - 1:
+        perm_to_last, perm_from_last = _axis_to_last_permutations(axis=axis, rank=rank)
+        axis_last_shape = [int(input_shape[int(v)]) for v in perm_to_last]
+        input_axis_last_name = ctx.add_intermediate_tensor(
+            f"{node.name}_logsoftmax_input_axis_last",
+            dtype=ctx.get_tensor_dtype(input_name),
+            shape=axis_last_shape,
+        )
+        input_axis_last_name = make_transpose(
+            ctx,
+            input_name,
+            input_axis_last_name,
+            perm_to_last,
+        )
+        softmax_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_softmax_axis_last",
+            dtype=output_dtype,
+            shape=list(axis_last_shape),
+        )
+        log_output_axis_last_name = ctx.add_intermediate_tensor(
+            f"{node.name}_logsoftmax_output_axis_last",
+            dtype=output_dtype,
+            shape=list(axis_last_shape),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SOFTMAX",
+                inputs=[input_axis_last_name],
+                outputs=[softmax_output_name],
+                options={"beta": 1.0},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOG",
+                inputs=[softmax_output_name],
+                outputs=[log_output_axis_last_name],
+            )
+        )
+        make_transpose(
+            ctx,
+            log_output_axis_last_name,
+            output_name,
+            perm_from_last,
+        )
+        return
+
+    softmax_output_name = ctx.add_intermediate_tensor(
+        f"{node.name}_softmax",
+        dtype=output_dtype,
+        shape=list(ctx.get_tensor_shape(output_name)),
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    softmax_tensor = ctx.model_ir.tensors.get(softmax_output_name, None)
+    if output_tensor is not None and softmax_tensor is not None:
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_tensor.shape)]
+        )
+        softmax_tensor.shape_signature = [int(v) for v in output_signature]
 
     ctx.add_operator(
         OperatorIR(
             op_type="SOFTMAX",
             inputs=[input_name],
+            outputs=[softmax_output_name],
+            options={"beta": 1.0},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[softmax_output_name],
             outputs=[output_name],
-            options={"beta": float(node.attrs.get("beta", 1.0))},
         )
     )
 
