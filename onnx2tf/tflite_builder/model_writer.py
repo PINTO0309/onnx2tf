@@ -157,6 +157,13 @@ def _build_argmax_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tupl
     return _enum(schema_tflite, "BuiltinOptions", "ArgMaxOptions"), options
 
 
+def _build_argmin_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ArgMinOptionsT"]()
+    output_type = str(op.options.get("outputType", "INT64")).upper()
+    options.outputType = _enum(schema_tflite, "TensorType", output_type)
+    return _enum(schema_tflite, "BuiltinOptions", "ArgMinOptions"), options
+
+
 def _build_one_hot_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["OneHotOptionsT"]()
     if hasattr(options, "axis"):
@@ -176,6 +183,22 @@ def _build_cast_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[
 def _build_gather_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["GatherNdOptionsT"]()
     return _enum(schema_tflite, "BuiltinOptions", "GatherNdOptions"), options
+
+
+def _build_non_max_suppression_v4_options(
+    schema_tflite: Dict[str, Any],
+    _op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["NonMaxSuppressionV4OptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "NonMaxSuppressionV4Options"), options
+
+
+def _build_non_max_suppression_v5_options(
+    schema_tflite: Dict[str, Any],
+    _op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["NonMaxSuppressionV5OptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "NonMaxSuppressionV5Options"), options
 
 
 def _build_broadcast_to_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
@@ -310,6 +333,20 @@ def _build_bidirectional_sequence_lstm_options(
     return _enum(schema_tflite, "BuiltinOptions", "BidirectionalSequenceLSTMOptions"), options
 
 
+def _build_sequence_rnn_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["SequenceRNNOptionsT"]()
+    options.timeMajor = bool(op.options.get("timeMajor", True))
+    fused = str(op.options.get("fusedActivationFunction", "TANH"))
+    options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
+    options.asymmetricQuantizeInputs = bool(
+        op.options.get("asymmetricQuantizeInputs", False)
+    )
+    return _enum(schema_tflite, "BuiltinOptions", "SequenceRNNOptions"), options
+
+
 def _build_fully_connected_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["FullyConnectedOptionsT"]()
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
@@ -378,12 +415,18 @@ def _build_builtin_options(
         return _build_gather_options(schema_tflite, op)
     if op.op_type == "ARG_MAX":
         return _build_argmax_options(schema_tflite, op)
+    if op.op_type == "ARG_MIN":
+        return _build_argmin_options(schema_tflite, op)
     if op.op_type == "ONE_HOT":
         return _build_one_hot_options(schema_tflite, op)
     if op.op_type == "CAST":
         return _build_cast_options(schema_tflite, op)
     if op.op_type == "GATHER_ND":
         return _build_gather_nd_options(schema_tflite, op)
+    if op.op_type == "NON_MAX_SUPPRESSION_V4":
+        return _build_non_max_suppression_v4_options(schema_tflite, op)
+    if op.op_type == "NON_MAX_SUPPRESSION_V5":
+        return _build_non_max_suppression_v5_options(schema_tflite, op)
     if op.op_type == "BROADCAST_TO":
         return _build_broadcast_to_options(schema_tflite, op)
     if op.op_type == "FLOOR_MOD":
@@ -420,18 +463,43 @@ def _build_builtin_options(
         return _build_batch_matmul_options(schema_tflite, op)
     if op.op_type == "BIDIRECTIONAL_SEQUENCE_LSTM":
         return _build_bidirectional_sequence_lstm_options(schema_tflite, op)
+    if op.op_type == "UNIDIRECTIONAL_SEQUENCE_RNN":
+        return _build_sequence_rnn_options(schema_tflite, op)
     if op.op_type == "STRIDED_SLICE":
         return _build_strided_slice_options(schema_tflite, op)
     if op.op_type in [
         "LOGISTIC",
+        "LOGICAL_AND",
+        "LOGICAL_OR",
+        "LOGICAL_NOT",
+        "EQUAL",
+        "NOT_EQUAL",
+        "GREATER",
+        "LESS",
+        "LESS_EQUAL",
         "RELU",
         "RELU6",
         "TANH",
+        "ATAN2",
         "LOG",
         "EXP",
+        "COS",
+        "SIN",
         "SQRT",
+        "ABS",
+        "CEIL",
+        "FLOOR",
+        "ROUND",
+        "SIGN",
+        "ELU",
+        "GELU",
         "NEG",
         "POW",
+        "SELECT",
+        "WHERE",
+        "RANGE",
+        "RIGHT_SHIFT",
+        "BITWISE_XOR",
         "PRELU",
         "DEQUANTIZE",
         "QUANTIZE",

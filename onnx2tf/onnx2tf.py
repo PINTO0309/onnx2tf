@@ -3349,6 +3349,7 @@ def convert(
                                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                                 keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                                 keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                                output_nms_with_argmax=output_nms_with_argmax,
                                 tflite_split_max_bytes=tflite_split_max_bytes,
                                 tflite_split_target_bytes=tflite_split_target_bytes,
                             )
@@ -3723,6 +3724,7 @@ def convert(
                             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
                             keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                             keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                            output_nms_with_argmax=output_nms_with_argmax,
                             tflite_split_max_bytes=tflite_split_max_bytes,
                             tflite_split_target_bytes=tflite_split_target_bytes,
                         )

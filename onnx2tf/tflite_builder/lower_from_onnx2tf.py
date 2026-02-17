@@ -301,6 +301,7 @@ class LoweringContext:
         custom_op_allowlist: Optional[List[str]] = None,
         tensor_consumer_count: Optional[Dict[str, int]] = None,
         graph_output_names: Optional[List[str]] = None,
+        output_nms_with_argmax: bool = False,
     ):
         self.model_ir = model_ir
         self.shape_map = shape_map
@@ -317,6 +318,7 @@ class LoweringContext:
             else {}
         )
         self.graph_output_names = set(graph_output_names) if graph_output_names is not None else set()
+        self.output_nms_with_argmax = bool(output_nms_with_argmax)
         self._serial = 0
 
     def _next_name(self, base: str) -> str:
@@ -10542,6 +10544,7 @@ def build_op_coverage_report(
     allow_custom_ops: bool = False,
     custom_op_allowlist: Optional[List[str]] = None,
     preprocess_report: Optional[Dict[str, Any]] = None,
+    output_nms_with_argmax: bool = False,
 ) -> Dict[str, Any]:
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
@@ -10569,6 +10572,7 @@ def build_op_coverage_report(
         custom_op_allowlist=custom_op_allowlist,
         tensor_consumer_count=tensor_consumer_count,
         graph_output_names=graph_output_names,
+        output_nms_with_argmax=output_nms_with_argmax,
     )
     initializer_names = {ini.name for ini in onnx_graph.graph.initializer}
     for graph_input in onnx_graph.graph.input:
@@ -11166,6 +11170,7 @@ def lower_onnx_to_ir(
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
+    output_nms_with_argmax: bool = False,
 ) -> ModelIR:
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
@@ -11195,6 +11200,7 @@ def lower_onnx_to_ir(
         custom_op_allowlist=custom_op_allowlist,
         tensor_consumer_count=tensor_consumer_count,
         graph_output_names=graph_output_names,
+        output_nms_with_argmax=output_nms_with_argmax,
     )
 
     keep_ncw_input_names = {
