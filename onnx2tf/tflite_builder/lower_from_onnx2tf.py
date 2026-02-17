@@ -6898,6 +6898,102 @@ def _optimize_terminal_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
     }
 
 
+def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fuse Conv -> Activation chains into Conv fusedActivationFunction in flatbuffer_direct IR.
+
+    Target:
+      (CONV_2D|DEPTHWISE_CONV_2D, fusedActivationFunction=NONE) -> (RELU|RELU6|TANH)
+
+    Rewrite:
+      (CONV_2D|DEPTHWISE_CONV_2D, fusedActivationFunction=<activation>)
+
+    Safety:
+    - Conv output must have exactly one consumer.
+    - Activation must be a unary op with one input and one output.
+    - Conv output tensor and activation output tensor must have matching dtype when both exist.
+    """
+    fused = 0
+    activation_map = {
+        "RELU": "RELU",
+        "RELU6": "RELU6",
+        "TANH": "TANH",
+    }
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+
+        for conv_idx, conv_op in enumerate(model_ir.operators):
+            conv_type = str(conv_op.op_type).upper()
+            if conv_type not in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
+                continue
+            if len(conv_op.outputs) != 1:
+                continue
+
+            conv_opts = dict(conv_op.options) if isinstance(conv_op.options, dict) else {}
+            fused_act = str(conv_opts.get("fusedActivationFunction", "NONE")).upper()
+            if fused_act != "NONE":
+                continue
+
+            conv_out_name = str(conv_op.outputs[0])
+            conv_users = [int(v) for v in consumers.get(conv_out_name, [])]
+            if len(conv_users) != 1:
+                continue
+
+            act_idx = int(conv_users[0])
+            if act_idx < 0 or act_idx >= len(model_ir.operators):
+                continue
+            if act_idx == int(conv_idx):
+                continue
+            act_op = model_ir.operators[act_idx]
+            act_type = str(act_op.op_type).upper()
+            fused_target = activation_map.get(act_type, None)
+            if fused_target is None:
+                continue
+            if len(act_op.inputs) != 1 or len(act_op.outputs) != 1:
+                continue
+            if str(act_op.inputs[0]) != conv_out_name:
+                continue
+
+            act_out_name = str(act_op.outputs[0])
+            conv_out_tensor = model_ir.tensors.get(conv_out_name, None)
+            act_out_tensor = model_ir.tensors.get(act_out_name, None)
+            if conv_out_tensor is not None and act_out_tensor is not None:
+                if str(conv_out_tensor.dtype).upper() != str(act_out_tensor.dtype).upper():
+                    continue
+
+            conv_opts["fusedActivationFunction"] = str(fused_target)
+            conv_op.options = conv_opts
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=conv_op,
+                new_outputs=[act_out_name],
+            )
+            _append_tensor_lineage_event(
+                model_ir=model_ir,
+                event={
+                    "kind": "fuse_conv_activation",
+                    "conv_op_type": str(conv_op.op_type),
+                    "activation_op_type": str(act_op.op_type),
+                    "fused_activation": str(fused_target),
+                    "conv_output": str(conv_out_name),
+                    "fused_output": str(act_out_name),
+                },
+            )
+
+            del model_ir.operators[int(act_idx)]
+            fused += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"fused_conv_activation_chains": int(fused)}
+
+
 def _sanitize_terminal_transpose_before_dequantize(model_ir: ModelIR) -> Dict[str, int]:
     """
     Sanitize terminal TRANSPOSE->DEQUANTIZE by swapping to DEQUANTIZE->TRANSPOSE.
@@ -10327,6 +10423,7 @@ def lower_onnx_to_ir(
         _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
     _sanitize_terminal_transpose_before_dequantize(model_ir)
     _optimize_terminal_quantize_dequantize(model_ir)
+    _optimize_fuse_conv_activation_chains(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
@@ -10364,6 +10461,7 @@ def lower_onnx_to_ir(
     # Run terminal sanitizers once more at the very end.
     _sanitize_terminal_transpose_before_dequantize(model_ir)
     _optimize_terminal_quantize_dequantize(model_ir)
+    _optimize_fuse_conv_activation_chains(model_ir)
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)

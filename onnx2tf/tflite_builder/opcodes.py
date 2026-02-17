@@ -23,9 +23,17 @@ def build_operator_codes(
         if key in op_index_map:
             continue
         oc = schema_tflite["OperatorCodeT"]()
-        builtin_code = getattr(schema_tflite["BuiltinOperator"], op.op_type)
-        oc.builtinCode = builtin_code
-        oc.deprecatedBuiltinCode = builtin_code
+        builtin_code = int(getattr(schema_tflite["BuiltinOperator"], op.op_type))
+        oc.builtinCode = int(builtin_code)
+        deprecated_builtin_code = int(builtin_code)
+        placeholder_code = getattr(
+            schema_tflite["BuiltinOperator"],
+            "PLACEHOLDER_FOR_GREATER_OP_CODES",
+            None,
+        )
+        if deprecated_builtin_code > 127 and placeholder_code is not None:
+            deprecated_builtin_code = int(placeholder_code)
+        oc.deprecatedBuiltinCode = int(deprecated_builtin_code)
         oc.version = int(op.version)
         if op.op_type == "CUSTOM":
             oc.customCode = str(op.options.get("customCode", "CUSTOM"))

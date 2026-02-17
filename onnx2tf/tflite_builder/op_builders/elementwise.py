@@ -46,6 +46,112 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_div_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    if len(input_names) > 0:
+        _propagate_shape(ctx, input_names[0], output_name)
+
+    lhs_name = input_names[0]
+    rhs_name = input_names[1]
+    lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    rhs_const = ctx.get_constant_array(rhs_name)
+    if rhs_const is not None:
+        calc_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+        np_calc_dtype = np.float16 if calc_dtype == "FLOAT16" else np.float32
+        reciprocal = np.asarray(
+            np.reciprocal(np.asarray(rhs_const, dtype=np_calc_dtype)),
+            dtype=np_calc_dtype,
+        )
+        reciprocal_name = ctx.add_const_tensor(
+            f"{output_name}_div_reciprocal",
+            reciprocal,
+        )
+
+        mul_lhs_name = lhs_name
+        if lhs_dtype != calc_dtype:
+            lhs_shape = [int(v) for v in ctx.get_tensor_shape(lhs_name)]
+            mul_lhs_name = ctx.add_intermediate_tensor(
+                f"{output_name}_div_lhs_cast",
+                dtype=calc_dtype,
+                shape=lhs_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[lhs_name],
+                    outputs=[mul_lhs_name],
+                    options={
+                        "inDataType": lhs_dtype,
+                        "outDataType": calc_dtype,
+                    },
+                )
+            )
+
+        mul_out_name = output_name
+        if output_dtype != calc_dtype:
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            mul_out_name = ctx.add_intermediate_tensor(
+                f"{output_name}_div_mul_out",
+                dtype=calc_dtype,
+                shape=output_shape,
+            )
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[mul_lhs_name, reciprocal_name],
+                outputs=[mul_out_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        if mul_out_name != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[mul_out_name],
+                    outputs=[output_name],
+                    options={
+                        "inDataType": calc_dtype,
+                        "outDataType": output_dtype,
+                    },
+                )
+            )
+        return
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=input_names,
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+
+def build_mod_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    if len(input_names) > 0:
+        _propagate_shape(ctx, input_names[0], output_name)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="FLOOR_MOD",
+            inputs=input_names,
+            outputs=[output_name],
+        )
+    )
+
+
 def build_logistic_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name

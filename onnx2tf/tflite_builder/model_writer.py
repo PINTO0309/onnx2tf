@@ -143,6 +143,42 @@ def _build_gather_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tupl
     return _enum(schema_tflite, "BuiltinOptions", "GatherOptions"), options
 
 
+def _build_argmax_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ArgMaxOptionsT"]()
+    output_type = str(op.options.get("outputType", "INT64")).upper()
+    options.outputType = _enum(schema_tflite, "TensorType", output_type)
+    return _enum(schema_tflite, "BuiltinOptions", "ArgMaxOptions"), options
+
+
+def _build_cast_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["CastOptionsT"]()
+    in_dtype = str(op.options.get("inDataType", "FLOAT32")).upper()
+    out_dtype = str(op.options.get("outDataType", "FLOAT32")).upper()
+    options.inDataType = _enum(schema_tflite, "TensorType", in_dtype)
+    options.outDataType = _enum(schema_tflite, "TensorType", out_dtype)
+    return _enum(schema_tflite, "BuiltinOptions", "CastOptions"), options
+
+
+def _build_gather_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["GatherNdOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "GatherNdOptions"), options
+
+
+def _build_broadcast_to_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["BroadcastToOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "BroadcastToOptions"), options
+
+
+def _build_floor_mod_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["FloorModOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "FloorModOptions"), options
+
+
+def _build_tile_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["TileOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "TileOptions"), options
+
+
 def _build_l2_norm_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["L2NormOptionsT"]()
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
@@ -283,12 +319,24 @@ def _build_builtin_options(
         return _build_softmax_options(schema_tflite, op)
     if op.op_type == "TRANSPOSE":
         return _build_transpose_options(schema_tflite, op)
-    if op.op_type in ["MEAN", "SUM"]:
+    if op.op_type in ["MEAN", "SUM", "REDUCE_MAX"]:
         return _build_reducer_options(schema_tflite, op)
     if op.op_type == "SQUEEZE":
         return _build_squeeze_options(schema_tflite, op)
     if op.op_type == "GATHER":
         return _build_gather_options(schema_tflite, op)
+    if op.op_type == "ARG_MAX":
+        return _build_argmax_options(schema_tflite, op)
+    if op.op_type == "CAST":
+        return _build_cast_options(schema_tflite, op)
+    if op.op_type == "GATHER_ND":
+        return _build_gather_nd_options(schema_tflite, op)
+    if op.op_type == "BROADCAST_TO":
+        return _build_broadcast_to_options(schema_tflite, op)
+    if op.op_type == "FLOOR_MOD":
+        return _build_floor_mod_options(schema_tflite, op)
+    if op.op_type == "TILE":
+        return _build_tile_options(schema_tflite, op)
     if op.op_type == "L2_NORMALIZATION":
         return _build_l2_norm_options(schema_tflite, op)
     if op.op_type == "SPACE_TO_DEPTH":

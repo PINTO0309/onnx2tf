@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "onnx2tf"
-version = "2.0.15"
+version = "2.0.16"
 description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf)."
 readme = "README.md"
 requires-python = ">=3.12"

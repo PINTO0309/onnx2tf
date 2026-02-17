@@ -1,14 +1,18 @@
 from onnx2tf.tflite_builder.op_builders.elementwise import (
     build_binary_op,
     build_clip_op,
+    build_div_op,
     build_hardsigmoid_op,
     build_logistic_op,
+    build_mod_op,
     build_prelu_op,
     build_softmax_op,
     build_unary_op,
 )
 from onnx2tf.tflite_builder.op_builders.shape import (
+    build_cast_op,
     build_concat_op,
+    build_expand_op,
     build_flatten_op,
     build_identity_op,
     build_pad_op,
@@ -36,7 +40,9 @@ from onnx2tf.tflite_builder.op_builders.reduce import (
     build_reduce_op,
 )
 from onnx2tf.tflite_builder.op_builders.index import (
+    build_argmax_op,
     build_gather_op,
+    build_gather_elements_op,
 )
 from onnx2tf.tflite_builder.op_builders.norm import (
     build_batch_normalization_op,
@@ -64,12 +70,16 @@ from onnx2tf.tflite_builder.op_builders.quantized import (
 __all__ = [
     "build_binary_op",
     "build_clip_op",
+    "build_div_op",
     "build_hardsigmoid_op",
     "build_logistic_op",
+    "build_mod_op",
     "build_prelu_op",
     "build_softmax_op",
     "build_unary_op",
+    "build_cast_op",
     "build_concat_op",
+    "build_expand_op",
     "build_flatten_op",
     "build_identity_op",
     "build_pad_op",
@@ -87,7 +97,9 @@ __all__ = [
     "build_fully_connected_from_gemm_or_matmul",
     "build_matmul_op",
     "build_reduce_op",
+    "build_argmax_op",
     "build_gather_op",
+    "build_gather_elements_op",
     "build_batch_normalization_op",
     "build_l2_normalization_op",
     "build_custom_passthrough_op",

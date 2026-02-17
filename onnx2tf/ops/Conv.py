@@ -26,7 +26,6 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
     post_process_transpose,
-    _is_output_nhwc_assumed,
 )
 from typing import Any, Dict
 from onnx2tf.utils.logging import *
@@ -92,12 +91,6 @@ def make_node(
 
     input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
         if isinstance(graph_node_input, gs.Variable) else graph_node_input
-    input_nhwc_assumed = False
-    if isinstance(graph_node_input, gs.Variable):
-        input_nhwc_assumed = _is_output_nhwc_assumed(
-            graph_node_input=graph_node_input,
-            tf_layers_dict=tf_layers_dict,
-        )
     input_weights = tf_layers_dict[input_weights.name]['tf_node'] \
         if isinstance(input_weights, gs.Variable) else input_weights
     input_bias = tf_layers_dict[input_bias.name]['tf_node'] \
@@ -107,16 +100,6 @@ def make_node(
     input_tensor_rank = len(input_tensor_shape)
     spatial_size = input_tensor_rank - 2
     input_weights_shape = input_weights.shape
-
-    def _to_static_int_dim(dim):
-        if isinstance(dim, int):
-            return int(dim)
-        try:
-            if dim is not None:
-                return int(dim)
-        except Exception:
-            pass
-        return None
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
     group = graph_node.attrs.get('group', 1)
@@ -155,8 +138,7 @@ def make_node(
     all_axes_same = False
     if onnx_input_shape is not None \
         and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
-        and onnx_input_shape == tf_input_shape \
-        and not input_nhwc_assumed:
+        and onnx_input_shape == tf_input_shape:
 
         shape_for_judging_skip = [
             dim if dim is not None else INF_INDEX_VALUE for dim in onnx_input_shape[1:]
@@ -237,47 +219,6 @@ def make_node(
                         graph_node_output.name: onnx_tensor_infos_for_validation[graph_node_output.name]
                     }
                     del onnx_tensor_infos_for_validation
-
-    # Refresh input geometry after potential transpose workaround above.
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
-    spatial_size = input_tensor_rank - 2
-
-    # Pre-padding layout guard:
-    # If the tensor is still effectively NCHW-like, convert to NHWC before any
-    # explicit padding is applied. Padding in the wrong layout corrupts channels.
-    if input_tensor_rank == 4:
-        group_for_layout = _to_static_int_dim(graph_node.attrs.get('group', 1))
-        if group_for_layout is None or group_for_layout <= 0:
-            group_for_layout = 1
-        tf_in_ch = _to_static_int_dim(input_tensor_shape[-1])
-        nchw_in_ch = _to_static_int_dim(input_tensor_shape[1])
-        expected_in_ch = None
-
-        # Prefer ONNX weight shape [O, I, KH, KW] when available.
-        onnx_weight_shape = graph_node.inputs[1].shape \
-            if hasattr(graph_node.inputs[1], 'shape') else None
-        if onnx_weight_shape is not None and len(onnx_weight_shape) == 4:
-            onnx_in_ch_per_group = _to_static_int_dim(onnx_weight_shape[1])
-            if onnx_in_ch_per_group is not None:
-                expected_in_ch = int(onnx_in_ch_per_group) * int(group_for_layout)
-
-        # Fallback to current TF weight layout guess.
-        if expected_in_ch is None:
-            current_weight_shape = [_to_static_int_dim(v) for v in list(input_weights.shape)]
-            if len(current_weight_shape) == 4 and current_weight_shape[-2] is not None:
-                expected_in_ch = int(current_weight_shape[-2]) * int(group_for_layout)
-
-        if tf_in_ch is not None and nchw_in_ch is not None and expected_in_ch is not None:
-            if tf_in_ch != expected_in_ch and nchw_in_ch == expected_in_ch:
-                input_tensor = transpose_with_flexing_deterrence(
-                    input_tensor=input_tensor,
-                    perm=[0, 2, 3, 1],
-                    **kwargs,
-                )
-                input_tensor_shape = input_tensor.shape
-                input_tensor_rank = len(input_tensor_shape)
-                spatial_size = input_tensor_rank - 2
     """
     Conv1D
     Conv2D
@@ -312,9 +253,6 @@ def make_node(
                 x=input_tensor,
                 pads=pads,
             )
-            input_tensor_shape = input_tensor.shape
-            input_tensor_rank = len(input_tensor_shape)
-            spatial_size = input_tensor_rank - 2
             pad_mode = 'VALID'
             padded = True
         else:
@@ -352,116 +290,16 @@ def make_node(
     if depthwise and input_tensor_shape[-1] != None:
         depthwise = bool(group == input_tensor_shape[-1])
 
+    if depthwise is True:
+        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
+        input_weights = tf.reshape(input_weights, depthwise_filter_shape)
+
     input_weights = input_weights \
         if not isinstance(input_weights, np.ndarray) \
             else tf.convert_to_tensor(input_weights)
     input_bias = input_bias \
         if not isinstance(input_bias, np.ndarray) \
             else tf.convert_to_tensor(input_bias)
-
-    # Dynamic/variable Conv weights can arrive in ONNX layout (OI...).
-    # If spatial axes indicate OI... and not HW...IO, transpose once to TF layout.
-    def _to_int_or_none(dim: Any):
-        if dim is None:
-            return None
-        try:
-            return int(dim)
-        except Exception:
-            return None
-
-    def _spatial_match(shape_a: list, shape_b: list) -> bool:
-        if len(shape_a) != len(shape_b):
-            return False
-        for da, db in zip(shape_a, shape_b):
-            if da is None or db is None:
-                continue
-            if int(da) != int(db):
-                return False
-        return True
-
-    expected_spatial = []
-    if isinstance(kernel_shape, (list, tuple)) and len(kernel_shape) > 0:
-        expected_spatial = [_to_int_or_none(v) for v in kernel_shape]
-    elif hasattr(graph_node.inputs[1], 'shape') and graph_node.inputs[1].shape is not None:
-        weight_shape_onnx = [
-            _to_int_or_none(v) if not isinstance(v, str) else None
-            for v in list(graph_node.inputs[1].shape)
-        ]
-        if len(weight_shape_onnx) >= 3:
-            expected_spatial = list(weight_shape_onnx[2:])
-
-    input_weights_shape = [_to_int_or_none(v) for v in list(input_weights.shape)]
-    if len(input_weights_shape) >= 3 and len(expected_spatial) == len(input_weights_shape) - 2:
-        spatial_rank = len(expected_spatial)
-        hwio_spatial = list(input_weights_shape[:spatial_rank])
-        oix_spatial = list(input_weights_shape[2:])
-        oix_like = _spatial_match(oix_spatial, expected_spatial)
-        hwio_like = _spatial_match(hwio_spatial, expected_spatial)
-        if oix_like and not hwio_like:
-            weight_perm = [i for i in range(2, len(input_weights_shape))] + [1, 0]
-            input_weights = tf.transpose(input_weights, perm=weight_perm)
-            input_weights_shape = [_to_int_or_none(v) for v in list(input_weights.shape)]
-
-    if depthwise is True:
-        # Depthwise filter for TF must be [H, W, in_channels, channel_multiplier].
-        # Depending on the upstream path, weights may already be in this format.
-        # Reshape only when the current layout is clearly [H, W, 1, out_channels].
-        weight_in_ch = _to_static_int_dim(input_weights_shape[2]) \
-            if len(input_weights_shape) >= 3 else None
-        weight_out_ch = _to_static_int_dim(input_weights_shape[3]) \
-            if len(input_weights_shape) >= 4 else None
-        input_ch = _to_static_int_dim(input_tensor_shape[-1]) \
-            if len(input_tensor_shape) >= 1 else None
-        group_dim = _to_static_int_dim(group)
-        if group_dim is None or group_dim <= 0:
-            group_dim = 1
-
-        # Already depthwise-formatted.
-        if input_ch is not None and weight_in_ch == input_ch:
-            pass
-        else:
-            channel_multiplier = None
-            if input_ch is not None \
-                and weight_in_ch == 1 \
-                and weight_out_ch is not None \
-                and input_ch > 0 \
-                and weight_out_ch % input_ch == 0:
-                channel_multiplier = weight_out_ch // input_ch
-            elif weight_in_ch == 1 \
-                and weight_out_ch is not None \
-                and group_dim > 0 \
-                and weight_out_ch % group_dim == 0:
-                channel_multiplier = weight_out_ch // group_dim
-
-            if channel_multiplier is not None and channel_multiplier > 0:
-                depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, channel_multiplier]
-                input_weights = tf.reshape(input_weights, depthwise_filter_shape)
-                input_weights_shape = [_to_int_or_none(v) for v in list(input_weights.shape)]
-
-    # Additional layout guard:
-    # Some branches can reach Conv with NCHW-like tensors even when Conv runs
-    # in NHWC. Correct only when channel mismatch is unambiguous.
-    input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape)
-    if not padded and input_tensor_rank == 4 and len(input_weights_shape) == 4:
-        group = graph_node.attrs.get('group', 1)
-        group = _to_static_int_dim(group)
-        if group is None or group <= 0:
-            group = 1
-        tf_in_ch = _to_static_int_dim(input_tensor_shape[-1])
-        nchw_in_ch = _to_static_int_dim(input_tensor_shape[1])
-        filt_in_ch_per_group = _to_static_int_dim(input_weights_shape[-2])
-        expected_in_ch = None
-        if filt_in_ch_per_group is not None:
-            expected_in_ch = int(filt_in_ch_per_group) * int(group)
-        if tf_in_ch is not None and nchw_in_ch is not None and expected_in_ch is not None:
-            if tf_in_ch != expected_in_ch and nchw_in_ch == expected_in_ch:
-                input_tensor = transpose_with_flexing_deterrence(
-                    input_tensor=input_tensor,
-                    perm=[0, 2, 3, 1],
-                    **kwargs,
-                )
-                input_tensor_shape = input_tensor.shape
 
 
     def conv_bias(input_tensor, input_weights, strides, pad_mode, dilations, input_bias):
