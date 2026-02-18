@@ -87,7 +87,17 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
                 "asymmetricQuantizeInputs": False,
             },
         )
-    )
+        )
+
+
+def build_einsum_op(node: Any, ctx: Any) -> None:
+    # _validate_einsum limits builtin lowering to rank-2 matmul-style equations.
+    # Prefer FULLY_CONNECTED when RHS is constant, otherwise use BATCH_MATMUL.
+    rhs_name = node.inputs[1].name
+    if ctx.get_constant_array(rhs_name) is not None:
+        build_fully_connected_from_gemm_or_matmul(node, ctx)
+    else:
+        build_matmul_op(node, ctx)
 
 
 def build_matmul_op(node: Any, ctx: Any) -> None:

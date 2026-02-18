@@ -215,12 +215,23 @@ def _adapt_input_layout_for_tflite_input(data: np.ndarray, detail: Dict[str, Any
     if len(target_shape) != value.ndim:
         return value
 
-    # ONNX test data is usually NCHW, while flatbuffer_direct inputs are NHWC.
-    if value.ndim == 4:
-        n, c, h, w = [int(v) for v in value.shape]
-        nhwc_candidate = [n, h, w, c]
-        if all(_dim_matches(target_shape[i], nhwc_candidate[i]) for i in range(4)):
-            return np.transpose(value, (0, 2, 3, 1))
+    if all(_dim_matches(target_shape[idx], int(value.shape[idx])) for idx in range(value.ndim)):
+        return value
+
+    # ONNX test data is usually NCW/NCHW/NCDHW while flatbuffer_direct input
+    # tensor layout may be converted to NWC/NHWC/NDHWC.
+    transpose_candidates: List[Tuple[int, ...]] = []
+    if value.ndim == 3:
+        transpose_candidates = [(0, 2, 1)]
+    elif value.ndim == 4:
+        transpose_candidates = [(0, 2, 3, 1)]
+    elif value.ndim == 5:
+        transpose_candidates = [(0, 2, 3, 4, 1)]
+
+    for perm in transpose_candidates:
+        candidate_shape = [int(value.shape[int(axis)]) for axis in perm]
+        if all(_dim_matches(target_shape[i], candidate_shape[i]) for i in range(value.ndim)):
+            return np.transpose(value, perm)
     return value
 
 

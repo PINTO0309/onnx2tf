@@ -93,7 +93,7 @@ def _parse_slice_axes_or_steps(
     label: str,
 ) -> list[int]:
     values: list[int] | None = None
-    if len(node.inputs) > input_index:
+    if len(node.inputs) > input_index and str(node.inputs[input_index].name) != "":
         arr = ctx.get_constant_array(node.inputs[input_index].name)
         if arr is None:
             raise NotImplementedError(
@@ -113,6 +113,38 @@ def _parse_slice_axes_or_steps(
     return [int(v) for v in values]
 
 
+def _parse_slice_indices(
+    *,
+    node: Any,
+    ctx: Any,
+    input_index: int,
+    attr_name: str,
+    label: str,
+) -> list[int]:
+    values: list[int] | None = None
+    if len(node.inputs) > input_index and str(node.inputs[input_index].name) != "":
+        arr = ctx.get_constant_array(node.inputs[input_index].name)
+        if arr is None:
+            raise NotImplementedError(
+                f"Slice {label} must be constant for flatbuffer_direct. op={node.name}"
+            )
+        values = [int(v) for v in np.asarray(arr).reshape(-1).tolist()]
+    elif attr_name in node.attrs:
+        attr_val = node.attrs.get(attr_name)
+        if isinstance(attr_val, (list, tuple, np.ndarray)):
+            values = [int(v) for v in np.asarray(attr_val).reshape(-1).tolist()]
+        elif attr_val is None:
+            values = []
+        else:
+            values = [int(attr_val)]
+    if values is None:
+        raise NotImplementedError(
+            f"Slice {label} must be provided as constant input[{input_index}] "
+            f"or attribute '{attr_name}'. op={node.name}"
+        )
+    return [int(v) for v in values]
+
+
 def build_slice_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -124,14 +156,20 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    starts_arr = ctx.get_constant_array(node.inputs[1].name)
-    ends_arr = ctx.get_constant_array(node.inputs[2].name)
-    if starts_arr is None or ends_arr is None:
-        raise NotImplementedError(
-            f"Slice starts/ends must be constant for flatbuffer_direct. op={node.name}"
-        )
-    starts = [int(v) for v in np.asarray(starts_arr).reshape(-1).tolist()]
-    ends = [int(v) for v in np.asarray(ends_arr).reshape(-1).tolist()]
+    starts = _parse_slice_indices(
+        node=node,
+        ctx=ctx,
+        input_index=1,
+        attr_name="starts",
+        label="starts",
+    )
+    ends = _parse_slice_indices(
+        node=node,
+        ctx=ctx,
+        input_index=2,
+        attr_name="ends",
+        label="ends",
+    )
     if len(starts) != len(ends):
         raise NotImplementedError(
             f"Slice starts and ends length mismatch. op={node.name} "
@@ -1102,6 +1140,49 @@ def build_expand_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+
+def build_tile_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    multiples_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(multiples_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_dtype_and_quantization(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    multiples_for_tile = multiples_name
+    multiples_dtype = str(ctx.get_tensor_dtype(multiples_name)).upper()
+    if multiples_dtype != "INT32":
+        multiples_shape = [int(v) for v in ctx.get_tensor_shape(multiples_name)]
+        multiples_for_tile = ctx.add_intermediate_tensor(
+            f"{output_name}_tile_multiples_i32",
+            dtype="INT32",
+            shape=multiples_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[multiples_name],
+                outputs=[multiples_for_tile],
+                options={
+                    "inDataType": multiples_dtype,
+                    "outDataType": "INT32",
+                },
+            )
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TILE",
+            inputs=[input_name, multiples_for_tile],
+            outputs=[output_name],
+        )
+    )
 
 
 def build_pad_op(node: Any, ctx: Any) -> None:

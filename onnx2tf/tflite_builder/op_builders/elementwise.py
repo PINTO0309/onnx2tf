@@ -573,6 +573,289 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_erf_op(node: Any, ctx: Any) -> None:
+    (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        out_shape,
+    ) = _prepare_float_compute(node, ctx, tag="erf")
+
+    one_name = _add_scalar_const(ctx, f"{output_name}_erf_one", 1.0, compute_dtype)
+    minus_one_name = _add_scalar_const(ctx, f"{output_name}_erf_minus_one", -1.0, compute_dtype)
+    p_name = _add_scalar_const(ctx, f"{output_name}_erf_p", 0.3275911, compute_dtype)
+    a1_name = _add_scalar_const(ctx, f"{output_name}_erf_a1", 0.254829592, compute_dtype)
+    a2_name = _add_scalar_const(ctx, f"{output_name}_erf_a2", -0.284496736, compute_dtype)
+    a3_name = _add_scalar_const(ctx, f"{output_name}_erf_a3", 1.421413741, compute_dtype)
+    a4_name = _add_scalar_const(ctx, f"{output_name}_erf_a4", -1.453152027, compute_dtype)
+    a5_name = _add_scalar_const(ctx, f"{output_name}_erf_a5", 1.061405429, compute_dtype)
+
+    abs_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_abs",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    sign_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_sign",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    px_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_px",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    one_plus_px_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_one_plus_px",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    t_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_t",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    abs_sq_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_abs_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    neg_abs_sq_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_neg_abs_sq",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_exp",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s1_mul_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s1_mul",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s1_add_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s1_add",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s2_mul_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s2_mul",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s2_add_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s2_add",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s3_mul_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s3_mul",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s3_add_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s3_add",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s4_mul_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s4_mul",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    s4_add_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_s4_add",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    poly_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_poly",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    poly_exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_poly_exp",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    one_minus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_erf_one_minus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ABS",
+            inputs=[compute_input_name],
+            outputs=[abs_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SIGN",
+            inputs=[compute_input_name],
+            outputs=[sign_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[abs_name, p_name],
+            outputs=[px_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[one_name, px_name],
+            outputs=[one_plus_px_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[one_name, one_plus_px_name],
+            outputs=[t_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[abs_name, abs_name],
+            outputs=[abs_sq_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[abs_sq_name, minus_one_name],
+            outputs=[neg_abs_sq_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="EXP",
+            inputs=[neg_abs_sq_name],
+            outputs=[exp_name],
+        )
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[a5_name, t_name],
+            outputs=[s1_mul_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[s1_mul_name, a4_name],
+            outputs=[s1_add_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[s1_add_name, t_name],
+            outputs=[s2_mul_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[s2_mul_name, a3_name],
+            outputs=[s2_add_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[s2_add_name, t_name],
+            outputs=[s3_mul_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[s3_mul_name, a2_name],
+            outputs=[s3_add_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[s3_add_name, t_name],
+            outputs=[s4_mul_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[s4_mul_name, a1_name],
+            outputs=[s4_add_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[s4_add_name, t_name],
+            outputs=[poly_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[poly_name, exp_name],
+            outputs=[poly_exp_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[one_name, poly_exp_name],
+            outputs=[one_minus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[sign_name, one_minus_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
 def build_where_op(node: Any, ctx: Any) -> None:
     condition_name = node.inputs[0].name
     x_name = node.inputs[1].name

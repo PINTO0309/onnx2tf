@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
-from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+from onnx2tf.tflite_builder.op_builders.shared import _clone_quantization, make_transpose
 
 
 _DTYPE_TO_NP = {
@@ -75,6 +75,13 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             f"op={node.name} batch_dims={batch_dims}"
         )
 
+    output_tensor = ctx.model_ir.tensors[output_name]
+    existing_output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_tensor.shape)]
+    )
+    scalarized_indices_name = indices_name
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     indices_tensor = ctx.model_ir.tensors.get(indices_name, None)
     indices_signature = (
@@ -83,9 +90,26 @@ def build_gather_op(node: Any, ctx: Any) -> None:
         else [int(v) for v in indices_shape]
     )
     indices_const = ctx.get_constant_array(indices_name)
-    if indices_const is not None and np.asarray(indices_const).ndim == 0:
-        indices_shape = []
-        indices_signature = []
+    if indices_const is not None:
+        indices_const_arr = np.asarray(indices_const)
+        scalarize_single_index = indices_const_arr.ndim == 0
+        if not scalarize_single_index and int(indices_const_arr.size) == 1 and input_rank > 1:
+            expected_rank = len(existing_output_signature)
+            scalar_output_rank = int(input_rank) - 1
+            scalarize_single_index = expected_rank == scalar_output_rank
+        if scalarize_single_index:
+            scalar_value = np.asarray(indices_const_arr.reshape(-1)[0], dtype=indices_const_arr.dtype)
+            scalarized_indices_name = ctx.add_const_tensor(
+                f"{output_name}_gather_indices_scalar",
+                scalar_value,
+            )
+            scalar_tensor = ctx.model_ir.tensors.get(scalarized_indices_name, None)
+            if scalar_tensor is not None:
+                scalar_tensor.shape = []
+                scalar_tensor.shape_signature = []
+            indices_shape = []
+            indices_signature = []
+
     inferred_output_shape = (
         [int(v) for v in input_shape[:int(axis)]]
         + [int(v) for v in indices_shape]
@@ -98,7 +122,6 @@ def build_gather_op(node: Any, ctx: Any) -> None:
     )
     if len(inferred_output_signature) == 0:
         inferred_output_signature = [1]
-    output_tensor = ctx.model_ir.tensors[output_name]
     existing_output_signature = (
         [int(v) for v in list(output_tensor.shape_signature)]
         if output_tensor.shape_signature is not None
@@ -119,7 +142,7 @@ def build_gather_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="GATHER",
-            inputs=[params_name, indices_name],
+            inputs=[params_name, scalarized_indices_name],
             outputs=[output_name],
             options={
                 "axis": int(axis),
@@ -170,6 +193,166 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
             op_type="GATHER_ND",
             inputs=[params_name, indices_for_gather_nd],
             outputs=[output_name],
+        )
+    )
+
+
+def build_scatter_nd_op(node: Any, ctx: Any) -> None:
+    data_name = node.inputs[0].name
+    indices_name = node.inputs[1].name
+    updates_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(data_name)
+    ctx.ensure_tensor(indices_name)
+    ctx.ensure_tensor(updates_name)
+    ctx.ensure_tensor(output_name)
+
+    data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
+    output_tensor = ctx.model_ir.tensors[output_name]
+    data_tensor = ctx.model_ir.tensors[data_name]
+    output_tensor.dtype = data_dtype
+    output_tensor.quantization = _clone_quantization(data_tensor.quantization)
+    _propagate_shape(ctx, data_name, output_name)
+
+    indices_for_scatter = indices_name
+    indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
+    if indices_dtype != "INT32":
+        indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
+        indices_for_scatter = ctx.add_intermediate_tensor(
+            f"{output_name}_scatter_nd_indices_i32",
+            dtype="INT32",
+            shape=indices_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[indices_name],
+                outputs=[indices_for_scatter],
+                options={
+                    "inDataType": indices_dtype,
+                    "outDataType": "INT32",
+                },
+            )
+        )
+
+    data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
+    rank = int(len(data_shape))
+    shape_for_scatter = ""
+    if rank > 0 and all(int(dim) > 0 for dim in data_shape):
+        shape_for_scatter = ctx.add_const_tensor(
+            f"{output_name}_scatter_nd_shape",
+            np.asarray(data_shape, dtype=np.int32),
+        )
+    else:
+        shape_for_scatter = ctx.add_intermediate_tensor(
+            f"{output_name}_scatter_nd_shape",
+            dtype="INT32",
+            shape=[rank] if rank > 0 else [1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[data_name],
+                outputs=[shape_for_scatter],
+                options={"outType": "INT32"},
+            )
+        )
+
+    updates_shape = [int(v) for v in ctx.get_tensor_shape(updates_name)]
+    ones_scalar = ctx.add_const_tensor(
+        f"{output_name}_scatter_nd_one",
+        np.asarray(1, dtype=_DTYPE_TO_NP[data_dtype]),
+    )
+    updates_ones = ""
+    if len(updates_shape) > 0 and all(int(dim) > 0 for dim in updates_shape):
+        updates_ones = ctx.add_const_tensor(
+            f"{output_name}_scatter_nd_updates_ones",
+            np.ones(updates_shape, dtype=_DTYPE_TO_NP[data_dtype]),
+        )
+    else:
+        updates_shape_name = ctx.add_intermediate_tensor(
+            f"{output_name}_scatter_nd_updates_shape",
+            dtype="INT32",
+            shape=[len(updates_shape)] if len(updates_shape) > 0 else [1],
+        )
+        updates_ones = ctx.add_intermediate_tensor(
+            f"{output_name}_scatter_nd_updates_ones",
+            dtype=data_dtype,
+            shape=updates_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[updates_name],
+                outputs=[updates_shape_name],
+                options={"outType": "INT32"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FILL",
+                inputs=[updates_shape_name, ones_scalar],
+                outputs=[updates_ones],
+            )
+        )
+
+    mask_scatter = ctx.add_intermediate_tensor(
+        f"{output_name}_scatter_nd_mask",
+        dtype=data_dtype,
+        shape=data_shape,
+    )
+    inverse_mask = ctx.add_intermediate_tensor(
+        f"{output_name}_scatter_nd_inverse_mask",
+        dtype=data_dtype,
+        shape=data_shape,
+    )
+    retained = ctx.add_intermediate_tensor(
+        f"{output_name}_scatter_nd_retained",
+        dtype=data_dtype,
+        shape=data_shape,
+    )
+    scattered_updates = ctx.add_intermediate_tensor(
+        f"{output_name}_scatter_nd_updates",
+        dtype=data_dtype,
+        shape=data_shape,
+    )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=[indices_for_scatter, updates_ones, shape_for_scatter],
+            outputs=[mask_scatter],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[ones_scalar, mask_scatter],
+            outputs=[inverse_mask],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[data_name, inverse_mask],
+            outputs=[retained],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=[indices_for_scatter, updates_name, shape_for_scatter],
+            outputs=[scattered_updates],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[retained, scattered_updates],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
         )
     )
 
@@ -890,23 +1073,15 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             "in flatbuffer_direct builtin lowering. "
             f"op={node.name} max_output={max_output}"
         )
-    max_output_size_vec_name = ctx.add_const_tensor(
-        f"{output_name}_nms_max_output_size_vec",
-        np.asarray([max_output], dtype=np.int32),
-    )
-    max_output_size_name = ctx.add_intermediate_tensor(
+    # Prefer scalar const for NMS scalar inputs to avoid redundant SQUEEZE(const_vec).
+    max_output_size_name = ctx.add_const_tensor(
         f"{output_name}_nms_max_output_size",
-        dtype="INT32",
-        shape=[1],
+        np.asarray(max_output, dtype=np.int32),
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SQUEEZE",
-            inputs=[max_output_size_vec_name],
-            outputs=[max_output_size_name],
-            options={"squeezeDims": [0]},
-        )
-    )
+    max_output_tensor = ctx.model_ir.tensors.get(max_output_size_name, None)
+    if max_output_tensor is not None:
+        max_output_tensor.shape = []
+        max_output_tensor.shape_signature = []
 
     iou_threshold_value = np.asarray([0.0], dtype=np.float32)
     if len(node.inputs) >= 4:
@@ -915,23 +1090,14 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             iou_threshold_flat = np.asarray(iou_threshold_arr, dtype=np.float32).reshape(-1)
             if iou_threshold_flat.size > 0:
                 iou_threshold_value = np.asarray([float(iou_threshold_flat[0])], dtype=np.float32)
-    iou_threshold_vec_name = ctx.add_const_tensor(
-        f"{output_name}_nms_iou_threshold_vec",
-        iou_threshold_value,
-    )
-    iou_threshold_name = ctx.add_intermediate_tensor(
+    iou_threshold_name = ctx.add_const_tensor(
         f"{output_name}_nms_iou_threshold",
-        dtype="FLOAT32",
-        shape=[1],
+        np.asarray(float(iou_threshold_value.reshape(-1)[0]), dtype=np.float32),
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SQUEEZE",
-            inputs=[iou_threshold_vec_name],
-            outputs=[iou_threshold_name],
-            options={"squeezeDims": [0]},
-        )
-    )
+    iou_threshold_tensor = ctx.model_ir.tensors.get(iou_threshold_name, None)
+    if iou_threshold_tensor is not None:
+        iou_threshold_tensor.shape = []
+        iou_threshold_tensor.shape_signature = []
 
     score_threshold_value = np.asarray([-np.inf], dtype=np.float32)
     if len(node.inputs) >= 5:
@@ -940,23 +1106,14 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             score_threshold_flat = np.asarray(score_threshold_arr, dtype=np.float32).reshape(-1)
             if score_threshold_flat.size > 0:
                 score_threshold_value = np.asarray([float(score_threshold_flat[0])], dtype=np.float32)
-    score_threshold_vec_name = ctx.add_const_tensor(
-        f"{output_name}_nms_score_threshold_vec",
-        score_threshold_value,
-    )
-    score_threshold_name = ctx.add_intermediate_tensor(
+    score_threshold_name = ctx.add_const_tensor(
         f"{output_name}_nms_score_threshold",
-        dtype="FLOAT32",
-        shape=[1],
+        np.asarray(float(score_threshold_value.reshape(-1)[0]), dtype=np.float32),
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SQUEEZE",
-            inputs=[score_threshold_vec_name],
-            outputs=[score_threshold_name],
-            options={"squeezeDims": [0]},
-        )
-    )
+    score_threshold_tensor = ctx.model_ir.tensors.get(score_threshold_name, None)
+    if score_threshold_tensor is not None:
+        score_threshold_tensor.shape = []
+        score_threshold_tensor.shape_signature = []
 
     nms_selected_indices_name = ctx.add_intermediate_tensor(
         f"{output_name}_nms_selected_indices",

@@ -172,6 +172,35 @@ def _make_reduce_axes_nonconst_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_global_average_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 8, 5, 7])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 1, 1])
+    node = helper.make_node("GlobalAveragePool", ["x"], ["y"], name="GlobalAveragePoolNode")
+    graph = helper.make_graph([node], "global_average_pool_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_grouped_conv_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 5, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 6, 5, 5])
+    w = numpy_helper.from_array(
+        np.ones((6, 2, 3, 3), dtype=np.float32),
+        name="W",
+    )
+    b = numpy_helper.from_array(np.zeros((6,), dtype=np.float32), name="B")
+    node = helper.make_node(
+        "Conv",
+        ["x", "W", "B"],
+        ["y"],
+        name="GroupedConvNode",
+        group=2,
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+    )
+    graph = helper.make_graph([node], "grouped_conv_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_einsum_nonconst_rhs_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
@@ -184,6 +213,21 @@ def _make_einsum_nonconst_rhs_model() -> onnx.ModelProto:
         equation="ij,jk->ik",
     )
     graph = helper.make_graph([node], "einsum_nonconst_rhs_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_custom_candidate_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumCustomNode",
+        equation="ij,jk->kj",
+    )
+    graph = helper.make_graph([node], "einsum_custom_candidate_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -210,6 +254,47 @@ def _make_einsum_const_rhs_model() -> onnx.ModelProto:
     )
     graph = helper.make_graph([node], "einsum_const_rhs_graph", [x], [z], initializer=[w])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_erf_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node("Erf", ["x"], ["y"], name="ErfNode")
+    graph = helper.make_graph([node], "erf_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_tile_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 6])
+    repeats = numpy_helper.from_array(np.asarray([2, 2], dtype=np.int64), name="repeats")
+    node = helper.make_node("Tile", ["x", "repeats"], ["y"], name="TileNode")
+    graph = helper.make_graph([node], "tile_graph", [x], [y], initializer=[repeats])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_scatter_nd_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 3])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2])
+    output = helper.make_tensor_value_info("output", TensorProto.FLOAT, [2, 3])
+    indices = numpy_helper.from_array(
+        np.asarray([[0, 1], [1, 2]], dtype=np.int64),
+        name="indices",
+    )
+    node = helper.make_node(
+        "ScatterND",
+        ["data", "indices", "updates"],
+        ["output"],
+        name="ScatterNDNode",
+    )
+    graph = helper.make_graph(
+        [node],
+        "scatter_nd_graph",
+        [data, updates],
+        [output],
+        initializer=[indices],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
 def test_op_coverage_report_keys_compatibility_snapshot() -> None:
@@ -355,14 +440,14 @@ def test_op_coverage_axis_rank_inference_avoids_custom_fallback_on_unknown_shape
 
 def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
     default_report = build_op_coverage_report(
-        onnx_graph=_make_einsum_nonconst_rhs_model(),
+        onnx_graph=_make_einsum_custom_candidate_model(),
         output_file_name="einsum_custom_disabled_snapshot",
     )
     assert default_report["unsupported_reason_counts"] == {"custom_op_candidate_disabled": 1}
     assert default_report["unsupported_nodes"][0]["reason_code"] == "custom_op_candidate_disabled"
 
     allowlist_block_report = build_op_coverage_report(
-        onnx_graph=_make_einsum_nonconst_rhs_model(),
+        onnx_graph=_make_einsum_custom_candidate_model(),
         output_file_name="einsum_custom_allowlist_block_snapshot",
         allow_custom_ops=True,
         custom_op_allowlist=["TopK"],
@@ -371,7 +456,7 @@ def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
     assert allowlist_block_report["unsupported_nodes"][0]["reason_code"] == "custom_op_not_in_allowlist"
 
     allowlist_custom_report = build_op_coverage_report(
-        onnx_graph=_make_einsum_nonconst_rhs_model(),
+        onnx_graph=_make_einsum_custom_candidate_model(),
         output_file_name="einsum_custom_allowed_snapshot",
         allow_custom_ops=True,
         custom_op_allowlist=["Einsum"],
@@ -381,7 +466,7 @@ def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
     assert allowlist_custom_report["graph_custom_ops"] == ["Einsum"]
 
     builtin_report = build_op_coverage_report(
-        onnx_graph=_make_einsum_const_rhs_model(),
+        onnx_graph=_make_einsum_nonconst_rhs_model(),
         output_file_name="einsum_builtin_snapshot",
         allow_custom_ops=True,
         custom_op_allowlist=["Einsum"],
@@ -393,3 +478,56 @@ def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
         node["onnx_op"] == "Einsum" and node.get("dispatch_mode") == "builtin"
         for node in builtin_report["graph_node_reports"]
     )
+
+
+def test_op_coverage_global_average_pool_and_grouped_conv_builtin_dispatch() -> None:
+    global_avg_report = build_op_coverage_report(
+        onnx_graph=_make_global_average_pool_model(),
+        output_file_name="global_average_pool_builtin_snapshot",
+    )
+    assert global_avg_report["unsupported_reason_counts"] == {}
+    assert global_avg_report["graph_summary"]["unsupported_nodes"] == 0
+    assert global_avg_report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert global_avg_report["graph_custom_ops"] == []
+    assert global_avg_report["graph_node_reports"][0]["onnx_op"] == "GlobalAveragePool"
+    assert global_avg_report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+    grouped_conv_default_report = build_op_coverage_report(
+        onnx_graph=_make_grouped_conv_model(),
+        output_file_name="grouped_conv_default_snapshot",
+    )
+    assert grouped_conv_default_report["unsupported_reason_counts"] == {}
+    assert grouped_conv_default_report["graph_summary"]["unsupported_nodes"] == 0
+
+    grouped_conv_report = build_op_coverage_report(
+        onnx_graph=_make_grouped_conv_model(),
+        output_file_name="grouped_conv_builtin_snapshot",
+        disable_group_convolution=True,
+    )
+    assert grouped_conv_report["unsupported_reason_counts"] == {}
+    assert grouped_conv_report["graph_summary"]["unsupported_nodes"] == 0
+    assert grouped_conv_report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert grouped_conv_report["graph_custom_ops"] == []
+    assert grouped_conv_report["graph_node_reports"][0]["onnx_op"] == "Conv"
+    assert grouped_conv_report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_erf_tile_scatternd_builtin_dispatch() -> None:
+    cases = [
+        (_make_erf_model(), "Erf"),
+        (_make_tile_model(), "Tile"),
+        (_make_scatter_nd_model(), "ScatterND"),
+    ]
+    for model, op_name in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name=f"{op_name.lower()}_builtin_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+            for node in report["graph_node_reports"]
+        )

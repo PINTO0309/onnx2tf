@@ -3331,41 +3331,81 @@ def convert(
                         if flatbuffer_direct_allow_custom_ops
                         else [False, True]
                     ):
-                        try:
-                            direct_outputs = export_tflite_model_flatbuffer_direct(
-                                onnx_graph=onnx_graph,
-                                output_folder_path=output_folder_path,
-                                output_file_name=output_file_name,
-                                output_weights=output_weights,
-                                quant_type=quant_type,
-                                input_quant_dtype=input_quant_dtype,
-                                output_quant_dtype=output_quant_dtype,
-                                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                                output_integer_quantized_tflite=output_integer_quantized_tflite,
-                                auto_split_tflite_by_size=auto_split_tflite_by_size,
-                                report_op_coverage=report_op_coverage,
-                                flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
-                                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
-                                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
-                                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
-                                output_nms_with_argmax=output_nms_with_argmax,
-                                tflite_split_max_bytes=tflite_split_max_bytes,
-                                tflite_split_target_bytes=tflite_split_target_bytes,
-                            )
-                            if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                                warn(
-                                    Color.YELLOW(
-                                        'Retrying flatbuffer_direct with custom-op lowering enabled '
-                                        'after TF conversion failure.'
+                        direct_output_nms_with_argmax = bool(output_nms_with_argmax)
+                        retried_nms_with_argmax = False
+                        while True:
+                            try:
+                                direct_outputs = export_tflite_model_flatbuffer_direct(
+                                    onnx_graph=onnx_graph,
+                                    output_folder_path=output_folder_path,
+                                    output_file_name=output_file_name,
+                                    output_weights=output_weights,
+                                    quant_type=quant_type,
+                                    input_quant_dtype=input_quant_dtype,
+                                    output_quant_dtype=output_quant_dtype,
+                                    output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                                    output_integer_quantized_tflite=output_integer_quantized_tflite,
+                                    auto_split_tflite_by_size=auto_split_tflite_by_size,
+                                    report_op_coverage=report_op_coverage,
+                                    flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
+                                    flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                                    keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                                    keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                                    keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                                    disable_group_convolution=disable_group_convolution,
+                                    output_nms_with_argmax=direct_output_nms_with_argmax,
+                                    tflite_split_max_bytes=tflite_split_max_bytes,
+                                    tflite_split_target_bytes=tflite_split_target_bytes,
+                                )
+                                if direct_output_nms_with_argmax and not output_nms_with_argmax:
+                                    warn(
+                                        Color.YELLOW(
+                                            'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
+                                            'for builtin NonMaxSuppression lowering.'
+                                        )
+                                    )
+                                if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
+                                    warn(
+                                        Color.YELLOW(
+                                            'Retrying flatbuffer_direct with custom-op lowering enabled '
+                                            'after TF conversion failure.'
+                                        )
+                                    )
+                                direct_error = None
+                                break
+                            except Exception as retry_ex:
+                                retry_ex_str = str(retry_ex)
+                                retry_nms_argmax = (
+                                    'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
+                                    in retry_ex_str
+                                    or (
+                                        'reason_code=custom_op_candidate_disabled' in retry_ex_str
+                                        and 'op=NonMaxSuppression' in retry_ex_str
                                     )
                                 )
-                            direct_error = None
+                                if (
+                                    not retried_nms_with_argmax
+                                    and not output_nms_with_argmax
+                                    and not direct_output_nms_with_argmax
+                                    and retry_nms_argmax
+                                ):
+                                    retried_nms_with_argmax = True
+                                    direct_output_nms_with_argmax = True
+                                    continue
+                                if (
+                                    not flatbuffer_direct_allow_custom_ops
+                                    and not disable_group_convolution
+                                    and not direct_allow_custom_ops
+                                    and 'reason_code=unsupported_grouped_convolution' in retry_ex_str
+                                ):
+                                    direct_error = retry_ex
+                                    direct_outputs = None
+                                    break
+                                direct_error = retry_ex
+                                direct_outputs = None
+                                break
+                        if direct_error is None:
                             break
-                        except Exception as retry_ex:
-                            direct_error = retry_ex
-                            direct_outputs = None
-                            continue
                     if direct_error is not None:
                         raise direct_error
                     if direct_outputs is not None:
@@ -3706,40 +3746,80 @@ def convert(
                     if flatbuffer_direct_allow_custom_ops
                     else [False, True]
                 ):
-                    try:
-                        direct_outputs = export_tflite_model_flatbuffer_direct(
-                            onnx_graph=onnx_graph,
-                            output_folder_path=output_folder_path,
-                            output_file_name=output_file_name,
-                            output_weights=output_weights,
-                            quant_type=quant_type,
-                            input_quant_dtype=input_quant_dtype,
-                            output_quant_dtype=output_quant_dtype,
-                            output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                            output_integer_quantized_tflite=output_integer_quantized_tflite,
-                            auto_split_tflite_by_size=auto_split_tflite_by_size,
-                            report_op_coverage=report_op_coverage,
-                            flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
-                            flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                            keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
-                            keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
-                            keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
-                            output_nms_with_argmax=output_nms_with_argmax,
-                            tflite_split_max_bytes=tflite_split_max_bytes,
-                            tflite_split_target_bytes=tflite_split_target_bytes,
-                        )
-                        if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                            warn(
-                                Color.YELLOW(
-                                    'Retrying flatbuffer_direct with custom-op lowering enabled.'
+                    direct_output_nms_with_argmax = bool(output_nms_with_argmax)
+                    retried_nms_with_argmax = False
+                    while True:
+                        try:
+                            direct_outputs = export_tflite_model_flatbuffer_direct(
+                                onnx_graph=onnx_graph,
+                                output_folder_path=output_folder_path,
+                                output_file_name=output_file_name,
+                                output_weights=output_weights,
+                                quant_type=quant_type,
+                                input_quant_dtype=input_quant_dtype,
+                                output_quant_dtype=output_quant_dtype,
+                                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                                output_integer_quantized_tflite=output_integer_quantized_tflite,
+                                auto_split_tflite_by_size=auto_split_tflite_by_size,
+                                report_op_coverage=report_op_coverage,
+                                flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
+                                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                                disable_group_convolution=disable_group_convolution,
+                                output_nms_with_argmax=direct_output_nms_with_argmax,
+                                tflite_split_max_bytes=tflite_split_max_bytes,
+                                tflite_split_target_bytes=tflite_split_target_bytes,
+                            )
+                            if direct_output_nms_with_argmax and not output_nms_with_argmax:
+                                warn(
+                                    Color.YELLOW(
+                                        'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
+                                        'for builtin NonMaxSuppression lowering.'
+                                    )
+                                )
+                            if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
+                                warn(
+                                    Color.YELLOW(
+                                        'Retrying flatbuffer_direct with custom-op lowering enabled.'
+                                    )
+                                )
+                            direct_error = None
+                            break
+                        except Exception as retry_ex:
+                            retry_ex_str = str(retry_ex)
+                            retry_nms_argmax = (
+                                'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
+                                in retry_ex_str
+                                or (
+                                    'reason_code=custom_op_candidate_disabled' in retry_ex_str
+                                    and 'op=NonMaxSuppression' in retry_ex_str
                                 )
                             )
-                        direct_error = None
+                            if (
+                                not retried_nms_with_argmax
+                                and not output_nms_with_argmax
+                                and not direct_output_nms_with_argmax
+                                and retry_nms_argmax
+                            ):
+                                retried_nms_with_argmax = True
+                                direct_output_nms_with_argmax = True
+                                continue
+                            if (
+                                not flatbuffer_direct_allow_custom_ops
+                                and not disable_group_convolution
+                                and not direct_allow_custom_ops
+                                and 'reason_code=unsupported_grouped_convolution' in retry_ex_str
+                            ):
+                                direct_error = retry_ex
+                                direct_outputs = None
+                                break
+                            direct_error = retry_ex
+                            direct_outputs = None
+                            break
+                    if direct_error is None:
                         break
-                    except Exception as retry_ex:
-                        direct_error = retry_ex
-                        direct_outputs = None
-                        continue
                 if direct_error is not None:
                     raise direct_error
             except Exception as ex:
