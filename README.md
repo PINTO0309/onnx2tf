@@ -570,7 +570,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.18
+  ghcr.io/pinto0309/onnx2tf:2.0.19
 
   or
 
@@ -579,7 +579,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.18
+  docker.io/pinto0309/onnx2tf:2.0.19
 
   or
 
@@ -589,7 +589,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.18 \
+  docker.io/pinto0309/onnx2tf:2.0.19 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

@@ -79,6 +79,12 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
     b_name = _input_name(original_inputs, 3)
     initial_h_name = _input_name(original_inputs, 5)
     initial_c_name = _input_name(original_inputs, 6)
+    direction = str(node.attrs.get("direction", "forward")).lower()
+    if direction not in {"forward", "bidirectional"}:
+        raise NotImplementedError(
+            f"LSTM direction must be forward or bidirectional for flatbuffer_direct. op={node.name} direction={direction}"
+        )
+    expected_num_directions = 2 if direction == "bidirectional" else 1
 
     y_name = node.outputs[0].name
     y_dtype = str(ctx.get_tensor_dtype(y_name))
@@ -97,9 +103,11 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"LSTM W/R must be rank-3. op={node.name} W={list(W.shape)} R={list(R.shape)}"
         )
-    if int(W.shape[0]) != 2 or int(R.shape[0]) != 2:
+    if int(W.shape[0]) != expected_num_directions or int(R.shape[0]) != expected_num_directions:
         raise NotImplementedError(
-            f"LSTM bidirectional lowering expects num_directions=2. op={node.name}"
+            "LSTM W/R num_directions mismatch for flatbuffer_direct. "
+            f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+            f"W_shape={list(W.shape)} R_shape={list(R.shape)}"
         )
 
     hidden_size_attr = int(node.attrs.get("hidden_size", 0))
@@ -119,11 +127,16 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             )
         B = np.asarray(b_value, dtype=np.float32)
     else:
-        B = np.zeros((2, 8 * hidden_size), dtype=np.float32)
-    if B.ndim != 2 or int(B.shape[0]) != 2 or int(B.shape[1]) != 8 * hidden_size:
+        B = np.zeros((expected_num_directions, 8 * hidden_size), dtype=np.float32)
+    if (
+        B.ndim != 2
+        or int(B.shape[0]) != expected_num_directions
+        or int(B.shape[1]) != 8 * hidden_size
+    ):
         raise NotImplementedError(
-            "LSTM B must have shape [2, 8*hidden_size]. "
-            f"op={node.name} hidden_size={hidden_size} B_shape={list(B.shape)}"
+            "LSTM B must have shape [num_directions, 8*hidden_size]. "
+            f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+            f"hidden_size={hidden_size} B_shape={list(B.shape)}"
         )
 
     h0_value = ctx.get_constant_array(initial_h_name)
@@ -138,33 +151,23 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"LSTM initial_h/initial_c must be rank-3. op={node.name}"
         )
-    if int(H0.shape[0]) != 2 or int(C0.shape[0]) != 2:
+    if int(H0.shape[0]) != expected_num_directions or int(C0.shape[0]) != expected_num_directions:
         raise NotImplementedError(
-            f"LSTM initial_h/initial_c first dim must be 2. op={node.name}"
+            "LSTM initial_h/initial_c first dim must match num_directions. "
+            f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+            f"H0_shape={list(H0.shape)} C0_shape={list(C0.shape)}"
         )
 
     fw_w_i, fw_w_f, fw_w_c, fw_w_o = _split_onnx_lstm_gates(
         np.asarray(W[0], dtype=np.float32),
         hidden_size,
     )
-    bw_w_i, bw_w_f, bw_w_c, bw_w_o = _split_onnx_lstm_gates(
-        np.asarray(W[1], dtype=np.float32),
-        hidden_size,
-    )
     fw_r_i, fw_r_f, fw_r_c, fw_r_o = _split_onnx_lstm_gates(
         np.asarray(R[0], dtype=np.float32),
         hidden_size,
     )
-    bw_r_i, bw_r_f, bw_r_c, bw_r_o = _split_onnx_lstm_gates(
-        np.asarray(R[1], dtype=np.float32),
-        hidden_size,
-    )
     fw_b_i, fw_b_f, fw_b_c, fw_b_o = _split_onnx_lstm_bias_gates(
         np.asarray(B[0], dtype=np.float32),
-        hidden_size,
-    )
-    bw_b_i, bw_b_f, bw_b_c, bw_b_o = _split_onnx_lstm_bias_gates(
-        np.asarray(B[1], dtype=np.float32),
         hidden_size,
     )
 
@@ -184,11 +187,6 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         state_tensor.is_variable = True
         state_tensor.data = None
         return state_name
-
-    fw_h0_name = _add_zero_variable_state("fw_h0_state", np.asarray(H0[0], dtype=np.float32))
-    fw_c0_name = _add_zero_variable_state("fw_c0_state", np.asarray(C0[0], dtype=np.float32))
-    bw_h0_name = _add_zero_variable_state("bw_h0_state", np.asarray(H0[1], dtype=np.float32))
-    bw_c0_name = _add_zero_variable_state("bw_c0_state", np.asarray(C0[1], dtype=np.float32))
 
     input_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
     x_tensor = ctx.model_ir.tensors.get(x_name, None)
@@ -213,13 +211,115 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
     )
     y_tensor = ctx.model_ir.tensors.get(y_name, None)
     if y_tensor is not None:
-        y_tensor.shape = [int(seq_dim), 2, int(batch_dim), int(hidden_size)]
+        y_tensor.shape = [int(seq_dim), int(expected_num_directions), int(batch_dim), int(hidden_size)]
         y_tensor.shape_signature = [
             int(seq_signature_dim) if seq_signature_dim is not None else int(seq_dim),
-            2,
+            int(expected_num_directions),
             int(batch_signature_dim) if batch_signature_dim is not None else int(batch_dim),
             int(hidden_size),
         ]
+    use_reshape_expand = (
+        seq_signature_dim is not None
+        and batch_signature_dim is not None
+        and int(seq_signature_dim) > 0
+        and int(batch_signature_dim) > 0
+    )
+    if expected_num_directions == 1:
+        fw_h0_name = _add_zero_variable_state("fw_h0_state", np.asarray(H0[0], dtype=np.float32))
+        fw_c0_name = _add_zero_variable_state("fw_c0_state", np.asarray(C0[0], dtype=np.float32))
+        uni_output_name = ctx.add_intermediate_tensor(
+            f"{y_name}_lstm_uni",
+            dtype=y_dtype,
+            shape=[int(seq_dim), int(batch_dim), int(hidden_size)],
+        )
+        uni_inputs = [
+            x_name,
+            _add_const("fw_w_i", fw_w_i),
+            _add_const("fw_w_f", fw_w_f),
+            _add_const("fw_w_c", fw_w_c),
+            _add_const("fw_w_o", fw_w_o),
+            _add_const("fw_r_i", fw_r_i),
+            _add_const("fw_r_f", fw_r_f),
+            _add_const("fw_r_c", fw_r_c),
+            _add_const("fw_r_o", fw_r_o),
+            "",
+            "",
+            "",
+            _add_const("fw_b_i", fw_b_i),
+            _add_const("fw_b_f", fw_b_f),
+            _add_const("fw_b_c", fw_b_c),
+            _add_const("fw_b_o", fw_b_o),
+            "",
+            "",
+            fw_h0_name,
+            fw_c0_name,
+            "",
+            "",
+            "",
+            "",
+        ]
+        if len(uni_inputs) != 24:
+            raise RuntimeError(
+                f"Internal error: UNIDIRECTIONAL_SEQUENCE_LSTM input count must be 24. got={len(uni_inputs)}"
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="UNIDIRECTIONAL_SEQUENCE_LSTM",
+                inputs=uni_inputs,
+                outputs=[uni_output_name],
+                options={
+                    "fusedActivationFunction": "TANH",
+                    "cellClip": float(node.attrs.get("clip", 0.0)),
+                    "projClip": 0.0,
+                    "timeMajor": True,
+                    "asymmetricQuantizeInputs": False,
+                    "diagonalRecurrentTensors": False,
+                },
+            )
+        )
+        if use_reshape_expand:
+            expand_shape = np.asarray(
+                [int(seq_dim), 1, int(batch_dim), int(hidden_size)],
+                dtype=np.int32,
+            )
+            expand_shape_name = _add_const("expand_shape", expand_shape, dtype=np.int32)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[uni_output_name, expand_shape_name],
+                    outputs=[y_name],
+                    options={"newShape": [int(v) for v in list(expand_shape)]},
+                )
+            )
+        else:
+            expand_axis_name = _add_const("expand_axis", np.asarray(1, dtype=np.int32), dtype=np.int32)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="EXPAND_DIMS",
+                    inputs=[uni_output_name, expand_axis_name],
+                    outputs=[y_name],
+                )
+            )
+        return
+
+    bw_w_i, bw_w_f, bw_w_c, bw_w_o = _split_onnx_lstm_gates(
+        np.asarray(W[1], dtype=np.float32),
+        hidden_size,
+    )
+    bw_r_i, bw_r_f, bw_r_c, bw_r_o = _split_onnx_lstm_gates(
+        np.asarray(R[1], dtype=np.float32),
+        hidden_size,
+    )
+    bw_b_i, bw_b_f, bw_b_c, bw_b_o = _split_onnx_lstm_bias_gates(
+        np.asarray(B[1], dtype=np.float32),
+        hidden_size,
+    )
+
+    fw_h0_name = _add_zero_variable_state("fw_h0_state", np.asarray(H0[0], dtype=np.float32))
+    fw_c0_name = _add_zero_variable_state("fw_c0_state", np.asarray(C0[0], dtype=np.float32))
+    bw_h0_name = _add_zero_variable_state("bw_h0_state", np.asarray(H0[1], dtype=np.float32))
+    bw_c0_name = _add_zero_variable_state("bw_c0_state", np.asarray(C0[1], dtype=np.float32))
+
     merged_output_name = ctx.add_intermediate_tensor(
         f"{y_name}_bilstm_merged",
         dtype=y_dtype,
@@ -329,12 +429,6 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    use_reshape_expand = (
-        seq_signature_dim is not None
-        and batch_signature_dim is not None
-        and int(seq_signature_dim) > 0
-        and int(batch_signature_dim) > 0
-    )
     if use_reshape_expand:
         expand_shape = np.asarray(
             [int(seq_dim), 1, int(batch_dim), int(hidden_size)],
@@ -377,6 +471,7 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
                 outputs=[bw_expanded_name],
             )
         )
+
     ctx.add_operator(
         OperatorIR(
             op_type="CONCATENATION",

@@ -185,6 +185,11 @@ def _build_gather_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> 
     return _enum(schema_tflite, "BuiltinOptions", "GatherNdOptions"), options
 
 
+def _build_scatter_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["ScatterNdOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "ScatterNdOptions"), options
+
+
 def _build_non_max_suppression_v4_options(
     schema_tflite: Dict[str, Any],
     _op: OperatorIR,
@@ -333,6 +338,26 @@ def _build_bidirectional_sequence_lstm_options(
     return _enum(schema_tflite, "BuiltinOptions", "BidirectionalSequenceLSTMOptions"), options
 
 
+def _build_unidirectional_sequence_lstm_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["UnidirectionalSequenceLSTMOptionsT"]()
+    fused = str(op.options.get("fusedActivationFunction", "TANH"))
+    options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
+    options.cellClip = float(op.options.get("cellClip", 0.0))
+    options.projClip = float(op.options.get("projClip", 0.0))
+    options.timeMajor = bool(op.options.get("timeMajor", True))
+    options.asymmetricQuantizeInputs = bool(
+        op.options.get("asymmetricQuantizeInputs", False)
+    )
+    if hasattr(options, "diagonalRecurrentTensors"):
+        options.diagonalRecurrentTensors = bool(
+            op.options.get("diagonalRecurrentTensors", False)
+        )
+    return _enum(schema_tflite, "BuiltinOptions", "UnidirectionalSequenceLSTMOptions"), options
+
+
 def _build_sequence_rnn_options(
     schema_tflite: Dict[str, Any],
     op: OperatorIR,
@@ -423,6 +448,8 @@ def _build_builtin_options(
         return _build_cast_options(schema_tflite, op)
     if op.op_type == "GATHER_ND":
         return _build_gather_nd_options(schema_tflite, op)
+    if op.op_type == "SCATTER_ND":
+        return _build_scatter_nd_options(schema_tflite, op)
     if op.op_type == "NON_MAX_SUPPRESSION_V4":
         return _build_non_max_suppression_v4_options(schema_tflite, op)
     if op.op_type == "NON_MAX_SUPPRESSION_V5":
@@ -463,6 +490,8 @@ def _build_builtin_options(
         return _build_batch_matmul_options(schema_tflite, op)
     if op.op_type == "BIDIRECTIONAL_SEQUENCE_LSTM":
         return _build_bidirectional_sequence_lstm_options(schema_tflite, op)
+    if op.op_type == "UNIDIRECTIONAL_SEQUENCE_LSTM":
+        return _build_unidirectional_sequence_lstm_options(schema_tflite, op)
     if op.op_type == "UNIDIRECTIONAL_SEQUENCE_RNN":
         return _build_sequence_rnn_options(schema_tflite, op)
     if op.op_type == "STRIDED_SLICE":

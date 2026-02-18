@@ -362,115 +362,6 @@ def _rewrite_pow(
     return None
 
 
-def _rewrite_gelu(
-    *,
-    node: onnx.NodeProto,
-    used_names: set[str],
-) -> Optional[Tuple[List[onnx.NodeProto], List[onnx.TensorProto]]]:
-    if str(node.op_type) not in {"Gelu", "GeLU"} or len(node.input) < 1 or len(node.output) < 1:
-        return None
-    approximate = _node_attr_str(node, "approximate", "none").lower()
-    if approximate not in {"none", "", "tanh"}:
-        return None
-    x_name = str(node.input[0])
-    y_name = str(node.output[0])
-
-    c_half = _make_const_initializer(
-        used_names=used_names,
-        name_base=f"{node.name or 'Gelu'}_half",
-        value=np.asarray(0.5, dtype=np.float32),
-    )
-    c_one = _make_const_initializer(
-        used_names=used_names,
-        name_base=f"{node.name or 'Gelu'}_one",
-        value=np.asarray(1.0, dtype=np.float32),
-    )
-    c_poly = _make_const_initializer(
-        used_names=used_names,
-        name_base=f"{node.name or 'Gelu'}_poly",
-        value=np.asarray(0.044715, dtype=np.float32),
-    )
-    c_scale = _make_const_initializer(
-        used_names=used_names,
-        name_base=f"{node.name or 'Gelu'}_scale",
-        value=np.asarray(np.sqrt(2.0 / np.pi), dtype=np.float32),
-    )
-    t_x2 = _next_name(used_names, f"{node.name or 'Gelu'}_x2_out")
-    t_x3 = _next_name(used_names, f"{node.name or 'Gelu'}_x3_out")
-    t_poly = _next_name(used_names, f"{node.name or 'Gelu'}_poly_out")
-    t_inner = _next_name(used_names, f"{node.name or 'Gelu'}_inner_out")
-    t_scaled = _next_name(used_names, f"{node.name or 'Gelu'}_scaled_out")
-    t_tanh = _next_name(used_names, f"{node.name or 'Gelu'}_tanh_out")
-    t_add = _next_name(used_names, f"{node.name or 'Gelu'}_add_out")
-    t_mul = _next_name(used_names, f"{node.name or 'Gelu'}_mul_out")
-    rewritten = [
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[x_name, x_name],
-            outputs=[t_x2],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[t_x2, x_name],
-            outputs=[t_x3],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[t_x3, c_poly.name],
-            outputs=[t_poly],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Add",
-            inputs=[x_name, t_poly],
-            outputs=[t_inner],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[t_inner, c_scale.name],
-            outputs=[t_scaled],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Tanh",
-            inputs=[t_scaled],
-            outputs=[t_tanh],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Add",
-            inputs=[t_tanh, c_one.name],
-            outputs=[t_add],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[x_name, t_add],
-            outputs=[t_mul],
-            name_base=node.name or "Gelu",
-        ),
-        _make_node(
-            used_names=used_names,
-            op_type="Mul",
-            inputs=[t_mul, c_half.name],
-            outputs=[y_name],
-            name_base=node.name or "Gelu",
-        ),
-    ]
-    return rewritten, [c_half, c_one, c_poly, c_scale]
-
-
 def apply_pseudo_ops_wave1(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
     graph = onnx_graph.graph
     used_names = _collect_used_names(graph)
@@ -486,7 +377,7 @@ def apply_pseudo_ops_wave1(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
     for node in graph.node:
         node_op = str(node.op_type)
         replacement: Optional[Tuple[List[onnx.NodeProto], List[onnx.TensorProto]]] = None
-        if node_op in {"HardSwish", "LeakyRelu", "Pow", "Gelu", "GeLU", "MatMulInteger"}:
+        if node_op in {"HardSwish", "LeakyRelu", "Pow", "MatMulInteger"}:
             matched_nodes += 1
             matched_by_op[node_op] = int(matched_by_op.get(node_op, 0) + 1)
             if node_op == "HardSwish":
@@ -495,8 +386,6 @@ def apply_pseudo_ops_wave1(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
                 replacement = _rewrite_leaky_relu(node=node, used_names=used_names)
             elif node_op == "Pow":
                 replacement = _rewrite_pow(node=node, used_names=used_names, const_map=const_map)
-            elif node_op in {"Gelu", "GeLU"}:
-                replacement = _rewrite_gelu(node=node, used_names=used_names)
             else:
                 replacement = None
 

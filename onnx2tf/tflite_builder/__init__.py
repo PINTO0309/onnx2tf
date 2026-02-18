@@ -102,6 +102,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         "keep_shape_absolutely_input_names",
         None,
     )
+    disable_group_convolution = bool(
+        kwargs.get("disable_group_convolution", False)
+    )
     flatbuffer_direct_allow_custom_ops = bool(
         kwargs.get("flatbuffer_direct_allow_custom_ops", False)
     )
@@ -179,6 +182,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             conversion_error=conversion_error,
             allow_custom_ops=flatbuffer_direct_allow_custom_ops,
             custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+            disable_group_convolution=disable_group_convolution,
             preprocess_report=preprocess_report,
             output_nms_with_argmax=output_nms_with_argmax,
         )
@@ -208,6 +212,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
             keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
             keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+            disable_group_convolution=disable_group_convolution,
             output_nms_with_argmax=output_nms_with_argmax,
         )
     except Exception as ex:

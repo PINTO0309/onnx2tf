@@ -98,6 +98,35 @@ def _make_gelu_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_interleaved_gelu_chain_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    s = helper.make_tensor_value_info("s", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    side = helper.make_tensor_value_info("side", TensorProto.FLOAT, [1, 3])
+    c_sqrt2 = helper.make_tensor("c_sqrt2", TensorProto.FLOAT, [1], [float(np.sqrt(2.0))])
+    c_one = helper.make_tensor("c_one", TensorProto.FLOAT, [1], [1.0])
+    c_half = helper.make_tensor("c_half", TensorProto.FLOAT, [1], [0.5])
+    nodes = [
+        helper.make_node("Div", ["x", "c_sqrt2"], ["d0"], name="DivNode"),
+        helper.make_node("Identity", ["s"], ["s0"], name="SideIdentity0"),
+        helper.make_node("Erf", ["d0"], ["e0"], name="ErfNode"),
+        helper.make_node("Identity", ["s0"], ["s1"], name="SideIdentity1"),
+        helper.make_node("Add", ["e0", "c_one"], ["a0"], name="AddNode"),
+        helper.make_node("Identity", ["s1"], ["s2"], name="SideIdentity2"),
+        helper.make_node("Mul", ["x", "a0"], ["m0"], name="MulNode0"),
+        helper.make_node("Identity", ["s2"], ["side"], name="SideIdentity3"),
+        helper.make_node("Mul", ["m0", "c_half"], ["y"], name="MulNode1"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "interleaved_gelu_chain_graph",
+        [x, s],
+        [y, side],
+        [c_sqrt2, c_one, c_half],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_space_to_depth_chain_model(*, with_fanout_conflict: bool = False) -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
@@ -209,15 +238,14 @@ def test_preprocess_wave1_rewrites_hardswish() -> None:
     assert ops == ["Add", "Clip", "Div", "Mul"]
 
 
-def test_preprocess_wave1_rewrites_gelu_to_tanh_chain() -> None:
+def test_preprocess_wave1_keeps_gelu_op() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
     model = _make_gelu_model()
     preprocessed, report = run_preprocess_pipeline(onnx_graph=model)
-    assert report["summary"]["changed_rule_count"] >= 1
+    assert report["summary"]["changed_rule_count"] == 0
     ops = [str(node.op_type) for node in preprocessed.graph.node]
-    assert "Gelu" not in ops
-    assert ops == ["Mul", "Mul", "Mul", "Add", "Mul", "Tanh", "Add", "Mul", "Mul"]
+    assert ops == ["Gelu"]
 
 
 def test_preprocess_wave1_rewrites_pow_square() -> None:
@@ -253,6 +281,30 @@ def test_pattern_fusion_wave2_rewrites_gelu_chain() -> None:
         enabled_rule_ids=[PATTERN_FUSION_WAVE2_RULE_ID],
     )
     assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["Gelu"]
+
+
+def test_pattern_fusion_wave2_rewrites_interleaved_gelu_chain() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_interleaved_gelu_chain_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[PATTERN_FUSION_WAVE2_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops.count("Gelu") == 1
+    assert ops.count("Identity") == 4
+
+
+def test_preprocess_default_rules_keep_fused_gelu_chain() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_gelu_chain_model()
+    preprocessed, report = run_preprocess_pipeline(onnx_graph=model)
+    assert report["summary"]["changed_rule_count"] >= 1
     ops = [str(node.op_type) for node in preprocessed.graph.node]
     assert ops == ["Gelu"]
 

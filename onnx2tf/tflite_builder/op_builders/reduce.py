@@ -86,6 +86,33 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_global_average_pool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 3:
+        raise NotImplementedError(
+            f"GlobalAveragePool requires rank>=3. op={node.name} input_shape={input_shape}"
+        )
+
+    spatial_axes = [int(v) for v in range(2, len(input_shape))]
+    axes_const = ctx.add_const_tensor(
+        f"{output_name}_global_avg_axes",
+        np.asarray(spatial_axes, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[input_name, axes_const],
+            outputs=[output_name],
+            options={"keepDims": True},
+        )
+    )
+
+
 def _build_sum_reduce_from_input(
     *,
     node: Any,

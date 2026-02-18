@@ -183,6 +183,12 @@ def _infer_rank4_conv_output_signature(
     return [int(v) for v in signature]
 
 
+def _shape_from_rank4_signature(signature: List[int]) -> Optional[List[int]]:
+    if len(signature) != 4:
+        return None
+    return [int(v) if int(v) > 0 else 1 for v in list(signature)]
+
+
 def _require_const(ctx: Any, tensor_name: str, label: str) -> np.ndarray:
     value = ctx.get_constant_array(tensor_name)
     if value is None:
@@ -682,6 +688,8 @@ def _resolve_qlinear_conv_padding_and_explicit_pads(
     if auto_pad == "SAME_UPPER":
         return "SAME", None
     if auto_pad == "VALID":
+        if any(int(v) != 0 for v in pads):
+            return "VALID", pads
         return "VALID", None
     if auto_pad == "SAME_LOWER":
         raise NotImplementedError(
@@ -892,8 +900,8 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"QLinearConv weight rank must be 4. op={node.name} weight_shape={list(weights.shape)}"
         )
-    input_shape = ctx.get_tensor_shape(x_name)
-    output_shape = ctx.get_tensor_shape(output_name)
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(x_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
     input_tensor = ctx.model_ir.tensors[x_name]
     output_tensor = ctx.model_ir.tensors[output_name]
     input_signature = (
@@ -901,11 +909,45 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         if input_tensor.shape_signature is not None
         else list(input_shape)
     )
-    existing_output_signature = (
+    output_signature = (
         list(output_tensor.shape_signature)
-        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) == 4
+        if output_tensor.shape_signature is not None
+        else list(output_shape)
+    )
+    existing_output_signature = (
+        list(output_signature)
+        if len(list(output_signature)) == 4
         else None
     )
+    rank4_input_from_signature = _shape_from_rank4_signature(input_signature)
+    if len(input_shape) != 4 and rank4_input_from_signature is not None:
+        input_shape = [int(v) for v in list(rank4_input_from_signature)]
+        input_tensor.shape = [int(v) for v in list(input_shape)]
+    rank4_output_from_signature = _shape_from_rank4_signature(output_signature)
+    if len(output_shape) != 4 and rank4_output_from_signature is not None:
+        output_shape = [int(v) for v in list(rank4_output_from_signature)]
+        output_tensor.shape = [int(v) for v in list(output_shape)]
+
+    group = int(node.attrs.get("group", 1))
+    inferred_input_channels = int(weights.shape[1]) * int(group if group > 0 else 1)
+    inferred_output_channels = int(weights.shape[0])
+    if (
+        len(input_shape) == 4
+        and len(input_signature) == 4
+        and int(input_signature[1]) < 0
+        and int(input_shape[1]) <= 1
+    ):
+        input_shape[1] = int(inferred_input_channels)
+        input_tensor.shape = [int(v) for v in list(input_shape)]
+    if (
+        len(output_shape) == 4
+        and len(output_signature) == 4
+        and int(output_signature[1]) < 0
+        and int(output_shape[1]) <= 1
+    ):
+        output_shape[1] = int(inferred_output_channels)
+        output_tensor.shape = [int(v) for v in list(output_shape)]
+
     if len(output_shape) != 4 and len(input_shape) == 4:
         inferred_output_shape = [
             int(input_shape[0]),
@@ -931,7 +973,6 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
     nchw_output = output_shape
     strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
     dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
-    group = int(node.attrs.get("group", 1))
     padding, explicit_pads = _resolve_qlinear_conv_padding_and_explicit_pads(
         node=node,
         input_shape_nchw=nchw_input,
@@ -1716,7 +1757,121 @@ def build_qlinear_global_average_pool_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    # Use MEAN-based lowering unconditionally for stability across delegates/runtimes.
+    def _lower_via_quantized_global_average_pool() -> bool:
+        if len(input_shape) != 4 or len(output_shape) != 4:
+            return False
+        if np.asarray(x_scale).size > 1 or np.asarray(y_scale).size > 1:
+            return False
+
+        if channels_last:
+            x_nhwc = x_name
+            nhwc_input_shape = [int(v) for v in list(input_shape)]
+            nhwc_input_signature = [int(v) for v in list(input_signature)]
+            y_nhwc = output_name
+        else:
+            nhwc_input_shape = [
+                int(input_shape[0]),
+                int(input_shape[2]),
+                int(input_shape[3]),
+                int(input_shape[1]),
+            ]
+            nhwc_input_signature = [
+                int(input_signature[0]),
+                int(input_signature[2]),
+                int(input_signature[3]),
+                int(input_signature[1]),
+            ]
+            x_nhwc = ctx.add_intermediate_tensor(
+                f"{node.name}_input_nhwc",
+                dtype=ctx.get_tensor_dtype(x_name),
+                shape=nhwc_input_shape,
+            )
+            x_nhwc_tensor = ctx.model_ir.tensors[x_nhwc]
+            x_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_input_signature)]
+            _set_tensor_quantization(
+                ctx=ctx,
+                tensor_name=x_nhwc,
+                scale=x_scale,
+                zero_point=x_zero,
+                quantized_dimension=0,
+            )
+            x_nhwc = make_transpose(
+                ctx,
+                x_name,
+                x_nhwc,
+                [0, 2, 3, 1],
+                allow_elide_inverse_chain=True,
+            )
+
+            nhwc_output_shape = [
+                int(output_shape[0]),
+                int(output_shape[2]),
+                int(output_shape[3]),
+                int(output_shape[1]),
+            ]
+            nhwc_output_signature = [
+                int(output_signature[0]),
+                int(output_signature[2]),
+                int(output_signature[3]),
+                int(output_signature[1]),
+            ]
+            y_nhwc = ctx.add_intermediate_tensor(
+                f"{node.name}_output_nhwc",
+                dtype=ctx.get_tensor_dtype(output_name),
+                shape=nhwc_output_shape,
+            )
+            y_nhwc_tensor = ctx.model_ir.tensors[y_nhwc]
+            y_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_output_signature)]
+            _set_tensor_quantization(
+                ctx=ctx,
+                tensor_name=y_nhwc,
+                scale=y_scale,
+                zero_point=y_zero,
+                quantized_dimension=0,
+            )
+
+        filter_h = int(nhwc_input_shape[1]) if len(nhwc_input_shape) > 1 else 0
+        filter_w = int(nhwc_input_shape[2]) if len(nhwc_input_shape) > 2 else 0
+        if filter_h <= 0 or filter_w <= 0:
+            return False
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="AVERAGE_POOL_2D",
+                inputs=[x_nhwc],
+                outputs=[y_nhwc],
+                options={
+                    "padding": "VALID",
+                    "strideH": 1,
+                    "strideW": 1,
+                    "filterHeight": int(filter_h),
+                    "filterWidth": int(filter_w),
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+
+        if not channels_last:
+            make_transpose(
+                ctx,
+                y_nhwc,
+                output_name,
+                [0, 3, 1, 2],
+            )
+            if len(ctx.model_ir.operators) > 0:
+                last_op = ctx.model_ir.operators[-1]
+                if (
+                    str(last_op.op_type) == "TRANSPOSE"
+                    and len(last_op.outputs) == 1
+                    and str(last_op.outputs[0]) == str(output_name)
+                ):
+                    last_opts = dict(last_op.options) if isinstance(last_op.options, dict) else {}
+                    last_opts["__preserve_layout_boundary__"] = True
+                    last_op.options = last_opts
+        return True
+
+    if _lower_via_quantized_global_average_pool():
+        return
     _lower_via_dequantize_mean_quantize()
 
 

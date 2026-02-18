@@ -245,89 +245,111 @@ def _fuse_gelu_erf_chain(
     graph_outputs: set[str],
 ) -> Tuple[List[onnx.NodeProto], int, int]:
     consumer_counts = _build_tensor_consumers(nodes)
-    fused_nodes: List[onnx.NodeProto] = []
+    consumer_indices: Dict[str, List[int]] = {}
+    for node_idx, node in enumerate(nodes):
+        for input_name in node.input:
+            if input_name == "":
+                continue
+            key = str(input_name)
+            if key not in consumer_indices:
+                consumer_indices[key] = []
+            consumer_indices[key].append(int(node_idx))
+
+    def _single_consumer_index(
+        *,
+        tensor_name: str,
+        expected_op_type: str,
+    ) -> Optional[int]:
+        users = consumer_indices.get(str(tensor_name), [])
+        if len(users) != 1:
+            return None
+        user_idx = int(users[0])
+        if str(nodes[user_idx].op_type) != str(expected_op_type):
+            return None
+        return user_idx
+
+    replace_at_index: Dict[int, onnx.NodeProto] = {}
+    remove_indices: set[int] = set()
     matched = 0
     rewritten = 0
-    i = 0
-    while i < len(nodes):
-        if i + 4 >= len(nodes):
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
+    for div_idx, div_node in enumerate(nodes):
+        if div_idx in remove_indices:
+            continue
+        if str(div_node.op_type) != "Div":
+            continue
+        if len(div_node.input) < 2 or len(div_node.output) < 1:
             continue
 
-        n0 = nodes[i]
-        n1 = nodes[i + 1]
-        n2 = nodes[i + 2]
-        n3 = nodes[i + 3]
-        n4 = nodes[i + 4]
-        if [
-            str(n0.op_type),
-            str(n1.op_type),
-            str(n2.op_type),
-            str(n3.op_type),
-            str(n4.op_type),
-        ] != ["Div", "Erf", "Add", "Mul", "Mul"]:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
+        x_name = str(div_node.input[0])
+        div_out = str(div_node.output[0])
+        erf_idx = _single_consumer_index(
+            tensor_name=div_out,
+            expected_op_type="Erf",
+        )
+        if erf_idx is None or erf_idx in remove_indices:
+            continue
+        erf_node = nodes[int(erf_idx)]
+        if len(erf_node.input) < 1 or len(erf_node.output) < 1:
+            continue
+        if str(erf_node.input[0]) != div_out:
             continue
 
-        if (
-            len(n0.input) < 2
-            or len(n1.input) < 1
-            or len(n2.input) < 2
-            or len(n3.input) < 2
-            or len(n4.input) < 2
-            or len(n0.output) < 1
-            or len(n1.output) < 1
-            or len(n2.output) < 1
-            or len(n3.output) < 1
-            or len(n4.output) < 1
-        ):
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
+        erf_out = str(erf_node.output[0])
+        add_idx = _single_consumer_index(
+            tensor_name=erf_out,
+            expected_op_type="Add",
+        )
+        if add_idx is None or add_idx in remove_indices:
+            continue
+        add_node = nodes[int(add_idx)]
+        if len(add_node.input) < 2 or len(add_node.output) < 1:
             continue
 
-        x_name = str(n0.input[0])
-        div_out = str(n0.output[0])
-        if str(n1.input[0]) != div_out:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
-            continue
-        erf_out = str(n1.output[0])
-        add_inputs = [str(v) for v in n2.input]
+        add_inputs = [str(v) for v in add_node.input]
         if erf_out not in add_inputs:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
         add_other = add_inputs[0] if add_inputs[1] == erf_out else add_inputs[1]
         add_const = _get_const_scalar(tensor_name=add_other, const_map=const_map)
         if add_const is None or abs(add_const - 1.0) > 1e-5:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
-        add_out = str(n2.output[0])
-        mul1_inputs = [str(v) for v in n3.input]
+
+        add_out = str(add_node.output[0])
+        mul1_idx = _single_consumer_index(
+            tensor_name=add_out,
+            expected_op_type="Mul",
+        )
+        if mul1_idx is None or mul1_idx in remove_indices:
+            continue
+        mul1_node = nodes[int(mul1_idx)]
+        if len(mul1_node.input) < 2 or len(mul1_node.output) < 1:
+            continue
+        mul1_inputs = [str(v) for v in mul1_node.input]
         if x_name not in mul1_inputs or add_out not in mul1_inputs:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
-        mul1_out = str(n3.output[0])
-        mul2_inputs = [str(v) for v in n4.input]
+
+        mul1_out = str(mul1_node.output[0])
+        mul2_idx = _single_consumer_index(
+            tensor_name=mul1_out,
+            expected_op_type="Mul",
+        )
+        if mul2_idx is None or mul2_idx in remove_indices:
+            continue
+        mul2_node = nodes[int(mul2_idx)]
+        if len(mul2_node.input) < 2 or len(mul2_node.output) < 1:
+            continue
+        mul2_inputs = [str(v) for v in mul2_node.input]
         if mul1_out not in mul2_inputs:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
         mul2_other = mul2_inputs[0] if mul2_inputs[1] == mul1_out else mul2_inputs[1]
         mul2_const = _get_const_scalar(tensor_name=mul2_other, const_map=const_map)
         if mul2_const is None or abs(mul2_const - 0.5) > 1e-5:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
 
-        sqrt2_const = _get_const_scalar(tensor_name=str(n0.input[1]), const_map=const_map)
+        sqrt2_const = _get_const_scalar(
+            tensor_name=str(div_node.input[1]),
+            const_map=const_map,
+        )
         if sqrt2_const is None or abs(sqrt2_const - float(np.sqrt(2.0))) > 1e-4:
-            fused_nodes.append(_copy_node(nodes[i]))
-            i += 1
             continue
 
         matched += 1
@@ -339,18 +361,35 @@ def _fuse_gelu_erf_chain(
                     f"tensor={intermediate}"
                 )
 
-        fused_nodes.append(
-            _make_node(
-                used_names=used_names,
-                op_type="Gelu",
-                inputs=[x_name],
-                outputs=[str(n4.output[0])],
-                name_base=n4.name or "gelu_fused",
-                attrs={"approximate": "none"},
-            )
+        matched_indices = {
+            int(div_idx),
+            int(erf_idx),
+            int(add_idx),
+            int(mul1_idx),
+            int(mul2_idx),
+        }
+        if any(idx in remove_indices for idx in matched_indices):
+            continue
+
+        replace_at_index[int(mul2_idx)] = _make_node(
+            used_names=used_names,
+            op_type="Gelu",
+            inputs=[x_name],
+            outputs=[str(mul2_node.output[0])],
+            name_base=mul2_node.name or "gelu_fused",
+            attrs={"approximate": "none"},
         )
+        remove_indices.update(matched_indices)
         rewritten += 1
-        i += 5
+
+    fused_nodes: List[onnx.NodeProto] = []
+    for node_idx, node in enumerate(nodes):
+        if node_idx in replace_at_index:
+            fused_nodes.append(replace_at_index[node_idx])
+            continue
+        if node_idx in remove_indices:
+            continue
+        fused_nodes.append(_copy_node(node))
     return fused_nodes, matched, rewritten
 
 
@@ -525,4 +564,3 @@ def register_pattern_fusion_wave2_rule() -> None:
         callback=apply_pattern_fusion_wave2,
         overwrite=True,
     )
-
