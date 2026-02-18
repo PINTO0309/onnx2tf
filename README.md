@@ -283,7 +283,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
 ### [WIP・experimental] `flatbuffer_direct` support status for ONNX ops in this list
 
-The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model. By the way, if you want to generate a highly optimized quantized tflite for your ONNX model, I recommend using this package. https://github.com/NXP/eiq-onnx2tflite
+The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model. The goal is to completely remove the dependency on the TensorFlow runtime in the future. By the way, if you want to generate a highly optimized quantized tflite for your ONNX model, I recommend using this package. https://github.com/NXP/eiq-onnx2tflite
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
