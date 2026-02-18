@@ -341,6 +341,7 @@ Notes:
 |Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
 |Elu|ELU|-|
 |Equal|EQUAL|-|
+|Erf|ABS + SIGN + MUL + ADD + DIV + EXP + SUB|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Exp|EXP|-|
 |Expand|RESHAPE + MUL (broadcast via const ones)|Output shape must be statically known, non-negative, and broadcast-compatible with input shape (current direct lowering uses static `RESHAPE + MUL`)|
 |EyeLike|RESHAPE (from const eye)|Output must be rank-2 with fully static positive shape|
@@ -353,6 +354,7 @@ Notes:
 |Gelu|GELU|-|
 |Gemm|FULLY_CONNECTED|Input rank=2, weight rank=2 + constant, `transA=0` only|
 |Greater|GREATER|-|
+|GlobalAveragePool|MEAN|Input rank must be `>=3`|
 |GRU|TRANSPOSE + SLICE + SQUEEZE + BATCH_MATMUL + ADD + MUL + SUB + LOGISTIC + TANH + RESHAPE + CONCATENATION + EXPAND_DIMS|`layout=0`; `direction` in `{forward, reverse, bidirectional}`; `sequence_lens` unsupported; `W/R` must be constant rank-3; `linear_before_reset` in `{0,1}`; activations `[Sigmoid,Tanh]`; `clip=0`|
 |Hardmax|TRANSPOSE + ARG_MAX + ONE_HOT|`axis` must be in range; target axis size must be static positive|
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
@@ -362,7 +364,7 @@ Notes:
 |LogSoftmax|SOFTMAX + LOG (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
 |LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
 |LRN|LOCAL_RESPONSE_NORMALIZATION (+ transpose in/out)|Input rank must be 4, `size` must be a positive odd integer|
-|LSTM|BIDIRECTIONAL_SEQUENCE_LSTM + SPLIT + RESHAPE/EXPAND_DIMS + CONCATENATION|`direction=bidirectional`, `layout=0`, `input_forget=0`; `W/R` must be constant rank-3 with `num_directions=2`; optional `B` must be constant shape `[2, 8*hidden_size]`; `initial_h/initial_c` must be constant zero tensors of shape `[2, batch, hidden]`; `sequence_lens` and peephole input `P` unsupported; outputs `Y_h`/`Y_c` unsupported when consumed|
+|LSTM|UNIDIRECTIONAL_SEQUENCE_LSTM / BIDIRECTIONAL_SEQUENCE_LSTM + SPLIT + RESHAPE/EXPAND_DIMS + CONCATENATION|`direction` in `{forward,bidirectional}`, `layout=0`, `input_forget=0`; `W/R` must be constant rank-3 with `num_directions` matching `direction`; optional `B` must be constant shape `[num_directions, 8*hidden_size]`; `initial_h/initial_c` are required as constant zero tensors of shape `[num_directions, batch, hidden]`; `sequence_lens` and peephole input `P` unsupported; projection (`R.shape[2] != hidden_size`) unsupported; outputs `Y_h`/`Y_c` unsupported when consumed|
 |MatMul|BATCH_MATMUL|Input rank >= 2. Dynamic rhs input is supported (no constant-weight requirement)|
 |MatMulInteger|CAST + SUB + BATCH_MATMUL|A/B input rank must be >=2 (rank=1 placeholder allowed), A/B dtypes must be integer tensor types (`INT8/UINT8/INT16/UINT16/INT32`), output dtype must be `INT32/INT64`; optional zero-point inputs must be scalar/1D and shape-compatible|
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
@@ -384,9 +386,11 @@ Notes:
 |QLinearConcat|DEQUANTIZE + CONCATENATION + QUANTIZE|`y scale/zero_point` and each input triplet (`x scale/zero_point`) must be constant, input ranks must match, `axis` must be in range|
 |QLinearConv|CONV_2D / DEPTHWISE_CONV_2D|Input/output rank=4, weight must be constant rank=4, all quantization params constant, group conv only regular/depthwise (depthwise detection uses `group` and weight shape), optional bias must be constant|
 |QLinearGlobalAveragePool|AVERAGE_POOL_2D (preferred) / DEQUANTIZE + MEAN + QUANTIZE (fallback)|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant, input rank >= 3, `channels_last` must be 0 or 1. Quantized `AVERAGE_POOL_2D` path is used for rank-4 with static spatial dims and per-tensor quantization|
+|QLinearLeakyRelu|DEQUANTIZE + PRELU + QUANTIZE|All quantization params (`x/y scale`, `x/y zero_point`) must be constant|
 |QLinearMatMul|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, all quantization params constant|
 |QLinearMul|MUL|All quantization params (`a/b/c scale`, `a/b/c zero_point`) must be constant|
 |QLinearSigmoid|DEQUANTIZE + LOGISTIC + QUANTIZE|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant|
+|QLinearSoftmax|DEQUANTIZE + SOFTMAX + QUANTIZE|All quantization params (`x/y scale`, `x/y zero_point`) must be constant; `axis` must be last dimension|
 |QuantizeLinear|QUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |Range|CAST + SQUEEZE + RANGE|Each of `start/limit/delta` must be scalar-like rank-1 length-1 tensor|
 |Reciprocal|DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
@@ -400,21 +404,25 @@ Notes:
 |Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR|Rank-4 only; supported modes: `nearest`/`linear` (limited attr combinations). Parameters must be either constant `scales/sizes` or dynamic rank-1 integer `sizes` (INT32/INT64)|
 |RNN|UNIDIRECTIONAL_SEQUENCE_RNN + TRANSPOSE + EXPAND_DIMS + SLICE + RESHAPE|`direction=forward`, `layout=0`; `sequence_lens` unsupported; `W/R` must be constant rank-3 with `num_directions=1`; activations in `{tanh,relu,sigmoid}`; `clip=0`|
 |Round|ROUND|-|
+|ScatterND|CAST + SHAPE + FILL + MUL + SCATTER_ND + SUB + ADD|`reduction=none` only; data/updates/output dtypes must match (numeric), indices dtype must be integer, indices last dim must be static positive and `<= data rank`|
 |Selu|MAXIMUM + MINIMUM + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Shape|SHAPE (+ SLICE for `start/end`)|Output dtype must be `INT32` or `INT64`; `start/end` slicing follows ONNX normalization|
 |Sigmoid|LOGISTIC|-|
 |Sign|SIGN|-|
 |Sin|SIN|-|
 |Sinh|SUB + EXP + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|Slice|SLICE / STRIDED_SLICE|`starts/ends` must be provided as constant inputs or attrs and lengths must match (`axes/steps` too when specified); negative/zero `steps` are unsupported|
 |Softmax|SOFTMAX (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
 |Softplus|EXP + ADD + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Softsign|ABS + ADD + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |SpaceToDepth|SPACE_TO_DEPTH|`blocksize > 1`, rank=4 (NCHW)|
+|Split|SLICE|`axis` must be in range; explicit split sizes (input/attr) must be constant and count must match outputs; without explicit split sizes, axis dim must be known and divisible by output count|
 |Sqrt|SQRT|-|
 |Squeeze|SQUEEZE|Axes must be constant when provided via input tensor|
 |Sub|SUB|-|
 |Tan|SIN + COS + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Tanh|TANH|-|
+|Tile|CAST + TILE|`multiples` must be rank-1 integer tensor; if input rank is static, `len(multiples)` must match input rank; constant `multiples` must be non-negative|
 |Transpose|TRANSPOSE|Permutation input must be constant|
 |Trilu|MUL / LOGICAL_AND|Input rank must be `>=2`; matrix dims must be static positive; optional `k` input must be constant|
 |Unsqueeze|RESHAPE|Axes must be constant and in range|
@@ -448,7 +456,7 @@ Notes:
 - `Einsum` is now treated as `builtin_supported` when it matches builtin constraints; unsupported `Einsum` patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `QLinearConv` is treated as `builtin_supported` for regular/depthwise patterns; unsupported grouped patterns may still fallback to `CUSTOM` when custom-op mode is enabled.
 - `LogSoftmax` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
-- `LSTM` is now treated as `builtin_supported` for constrained bidirectional patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `LSTM` is now treated as `builtin_supported` for constrained forward/bidirectional patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `NonMaxSuppression` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
@@ -459,7 +467,14 @@ Notes:
   `Less`, `LessOrEqual`, `Mish`, `NonZero`, `Not`, `Or`, `Range`, `ReduceL1`, `ReduceL2`,
   `RNN`, `Round`, `Selu`, `Sign`, `Sin`, `Sinh`, `Softplus`, `Softsign`, `Tan`, `Trilu`,
   `Where`, and `Xor`.
+- Additional builtin-covered ops added in subsequent commits include:
+  `Erf`, `GlobalAveragePool`, `QLinearLeakyRelu`, `QLinearSoftmax`, `ScatterND`, `Slice`,
+  `Split`, and `Tile`.
 - `Resize` builtin path now accepts dynamic rank-1 integer `sizes` input in addition to constant `scales/sizes`.
+- Recurrent lowering practical notes:
+  - `LSTM` builtin requires zero-initialized `initial_h/initial_c` and rejects consumed `Y_h`/`Y_c` (`reason_code=unsupported_output_usage`).
+  - `GRU` builtin supports `forward/reverse/bidirectional`, but requires activations `[Sigmoid,Tanh]`, `clip=0`, and no `sequence_lens`.
+  - `RNN` builtin supports `direction=forward` only (`layout=0`, no `sequence_lens`).
 
 ### tf_converter vs flatbuffer_direct (operational differences)
 
