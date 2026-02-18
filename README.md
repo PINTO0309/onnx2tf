@@ -274,12 +274,6 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > [!WARNING]
 > `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
->
-> `flatbuffer_direct` now runs a layout-transpose chain optimizer during lowering.
-> For NCW/NCHW/NCDHW <-> NWC/NHWC/NDHWC conversion paths, inverse `Transpose` pairs are removed automatically when safe.
-> `Transpose -> (Quantize/Dequantize) -> inverse Transpose` and `Transpose -> Quantize -> Dequantize -> inverse Transpose` are also folded for per-tensor quantization.
-> `Transpose -> (ADD/SUB/MUL/DIV) -> inverse Transpose` is folded when both binary inputs share the same pre-transpose permutation.
-> For float outputs, terminal `QUANTIZE -> DEQUANTIZE` pairs are also removed when the pair is isolated and output-only.
 
 ### [WIP・experimental] `flatbuffer_direct` support status for ONNX ops in this list
 
@@ -288,6 +282,16 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
 |<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="image" src="https://github.com/user-attachments/assets/7ffeaa53-4c83-4a9e-b5b4-17ea11c93b20" />|
+
+- e.g.
+  ```bash
+  onnx2tf \
+  -i iat_llie_180x320.onnx \
+  -tb flatbuffer_direct \
+  -cotof \
+  --report_op_coverage
+  ```
+  <img width="1032" height="312" alt="Image" src="https://github.com/user-attachments/assets/dcd6106b-3af9-4435-a52e-24e56214b1a8" />
 
 <details><summary>Click to expand</summary>
 
