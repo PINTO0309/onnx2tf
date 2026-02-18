@@ -291,7 +291,7 @@ The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX
   -cotof \
   --report_op_coverage
   ```
-  <img width="1032" height="312" alt="Image" src="https://github.com/user-attachments/assets/dcd6106b-3af9-4435-a52e-24e56214b1a8" />
+  <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
 <details><summary>Click to expand</summary>
 
