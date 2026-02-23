@@ -75,6 +75,35 @@ def _add_scalar_const(ctx: Any, base_name: str, value: float, dtype: str) -> str
     )
 
 
+def _add_ones_like_tensor(
+    ctx: Any,
+    *,
+    reference_name: str,
+    base_name: str,
+    dtype: str,
+) -> str:
+    ref_shape = [int(v) for v in ctx.get_tensor_shape(reference_name)]
+    target_dtype = str(dtype).upper()
+
+    # Prefer exact-shape ones for fully known static tensors so ATAN2 does not
+    # rely on broadcast when it is unnecessary.
+    if len(ref_shape) > 0 and all(int(dim) > 0 for dim in ref_shape):
+        np_dtype = np.float16 if target_dtype == "FLOAT16" else np.float32
+        return ctx.add_const_tensor(
+            base_name,
+            np.ones(ref_shape, dtype=np_dtype),
+        )
+
+    # Dynamic extents: keep rank-matched singleton shape to satisfy ATAN2 rank
+    # checks while avoiding redundant full-size materialization.
+    np_dtype = np.float16 if target_dtype == "FLOAT16" else np.float32
+    singleton_shape = [1 for _ in ref_shape] if len(ref_shape) > 0 else [1]
+    return ctx.add_const_tensor(
+        base_name,
+        np.ones(singleton_shape, dtype=np_dtype),
+    )
+
+
 def _cast_tensor_if_needed(
     *,
     ctx: Any,
@@ -1085,7 +1114,12 @@ def build_atan_op(node: Any, ctx: Any) -> None:
     compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, _ = (
         _prepare_float_compute(node, ctx, tag="atan")
     )
-    one_name = _add_scalar_const(ctx, f"{output_name}_atan_one", 1.0, compute_dtype)
+    one_name = _add_ones_like_tensor(
+        ctx,
+        reference_name=compute_input_name,
+        base_name=f"{output_name}_atan_ones_like",
+        dtype=compute_dtype,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="ATAN2",

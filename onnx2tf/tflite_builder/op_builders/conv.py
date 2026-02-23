@@ -31,6 +31,312 @@ def _make_pseudo_node(
     return pseudo
 
 
+def _decode_attr_string(value: Any, default: str) -> str:
+    if value is None:
+        return str(default)
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def _flatten_attr_values(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, np.ndarray):
+        return list(np.asarray(value).reshape(-1))
+    if isinstance(value, (list, tuple)):
+        flattened: list[Any] = []
+        for item in value:
+            if isinstance(item, np.ndarray):
+                flattened.extend(list(np.asarray(item).reshape(-1)))
+            elif isinstance(item, (list, tuple)):
+                flattened.extend(list(np.asarray(item).reshape(-1)))
+            else:
+                flattened.append(item)
+        return flattened
+    return [value]
+
+
+def _to_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray):
+        arr = np.asarray(value).reshape(-1)
+        if int(arr.size) == 0:
+            return None
+        value = arr[0]
+    if isinstance(value, (list, tuple)):
+        if len(value) == 0:
+            return None
+        value = value[0]
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _clone_shape_signature(ctx: Any, src_name: str, dst_name: str) -> None:
+    src_tensor = ctx.model_ir.tensors[src_name]
+    dst_tensor = ctx.model_ir.tensors[dst_name]
+    if src_tensor.shape_signature is not None:
+        dst_tensor.shape_signature = [int(v) for v in list(src_tensor.shape_signature)]
+    else:
+        dst_tensor.shape_signature = [int(v) for v in list(src_tensor.shape)]
+
+
+def _add_same_shape_tensor(ctx: Any, *, name: str, like_tensor_name: str) -> str:
+    ref_tensor = ctx.model_ir.tensors[like_tensor_name]
+    tensor_name = ctx.add_intermediate_tensor(
+        str(name),
+        dtype=str(ref_tensor.dtype),
+        shape=[int(v) for v in list(ref_tensor.shape)],
+    )
+    _clone_shape_signature(ctx, like_tensor_name, tensor_name)
+    return str(tensor_name)
+
+
+def _add_fusedconv_activation_op(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    activation: str,
+    activation_params: list[Any],
+) -> None:
+    activation_key = str(activation).lower()
+    params = _flatten_attr_values(activation_params)
+
+    if activation_key == "relu":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RELU",
+                inputs=[input_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    if activation_key == "tanh":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TANH",
+                inputs=[input_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    if activation_key == "sigmoid":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOGISTIC",
+                inputs=[input_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    if activation_key == "leakyrelu":
+        alpha = 0.01
+        if len(params) > 0:
+            alpha_value = _to_optional_float(params[0])
+            if alpha_value is None:
+                raise NotImplementedError(
+                    f"FusedConv LeakyRelu alpha must be scalar-convertible. op={node.name} activation_params={activation_params}"
+                )
+            alpha = float(alpha_value)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LEAKY_RELU",
+                inputs=[input_name],
+                outputs=[output_name],
+                options={"alpha": float(alpha)},
+            )
+        )
+        return
+
+    if activation_key == "clip":
+        if len(params) == 0:
+            raise NotImplementedError(
+                f"FusedConv Clip requires activation_params [min,max] (or one-sided bound). op={node.name} activation_params={activation_params}"
+            )
+        min_value = _to_optional_float(params[0]) if len(params) >= 1 else None
+        max_value = _to_optional_float(params[1]) if len(params) >= 2 else None
+        if len(params) >= 1 and params[0] is not None and min_value is None:
+            raise NotImplementedError(
+                f"FusedConv Clip min must be scalar-convertible. op={node.name} activation_params={activation_params}"
+            )
+        if len(params) >= 2 and params[1] is not None and max_value is None:
+            raise NotImplementedError(
+                f"FusedConv Clip max must be scalar-convertible. op={node.name} activation_params={activation_params}"
+            )
+        if min_value is not None and max_value is not None and float(min_value) > float(max_value):
+            raise NotImplementedError(
+                f"FusedConv Clip requires min <= max. op={node.name} min={min_value} max={max_value}"
+            )
+        if min_value is not None and float(min_value) == 0.0 and max_value is not None and float(max_value) == 6.0:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RELU6",
+                    inputs=[input_name],
+                    outputs=[output_name],
+                )
+            )
+            return
+        if min_value is not None and float(min_value) == 0.0 and max_value is None:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RELU",
+                    inputs=[input_name],
+                    outputs=[output_name],
+                )
+            )
+            return
+        if min_value is None and max_value is None:
+            raise NotImplementedError(
+                f"FusedConv Clip requires at least one concrete bound. op={node.name} activation_params={activation_params}"
+            )
+        if min_value is not None and max_value is None:
+            min_const = ctx.add_const_tensor(
+                f"{node.name}_fusedconv_clip_min",
+                np.asarray(float(min_value), dtype=np.float32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MAXIMUM",
+                    inputs=[input_name, min_const],
+                    outputs=[output_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            return
+        if min_value is None and max_value is not None:
+            max_const = ctx.add_const_tensor(
+                f"{node.name}_fusedconv_clip_max",
+                np.asarray(float(max_value), dtype=np.float32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MINIMUM",
+                    inputs=[input_name, max_const],
+                    outputs=[output_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            return
+        min_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_clip_min",
+            np.asarray(float(min_value), dtype=np.float32),
+        )
+        max_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_clip_max",
+            np.asarray(float(max_value), dtype=np.float32),
+        )
+        maxed_name = _add_same_shape_tensor(
+            ctx,
+            name=f"{node.name}_fusedconv_clip_maxed",
+            like_tensor_name=input_name,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[input_name, min_const],
+                outputs=[maxed_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MINIMUM",
+                inputs=[maxed_name, max_const],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
+    if activation_key == "hardsigmoid":
+        if len(params) < 2:
+            raise NotImplementedError(
+                f"FusedConv HardSigmoid requires two activation_params [alpha,beta]. op={node.name} activation_params={activation_params}"
+            )
+        alpha = _to_optional_float(params[0])
+        beta = _to_optional_float(params[1])
+        if alpha is None or beta is None:
+            raise NotImplementedError(
+                f"FusedConv HardSigmoid activation_params must be scalar-convertible. op={node.name} activation_params={activation_params}"
+            )
+        alpha_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_hardsigmoid_alpha",
+            np.asarray(float(alpha), dtype=np.float32),
+        )
+        beta_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_hardsigmoid_beta",
+            np.asarray(float(beta), dtype=np.float32),
+        )
+        zero_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_hardsigmoid_zero",
+            np.asarray(0.0, dtype=np.float32),
+        )
+        one_const = ctx.add_const_tensor(
+            f"{node.name}_fusedconv_hardsigmoid_one",
+            np.asarray(1.0, dtype=np.float32),
+        )
+        mul_name = _add_same_shape_tensor(
+            ctx,
+            name=f"{node.name}_fusedconv_hardsigmoid_mul",
+            like_tensor_name=input_name,
+        )
+        add_name = _add_same_shape_tensor(
+            ctx,
+            name=f"{node.name}_fusedconv_hardsigmoid_add",
+            like_tensor_name=input_name,
+        )
+        max_name = _add_same_shape_tensor(
+            ctx,
+            name=f"{node.name}_fusedconv_hardsigmoid_max",
+            like_tensor_name=input_name,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[input_name, alpha_const],
+                outputs=[mul_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[mul_name, beta_const],
+                outputs=[add_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[add_name, zero_const],
+                outputs=[max_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MINIMUM",
+                inputs=[max_name, one_const],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
+    raise NotImplementedError(
+        f"FusedConv activation is not supported in flatbuffer_direct. op={node.name} activation={activation}"
+    )
+
+
 def _extract_1d_pads(raw_pads: Any, *, op_name: str, node_name: str) -> list[int]:
     pads = [int(v) for v in list(raw_pads)]
     if len(pads) == 0:
@@ -387,6 +693,80 @@ def _infer_rank4_conv_output_signature(
         if int(input_signature_nchw[3]) < 0:
             signature[3] = -1
     return [int(v) for v in signature]
+
+
+def _infer_conv2d_output_shape_nchw(
+    *,
+    node: Any,
+    input_shape_nchw: list[int],
+    weights: np.ndarray,
+) -> list[int]:
+    kernel_shape_attr = node.attrs.get("kernel_shape", None)
+    if kernel_shape_attr is None:
+        kernel_h = int(weights.shape[2])
+        kernel_w = int(weights.shape[3])
+    else:
+        kernel_h, kernel_w = [int(v) for v in list(kernel_shape_attr)]
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+    if len(raw_pads) < 4:
+        raw_pads = [0, 0, 0, 0]
+    pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in raw_pads[:4]]
+    auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+
+    n = int(input_shape_nchw[0]) if len(input_shape_nchw) > 0 else 1
+    in_h = int(input_shape_nchw[2]) if len(input_shape_nchw) > 2 else -1
+    in_w = int(input_shape_nchw[3]) if len(input_shape_nchw) > 3 else -1
+    out_c = int(weights.shape[0])
+
+    eff_kh = int((kernel_h - 1) * int(dilations[0]) + 1)
+    eff_kw = int((kernel_w - 1) * int(dilations[1]) + 1)
+
+    def _infer_dim(in_dim: int, eff_k: int, stride: int, pad_before: int, pad_after: int) -> int:
+        if int(in_dim) <= 0:
+            return -1
+        if auto_pad in ["SAME_UPPER", "SAME_LOWER"]:
+            return int(np.ceil(float(in_dim) / float(stride)))
+        numer = int(in_dim) + int(pad_before) + int(pad_after) - int(eff_k)
+        return int(np.floor(float(numer) / float(stride)) + 1)
+
+    out_h = _infer_dim(in_h, eff_kh, int(strides[0]), pad_top, pad_bottom)
+    out_w = _infer_dim(in_w, eff_kw, int(strides[1]), pad_left, pad_right)
+    return [int(n), int(out_c), int(out_h), int(out_w)]
+
+
+def _materialize_fusedconv_placeholder_output_shape(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    weight_name: str,
+    output_name: str,
+) -> None:
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is None:
+        return
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    if output_shape != [1]:
+        return
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    if len(input_shape) != 4:
+        return
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        return
+    weights = np.asarray(weights)
+    if weights.ndim != 4:
+        return
+
+    inferred = _infer_conv2d_output_shape_nchw(
+        node=node,
+        input_shape_nchw=input_shape,
+        weights=weights,
+    )
+    output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in inferred]
+    output_tensor.shape_signature = [int(v) if int(v) > 0 else -1 for v in inferred]
 
 
 def _resolve_conv_transpose_padding(node: Any) -> str:
@@ -1341,4 +1721,47 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
         y_nhwc,
         output_name,
         [0, 3, 1, 2],
+    )
+
+
+def build_fused_conv_op(node: Any, ctx: Any) -> None:
+    output_name = str(node.outputs[0].name)
+    input_names = [str(inp.name) for inp in list(node.inputs)]
+    for tensor_name in input_names:
+        ctx.ensure_tensor(tensor_name)
+    ctx.ensure_tensor(output_name)
+    if len(input_names) >= 2:
+        _materialize_fusedconv_placeholder_output_shape(
+            node=node,
+            ctx=ctx,
+            input_name=input_names[0],
+            weight_name=input_names[1],
+            output_name=output_name,
+        )
+    pre_activation_output_name = _add_same_shape_tensor(
+        ctx,
+        name=f"{node.name}_fusedconv_pre_activation",
+        like_tensor_name=output_name,
+    )
+
+    conv_attrs = dict(node.attrs)
+    conv_attrs.pop("activation", None)
+    conv_attrs.pop("activation_params", None)
+    pseudo_node = _make_pseudo_node(
+        base_node=node,
+        input_names=input_names,
+        output_name=pre_activation_output_name,
+        attrs=conv_attrs,
+    )
+    build_conv2d_or_depthwise_op(pseudo_node, ctx)
+
+    activation = _decode_attr_string(node.attrs.get("activation", "Relu"), "Relu")
+    activation_params = _flatten_attr_values(node.attrs.get("activation_params", []))
+    _add_fusedconv_activation_op(
+        node=node,
+        ctx=ctx,
+        input_name=pre_activation_output_name,
+        output_name=output_name,
+        activation=activation,
+        activation_params=activation_params,
     )

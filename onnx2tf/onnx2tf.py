@@ -125,6 +125,7 @@ _SIZE_WITH_UNIT_PATTERN = re.compile(
 )
 
 _TEMP_MICROSOFT_DOMAIN_OPS = {
+    'FusedConv',
     'FusedMatMul',
     'QGemm',
     'QLinearAdd',

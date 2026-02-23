@@ -302,6 +302,12 @@ def _build_resize_bilinear_options(schema_tflite: Dict[str, Any], op: OperatorIR
     return _enum(schema_tflite, "BuiltinOptions", "ResizeBilinearOptions"), options
 
 
+def _build_leaky_relu_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["LeakyReluOptionsT"]()
+    options.alpha = float(op.options.get("alpha", 0.01))
+    return _enum(schema_tflite, "BuiltinOptions", "LeakyReluOptions"), options
+
+
 def _build_shape_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["ShapeOptionsT"]()
     out_type = str(op.options.get("outType", "INT32")).upper()
@@ -478,6 +484,8 @@ def _build_builtin_options(
         return _build_resize_nearest_options(schema_tflite, op)
     if op.op_type == "RESIZE_BILINEAR":
         return _build_resize_bilinear_options(schema_tflite, op)
+    if op.op_type == "LEAKY_RELU":
+        return _build_leaky_relu_options(schema_tflite, op)
     if op.op_type == "SHAPE":
         return _build_shape_options(schema_tflite, op)
     if op.op_type == "SPLIT":
