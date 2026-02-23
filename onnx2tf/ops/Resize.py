@@ -5,6 +5,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import tf_keras
+from typing import Any, Optional
 from tensorflow.python.keras.layers import Lambda
 import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
@@ -30,6 +31,292 @@ from onnx2tf.utils.enums import (
 )
 
 INF_INDEX_VALUE: int = 4294967296
+_BICUBIC_MATRIX_CACHE: dict = {}
+
+
+def _normalize_resize_coordinate_transformation_mode(
+    *,
+    coordinate_transformation_mode: str,
+) -> Optional[str]:
+    ctm = str(coordinate_transformation_mode).lower()
+    if ctm in {"align_corners", "asymmetric", "half_pixel", "pytorch_half_pixel"}:
+        return ctm
+    return None
+
+
+def _compute_resize_source_index(
+    *,
+    out_index: int,
+    input_size: int,
+    output_size: int,
+    coordinate_transformation_mode: str,
+) -> float:
+    ctm = str(coordinate_transformation_mode).lower()
+    in_size = int(input_size)
+    out_size = int(output_size)
+    i = float(out_index)
+    if ctm == "align_corners":
+        if out_size <= 1:
+            return 0.0
+        return i * float(in_size - 1) / float(out_size - 1)
+    if ctm == "asymmetric":
+        return i * float(in_size) / float(out_size)
+    if ctm == "half_pixel":
+        return (i + 0.5) * float(in_size) / float(out_size) - 0.5
+    if ctm == "pytorch_half_pixel":
+        if out_size > 1:
+            return (i + 0.5) * float(in_size) / float(out_size) - 0.5
+        return 0.0
+    raise ValueError(f"Unsupported coordinate_transformation_mode for Resize(cubic): {coordinate_transformation_mode}")
+
+
+def _cubic_kernel_weight(*, distance: float, cubic_coeff_a: float) -> float:
+    t = float(abs(distance))
+    a = float(cubic_coeff_a)
+    if t <= 1.0:
+        return ((a + 2.0) * t * t * t) - ((a + 3.0) * t * t) + 1.0
+    if t < 2.0:
+        return (a * t * t * t) - (5.0 * a * t * t) + (8.0 * a * t) - (4.0 * a)
+    return 0.0
+
+
+def _const_hw_from_tensor(
+    *,
+    values: Optional[Any],
+) -> Optional[tuple[int, int]]:
+    if values is None:
+        return None
+    if isinstance(values, np.ndarray):
+        arr = np.asarray(values).reshape(-1)
+    elif isinstance(values, (list, tuple)):
+        arr = np.asarray(values).reshape(-1)
+    else:
+        arr = tf.get_static_value(values)
+        if arr is None:
+            try:
+                arr = values.numpy()
+            except Exception:
+                return None
+        arr = np.asarray(arr).reshape(-1)
+    if arr.size != 2:
+        return None
+    out_h = int(arr[0])
+    out_w = int(arr[1])
+    if out_h <= 0 or out_w <= 0:
+        return None
+    return out_h, out_w
+
+
+def _to_resize_float_attr(
+    *,
+    value: Any,
+    default: float,
+) -> float:
+    scalar = value
+    if isinstance(scalar, np.ndarray):
+        arr = np.asarray(scalar).reshape(-1)
+        if arr.size == 0:
+            return float(default)
+        scalar = arr[0]
+    elif isinstance(scalar, (list, tuple)):
+        if len(scalar) == 0:
+            return float(default)
+        scalar = scalar[0]
+    elif tf.is_tensor(scalar):
+        resolved = tf.get_static_value(scalar)
+        if resolved is None:
+            return float(default)
+        arr = np.asarray(resolved).reshape(-1)
+        if arr.size == 0:
+            return float(default)
+        scalar = arr[0]
+    try:
+        return float(scalar)
+    except Exception:
+        return float(default)
+
+
+def _to_resize_bool_attr(
+    *,
+    value: Any,
+    default: bool,
+) -> bool:
+    scalar = value
+    if isinstance(scalar, np.ndarray):
+        arr = np.asarray(scalar).reshape(-1)
+        if arr.size == 0:
+            return bool(default)
+        scalar = arr[0]
+    elif isinstance(scalar, (list, tuple)):
+        if len(scalar) == 0:
+            return bool(default)
+        scalar = scalar[0]
+    elif tf.is_tensor(scalar):
+        resolved = tf.get_static_value(scalar)
+        if resolved is None:
+            return bool(default)
+        arr = np.asarray(resolved).reshape(-1)
+        if arr.size == 0:
+            return bool(default)
+        scalar = arr[0]
+    try:
+        return bool(int(scalar))
+    except Exception:
+        return bool(scalar)
+
+
+def _build_resize_cubic_matrix_from_onnx(
+    *,
+    input_size: int,
+    output_size: int,
+    coordinate_transformation_mode: str,
+    cubic_coeff_a: float,
+    exclude_outside: bool,
+) -> np.ndarray:
+    key = (
+        int(input_size),
+        int(output_size),
+        str(coordinate_transformation_mode).lower(),
+        float(cubic_coeff_a),
+        bool(exclude_outside),
+    )
+    cached = _BICUBIC_MATRIX_CACHE.get(key, None)
+    if cached is not None:
+        return np.asarray(cached, dtype=np.float32)
+
+    in_size = int(input_size)
+    out_size = int(output_size)
+    if in_size <= 0 or out_size <= 0:
+        raise ValueError(
+            f"Resize(cubic) requires positive input/output size. input_size={in_size} output_size={out_size}"
+        )
+    ctm = _normalize_resize_coordinate_transformation_mode(
+        coordinate_transformation_mode=coordinate_transformation_mode,
+    )
+    if ctm is None:
+        raise ValueError(
+            "Unsupported coordinate_transformation_mode for Resize(cubic). "
+            f"coordinate_transformation_mode={coordinate_transformation_mode}"
+        )
+
+    matrix = np.zeros((out_size, in_size), dtype=np.float32)
+    for out_idx in range(out_size):
+        src = _compute_resize_source_index(
+            out_index=out_idx,
+            input_size=in_size,
+            output_size=out_size,
+            coordinate_transformation_mode=ctm,
+        )
+        src_floor = int(np.floor(src))
+        row_weight_sum = 0.0
+        for offset in [-1, 0, 1, 2]:
+            src_idx = int(src_floor + offset)
+            weight = _cubic_kernel_weight(
+                distance=src - float(src_idx),
+                cubic_coeff_a=float(cubic_coeff_a),
+            )
+            if bool(exclude_outside) and (src_idx < 0 or src_idx >= in_size):
+                continue
+            if src_idx < 0:
+                src_idx = 0
+            elif src_idx >= in_size:
+                src_idx = in_size - 1
+            matrix[out_idx, src_idx] += np.float32(weight)
+            row_weight_sum += float(weight)
+        if bool(exclude_outside) and abs(row_weight_sum) > 0.0:
+            matrix[out_idx, :] = matrix[out_idx, :] / np.float32(row_weight_sum)
+
+    _BICUBIC_MATRIX_CACHE[key] = matrix
+    return np.asarray(matrix, dtype=np.float32)
+
+
+def _try_resize_cubic_without_flex(
+    *,
+    input_tensor: tf.Tensor,
+    new_size: Optional[Any],
+    coordinate_transformation_mode: str,
+    cubic_coeff_a: float,
+    exclude_outside: bool,
+    name: str,
+) -> Optional[tf.Tensor]:
+    input_shape = input_tensor.shape
+    if input_shape is None or len(input_shape) != 4:
+        return None
+
+    in_h = input_shape[1]
+    in_w = input_shape[2]
+    in_c = input_shape[3]
+    if not isinstance(in_h, int) or not isinstance(in_w, int) or not isinstance(in_c, int):
+        return None
+    if int(in_h) <= 0 or int(in_w) <= 0 or int(in_c) <= 0:
+        return None
+
+    out_hw = _const_hw_from_tensor(values=new_size)
+    if out_hw is None:
+        return None
+    out_h, out_w = out_hw
+
+    ctm = _normalize_resize_coordinate_transformation_mode(
+        coordinate_transformation_mode=coordinate_transformation_mode,
+    )
+    if ctm is None:
+        return None
+
+    h_matrix = _build_resize_cubic_matrix_from_onnx(
+        input_size=int(in_h),
+        output_size=int(out_h),
+        coordinate_transformation_mode=ctm,
+        cubic_coeff_a=float(cubic_coeff_a),
+        exclude_outside=bool(exclude_outside),
+    )
+    w_matrix = _build_resize_cubic_matrix_from_onnx(
+        input_size=int(in_w),
+        output_size=int(out_w),
+        coordinate_transformation_mode=ctm,
+        cubic_coeff_a=float(cubic_coeff_a),
+        exclude_outside=bool(exclude_outside),
+    )
+    h_matrix_const = tf.constant(
+        np.asarray(h_matrix, dtype=np.float32).reshape(1, int(out_h), int(in_h)),
+        dtype=tf.float32,
+        name=f"{name}_resize_cubic_h_matrix",
+    )
+    w_matrix_const = tf.constant(
+        np.asarray(w_matrix, dtype=np.float32).reshape(1, 1, int(out_w), int(in_w)),
+        dtype=tf.float32,
+        name=f"{name}_resize_cubic_w_matrix",
+    )
+
+    original_dtype = input_tensor.dtype
+    work = input_tensor
+    if original_dtype != tf.float32:
+        work = tf.cast(work, tf.float32, name=f"{name}_resize_cubic_input_f32")
+
+    flatten_wc = int(in_w) * int(in_c)
+    h_in = tf.reshape(
+        work,
+        [-1, int(in_h), flatten_wc],
+        name=f"{name}_resize_cubic_h_in",
+    )
+    h_out = tf.matmul(
+        h_matrix_const,
+        h_in,
+        name=f"{name}_resize_cubic_h_out",
+    )
+    h_nhwc = tf.reshape(
+        h_out,
+        [-1, int(out_h), int(in_w), int(in_c)],
+        name=f"{name}_resize_cubic_h_nhwc",
+    )
+    y = tf.matmul(
+        w_matrix_const,
+        h_nhwc,
+        name=f"{name}_resize_cubic_output_f32",
+    )
+
+    if original_dtype != y.dtype:
+        y = tf.cast(y, original_dtype, name=f"{name}_resize_cubic_output_cast")
+    return y
 
 
 @print_node_info
@@ -169,6 +456,8 @@ def make_node(
     coordinate_transformation_mode = graph_node.attrs.get('coordinate_transformation_mode', 'half_pixel')
     extrapolation_value = graph_node.attrs.get('extrapolation_value', 0.0)
     mode = graph_node.attrs.get('mode', 'nearest')
+    cubic_coeff_a = graph_node.attrs.get('cubic_coeff_a', -0.75)
+    exclude_outside = graph_node.attrs.get('exclude_outside', 0)
     antialias = bool(graph_node.attrs.get('antialias', 0))
     keep_aspect_ratio_policy = graph_node.attrs.get('keep_aspect_ratio_policy', 'stretch')
     preserve_aspect_ratio = False
@@ -399,6 +688,18 @@ def make_node(
         param_name='mode',
         **kwargs,
     )
+    cubic_coeff_a = replace_parameter(
+        value_before_replacement=cubic_coeff_a,
+        param_target='attributes',
+        param_name='cubic_coeff_a',
+        **kwargs,
+    )
+    exclude_outside = replace_parameter(
+        value_before_replacement=exclude_outside,
+        param_target='attributes',
+        param_name='exclude_outside',
+        **kwargs,
+    )
 
     # Pre-process transpose
     input_tensor = pre_process_transpose(
@@ -415,6 +716,38 @@ def make_node(
     align_corners = None
     half_pixel_centers = None
     org_dtype = input_tensor.dtype
+    resolved_cubic_coeff_a = _to_resize_float_attr(
+        value=cubic_coeff_a,
+        default=-0.75,
+    )
+    resolved_exclude_outside = _to_resize_bool_attr(
+        value=exclude_outside,
+        default=False,
+    )
+
+    # Prefer non-Flex cubic lowering when static spatial sizes are available.
+    # This path uses RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL and keeps
+    # ONNX cubic semantics by deriving interpolation matrices from ONNX attributes.
+    if mode == tf.image.ResizeMethod.BICUBIC \
+        and input_tensor_rank == 4 \
+        and not resize_one_d:
+        resolved_ctm = _normalize_resize_coordinate_transformation_mode(
+            coordinate_transformation_mode=coordinate_transformation_mode,
+        )
+        if resolved_ctm is not None:
+            resized_tensor = _try_resize_cubic_without_flex(
+                input_tensor=input_tensor,
+                new_size=new_size,
+                coordinate_transformation_mode=resolved_ctm,
+                cubic_coeff_a=float(resolved_cubic_coeff_a),
+                exclude_outside=bool(resolved_exclude_outside),
+                name=graph_node.name,
+            )
+            if resized_tensor is not None:
+                align_corners = bool(resolved_ctm == "align_corners")
+                half_pixel_centers = bool(resolved_ctm in {"half_pixel", "pytorch_half_pixel"})
+                tf_op_type = tf.matmul
+
     if coordinate_transformation_mode == "tf_crop_and_resize":
         # get boxes for crop
         indices = [1,2,5,6]
@@ -433,7 +766,7 @@ def make_node(
         )
         tf_op_type = tf.image.crop_and_resize
 
-    elif coordinate_transformation_mode == "align_corners" and opset <= 17:
+    elif resized_tensor is None and coordinate_transformation_mode == "align_corners" and opset <= 17:
         align_corners = True
         half_pixel_centers = False
         resized_tensor = Lambda(
@@ -447,7 +780,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
 
-    elif coordinate_transformation_mode == "asymmetric" and opset <= 17:
+    elif resized_tensor is None and coordinate_transformation_mode == "asymmetric" and opset <= 17:
         align_corners = False
         half_pixel_centers = False
         resized_tensor = Lambda(
@@ -461,7 +794,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
 
-    elif coordinate_transformation_mode == "half_pixel" and opset <= 17:
+    elif resized_tensor is None and coordinate_transformation_mode == "half_pixel" and opset <= 17:
         align_corners = False
         half_pixel_centers = True
         resized_tensor = Lambda(
@@ -475,7 +808,7 @@ def make_node(
         )(input_tensor)
         tf_op_type = tf_resize
 
-    else:
+    elif resized_tensor is None:
         resized_tensor = tf.image.resize(
             images=input_tensor,
             size=new_size,
@@ -528,6 +861,8 @@ def make_node(
                     'new_size/crop_size': new_size,
                     'method': mode,
                     'extrapolation_value': extrapolation_value,
+                    'cubic_coeff_a': resolved_cubic_coeff_a,
+                    'exclude_outside': resolved_exclude_outside,
                     'align_corners': align_corners,
                 },
                 'tf_outputs': {
