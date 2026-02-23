@@ -405,7 +405,7 @@ Notes:
 |ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
 |Relu|RELU|-|
 |Reshape|RESHAPE|Shape input must be constant|
-|Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR|Rank-4 only; supported modes: `nearest`/`linear` (limited attr combinations). Parameters must be either constant `scales/sizes` or dynamic rank-1 integer `sizes` (INT32/INT64)|
+|Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR / (cubic) RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL|Rank-4 only. `nearest`/`linear`: builtin resize path (limited attr combinations), parameters must be constant `scales/sizes` or dynamic rank-1 integer `sizes` (INT32/INT64). `cubic`: strict ONNX cubic decomposition (no FlexResizeBicubic), supports `coordinate_transformation_mode` in `{align_corners, asymmetric, half_pixel, pytorch_half_pixel}` and honors `cubic_coeff_a`/`exclude_outside`; requires static input C/H/W and static output H/W. Batch dimension is preserved through the cubic decomposition path|
 |RNN|UNIDIRECTIONAL_SEQUENCE_RNN + TRANSPOSE + EXPAND_DIMS + SLICE + RESHAPE|`direction=forward`, `layout=0`; `sequence_lens` unsupported; `W/R` must be constant rank-3 with `num_directions=1`; activations in `{tanh,relu,sigmoid}`; `clip=0`|
 |Round|ROUND|-|
 |ScatterND|CAST + SHAPE + FILL + MUL + SCATTER_ND + SUB + ADD|`reduction=none` only; data/updates/output dtypes must match (numeric), indices dtype must be integer, indices last dim must be static positive and `<= data rank`|
@@ -475,6 +475,9 @@ Notes:
   `Erf`, `GlobalAveragePool`, `QLinearLeakyRelu`, `QLinearSoftmax`, `ScatterND`, `Slice`,
   `Split`, and `Tile`.
 - `Resize` builtin path now accepts dynamic rank-1 integer `sizes` input in addition to constant `scales/sizes`.
+- `Resize(cubic)` now uses strict ONNX cubic semantics (including `cubic_coeff_a` and `exclude_outside`) in both `tf_converter` and `flatbuffer_direct`.
+- `tf_converter` now prefers a non-Flex cubic lowering (`RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL`) when rank-4 input and static spatial sizes are available, reducing `FlexResizeBicubic` generation.
+- `flatbuffer_direct` cubic lowering now preserves batch metadata on intermediate tensors and output tensors (no batch-dimension drop in `RESHAPE`/`BATCH_MATMUL` chain).
 - Recurrent lowering practical notes:
   - `LSTM` builtin requires zero-initialized `initial_h/initial_c` and rejects consumed `Y_h`/`Y_c` (`reason_code=unsupported_output_usage`).
   - `GRU` builtin supports `forward/reverse/bidirectional`, but requires activations `[Sigmoid,Tanh]`, `clip=0`, and no `sequence_lens`.
@@ -589,7 +592,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.19
+  ghcr.io/pinto0309/onnx2tf:2.0.20
 
   or
 
@@ -598,7 +601,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.19
+  docker.io/pinto0309/onnx2tf:2.0.20
 
   or
 
@@ -608,7 +611,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.19 \
+  docker.io/pinto0309/onnx2tf:2.0.20 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -3159,7 +3162,7 @@ Do not submit an issue that only contains an amount of information that cannot b
   |13|ReduceL1<br>ReduceL2<br>ReduceLogSum<br>ReduceLogSumExp<br>ReduceMax<br>ReduceMean<br>ReduceMin<br>ReduceProd<br>ReduceSum<br>ReduceSumSquare|1. "param_target": "attributes"<br>`axes`: Value of `axes`<br>`keepdims`: Value of `keepdims`<br>2. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the ReduceXX operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the ReduceXX operation with the perm specified as post-processing.|
   |14|Unsqueeze|1. "param_target": "inputs"<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Unsqueeze operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Unsqueeze operation with the perm specified as post-processing.<br>3. "param_target": "op"<br>`new_shape`: Specifies directly the shape after Unsqueeze processing.<br>{<br>&nbsp;&nbsp;"op_name": "/backbone/backbone.1/Unsqueeze_1",<br>&nbsp;&nbsp;"param_target": "op",<br>&nbsp;&nbsp;"new_shape": [1,15,15,1]<br>}|
   |15|Reshape|1. "param_target": "inputs"<br>`values`: Value of `shape`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Reshape operation with the perm specified as pre-processing.<br>2. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Reshape operation with the perm specified as post-processing.|
-  |16|Resize|1. "param_target": "attributes"<br>`coordinate_transformation_mode`: Value of `coordinate_transformation_mode`<br>`extrapolation_value`: Value of `extrapolation_value`<br>`mode`: Value of `mode`<br>2. "param_target": "inputs"<br>`values`: Value of `roi` or `scales` or `sizes`. `scales`=`[scale_h,scale_w]`,`sizes`=`[h,w]`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Resize operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Resize operation with the perm specified as post-processing.|
+  |16|Resize|1. "param_target": "attributes"<br>`coordinate_transformation_mode`: Value of `coordinate_transformation_mode`<br>`extrapolation_value`: Value of `extrapolation_value`<br>`mode`: Value of `mode`<br>`cubic_coeff_a`: Value of `cubic_coeff_a`<br>`exclude_outside`: Value of `exclude_outside`<br>2. "param_target": "inputs"<br>`values`: Value of `roi` or `scales` or `sizes`. `scales`=`[scale_h,scale_w]`,`sizes`=`[h,w]`<br>`pre_process_transpose_perm`: Transpose is applied to the tensor before the Resize operation with the perm specified as pre-processing.<br>3. "param_target": "outputs"<br>`post_process_transpose_perm`: Transpose is applied to the tensor after the Resize operation with the perm specified as post-processing.|
   |17|Slice|`Slice` implements special replacements separately ignore all automatic conversions and generate `tf.strided_slice` directly by specifying all parameters of `tf.strided_slice` directly.<br>https://www.tensorflow.org/api_docs/python/tf/strided_slice<br>See [json_samples/replace_slice.json](https://github.com/PINTO0309/onnx2tf/blob/main/json_samples/replace_slice.json) for a sample description.<br>![20221221222956](https://user-images.githubusercontent.com/33194443/208916732-9987a69a-83a7-4a29-8b77-d97b1812d59c.png)<br>1. "param_target": "op"<br>`begin`: Value of `begin`<br>`end`: Value of `end`<br>`strides`: Value of `strides`<br>`begin_mask`: Value of `begin_mask`<br>`end_mask`: Value of `end_mask`<br>`ellipsis_mask`: Value of `ellipsis_mask`<br>`new_axis_mask`: Value of `new_axis_mask`<br>`shrink_axis_mask`: Value of `shrink_axis_mask`<br>{<br>&nbsp;&nbsp;"op_name": "/Slice",<br>&nbsp;&nbsp;"param_target": "op",<br>&nbsp;&nbsp;"begin": [0,0,1,0],<br>&nbsp;&nbsp;"end": [0,0,0,0],<br>&nbsp;&nbsp;"end_mask": 15<br>}|
   |18|Softmax|1. "param_target": "attributes"<br>`axis`: Value of `axis`. The transpositions corresponding to the specified axis are extrapolated before and after `Softmax`.<br>2. "param_target": "inputs"<br>`values`: Value of `tensor`|
   |19|Split|1. "param_target": "inputs"<br>`values`: Value of `split`<br>2. "param_target": "attributes"<br>`axis`: Value of `axis`.<br>`num_outputs`: Value of `num_outputs`.|

@@ -101,6 +101,31 @@ def _make_fused_matmul_model() -> onnx.ModelProto:
     )
 
 
+def _make_fused_conv_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 8, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 8])
+    w = numpy_helper.from_array(np.ones((4, 3, 3, 3), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="B")
+    node = helper.make_node(
+        "FusedConv",
+        ["x", "W", "B"],
+        ["y"],
+        name="FusedConvNode",
+        domain="com.microsoft",
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+        activation="Relu",
+    )
+    graph = helper.make_graph([node], "fused_conv_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
 def _make_qlinear_concat_slice_softmax_unknown_rank_model() -> onnx.ModelProto:
     x0_q = helper.make_tensor_value_info("x0_q", TensorProto.UINT8, [])
     x1_q = helper.make_tensor_value_info("x1_q", TensorProto.UINT8, [])
@@ -420,6 +445,18 @@ def test_op_coverage_fused_matmul_builtin_dispatch() -> None:
     assert report["graph_summary"]["unsupported_nodes"] == 0
     assert report["graph_summary"]["supported_nodes"] == 1
     assert report["graph_node_reports"][0]["onnx_op"] == "FusedMatMul"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_fused_conv_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_fused_conv_model(),
+        output_file_name="fused_conv_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_node_reports"][0]["onnx_op"] == "FusedConv"
     assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
 
 

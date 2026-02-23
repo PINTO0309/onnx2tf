@@ -25,6 +25,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_constant_of_shape_op,
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
+    build_fused_conv_op,
     build_cosh_op,
     build_custom_passthrough_op,
     build_dequantize_linear_op,
@@ -1190,6 +1191,207 @@ def _validate_conv(node: Any, ctx: Any) -> None:
                 node_op=node.op,
             )
         return
+
+
+def _validate_fused_conv(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if input_shape != [1] and output_shape != [1]:
+        _validate_conv(node, ctx)
+    else:
+        weights = _require_const_input(node, ctx, 1, "conv weights")
+        if weights.ndim not in [3, 4]:
+            raise NodeValidationError(
+                reason_code="unsupported_weight_rank",
+                message=f"FusedConv weight rank must be 3 or 4. weight_shape={list(weights.shape)}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if int(weights.ndim) == 4:
+            if input_shape != [1] and len(input_shape) != 4:
+                raise NodeValidationError(
+                    reason_code="unsupported_tensor_rank",
+                    message=(
+                        "FusedConv2D input rank must be 4 (or unknown placeholder rank=1). "
+                        f"input_shape={input_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if output_shape != [1] and len(output_shape) != 4:
+                raise NodeValidationError(
+                    reason_code="unsupported_tensor_rank",
+                    message=(
+                        "FusedConv2D output rank must be 4 (or unknown placeholder rank=1). "
+                        f"output_shape={output_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        else:
+            if input_shape != [1] and len(input_shape) != 3:
+                raise NodeValidationError(
+                    reason_code="unsupported_tensor_rank",
+                    message=(
+                        "FusedConv1D input rank must be 3 (or unknown placeholder rank=1). "
+                        f"input_shape={input_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if output_shape != [1] and len(output_shape) != 3:
+                raise NodeValidationError(
+                    reason_code="unsupported_tensor_rank",
+                    message=(
+                        "FusedConv1D output rank must be 3 (or unknown placeholder rank=1). "
+                        f"output_shape={output_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        group = int(node.attrs.get("group", 1))
+        if group <= 0:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"FusedConv group must be > 0. group={group}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    activation_raw = node.attrs.get("activation", "Relu")
+    if isinstance(activation_raw, (bytes, bytearray)):
+        activation = activation_raw.decode("utf-8")
+    else:
+        activation = str(activation_raw)
+    activation_key = str(activation).lower()
+    supported = {"relu", "tanh", "sigmoid", "leakyrelu", "clip", "hardsigmoid"}
+    if activation_key not in supported:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "FusedConv activation must be one of "
+                "[Relu, Tanh, Sigmoid, LeakyRelu, Clip, HardSigmoid]. "
+                f"activation={activation}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    params_attr = node.attrs.get("activation_params", [])
+    if params_attr is None:
+        params: list[Any] = []
+    elif isinstance(params_attr, np.ndarray):
+        params = list(np.asarray(params_attr).reshape(-1))
+    elif isinstance(params_attr, (list, tuple)):
+        params = []
+        for item in params_attr:
+            if isinstance(item, np.ndarray):
+                params.extend(list(np.asarray(item).reshape(-1)))
+            elif isinstance(item, (list, tuple)):
+                params.extend(list(np.asarray(item).reshape(-1)))
+            else:
+                params.append(item)
+    else:
+        params = [params_attr]
+
+    def _to_optional_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        arr = np.asarray(value)
+        if int(arr.size) == 0:
+            return None
+        try:
+            return float(arr.reshape(-1)[0])
+        except Exception:
+            return None
+
+    if activation_key == "leakyrelu":
+        if len(params) > 0 and _to_optional_float(params[0]) is None:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv LeakyRelu alpha must be scalar-convertible when provided. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+    elif activation_key == "clip":
+        if len(params) == 0:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv Clip requires activation_params with at least one bound. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        min_value = _to_optional_float(params[0]) if len(params) >= 1 else None
+        max_value = _to_optional_float(params[1]) if len(params) >= 2 else None
+        if len(params) >= 1 and params[0] is not None and min_value is None:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv Clip minimum must be scalar-convertible when provided. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if len(params) >= 2 and params[1] is not None and max_value is None:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv Clip maximum must be scalar-convertible when provided. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if min_value is not None and max_value is not None and float(min_value) > float(max_value):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv Clip minimum must be <= maximum. "
+                    f"min={min_value} max={max_value}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if min_value is None and max_value is None:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv Clip requires at least one concrete bound. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+    elif activation_key == "hardsigmoid":
+        if len(params) < 2:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv HardSigmoid requires activation_params [alpha, beta]. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        alpha = _to_optional_float(params[0])
+        beta = _to_optional_float(params[1])
+        if alpha is None or beta is None:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "FusedConv HardSigmoid alpha/beta must be scalar-convertible. "
+                    f"activation_params={params_attr}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 def _validate_global_average_pool(node: Any, ctx: Any) -> None:
@@ -3122,10 +3324,10 @@ def _validate_resize(node: Any, ctx: Any) -> None:
         )
 
     mode = str(node.attrs.get("mode", "nearest")).lower()
-    if mode not in ["nearest", "linear"]:
+    if mode not in ["nearest", "linear", "cubic"]:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
-            message=f"Resize mode must be nearest or linear. got={mode}",
+            message=f"Resize mode must be nearest, linear, or cubic. got={mode}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -3154,7 +3356,7 @@ def _validate_resize(node: Any, ctx: Any) -> None:
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",
                 message=(
-                    "Resize(linear) supports coordinate_transformation_mode "
+                    "Resize(linear/cubic) supports coordinate_transformation_mode "
                     f"half_pixel/pytorch_half_pixel/asymmetric/align_corners only. got={ctm}"
                 ),
                 node_name=node.name,
@@ -4187,6 +4389,32 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             output_rank={0: [3, 4]},
         ),
         extra_validator=_validate_conv,
+    ),
+    "FusedConv": DispatchEntry(
+        onnx_op="FusedConv",
+        tflite_ops=[
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+            "RELU",
+            "RELU6",
+            "TANH",
+            "LOGISTIC",
+            "LEAKY_RELU",
+            "MUL",
+            "ADD",
+            "MAXIMUM",
+            "MINIMUM",
+        ],
+        builder=build_fused_conv_op,
+        validation=ValidationSpec(
+            min_inputs=2,
+            max_inputs=3,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [1, 3, 4]},
+            output_rank={0: [1, 3, 4]},
+        ),
+        extra_validator=_validate_fused_conv,
     ),
     "ConvTranspose": DispatchEntry(
         onnx_op="ConvTranspose",

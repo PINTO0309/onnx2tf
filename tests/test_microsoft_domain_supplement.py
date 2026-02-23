@@ -37,6 +37,32 @@ def _make_fused_matmul_model(*, domain: str = "") -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=opsets)
 
 
+def _make_fused_conv_model(*, domain: str = "") -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1, 1, 4, 4])
+    w = numpy_helper.from_array(
+        np.asarray(
+            [[[[1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [1.0, 0.0, -1.0]]]],
+            dtype=np.float32,
+        ),
+        name="w",
+    )
+    b = numpy_helper.from_array(np.asarray([0.0], dtype=np.float32), name="b")
+    fused = helper.make_node(
+        "FusedConv",
+        ["x", "w", "b"],
+        ["y"],
+        name="FusedConvNode",
+        domain=domain,
+        activation="Relu",
+    )
+    graph = helper.make_graph([fused], "fused_conv_graph", [x], [y], initializer=[w, b])
+    opsets = [helper.make_operatorsetid("", 12)]
+    if domain == "com.microsoft":
+        opsets.append(helper.make_operatorsetid("com.microsoft", 1))
+    return helper.make_model(graph, opset_imports=opsets)
+
+
 def test_supplement_microsoft_domain_for_fused_matmul_default_domain() -> None:
     model = _make_fused_matmul_model(domain="")
 
@@ -60,8 +86,31 @@ def test_supplement_microsoft_domain_skips_already_tagged_node() -> None:
     assert sum(1 for opset in model.opset_import if opset.domain == "com.microsoft") == 1
 
 
+def test_supplement_microsoft_domain_for_fused_conv_default_domain() -> None:
+    model = _make_fused_conv_model(domain="")
+
+    rewritten = _supplement_microsoft_domain_for_selected_ops(onnx_model=model)
+
+    assert rewritten == {"FusedConv": 1}
+    assert model.graph.node[0].domain == "com.microsoft"
+    assert any(
+        opset.domain == "com.microsoft" and int(opset.version) == 1
+        for opset in model.opset_import
+    )
+
+
 def test_prepare_runtime_checks_applies_domain_supplement_on_copy() -> None:
     source = _make_fused_matmul_model(domain="")
+
+    prepared = _prepare_onnx_graph_for_runtime_checks(source_onnx_graph=source)
+
+    assert prepared is not None
+    assert source.graph.node[0].domain == ""
+    assert prepared.graph.node[0].domain == "com.microsoft"
+
+
+def test_prepare_runtime_checks_applies_domain_supplement_for_fused_conv() -> None:
+    source = _make_fused_conv_model(domain="")
 
     prepared = _prepare_onnx_graph_for_runtime_checks(source_onnx_graph=source)
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, Tuple
 import copy
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+
+_BICUBIC_MATRIX_CACHE: Dict[Tuple[int, int, str, float, bool], np.ndarray] = {}
 
 
 def _numpy_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
@@ -1827,7 +1829,7 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
     return onnx_sizes_hw, onnx_scales_hw
 
 
-def _resolve_resize_flags(node: Any) -> tuple[str, bool, bool]:
+def _resolve_resize_flags(node: Any) -> tuple[str, str, bool, bool]:
     mode = str(node.attrs.get("mode", "nearest")).lower()
     ctm = str(node.attrs.get("coordinate_transformation_mode", "half_pixel")).lower()
     align_corners = bool(ctm == "align_corners")
@@ -1835,7 +1837,339 @@ def _resolve_resize_flags(node: Any) -> tuple[str, bool, bool]:
     if mode == "nearest" and ctm == "asymmetric":
         align_corners = False
         half_pixel_centers = False
-    return mode, align_corners, half_pixel_centers
+    return mode, ctm, align_corners, half_pixel_centers
+
+
+def _normalize_resize_coordinate_transformation_mode(
+    *,
+    coordinate_transformation_mode: str,
+) -> str | None:
+    ctm = str(coordinate_transformation_mode).lower()
+    if ctm in {"align_corners", "asymmetric", "half_pixel", "pytorch_half_pixel"}:
+        return ctm
+    return None
+
+
+def _compute_resize_source_index(
+    *,
+    out_index: int,
+    input_size: int,
+    output_size: int,
+    coordinate_transformation_mode: str,
+) -> float:
+    ctm = str(coordinate_transformation_mode).lower()
+    in_size = int(input_size)
+    out_size = int(output_size)
+    i = float(out_index)
+    if ctm == "align_corners":
+        if out_size <= 1:
+            return 0.0
+        return i * float(in_size - 1) / float(out_size - 1)
+    if ctm == "asymmetric":
+        return i * float(in_size) / float(out_size)
+    if ctm == "half_pixel":
+        return (i + 0.5) * float(in_size) / float(out_size) - 0.5
+    if ctm == "pytorch_half_pixel":
+        if out_size > 1:
+            return (i + 0.5) * float(in_size) / float(out_size) - 0.5
+        return 0.0
+    raise NotImplementedError(
+        f"Unsupported coordinate_transformation_mode for Resize(cubic): {coordinate_transformation_mode}"
+    )
+
+
+def _cubic_kernel_weight(*, distance: float, cubic_coeff_a: float) -> float:
+    t = float(abs(distance))
+    a = float(cubic_coeff_a)
+    if t <= 1.0:
+        return ((a + 2.0) * t * t * t) - ((a + 3.0) * t * t) + 1.0
+    if t < 2.0:
+        return (a * t * t * t) - (5.0 * a * t * t) + (8.0 * a * t) - (4.0 * a)
+    return 0.0
+
+
+def _build_resize_cubic_matrix_from_onnx(
+    *,
+    input_size: int,
+    output_size: int,
+    coordinate_transformation_mode: str,
+    cubic_coeff_a: float,
+    exclude_outside: bool,
+) -> np.ndarray:
+    ctm = _normalize_resize_coordinate_transformation_mode(
+        coordinate_transformation_mode=coordinate_transformation_mode,
+    )
+    if ctm is None:
+        raise NotImplementedError(
+            "Resize(cubic) strict lowering supports coordinate_transformation_mode "
+            f"only in [align_corners, asymmetric, half_pixel, pytorch_half_pixel]. "
+            f"got={coordinate_transformation_mode}"
+        )
+
+    key = (
+        int(input_size),
+        int(output_size),
+        str(ctm),
+        float(cubic_coeff_a),
+        bool(exclude_outside),
+    )
+    cached = _BICUBIC_MATRIX_CACHE.get(key, None)
+    if cached is not None:
+        return np.asarray(cached, dtype=np.float32)
+    in_size = int(input_size)
+    out_size = int(output_size)
+    if in_size <= 0 or out_size <= 0:
+        raise NotImplementedError(
+            f"Resize(cubic) requires positive input/output size. input_size={in_size} output_size={out_size}"
+        )
+
+    matrix = np.zeros((out_size, in_size), dtype=np.float32)
+    for out_idx in range(out_size):
+        src = _compute_resize_source_index(
+            out_index=out_idx,
+            input_size=in_size,
+            output_size=out_size,
+            coordinate_transformation_mode=ctm,
+        )
+        src_floor = int(np.floor(src))
+        row_weight_sum = 0.0
+        for offset in [-1, 0, 1, 2]:
+            src_idx = int(src_floor + offset)
+            weight = _cubic_kernel_weight(
+                distance=src - float(src_idx),
+                cubic_coeff_a=float(cubic_coeff_a),
+            )
+            if bool(exclude_outside) and (src_idx < 0 or src_idx >= in_size):
+                continue
+            if src_idx < 0:
+                src_idx = 0
+            elif src_idx >= in_size:
+                src_idx = in_size - 1
+            matrix[out_idx, src_idx] += np.float32(weight)
+            row_weight_sum += float(weight)
+        if bool(exclude_outside) and abs(row_weight_sum) > 0.0:
+            matrix[out_idx, :] = matrix[out_idx, :] / np.float32(row_weight_sum)
+
+    _BICUBIC_MATRIX_CACHE[key] = matrix
+    return np.asarray(matrix, dtype=np.float32)
+
+
+def _add_reshape_operator(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    new_shape: list[int],
+) -> None:
+    shape_const = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape",
+        np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_const],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in list(new_shape)]},
+        )
+    )
+
+
+def _build_resize_cubic_strict_op(
+    *,
+    node: Any,
+    ctx: Any,
+    x_nhwc: str,
+    y_nhwc: str,
+    input_signature_nchw: list[int],
+    output_signature_nchw: list[int],
+    coordinate_transformation_mode: str,
+    cubic_coeff_a: float,
+    exclude_outside: bool,
+) -> None:
+    if len(input_signature_nchw) != 4 or len(output_signature_nchw) != 4:
+        raise NotImplementedError(
+            f"Resize(cubic) strict lowering supports rank-4 signature only. "
+            f"op={node.name} input_signature={input_signature_nchw} output_signature={output_signature_nchw}"
+        )
+    if any(int(input_signature_nchw[idx]) < 0 for idx in [1, 2, 3]):
+        raise NotImplementedError(
+            "Resize(cubic) strict lowering requires static input C/H/W for flatbuffer_direct. "
+            f"op={node.name} input_signature={input_signature_nchw}"
+        )
+    if any(int(output_signature_nchw[idx]) < 0 for idx in [2, 3]):
+        raise NotImplementedError(
+            "Resize(cubic) strict lowering requires static output H/W for flatbuffer_direct. "
+            f"op={node.name} output_signature={output_signature_nchw}"
+        )
+
+    in_c = int(input_signature_nchw[1])
+    in_h = int(input_signature_nchw[2])
+    in_w = int(input_signature_nchw[3])
+    out_c = int(output_signature_nchw[1])
+    out_h = int(output_signature_nchw[2])
+    out_w = int(output_signature_nchw[3])
+    if out_c >= 0 and out_c != in_c:
+        raise NotImplementedError(
+            "Resize(cubic) strict lowering expects channel-preserving resize. "
+            f"op={node.name} input_c={in_c} output_c={out_c}"
+        )
+    if min(in_c, in_h, in_w, out_h, out_w) <= 0:
+        raise NotImplementedError(
+            "Resize(cubic) strict lowering requires positive static C/H/W values. "
+            f"op={node.name} in=[{in_c},{in_h},{in_w}] out=[{out_h},{out_w}]"
+        )
+
+    x_shape_nhwc = [int(v) for v in list(ctx.get_tensor_shape(x_nhwc))]
+    input_batch_shape = int(x_shape_nhwc[0]) if len(x_shape_nhwc) == 4 else -1
+    input_batch_signature = int(input_signature_nchw[0]) if len(input_signature_nchw) == 4 else -1
+    output_batch_signature = int(output_signature_nchw[0]) if len(output_signature_nchw) == 4 else -1
+    static_batch = -1
+    if input_batch_signature > 0:
+        static_batch = int(input_batch_signature)
+    elif output_batch_signature > 0:
+        static_batch = int(output_batch_signature)
+    elif input_batch_shape > 0:
+        static_batch = int(input_batch_shape)
+
+    # Keep ONNX cubic semantics by deriving 1D interpolation matrices
+    # from ONNX Resize attributes and applying them separably.
+    h_matrix = _build_resize_cubic_matrix_from_onnx(
+        input_size=in_h,
+        output_size=out_h,
+        coordinate_transformation_mode=coordinate_transformation_mode,
+        cubic_coeff_a=float(cubic_coeff_a),
+        exclude_outside=bool(exclude_outside),
+    )
+    w_matrix = _build_resize_cubic_matrix_from_onnx(
+        input_size=in_w,
+        output_size=out_w,
+        coordinate_transformation_mode=coordinate_transformation_mode,
+        cubic_coeff_a=float(cubic_coeff_a),
+        exclude_outside=bool(exclude_outside),
+    )
+    h_matrix_name = ctx.add_const_tensor(
+        f"{node.name}_resize_cubic_h_matrix",
+        np.asarray(h_matrix, dtype=np.float32).reshape(1, out_h, in_h),
+    )
+    w_matrix_name = ctx.add_const_tensor(
+        f"{node.name}_resize_cubic_w_matrix",
+        np.asarray(w_matrix, dtype=np.float32).reshape(1, 1, out_w, in_w),
+    )
+
+    x_work = x_nhwc
+    x_dtype = str(ctx.get_tensor_dtype(x_nhwc)).upper()
+    if x_dtype != "FLOAT32":
+        x_cast = ctx.add_intermediate_tensor(
+            f"{node.name}_resize_cubic_input_f32",
+            dtype="FLOAT32",
+            shape=[int(static_batch if static_batch > 0 else -1), in_h, in_w, in_c],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[x_nhwc],
+                outputs=[x_cast],
+                options={
+                    "inDataType": x_dtype,
+                    "outDataType": "FLOAT32",
+                },
+            )
+        )
+        x_work = x_cast
+
+    # Height interpolation:
+    # [N,H,W,C] -> reshape [N,H,W*C] -> BMM([1,out_h,H], ...) -> [N,out_h,W*C] -> reshape [N,out_h,W,C]
+    flatten_wc = int(in_w * in_c)
+    x_h_3d = ctx.add_intermediate_tensor(
+        f"{node.name}_resize_cubic_h_in",
+        dtype="FLOAT32",
+        shape=[int(static_batch if static_batch > 0 else -1), in_h, flatten_wc],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=x_work,
+        output_name=x_h_3d,
+        new_shape=[int(static_batch if static_batch > 0 else -1), in_h, flatten_wc],
+    )
+    y_h_3d = ctx.add_intermediate_tensor(
+        f"{node.name}_resize_cubic_h_out",
+        dtype="FLOAT32",
+        shape=[int(static_batch if static_batch > 0 else -1), out_h, flatten_wc],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[h_matrix_name, x_h_3d],
+            outputs=[y_h_3d],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+    y_h_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_resize_cubic_h_nhwc",
+        dtype="FLOAT32",
+        shape=[int(static_batch if static_batch > 0 else -1), out_h, in_w, in_c],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=y_h_3d,
+        output_name=y_h_nhwc,
+        new_shape=[int(static_batch if static_batch > 0 else -1), out_h, in_w, in_c],
+    )
+
+    y_float_nhwc = y_nhwc
+    output_dtype = str(ctx.get_tensor_dtype(y_nhwc)).upper()
+    if output_dtype != "FLOAT32":
+        y_float_nhwc = ctx.add_intermediate_tensor(
+            f"{node.name}_resize_cubic_output_f32",
+            dtype="FLOAT32",
+            shape=[int(static_batch if static_batch > 0 else -1), out_h, out_w, in_c],
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[w_matrix_name, y_h_nhwc],
+            outputs=[y_float_nhwc],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    # Keep batch metadata stable on the NHWC cubic output tensor.
+    y_float_tensor = ctx.model_ir.tensors.get(y_float_nhwc, None)
+    if y_float_tensor is not None:
+        y_float_tensor.shape = [
+            int(static_batch if static_batch > 0 else -1),
+            int(out_h),
+            int(out_w),
+            int(in_c),
+        ]
+        y_float_tensor.shape_signature = [
+            int(output_batch_signature if output_batch_signature > 0 else -1),
+            int(output_signature_nchw[2]) if int(output_signature_nchw[2]) > 0 else -1,
+            int(output_signature_nchw[3]) if int(output_signature_nchw[3]) > 0 else -1,
+            int(output_signature_nchw[1]) if int(output_signature_nchw[1]) > 0 else -1,
+        ]
+
+    if output_dtype != "FLOAT32":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[y_float_nhwc],
+                outputs=[y_nhwc],
+                options={
+                    "inDataType": "FLOAT32",
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def build_resize_op(node: Any, ctx: Any) -> None:
@@ -1886,7 +2220,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         if in_quant is not None:
             ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
 
-    mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
+    mode, coordinate_transformation_mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
     tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
     onnx_sizes_hw, onnx_scales_hw = _extract_resize_onnx_hw_hints(node, ctx)
     output_signature = _infer_resize_output_signature_nchw(
@@ -1925,77 +2259,6 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         allow_elide_inverse_chain=True,
     )
 
-    size_input_name = ""
-    dynamic_size_input_name = _build_resize_dynamic_size_input(node, ctx)
-    has_dynamic_spatial_input = (
-        len(input_signature) == 4 and (int(input_signature[2]) < 0 or int(input_signature[3]) < 0)
-    )
-    resize_scales_hw_int = _resolve_integer_resize_scales_hw(onnx_scales_hw)
-    if dynamic_size_input_name is not None:
-        size_input_name = dynamic_size_input_name
-    elif has_dynamic_spatial_input and onnx_sizes_hw is None and onnx_scales_hw is not None:
-        if resize_scales_hw_int is None:
-            raise NotImplementedError(
-                f"Resize with dynamic spatial input supports integer scales only in flatbuffer_direct. "
-                f"op={node.name} scales_hw={onnx_scales_hw}"
-            )
-        input_hw_shape = ctx.add_intermediate_tensor(
-            f"{node.name}_input_hw_shape",
-            dtype="INT32",
-            shape=[2],
-        )
-        shape_vec = ctx.add_intermediate_tensor(
-            f"{node.name}_input_shape_vec",
-            dtype="INT32",
-            shape=[4],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SHAPE",
-                inputs=[x_nhwc],
-                outputs=[shape_vec],
-                options={"outType": "INT32"},
-            )
-        )
-        shape_begin = ctx.add_const_tensor(
-            f"{node.name}_shape_slice_begin",
-            np.asarray([1], dtype=np.int32),
-        )
-        shape_size = ctx.add_const_tensor(
-            f"{node.name}_shape_slice_size",
-            np.asarray([2], dtype=np.int32),
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SLICE",
-                inputs=[shape_vec, shape_begin, shape_size],
-                outputs=[input_hw_shape],
-            )
-        )
-        scales_const = ctx.add_const_tensor(
-            f"{node.name}_resize_scales_hw_int",
-            np.asarray([int(resize_scales_hw_int[0]), int(resize_scales_hw_int[1])], dtype=np.int32),
-        )
-        dynamic_size = ctx.add_intermediate_tensor(
-            f"{node.name}_resize_size_dynamic",
-            dtype="INT32",
-            shape=[2],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="MUL",
-                inputs=[input_hw_shape, scales_const],
-                outputs=[dynamic_size],
-                options={"fusedActivationFunction": "NONE"},
-            )
-        )
-        size_input_name = dynamic_size
-    else:
-        size_const = ctx.add_const_tensor(
-            f"{node.name}_resize_size",
-            np.asarray([int(output_shape[2]), int(output_shape[3])], dtype=np.int32),
-        )
-        size_input_name = size_const
     y_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_output_nhwc",
         dtype=ctx.get_tensor_dtype(output_name),
@@ -2006,19 +2269,113 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(y_quant)
     ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in list(nhwc_output_signature)]
 
-    ctx.add_operator(
-        OperatorIR(
-            op_type=tflite_op,
-            inputs=[x_nhwc, size_input_name],
-            outputs=[y_nhwc],
-            options={
-                "alignCorners": bool(align_corners),
-                "halfPixelCenters": bool(half_pixel_centers),
-                "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
-                "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
-            },
+    if mode == "cubic":
+        exclude_outside_attr = node.attrs.get("exclude_outside", 0)
+        try:
+            exclude_outside = bool(int(exclude_outside_attr))
+        except Exception:
+            exclude_outside = bool(exclude_outside_attr)
+        cubic_coeff_a_attr = node.attrs.get("cubic_coeff_a", -0.75)
+        try:
+            cubic_coeff_a = float(cubic_coeff_a_attr)
+        except Exception:
+            cubic_coeff_a = -0.75
+        _build_resize_cubic_strict_op(
+            node=node,
+            ctx=ctx,
+            x_nhwc=x_nhwc,
+            y_nhwc=y_nhwc,
+            input_signature_nchw=input_signature,
+            output_signature_nchw=output_signature,
+            coordinate_transformation_mode=str(coordinate_transformation_mode),
+            cubic_coeff_a=float(cubic_coeff_a),
+            exclude_outside=bool(exclude_outside),
         )
-    )
+    else:
+        size_input_name = ""
+        dynamic_size_input_name = _build_resize_dynamic_size_input(node, ctx)
+        has_dynamic_spatial_input = (
+            len(input_signature) == 4 and (int(input_signature[2]) < 0 or int(input_signature[3]) < 0)
+        )
+        resize_scales_hw_int = _resolve_integer_resize_scales_hw(onnx_scales_hw)
+        if dynamic_size_input_name is not None:
+            size_input_name = dynamic_size_input_name
+        elif has_dynamic_spatial_input and onnx_sizes_hw is None and onnx_scales_hw is not None:
+            if resize_scales_hw_int is None:
+                raise NotImplementedError(
+                    f"Resize with dynamic spatial input supports integer scales only in flatbuffer_direct. "
+                    f"op={node.name} scales_hw={onnx_scales_hw}"
+                )
+            input_hw_shape = ctx.add_intermediate_tensor(
+                f"{node.name}_input_hw_shape",
+                dtype="INT32",
+                shape=[2],
+            )
+            shape_vec = ctx.add_intermediate_tensor(
+                f"{node.name}_input_shape_vec",
+                dtype="INT32",
+                shape=[4],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SHAPE",
+                    inputs=[x_nhwc],
+                    outputs=[shape_vec],
+                    options={"outType": "INT32"},
+                )
+            )
+            shape_begin = ctx.add_const_tensor(
+                f"{node.name}_shape_slice_begin",
+                np.asarray([1], dtype=np.int32),
+            )
+            shape_size = ctx.add_const_tensor(
+                f"{node.name}_shape_slice_size",
+                np.asarray([2], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[shape_vec, shape_begin, shape_size],
+                    outputs=[input_hw_shape],
+                )
+            )
+            scales_const = ctx.add_const_tensor(
+                f"{node.name}_resize_scales_hw_int",
+                np.asarray([int(resize_scales_hw_int[0]), int(resize_scales_hw_int[1])], dtype=np.int32),
+            )
+            dynamic_size = ctx.add_intermediate_tensor(
+                f"{node.name}_resize_size_dynamic",
+                dtype="INT32",
+                shape=[2],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[input_hw_shape, scales_const],
+                    outputs=[dynamic_size],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            size_input_name = dynamic_size
+        else:
+            size_const = ctx.add_const_tensor(
+                f"{node.name}_resize_size",
+                np.asarray([int(output_shape[2]), int(output_shape[3])], dtype=np.int32),
+            )
+            size_input_name = size_const
+        ctx.add_operator(
+            OperatorIR(
+                op_type=tflite_op,
+                inputs=[x_nhwc, size_input_name],
+                outputs=[y_nhwc],
+                options={
+                    "alignCorners": bool(align_corners),
+                    "halfPixelCenters": bool(half_pixel_centers),
+                    "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
+                    "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
+                },
+            )
+        )
     make_transpose(
         ctx,
         y_nhwc,
