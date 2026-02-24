@@ -342,6 +342,7 @@ Notes:
 |DequantizeLinear|DEQUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |DepthToSpace|DEPTH_TO_SPACE (DCR) / RESHAPE + TRANSPOSE + RESHAPE (CRD)|Rank-4 only, `blocksize > 1`, `mode` in `{DCR,CRD}`|
 |Div|DIV or MUL (when divisor is constant reciprocal)|For non-floating outputs, lowered as `CAST -> MUL(reciprocal) -> CAST` to preserve output dtype without using unsupported integer DIV paths|
+|Dropout|RESHAPE (+ optional SHAPE + FILL for mask output)|Inference-time no-op in flatbuffer_direct; inputs `ratio`/`training_mode` are ignored|
 |DynamicQuantizeLinear|NEG + REDUCE_MAX + MINIMUM + MAXIMUM + SUB + DIV + ADD + CAST|Input dtype must be `FLOAT16/FLOAT32`, output dtypes must be `Y=UINT8`, `Y_Scale=FLOAT16/FLOAT32`, `Y_ZeroPoint=UINT8`; scale/zero-point outputs must be scalar|
 |Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
 |Elu|ELU|-|
@@ -365,6 +366,7 @@ Notes:
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
 |HardSwish|HARD_SWISH|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Identity|RESHAPE|-|
+|InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
 |LogSoftmax|SOFTMAX + LOG (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
@@ -556,8 +558,8 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnxruntime==1.24.1
 - onnxsim-prebuilt==0.4.39.post2
 - onnxoptimizer==0.4.2
-- sne4onnx>=2.0.0
-- sng4onnx>=2.0.0
+- sne4onnx>=2.0.1
+- sng4onnx>=2.0.1
 - tensorflow==2.19.0
 - tf-keras==2.19.0
 - ai-edge-litert==2.1.2
@@ -610,7 +612,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.21
+  ghcr.io/pinto0309/onnx2tf:2.0.22
 
   or
 
@@ -619,7 +621,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.21
+  docker.io/pinto0309/onnx2tf:2.0.22
 
   or
 
@@ -629,7 +631,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.21 \
+  docker.io/pinto0309/onnx2tf:2.0.22 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

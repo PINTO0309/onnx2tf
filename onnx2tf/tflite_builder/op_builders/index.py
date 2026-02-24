@@ -99,6 +99,30 @@ def build_gather_op(node: Any, ctx: Any) -> None:
     indices_const = ctx.get_constant_array(indices_name)
     if indices_const is not None:
         indices_const_arr = np.asarray(indices_const)
+        if np.issubdtype(indices_const_arr.dtype, np.integer) and bool(np.any(indices_const_arr < 0)):
+            axis_dim = int(input_shape[int(axis)]) if int(axis) < int(len(input_shape)) else -1
+            if axis_dim <= 0:
+                raise NotImplementedError(
+                    f"Gather negative constant indices require known positive axis dimension. "
+                    f"op={node.name} axis={axis} axis_dim={axis_dim}"
+                )
+            wrapped_indices_i64 = np.where(
+                indices_const_arr.astype(np.int64, copy=False) < 0,
+                indices_const_arr.astype(np.int64, copy=False) + int(axis_dim),
+                indices_const_arr.astype(np.int64, copy=False),
+            )
+            if bool(np.any(wrapped_indices_i64 < 0)) or bool(np.any(wrapped_indices_i64 >= int(axis_dim))):
+                raise NotImplementedError(
+                    f"Gather constant indices are out of bounds after negative-index normalization. "
+                    f"op={node.name} axis={axis} axis_dim={axis_dim}"
+                )
+            indices_const_arr = wrapped_indices_i64.astype(indices_const_arr.dtype, copy=False)
+            scalarized_indices_name = ctx.add_const_tensor(
+                f"{output_name}_gather_indices_wrapped",
+                indices_const_arr,
+            )
+            indices_shape = [int(v) for v in list(indices_const_arr.shape)]
+            indices_signature = [int(v) for v in list(indices_const_arr.shape)]
         scalarize_single_index = indices_const_arr.ndim == 0
         if not scalarize_single_index and int(indices_const_arr.size) == 1 and input_rank > 1:
             expected_rank = len(existing_output_signature)
