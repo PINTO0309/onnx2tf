@@ -209,6 +209,51 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_min_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    if len(input_names) < 2:
+        raise NotImplementedError(
+            f"Min requires at least 2 inputs in flatbuffer_direct. op={node.name}"
+        )
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_names[0], output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+
+    current_name = input_names[0]
+    for idx, rhs_name in enumerate(input_names[1:], start=1):
+        is_last = idx == int(len(input_names) - 1)
+        min_output_name = output_name
+        if not is_last:
+            min_output_name = ctx.add_intermediate_tensor(
+                f"{output_name}_min_{idx}",
+                dtype=output_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MINIMUM",
+                inputs=[current_name, rhs_name],
+                outputs=[min_output_name],
+                options={},
+            )
+        )
+        current_name = min_output_name
+
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in output_signature]
+
+
 def build_pow_op(node: Any, ctx: Any) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name

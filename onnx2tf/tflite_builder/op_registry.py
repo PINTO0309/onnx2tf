@@ -29,6 +29,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_cosh_op,
     build_custom_passthrough_op,
     build_dequantize_linear_op,
+    build_depth_to_space_op,
     build_dynamic_quantize_linear_op,
     build_div_op,
     build_einsum_op,
@@ -49,6 +50,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_hardsigmoid_op,
     build_global_average_pool_op,
     build_logsoftmax_op,
+    build_min_op,
     build_mish_op,
     build_nonzero_op,
     build_qgemm_op,
@@ -57,6 +59,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_pad_op,
     build_mod_op,
     build_one_hot_op,
+    build_topk_op,
     build_l2_normalization_op,
     build_lrn_op,
     build_logistic_op,
@@ -1491,6 +1494,14 @@ def _validate_pool(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+        count_include_pad = int(node.attrs.get("count_include_pad", 0))
+        if count_include_pad not in [0, 1]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"AveragePool count_include_pad must be 0 or 1. got={count_include_pad}",
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 def _validate_fc(node: Any, ctx: Any) -> None:
@@ -2132,6 +2143,96 @@ def _validate_argmin(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_topk(node: Any, ctx: Any) -> None:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    input_rank = len(input_shape)
+    if input_rank <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"TopK input rank must be >= 1. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "TopK currently supports FLOAT16/FLOAT32 input in flatbuffer_direct. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    axis = int(node.attrs.get("axis", -1))
+    if axis < 0:
+        axis += input_rank
+    if axis < 0 or axis >= input_rank:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"TopK axis out of range. axis={axis} rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    largest = int(node.attrs.get("largest", 1))
+    if largest not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"TopK largest must be 0 or 1. largest={largest}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    sorted_attr = int(node.attrs.get("sorted", 1))
+    if sorted_attr != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"TopK sorted must be 1 in flatbuffer_direct builtin lowering. sorted={sorted_attr}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    k_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+    if len(k_shape) == 0:
+        pass
+    elif len(k_shape) == 1 and int(k_shape[0]) <= 1:
+        pass
+    else:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+                f"k_shape={k_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    k_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    if not _is_integer_dtype(k_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"TopK k input must be integer dtype. k_dtype={k_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if len(node.outputs) >= 2:
+        indices_dtype = str(ctx.get_tensor_dtype(node.outputs[1].name)).upper()
+        if indices_dtype not in {"INT32", "INT64"}:
+            raise NodeValidationError(
+                reason_code="unsupported_output_dtype",
+                message=(
+                    "TopK indices output dtype must be INT32 or INT64 in flatbuffer_direct. "
+                    f"indices_dtype={indices_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _validate_hardmax(node: Any, ctx: Any) -> None:
     input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
     input_rank = len(input_shape)
@@ -2216,12 +2317,12 @@ def _validate_non_max_suppression(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if not output_nms_with_argmax and int(scores_shape[1]) != 1:
+    if not output_nms_with_argmax and int(scores_shape[1]) <= 0:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax "
-                "for flatbuffer_direct builtin lowering. "
+                "NonMaxSuppression requires static positive class dimension when "
+                "--output_nms_with_argmax is disabled for flatbuffer_direct builtin lowering. "
                 f"scores_shape={scores_shape}"
             ),
             node_name=node.name,
@@ -2857,11 +2958,38 @@ def _validate_space_to_depth(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    mode = str(node.attrs.get("mode", "DCR")).upper()
+    mode_raw = node.attrs.get("mode", "DCR")
+    if isinstance(mode_raw, (bytes, bytearray)):
+        mode = mode_raw.decode("utf-8").upper()
+    else:
+        mode = str(mode_raw).upper()
     if mode != "DCR":
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"SpaceToDepth mode must be DCR. got={mode}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_depth_to_space(node: Any, ctx: Any) -> None:
+    block_size = int(node.attrs.get("blocksize", 0))
+    if block_size <= 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"DepthToSpace blocksize must be > 1. got={block_size}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    mode_raw = node.attrs.get("mode", "DCR")
+    if isinstance(mode_raw, (bytes, bytearray)):
+        mode = mode_raw.decode("utf-8").upper()
+    else:
+        mode = str(mode_raw).upper()
+    if mode not in {"DCR", "CRD"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"DepthToSpace mode must be DCR or CRD. got={mode}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -3637,6 +3765,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_div_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
     ),
+    "Min": DispatchEntry(
+        onnx_op="Min",
+        tflite_ops=["MINIMUM"],
+        builder=build_min_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=None, min_outputs=1, max_outputs=1),
+    ),
     "Abs": DispatchEntry(
         onnx_op="Abs",
         tflite_ops=["ABS"],
@@ -3974,6 +4108,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["MUL", "ADD", "MAXIMUM", "MINIMUM"],
         builder=build_hardsigmoid_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "HardSwish": DispatchEntry(
+        onnx_op="HardSwish",
+        tflite_ops=["HARD_SWISH"],
+        builder=_make_unary_builder("HARD_SWISH"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_unary,
     ),
     "Relu": DispatchEntry(
         onnx_op="Relu",
@@ -4321,6 +4462,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_argmin,
     ),
+    "TopK": DispatchEntry(
+        onnx_op="TopK",
+        tflite_ops=["CAST", "SQUEEZE", "TRANSPOSE", "NEG", "TOPK_V2"],
+        builder=build_topk_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=2),
+        extra_validator=_validate_topk,
+    ),
     "Hardmax": DispatchEntry(
         onnx_op="Hardmax",
         tflite_ops=["TRANSPOSE", "ARG_MAX", "ONE_HOT"],
@@ -4375,6 +4523,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             output_rank={0: [4]},
         ),
         extra_validator=_validate_space_to_depth,
+    ),
+    "DepthToSpace": DispatchEntry(
+        onnx_op="DepthToSpace",
+        tflite_ops=["DEPTH_TO_SPACE"],
+        builder=build_depth_to_space_op,
+        validation=ValidationSpec(
+            min_inputs=1,
+            max_inputs=1,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [4]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_depth_to_space,
     ),
     "Conv": DispatchEntry(
         onnx_op="Conv",

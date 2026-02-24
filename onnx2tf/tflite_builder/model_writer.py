@@ -243,6 +243,12 @@ def _build_space_to_depth_options(schema_tflite: Dict[str, Any], op: OperatorIR)
     return _enum(schema_tflite, "BuiltinOptions", "SpaceToDepthOptions"), options
 
 
+def _build_depth_to_space_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["DepthToSpaceOptionsT"]()
+    options.blockSize = int(op.options.get("blockSize", 1))
+    return _enum(schema_tflite, "BuiltinOptions", "DepthToSpaceOptions"), options
+
+
 def _build_conv_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["Conv2DOptionsT"]()
     options.padding = _enum(schema_tflite, "Padding", str(op.options["padding"]))
@@ -306,6 +312,11 @@ def _build_leaky_relu_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> 
     options = schema_tflite["LeakyReluOptionsT"]()
     options.alpha = float(op.options.get("alpha", 0.01))
     return _enum(schema_tflite, "BuiltinOptions", "LeakyReluOptions"), options
+
+
+def _build_hard_swish_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["HardSwishOptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "HardSwishOptions"), options
 
 
 def _build_shape_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
@@ -472,6 +483,8 @@ def _build_builtin_options(
         return _build_lrn_options(schema_tflite, op)
     if op.op_type == "SPACE_TO_DEPTH":
         return _build_space_to_depth_options(schema_tflite, op)
+    if op.op_type == "DEPTH_TO_SPACE":
+        return _build_depth_to_space_options(schema_tflite, op)
     if op.op_type == "CONV_2D":
         return _build_conv_options(schema_tflite, op)
     if op.op_type == "DEPTHWISE_CONV_2D":
@@ -486,6 +499,8 @@ def _build_builtin_options(
         return _build_resize_bilinear_options(schema_tflite, op)
     if op.op_type == "LEAKY_RELU":
         return _build_leaky_relu_options(schema_tflite, op)
+    if op.op_type == "HARD_SWISH":
+        return _build_hard_swish_options(schema_tflite, op)
     if op.op_type == "SHAPE":
         return _build_shape_options(schema_tflite, op)
     if op.op_type == "SPLIT":
@@ -516,6 +531,7 @@ def _build_builtin_options(
         "LESS_EQUAL",
         "RELU",
         "RELU6",
+        "RELU_0_TO_1",
         "TANH",
         "ATAN2",
         "LOG",
@@ -542,6 +558,7 @@ def _build_builtin_options(
         "QUANTIZE",
         "PAD",
         "PADV2",
+        "TOPK_V2",
         "SLICE",
         "FILL",
     ]:

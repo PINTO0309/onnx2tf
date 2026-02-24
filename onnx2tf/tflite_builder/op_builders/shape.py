@@ -1204,35 +1204,93 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             f"Pad mode is not supported in flatbuffer_direct. op={node.name} mode={mode}"
         )
 
+    input_rank = len(ctx.get_tensor_shape(input_name))
     pads_arr = None
+    pads_input_name = ""
     if len(node.inputs) >= 2:
-        pads_arr = ctx.get_constant_array(node.inputs[1].name)
+        pads_input_name = str(node.inputs[1].name)
+        if pads_input_name != "":
+            pads_arr = ctx.get_constant_array(pads_input_name)
     if pads_arr is None and "pads" in node.attrs:
         pads_arr = node.attrs.get("pads")
-    if pads_arr is None:
-        raise NotImplementedError(
-            f"Pad pads must be constant for flatbuffer_direct. op={node.name}"
+
+    pads_name = ""
+    if pads_arr is not None:
+        pads_flat = [int(v) for v in np.asarray(pads_arr).reshape(-1).tolist()]
+        if len(pads_flat) != int(input_rank * 2):
+            raise NotImplementedError(
+                "Pad pads length must be 2 * input_rank for flatbuffer_direct. "
+                f"op={node.name} rank={input_rank} pads_len={len(pads_flat)}"
+            )
+        pads_begin = pads_flat[:input_rank]
+        pads_end = pads_flat[input_rank:]
+        paddings = np.asarray(
+            [[int(b), int(e)] for b, e in zip(pads_begin, pads_end)],
+            dtype=np.int32,
+        )
+        pads_name = ctx.add_const_tensor(
+            f"{output_name}_pads",
+            paddings,
+        )
+    else:
+        if pads_input_name == "":
+            raise NotImplementedError(
+                f"Pad pads must be constant for flatbuffer_direct. op={node.name}"
+            )
+        ctx.ensure_tensor(pads_input_name)
+        pads_vector_name = pads_input_name
+        pads_dtype = str(ctx.get_tensor_dtype(pads_vector_name)).upper()
+        if pads_dtype != "INT32":
+            pads_vector_name_i32 = ctx.add_intermediate_tensor(
+                f"{output_name}_pads_i32",
+                dtype="INT32",
+                shape=[int(input_rank * 2)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[pads_vector_name],
+                    outputs=[pads_vector_name_i32],
+                    options={
+                        "inDataType": pads_dtype,
+                        "outDataType": "INT32",
+                    },
+                )
+            )
+            pads_vector_name = pads_vector_name_i32
+
+        pads_2xrank_name = ctx.add_intermediate_tensor(
+            f"{output_name}_pads_2xrank",
+            dtype="INT32",
+            shape=[2, int(input_rank)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[pads_vector_name],
+                outputs=[pads_2xrank_name],
+                options={"newShape": [2, int(input_rank)]},
+            )
         )
 
-    input_rank = len(ctx.get_tensor_shape(input_name))
-    pads_flat = [int(v) for v in np.asarray(pads_arr).reshape(-1).tolist()]
-    if len(pads_flat) != int(input_rank * 2):
-        raise NotImplementedError(
-            "Pad pads length must be 2 * input_rank for flatbuffer_direct. "
-            f"op={node.name} rank={input_rank} pads_len={len(pads_flat)}"
+        perm_name = ctx.add_const_tensor(
+            f"{output_name}_pads_transpose_perm",
+            np.asarray([1, 0], dtype=np.int32),
         )
-    pads_begin = pads_flat[:input_rank]
-    pads_end = pads_flat[input_rank:]
-    paddings = np.asarray(
-        [[int(b), int(e)] for b, e in zip(pads_begin, pads_end)],
-        dtype=np.int32,
-    )
-    pads_name = ctx.add_const_tensor(
-        f"{output_name}_pads",
-        paddings,
-    )
+        pads_name = ctx.add_intermediate_tensor(
+            f"{output_name}_pads",
+            dtype="INT32",
+            shape=[int(input_rank), 2],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[pads_2xrank_name, perm_name],
+                outputs=[pads_name],
+            )
+        )
 
-    # Keep initial support minimal/safe: constant zero-padding only.
+    # Keep support minimal/safe: constant zero-padding value only.
     if len(node.inputs) >= 3:
         constant_value_arr = ctx.get_constant_array(node.inputs[2].name)
         if constant_value_arr is None:
@@ -1559,18 +1617,268 @@ def build_space_to_depth_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NotImplementedError(
+            f"SpaceToDepth supports rank-4 input/output only. op={node.name} "
+            f"input_shape={input_shape} output_shape={output_shape}"
+        )
+
     block_size = int(node.attrs.get("blocksize", 0))
     if block_size <= 1:
         raise NotImplementedError(
             f"SpaceToDepth blocksize must be > 1. op={node.name} blocksize={block_size}"
         )
+    mode_raw = node.attrs.get("mode", "DCR")
+    if isinstance(mode_raw, (bytes, bytearray)):
+        mode = mode_raw.decode("utf-8").upper()
+    else:
+        mode = str(mode_raw).upper()
+    if mode != "DCR":
+        raise NotImplementedError(
+            f"SpaceToDepth mode must be DCR for flatbuffer_direct builtin lowering. op={node.name} mode={mode}"
+        )
+
+    nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
+    nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    nhwc_input_signature = (
+        [int(v) for v in list(nhwc_input_shape)]
+        if input_tensor is None or input_tensor.shape_signature is None
+        else [
+            int(input_tensor.shape_signature[0]),
+            int(input_tensor.shape_signature[2]),
+            int(input_tensor.shape_signature[3]),
+            int(input_tensor.shape_signature[1]),
+        ]
+    )
+    nhwc_output_signature = (
+        [int(v) for v in list(nhwc_output_shape)]
+        if output_tensor is None or output_tensor.shape_signature is None
+        else [
+            int(output_tensor.shape_signature[0]),
+            int(output_tensor.shape_signature[2]),
+            int(output_tensor.shape_signature[3]),
+            int(output_tensor.shape_signature[1]),
+        ]
+    )
+
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=nhwc_input_shape,
+    )
+    ctx.model_ir.tensors[x_nhwc].shape_signature = [int(v) for v in list(nhwc_input_signature)]
+    x_nhwc = make_transpose(
+        ctx,
+        input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    y_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_nhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=nhwc_output_shape,
+    )
+    ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in list(nhwc_output_signature)]
+    if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+        ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(
+            ctx.model_ir.tensors[x_nhwc].quantization
+        )
+
     ctx.add_operator(
         OperatorIR(
             op_type="SPACE_TO_DEPTH",
-            inputs=[input_name],
-            outputs=[output_name],
+            inputs=[x_nhwc],
+            outputs=[y_nhwc],
             options={"blockSize": int(block_size)},
         )
+    )
+    make_transpose(
+        ctx,
+        y_nhwc,
+        output_name,
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+
+def build_depth_to_space_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_dtype_and_quantization(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NotImplementedError(
+            f"DepthToSpace supports rank-4 input/output only. op={node.name} "
+            f"input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    block_size = int(node.attrs.get("blocksize", 0))
+    if block_size <= 1:
+        raise NotImplementedError(
+            f"DepthToSpace blocksize must be > 1. op={node.name} blocksize={block_size}"
+        )
+    mode_raw = node.attrs.get("mode", "DCR")
+    if isinstance(mode_raw, (bytes, bytearray)):
+        mode = mode_raw.decode("utf-8").upper()
+    else:
+        mode = str(mode_raw).upper()
+    if mode not in {"DCR", "CRD"}:
+        raise NotImplementedError(
+            f"DepthToSpace mode must be DCR or CRD for flatbuffer_direct builtin lowering. op={node.name} mode={mode}"
+        )
+
+    nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
+    nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    nhwc_input_signature = (
+        [int(v) for v in list(nhwc_input_shape)]
+        if input_tensor is None or input_tensor.shape_signature is None
+        else [
+            int(input_tensor.shape_signature[0]),
+            int(input_tensor.shape_signature[2]),
+            int(input_tensor.shape_signature[3]),
+            int(input_tensor.shape_signature[1]),
+        ]
+    )
+    nhwc_output_signature = (
+        [int(v) for v in list(nhwc_output_shape)]
+        if output_tensor is None or output_tensor.shape_signature is None
+        else [
+            int(output_tensor.shape_signature[0]),
+            int(output_tensor.shape_signature[2]),
+            int(output_tensor.shape_signature[3]),
+            int(output_tensor.shape_signature[1]),
+        ]
+    )
+
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=nhwc_input_shape,
+    )
+    ctx.model_ir.tensors[x_nhwc].shape_signature = [int(v) for v in list(nhwc_input_signature)]
+    x_nhwc = make_transpose(
+        ctx,
+        input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    y_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_nhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=nhwc_output_shape,
+    )
+    ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in list(nhwc_output_signature)]
+    if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+        ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(
+            ctx.model_ir.tensors[x_nhwc].quantization
+        )
+
+    if mode == "DCR":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEPTH_TO_SPACE",
+                inputs=[x_nhwc],
+                outputs=[y_nhwc],
+                options={"blockSize": int(block_size)},
+            )
+        )
+    else:
+        batch = int(nhwc_input_shape[0])
+        height = int(nhwc_input_shape[1])
+        width = int(nhwc_input_shape[2])
+        channels = int(nhwc_input_shape[3])
+        block_area = int(block_size * block_size)
+        if channels % block_area != 0:
+            raise NotImplementedError(
+                f"DepthToSpace CRD requires input channels divisible by blocksize^2. "
+                f"op={node.name} channels={channels} blocksize={block_size}"
+            )
+        out_channels = int(channels // block_area)
+
+        reshape1_shape = [batch, height, width, out_channels, int(block_size), int(block_size)]
+        reshape1_shape_name = ctx.add_const_tensor(
+            f"{node.name}_crd_reshape1_shape",
+            np.asarray(reshape1_shape, dtype=np.int32),
+        )
+        reshape1_out = ctx.add_intermediate_tensor(
+            f"{node.name}_crd_reshape1_out",
+            dtype=ctx.get_tensor_dtype(output_name),
+            shape=reshape1_shape,
+        )
+        ctx.model_ir.tensors[reshape1_out].shape_signature = [int(v) for v in list(reshape1_shape)]
+        if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+            ctx.model_ir.tensors[reshape1_out].quantization = _clone_quantization(
+                ctx.model_ir.tensors[x_nhwc].quantization
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[x_nhwc, reshape1_shape_name],
+                outputs=[reshape1_out],
+                options={"newShape": [int(v) for v in list(reshape1_shape)]},
+            )
+        )
+
+        transpose_out_shape = [batch, height, int(block_size), width, int(block_size), out_channels]
+        transpose_out = ctx.add_intermediate_tensor(
+            f"{node.name}_crd_transpose_out",
+            dtype=ctx.get_tensor_dtype(output_name),
+            shape=transpose_out_shape,
+        )
+        ctx.model_ir.tensors[transpose_out].shape_signature = [int(v) for v in list(transpose_out_shape)]
+        transpose_out = make_transpose(
+            ctx,
+            reshape1_out,
+            transpose_out,
+            [0, 1, 4, 2, 5, 3],
+            allow_elide_inverse_chain=False,
+        )
+
+        reshape2_shape = [batch, int(height * block_size), int(width * block_size), out_channels]
+        reshape2_shape_name = ctx.add_const_tensor(
+            f"{node.name}_crd_reshape2_shape",
+            np.asarray(reshape2_shape, dtype=np.int32),
+        )
+        if reshape2_shape != nhwc_output_shape:
+            raise NotImplementedError(
+                f"DepthToSpace CRD shape mismatch. op={node.name} expected={nhwc_output_shape} got={reshape2_shape}"
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[transpose_out, reshape2_shape_name],
+                outputs=[y_nhwc],
+                options={"newShape": [int(v) for v in list(reshape2_shape)]},
+            )
+        )
+        if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+            ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(
+                ctx.model_ir.tensors[x_nhwc].quantization
+            )
+    make_transpose(
+        ctx,
+        y_nhwc,
+        output_name,
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
     )
 
 

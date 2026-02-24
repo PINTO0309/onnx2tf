@@ -49,6 +49,13 @@ def _normalize_axis_for_rank(axis: int, rank: int) -> int:
     return int(a)
 
 
+def _inverse_permutation(perm: list[int]) -> list[int]:
+    inv = [0] * int(len(perm))
+    for out_axis, in_axis in enumerate(perm):
+        inv[int(in_axis)] = int(out_axis)
+    return inv
+
+
 def build_gather_op(node: Any, ctx: Any) -> None:
     params_name = node.inputs[0].name
     indices_name = node.inputs[1].name
@@ -492,6 +499,265 @@ def build_argmin_op(node: Any, ctx: Any) -> None:
                 options={"newShape": output_shape},
             )
         )
+
+
+def build_topk_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    k_name = node.inputs[1].name
+    values_output_name = node.outputs[0].name
+    indices_output_name = node.outputs[1].name if len(node.outputs) >= 2 else ""
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(k_name)
+    ctx.ensure_tensor(values_output_name)
+    if indices_output_name != "":
+        ctx.ensure_tensor(indices_output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_rank = int(len(input_shape))
+    axis = _normalize_axis_for_rank(int(node.attrs.get("axis", -1)), input_rank)
+    largest = bool(int(node.attrs.get("largest", 1)))
+    sorted_values = bool(int(node.attrs.get("sorted", 1)))
+    if not sorted_values:
+        raise NotImplementedError(
+            f"TopK sorted=0 is not supported in flatbuffer_direct. op={node.name}"
+        )
+
+    values_output_shape = [int(v) for v in ctx.get_tensor_shape(values_output_name)]
+    values_output_tensor = ctx.model_ir.tensors.get(values_output_name, None)
+    values_output_signature = (
+        [int(v) for v in list(values_output_tensor.shape_signature)]
+        if values_output_tensor is not None and values_output_tensor.shape_signature is not None
+        else [int(v) for v in values_output_shape]
+    )
+    indices_output_shape = (
+        [int(v) for v in ctx.get_tensor_shape(indices_output_name)]
+        if indices_output_name != ""
+        else [int(v) for v in values_output_shape]
+    )
+    indices_output_tensor = ctx.model_ir.tensors.get(indices_output_name, None)
+    indices_output_signature = (
+        [int(v) for v in list(indices_output_tensor.shape_signature)]
+        if indices_output_tensor is not None and indices_output_tensor.shape_signature is not None
+        else [int(v) for v in indices_output_shape]
+    )
+
+    work_input_name = input_name
+    perm_to_last: list[int] | None = None
+    perm_from_last: list[int] | None = None
+    if axis != input_rank - 1:
+        perm_to_last = [int(v) for v in range(input_rank) if int(v) != int(axis)] + [int(axis)]
+        perm_from_last = _inverse_permutation(perm_to_last)
+        transposed_input_shape = [int(input_shape[int(v)]) for v in perm_to_last]
+        transposed_input_name = ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_transposed_input",
+            dtype=str(ctx.get_tensor_dtype(input_name)).upper(),
+            shape=transposed_input_shape,
+        )
+        make_transpose(
+            ctx=ctx,
+            input_name=input_name,
+            output_name=transposed_input_name,
+            perm_values=perm_to_last,
+        )
+        work_input_name = transposed_input_name
+
+    topk_input_name = work_input_name
+    if not largest:
+        neg_input_shape = [int(v) for v in ctx.get_tensor_shape(work_input_name)]
+        neg_input_name = ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_neg_input",
+            dtype=str(ctx.get_tensor_dtype(work_input_name)).upper(),
+            shape=neg_input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="NEG",
+                inputs=[work_input_name],
+                outputs=[neg_input_name],
+            )
+        )
+        topk_input_name = neg_input_name
+
+    k_for_topk_name = k_name
+    k_dtype = str(ctx.get_tensor_dtype(k_for_topk_name)).upper()
+    if k_dtype != "INT32":
+        k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
+        k_i32_name = ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_k_i32",
+            dtype="INT32",
+            shape=k_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[k_for_topk_name],
+                outputs=[k_i32_name],
+                options={
+                    "inDataType": k_dtype,
+                    "outDataType": "INT32",
+                },
+            )
+        )
+        k_for_topk_name = k_i32_name
+
+    k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
+    if len(k_shape) == 1:
+        if int(k_shape[0]) > 1:
+            raise NotImplementedError(
+                "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+                f"op={node.name} k_shape={k_shape}"
+            )
+        k_scalar_name = ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_k_scalar",
+            dtype="INT32",
+            shape=[],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[k_for_topk_name],
+                outputs=[k_scalar_name],
+                options={"squeezeDims": [0]},
+            )
+        )
+        k_for_topk_name = k_scalar_name
+    elif len(k_shape) != 0:
+        raise NotImplementedError(
+            "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+            f"op={node.name} k_shape={k_shape}"
+        )
+
+    topk_values_shape = (
+        [int(values_output_shape[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(values_output_shape) == len(perm_to_last)
+        else [int(v) for v in values_output_shape]
+    )
+    topk_values_signature = (
+        [int(values_output_signature[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(values_output_signature) == len(perm_to_last)
+        else [int(v) for v in values_output_signature]
+    )
+    topk_indices_shape = (
+        [int(indices_output_shape[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(indices_output_shape) == len(perm_to_last)
+        else [int(v) for v in indices_output_shape]
+    )
+    topk_indices_signature = (
+        [int(indices_output_signature[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(indices_output_signature) == len(perm_to_last)
+        else [int(v) for v in indices_output_signature]
+    )
+
+    values_topk_name = (
+        values_output_name
+        if largest and perm_from_last is None
+        else ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_values_raw",
+            dtype=str(ctx.get_tensor_dtype(values_output_name)).upper(),
+            shape=topk_values_shape,
+        )
+    )
+    if indices_output_name != "":
+        indices_topk_name = (
+            indices_output_name
+            if perm_from_last is None and str(ctx.get_tensor_dtype(indices_output_name)).upper() == "INT32"
+            else ctx.add_intermediate_tensor(
+                f"{indices_output_name}_topk_indices_raw",
+                dtype="INT32",
+                shape=topk_indices_shape,
+            )
+        )
+    else:
+        indices_topk_name = ctx.add_intermediate_tensor(
+            f"{values_output_name}_topk_indices_raw_unused",
+            dtype="INT32",
+            shape=topk_indices_shape,
+        )
+    values_topk_tensor = ctx.model_ir.tensors.get(values_topk_name, None)
+    if values_topk_tensor is not None:
+        values_topk_tensor.shape_signature = [int(v) for v in topk_values_signature]
+    indices_topk_tensor = ctx.model_ir.tensors.get(indices_topk_name, None)
+    if indices_topk_tensor is not None:
+        indices_topk_tensor.shape_signature = [int(v) for v in topk_indices_signature]
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TOPK_V2",
+            inputs=[topk_input_name, k_for_topk_name],
+            outputs=[values_topk_name, indices_topk_name],
+        )
+    )
+
+    values_post_largest_name = values_topk_name
+    if not largest:
+        values_post_largest_name = (
+            values_output_name
+            if perm_from_last is None
+            else ctx.add_intermediate_tensor(
+                f"{values_output_name}_topk_values_largest",
+                dtype=str(ctx.get_tensor_dtype(values_output_name)).upper(),
+                shape=topk_values_shape,
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="NEG",
+                inputs=[values_topk_name],
+                outputs=[values_post_largest_name],
+            )
+        )
+        values_post_largest_tensor = ctx.model_ir.tensors.get(values_post_largest_name, None)
+        if values_post_largest_tensor is not None:
+            values_post_largest_tensor.shape_signature = [int(v) for v in topk_values_signature]
+
+    values_final_name = values_post_largest_name
+    indices_final_i32_name = indices_topk_name
+    if perm_from_last is not None:
+        if values_final_name != values_output_name:
+            make_transpose(
+                ctx=ctx,
+                input_name=values_final_name,
+                output_name=values_output_name,
+                perm_values=perm_from_last,
+            )
+            values_final_name = values_output_name
+
+        indices_transposed_name = (
+            indices_output_name
+            if indices_output_name != ""
+            and str(ctx.get_tensor_dtype(indices_output_name)).upper() == "INT32"
+            else ctx.add_intermediate_tensor(
+                f"{values_output_name}_topk_indices_axis_restored",
+                dtype="INT32",
+                shape=indices_output_shape,
+            )
+        )
+        make_transpose(
+            ctx=ctx,
+            input_name=indices_final_i32_name,
+            output_name=indices_transposed_name,
+            perm_values=perm_from_last,
+        )
+        if indices_transposed_name != indices_output_name:
+            indices_transposed_tensor = ctx.model_ir.tensors.get(indices_transposed_name, None)
+            if indices_transposed_tensor is not None:
+                indices_transposed_tensor.shape_signature = [int(v) for v in indices_output_signature]
+        indices_final_i32_name = indices_transposed_name
+
+    if indices_output_name != "":
+        indices_dtype = str(ctx.get_tensor_dtype(indices_output_name)).upper()
+        if indices_dtype != "INT32":
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[indices_final_i32_name],
+                    outputs=[indices_output_name],
+                    options={
+                        "inDataType": "INT32",
+                        "outDataType": indices_dtype,
+                    },
+                )
+            )
 
 
 def build_hardmax_op(node: Any, ctx: Any) -> None:
@@ -955,12 +1221,6 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             "in flatbuffer_direct. "
             f"op={node.name} boxes_shape={boxes_shape} scores_shape={scores_shape}"
         )
-    if not output_nms_with_argmax and scores_shape[1] != 1:
-        raise NotImplementedError(
-            "NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax "
-            "in flatbuffer_direct builtin lowering. "
-            f"op={node.name} scores_shape={scores_shape}"
-        )
     if boxes_shape[2] != 4:
         raise NotImplementedError(
             "NonMaxSuppression requires boxes last dimension = 4 in flatbuffer_direct builtin lowering. "
@@ -989,6 +1249,13 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             },
         )
     )
+
+    if not output_nms_with_argmax and int(scores_shape[1]) <= 0:
+        raise NotImplementedError(
+            "NonMaxSuppression requires static positive class dimension when "
+            "--output_nms_with_argmax is disabled in flatbuffer_direct builtin lowering. "
+            f"op={node.name} scores_shape={scores_shape}"
+        )
 
     scores_for_nms_name = scores_name
     selected_class_ids_name = None
@@ -1115,168 +1382,345 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
         score_threshold_tensor.shape = []
         score_threshold_tensor.shape_signature = []
 
-    nms_selected_indices_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_selected_indices",
-        dtype="INT32",
-        shape=[max_output],
-    )
-    nms_valid_count_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_valid_count",
-        dtype="INT32",
-        shape=[1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="NON_MAX_SUPPRESSION_V4",
-            inputs=[
-                boxes_2d_name,
-                scores_1d_name,
-                max_output_size_name,
-                iou_threshold_name,
-                score_threshold_name,
-            ],
-            outputs=[
-                nms_selected_indices_name,
-                nms_valid_count_name,
-            ],
-        )
-    )
-
-    selected_indices_valid_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_selected_indices_valid",
-        dtype="INT32",
-        shape=[-1],
-    )
-    valid_count_vec_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_valid_count_vec",
-        dtype="INT32",
-        shape=[1],
-    )
-    valid_count_vec_shape_name = ctx.add_const_tensor(
-        f"{output_name}_nms_valid_count_vec_shape",
-        np.asarray([1], dtype=np.int32),
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="RESHAPE",
-            inputs=[nms_valid_count_name, valid_count_vec_shape_name],
-            outputs=[valid_count_vec_name],
-            options={"newShape": [1]},
-        )
-    )
-    selected_indices_valid_begin_name = ctx.add_const_tensor(
-        f"{output_name}_nms_selected_indices_valid_begin",
-        np.asarray([0], dtype=np.int32),
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SLICE",
-            inputs=[
-                nms_selected_indices_name,
-                selected_indices_valid_begin_name,
-                valid_count_vec_name,
-            ],
-            outputs=[selected_indices_valid_name],
-        )
-    )
-
-    selected_indices_col_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_selected_indices_col",
-        dtype="INT32",
-        shape=[-1, 1],
-    )
-    selected_indices_col_shape_name = ctx.add_const_tensor(
-        f"{output_name}_nms_selected_indices_col_shape",
-        np.asarray([-1, 1], dtype=np.int32),
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="RESHAPE",
-            inputs=[selected_indices_valid_name, selected_indices_col_shape_name],
-            outputs=[selected_indices_col_name],
-            options={"newShape": [-1, 1]},
-        )
-    )
-
-    zero_col_name = ctx.add_intermediate_tensor(
-        f"{output_name}_nms_zero_col",
-        dtype="INT32",
-        shape=[-1, 1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SUB",
-            inputs=[selected_indices_col_name, selected_indices_col_name],
-            outputs=[zero_col_name],
-            options={"fusedActivationFunction": "NONE"},
-        )
-    )
-
-    class_ids_col_name = zero_col_name
-    if output_nms_with_argmax and selected_class_ids_name is not None:
-        selected_class_ids_valid_name = ctx.add_intermediate_tensor(
-            f"{output_name}_nms_selected_class_ids",
+    def _build_single_class_nms_triplets(
+        *,
+        class_scores_1d_name: str,
+        suffix: str,
+        class_id_value: int | None = None,
+        class_ids_vector_name: str | None = None,
+    ) -> str:
+        nms_selected_indices_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_selected_indices{suffix}",
             dtype="INT32",
-            shape=[-1],
+            shape=[max_output],
+        )
+        nms_valid_count_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_valid_count{suffix}",
+            dtype="INT32",
+            shape=[1],
         )
         ctx.add_operator(
             OperatorIR(
-                op_type="GATHER",
-                inputs=[selected_class_ids_name, selected_indices_valid_name],
-                outputs=[selected_class_ids_valid_name],
-                options={
-                    "axis": 0,
-                    "batchDims": 0,
-                },
+                op_type="NON_MAX_SUPPRESSION_V4",
+                inputs=[
+                    boxes_2d_name,
+                    class_scores_1d_name,
+                    max_output_size_name,
+                    iou_threshold_name,
+                    score_threshold_name,
+                ],
+                outputs=[
+                    nms_selected_indices_name,
+                    nms_valid_count_name,
+                ],
             )
         )
-        class_ids_col_name = ctx.add_intermediate_tensor(
-            f"{output_name}_nms_selected_class_ids_col",
+
+        selected_indices_valid_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_selected_indices_valid{suffix}",
+            dtype="INT32",
+            shape=[-1],
+        )
+        valid_count_vec_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_valid_count_vec{suffix}",
+            dtype="INT32",
+            shape=[1],
+        )
+        valid_count_vec_shape_name = ctx.add_const_tensor(
+            f"{output_name}_nms_valid_count_vec_shape{suffix}",
+            np.asarray([1], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[nms_valid_count_name, valid_count_vec_shape_name],
+                outputs=[valid_count_vec_name],
+                options={"newShape": [1]},
+            )
+        )
+        selected_indices_valid_begin_name = ctx.add_const_tensor(
+            f"{output_name}_nms_selected_indices_valid_begin{suffix}",
+            np.asarray([0], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[
+                    nms_selected_indices_name,
+                    selected_indices_valid_begin_name,
+                    valid_count_vec_name,
+                ],
+                outputs=[selected_indices_valid_name],
+            )
+        )
+
+        selected_indices_col_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_selected_indices_col{suffix}",
             dtype="INT32",
             shape=[-1, 1],
         )
-        class_ids_col_shape_name = ctx.add_const_tensor(
-            f"{output_name}_nms_selected_class_ids_col_shape",
+        selected_indices_col_shape_name = ctx.add_const_tensor(
+            f"{output_name}_nms_selected_indices_col_shape{suffix}",
             np.asarray([-1, 1], dtype=np.int32),
         )
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
-                inputs=[selected_class_ids_valid_name, class_ids_col_shape_name],
-                outputs=[class_ids_col_name],
+                inputs=[selected_indices_valid_name, selected_indices_col_shape_name],
+                outputs=[selected_indices_col_name],
                 options={"newShape": [-1, 1]},
             )
         )
 
-    indices_triplets_name = output_name
-    if output_dtype != "INT32":
+        zero_col_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_zero_col{suffix}",
+            dtype="INT32",
+            shape=[-1, 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[selected_indices_col_name, selected_indices_col_name],
+                outputs=[zero_col_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        class_ids_col_name = zero_col_name
+        if class_ids_vector_name is not None:
+            selected_class_ids_valid_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_selected_class_ids{suffix}",
+                dtype="INT32",
+                shape=[-1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[class_ids_vector_name, selected_indices_valid_name],
+                    outputs=[selected_class_ids_valid_name],
+                    options={
+                        "axis": 0,
+                        "batchDims": 0,
+                    },
+                )
+            )
+            class_ids_col_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_selected_class_ids_col{suffix}",
+                dtype="INT32",
+                shape=[-1, 1],
+            )
+            class_ids_col_shape_name = ctx.add_const_tensor(
+                f"{output_name}_nms_selected_class_ids_col_shape{suffix}",
+                np.asarray([-1, 1], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[selected_class_ids_valid_name, class_ids_col_shape_name],
+                    outputs=[class_ids_col_name],
+                    options={"newShape": [-1, 1]},
+                )
+            )
+        elif class_id_value is not None and int(class_id_value) != 0:
+            class_id_scalar_name = ctx.add_const_tensor(
+                f"{output_name}_nms_class_id{suffix}",
+                np.asarray(int(class_id_value), dtype=np.int32),
+            )
+            class_id_scalar_tensor = ctx.model_ir.tensors.get(class_id_scalar_name, None)
+            if class_id_scalar_tensor is not None:
+                class_id_scalar_tensor.shape = []
+                class_id_scalar_tensor.shape_signature = []
+            class_ids_col_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_class_ids_col{suffix}",
+                dtype="INT32",
+                shape=[-1, 1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="ADD",
+                    inputs=[zero_col_name, class_id_scalar_name],
+                    outputs=[class_ids_col_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+
         indices_triplets_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_indices_triplets_i32{suffix}",
+            dtype="INT32",
+            shape=[-1, 3],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[
+                    zero_col_name,
+                    class_ids_col_name,
+                    selected_indices_col_name,
+                ],
+                outputs=[indices_triplets_name],
+                options={
+                    "axis": 1,
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+        return indices_triplets_name
+
+    indices_triplets_i32_names: list[str] = []
+
+    if output_nms_with_argmax:
+        scores_1d_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_scores_1d",
+            dtype=str(ctx.get_tensor_dtype(scores_for_nms_name)).upper(),
+            shape=[num_boxes],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[scores_for_nms_name],
+                outputs=[scores_1d_name],
+                options={
+                    "squeezeDims": [0, 1],
+                },
+            )
+        )
+        indices_triplets_i32_names.append(
+            _build_single_class_nms_triplets(
+                class_scores_1d_name=scores_1d_name,
+                suffix="_argmax",
+                class_ids_vector_name=selected_class_ids_name,
+            )
+        )
+    else:
+        num_classes = int(scores_shape[1])
+        if num_classes == 1:
+            scores_1d_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_scores_1d",
+                dtype=str(ctx.get_tensor_dtype(scores_for_nms_name)).upper(),
+                shape=[num_boxes],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SQUEEZE",
+                    inputs=[scores_for_nms_name],
+                    outputs=[scores_1d_name],
+                    options={
+                        "squeezeDims": [0, 1],
+                    },
+                )
+            )
+            indices_triplets_i32_names.append(
+                _build_single_class_nms_triplets(
+                    class_scores_1d_name=scores_1d_name,
+                    suffix="_c0",
+                    class_id_value=0,
+                )
+            )
+        else:
+            scores_2d_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_scores_2d",
+                dtype=str(ctx.get_tensor_dtype(scores_for_nms_name)).upper(),
+                shape=[num_classes, num_boxes],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SQUEEZE",
+                    inputs=[scores_for_nms_name],
+                    outputs=[scores_2d_name],
+                    options={
+                        "squeezeDims": [0],
+                    },
+                )
+            )
+            for class_idx in range(num_classes):
+                class_suffix = f"_c{int(class_idx)}"
+                class_scores_row_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_nms_scores_row{class_suffix}",
+                    dtype=str(ctx.get_tensor_dtype(scores_for_nms_name)).upper(),
+                    shape=[1, num_boxes],
+                )
+                class_begin_name = ctx.add_const_tensor(
+                    f"{output_name}_nms_scores_begin{class_suffix}",
+                    np.asarray([int(class_idx), 0], dtype=np.int32),
+                )
+                class_size_name = ctx.add_const_tensor(
+                    f"{output_name}_nms_scores_size{class_suffix}",
+                    np.asarray([1, int(num_boxes)], dtype=np.int32),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SLICE",
+                        inputs=[scores_2d_name, class_begin_name, class_size_name],
+                        outputs=[class_scores_row_name],
+                    )
+                )
+                class_scores_1d_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_nms_scores_1d{class_suffix}",
+                    dtype=str(ctx.get_tensor_dtype(scores_for_nms_name)).upper(),
+                    shape=[num_boxes],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SQUEEZE",
+                        inputs=[class_scores_row_name],
+                        outputs=[class_scores_1d_name],
+                        options={
+                            "squeezeDims": [0],
+                        },
+                    )
+                )
+                indices_triplets_i32_names.append(
+                    _build_single_class_nms_triplets(
+                        class_scores_1d_name=class_scores_1d_name,
+                        suffix=class_suffix,
+                        class_id_value=int(class_idx),
+                    )
+                )
+
+    if len(indices_triplets_i32_names) == 0:
+        raise NotImplementedError(
+            "NonMaxSuppression lowering failed to build any class-wise NMS outputs. "
+            f"op={node.name} scores_shape={scores_shape}"
+        )
+    if len(indices_triplets_i32_names) == 1:
+        indices_triplets_i32_name = indices_triplets_i32_names[0]
+    else:
+        indices_triplets_i32_name = ctx.add_intermediate_tensor(
             f"{output_name}_nms_indices_triplets_i32",
             dtype="INT32",
             shape=[-1, 3],
         )
-
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CONCATENATION",
-            inputs=[
-                zero_col_name,
-                class_ids_col_name,
-                selected_indices_col_name,
-            ],
-            outputs=[indices_triplets_name],
-            options={
-                "axis": 1,
-                "fusedActivationFunction": "NONE",
-            },
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=indices_triplets_i32_names,
+                outputs=[indices_triplets_i32_name],
+                options={
+                    "axis": 0,
+                    "fusedActivationFunction": "NONE",
+                },
+            )
         )
-    )
 
-    if output_dtype != "INT32":
+    if output_dtype == "INT32":
+        if indices_triplets_i32_name != output_name:
+            output_shape_name = ctx.add_const_tensor(
+                f"{output_name}_nms_output_shape",
+                np.asarray([-1, 3], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[indices_triplets_i32_name, output_shape_name],
+                    outputs=[output_name],
+                    options={"newShape": [-1, 3]},
+                )
+            )
+    else:
         ctx.add_operator(
             OperatorIR(
                 op_type="CAST",
-                inputs=[indices_triplets_name],
+                inputs=[indices_triplets_i32_name],
                 outputs=[output_name],
                 options={
                     "inDataType": "INT32",

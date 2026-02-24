@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
-from onnx2tf.tflite_builder.op_builders.shared import make_transpose, resolve_padding
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _infer_pool_output_hw(
@@ -204,6 +204,71 @@ def _resolve_max_pool_padding_and_explicit_pads(
     return "VALID", None, list(explicit_pads)
 
 
+def _resolve_avg_pool_padding_and_explicit_pads(
+    *,
+    node: Any,
+    input_shape_nchw: List[int],
+    kernel: List[int],
+    strides: List[int],
+) -> Tuple[str, Optional[List[int]], List[int]]:
+    auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+    if len(raw_pads) < 4:
+        raw_pads = [0, 0, 0, 0]
+    pads = [int(raw_pads[0]), int(raw_pads[1]), int(raw_pads[2]), int(raw_pads[3])]
+
+    input_h = int(input_shape_nchw[2])
+    input_w = int(input_shape_nchw[3])
+    kernel_h = int(kernel[0])
+    kernel_w = int(kernel[1])
+    stride_h = int(strides[0])
+    stride_w = int(strides[1])
+
+    if auto_pad in ["SAME", "SAME_UPPER"]:
+        effective = _calc_same_pads_2d(
+            input_h=input_h,
+            input_w=input_w,
+            kernel_h=kernel_h,
+            kernel_w=kernel_w,
+            stride_h=stride_h,
+            stride_w=stride_w,
+        )
+        return "SAME", None, effective
+    if auto_pad == "SAME_LOWER":
+        same_upper_pads = _calc_same_pads_2d(
+            input_h=input_h,
+            input_w=input_w,
+            kernel_h=kernel_h,
+            kernel_w=kernel_w,
+            stride_h=stride_h,
+            stride_w=stride_w,
+        )
+        top, left, bottom, right = [int(v) for v in same_upper_pads]
+        same_lower_pads = [bottom, right, top, left]
+        if any(int(v) != 0 for v in same_lower_pads):
+            return "VALID", list(same_lower_pads), list(same_lower_pads)
+        return "VALID", None, list(same_lower_pads)
+    if auto_pad == "VALID":
+        return "VALID", None, [0, 0, 0, 0]
+    if auto_pad != "NOTSET":
+        raise NotImplementedError(
+            f"AveragePool auto_pad attribute is invalid for flatbuffer_direct. op={node.name} auto_pad={auto_pad}"
+        )
+    same_upper_pads = _calc_same_pads_2d(
+        input_h=input_h,
+        input_w=input_w,
+        kernel_h=kernel_h,
+        kernel_w=kernel_w,
+        stride_h=stride_h,
+        stride_w=stride_w,
+    )
+    if pads == same_upper_pads:
+        return "SAME", None, list(pads)
+    if any(int(v) != 0 for v in pads):
+        return "VALID", list(pads), list(pads)
+    return "VALID", None, list(pads)
+
+
 def _numpy_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
     dt = str(tflite_dtype).upper()
     if dt == "INT8":
@@ -273,6 +338,8 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
     ceil_mode = int(node.attrs.get("ceil_mode", 0))
     explicit_pads: Optional[List[int]] = None
     effective_pads: List[int] = [0, 0, 0, 0]
+    average_count_include_pad = 0
+    average_needs_exclude_pad_correction = False
     if op_type == "MAX_POOL_2D":
         if ceil_mode not in [0, 1]:
             raise NotImplementedError(
@@ -291,7 +358,22 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             raise NotImplementedError(
                 f"ceil_mode is not supported for {node.op} in flatbuffer_direct. op={node.name}"
             )
-        padding = resolve_padding(node)
+        average_count_include_pad = int(node.attrs.get("count_include_pad", 0))
+        if average_count_include_pad not in [0, 1]:
+            raise NotImplementedError(
+                f"AveragePool count_include_pad must be 0 or 1 for flatbuffer_direct. "
+                f"op={node.name} count_include_pad={average_count_include_pad}"
+            )
+        padding, explicit_pads, effective_pads = _resolve_avg_pool_padding_and_explicit_pads(
+            node=node,
+            input_shape_nchw=[int(v) for v in input_shape],
+            kernel=kernel,
+            strides=strides,
+        )
+        average_needs_exclude_pad_correction = (
+            int(average_count_include_pad) == 0
+            and any(int(v) != 0 for v in effective_pads)
+        )
 
     if len(output_shape) != 4:
         out_h, out_w = _infer_pool_output_hw(
@@ -327,6 +409,18 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
         output_tensor.dtype = input_dtype
     if output_tensor.quantization is None and input_tensor.quantization is not None:
         output_tensor.quantization = _clone_quantization(input_tensor.quantization)
+    output_dtype = str(output_tensor.dtype).upper()
+    if average_needs_exclude_pad_correction:
+        if input_dtype != output_dtype:
+            raise NotImplementedError(
+                "AveragePool count_include_pad=0 correction requires identical input/output dtype. "
+                f"op={node.name} input_dtype={input_dtype} output_dtype={output_dtype}"
+            )
+        if output_dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NotImplementedError(
+                "AveragePool count_include_pad=0 correction supports FLOAT16/FLOAT32 only. "
+                f"op={node.name} dtype={output_dtype}"
+            )
 
     nhwc_input_shape = [input_shape[0], input_shape[2], input_shape[3], input_shape[1]]
     nhwc_output_shape = [output_shape[0], output_shape[2], output_shape[3], output_shape[1]]
@@ -360,7 +454,8 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
         allow_elide_inverse_chain=True,
     )
     x_nhwc_pool = x_nhwc
-    if op_type == "MAX_POOL_2D" and explicit_pads is not None:
+    x_nhwc_prepad = x_nhwc_pool
+    if explicit_pads is not None:
         pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in explicit_pads]
         if any(int(v) != 0 for v in [pad_top, pad_left, pad_bottom, pad_right]):
             x_tensor = ctx.model_ir.tensors[x_nhwc_pool]
@@ -411,10 +506,13 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
                     )
                 )
             else:
-                pad_value = _max_pool_pad_value_for_tensor(
-                    tensor_dtype=ctx.get_tensor_dtype(x_nhwc_pool),
-                    tensor_quant=x_tensor.quantization,
-                )
+                if op_type == "MAX_POOL_2D":
+                    pad_value = _max_pool_pad_value_for_tensor(
+                        tensor_dtype=ctx.get_tensor_dtype(x_nhwc_pool),
+                        tensor_quant=x_tensor.quantization,
+                    )
+                else:
+                    pad_value = 0.0
                 pad_value_name = ctx.add_const_tensor(
                     f"{node.name}_pad_value",
                     np.asarray(
@@ -440,11 +538,22 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
     y_quant = output_tensor.quantization
     if y_quant is not None:
         ctx.model_ir.tensors[y_nhwc].quantization = _clone_quantization(y_quant)
+    pool_output_name = y_nhwc
+    if op_type == "AVERAGE_POOL_2D" and average_needs_exclude_pad_correction:
+        pool_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nhwc_include_pad",
+            dtype=ctx.get_tensor_dtype(output_name),
+            shape=nhwc_output_shape,
+        )
+        pool_output_tensor = ctx.model_ir.tensors[pool_output_name]
+        pool_output_tensor.shape_signature = [int(v) for v in nhwc_output_signature]
+        if y_quant is not None:
+            pool_output_tensor.quantization = _clone_quantization(y_quant)
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
             inputs=[x_nhwc_pool],
-            outputs=[y_nhwc],
+            outputs=[pool_output_name],
             options={
                 "padding": padding,
                 "strideH": int(strides[0]),
@@ -455,6 +564,87 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             },
         )
     )
+    if op_type == "AVERAGE_POOL_2D" and average_needs_exclude_pad_correction:
+        mask_shape = [int(v) for v in list(ctx.get_tensor_shape(x_nhwc_prepad))]
+        if len(mask_shape) != 4 or any(int(v) <= 0 for v in mask_shape):
+            raise NotImplementedError(
+                "AveragePool count_include_pad=0 correction requires fully known static rank-4 input shape. "
+                f"op={node.name} input_shape={mask_shape}"
+            )
+        mask_name = ctx.add_const_tensor(
+            f"{node.name}_exclude_pad_mask",
+            np.ones(
+                mask_shape,
+                dtype=np.float16 if output_dtype == "FLOAT16" else np.float32,
+            ),
+        )
+        mask_input_name = mask_name
+        if explicit_pads is not None:
+            pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in explicit_pads]
+            if any(int(v) != 0 for v in [pad_top, pad_left, pad_bottom, pad_right]):
+                mask_padded_name = ctx.add_intermediate_tensor(
+                    f"{node.name}_exclude_pad_mask_padded",
+                    dtype=output_dtype,
+                    shape=list(ctx.get_tensor_shape(x_nhwc_pool)),
+                )
+                pads_name = ctx.add_const_tensor(
+                    f"{node.name}_exclude_pad_mask_pads_nhwc",
+                    np.asarray(
+                        [
+                            [0, 0],
+                            [pad_top, pad_bottom],
+                            [pad_left, pad_right],
+                            [0, 0],
+                        ],
+                        dtype=np.int32,
+                    ),
+                )
+                pad_zero_name = ctx.add_const_tensor(
+                    f"{node.name}_exclude_pad_mask_pad_zero",
+                    np.asarray(
+                        [0.0],
+                        dtype=np.float16 if output_dtype == "FLOAT16" else np.float32,
+                    ),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="PADV2",
+                        inputs=[mask_name, pads_name, pad_zero_name],
+                        outputs=[mask_padded_name],
+                    )
+                )
+                mask_input_name = mask_padded_name
+
+        mask_pool_name = ctx.add_intermediate_tensor(
+            f"{node.name}_exclude_pad_mask_pool",
+            dtype=output_dtype,
+            shape=nhwc_output_shape,
+        )
+        ctx.model_ir.tensors[mask_pool_name].shape_signature = [int(v) for v in nhwc_output_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="AVERAGE_POOL_2D",
+                inputs=[mask_input_name],
+                outputs=[mask_pool_name],
+                options={
+                    "padding": padding,
+                    "strideH": int(strides[0]),
+                    "strideW": int(strides[1]),
+                    "filterHeight": int(kernel[0]),
+                    "filterWidth": int(kernel[1]),
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[pool_output_name, mask_pool_name],
+                outputs=[y_nhwc],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
     make_transpose(
         ctx,
         y_nhwc,
