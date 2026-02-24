@@ -16,14 +16,28 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_boundary_input_transpose_channel_slice_blocks,
     _optimize_center_size_offset_terminal_transpose_chains,
     _optimize_duplicate_transpose_fanout,
+    _optimize_fold_conv_mul_add_affine_chains,
+    _optimize_hardsigmoid_mul_transpose_passthrough_chains,
     _optimize_layout_transpose_chains,
+    _optimize_maximum_minimum_relu0to1_chains,
     _optimize_singleton_channel_layout_transpose_to_reshape,
+    _optimize_singleton_spatial_nhwc_transpose_reshape_flatten,
     _optimize_singleton_reshape_concat_post_transpose_nhwc_chains,
     _optimize_transpose_conv_attention_nhwc_propagation_chains,
     _optimize_transpose_elementwise_concat_conv_nhwc_groups,
+    _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains,
+    _optimize_shufflenet_transpose_shuffle_chains,
+    _optimize_sinet_concat_resize_affine_transpose_chains,
+    _optimize_sinet_dual_resize_affine_transpose_chains,
+    _optimize_transposeconv_output_nhwc_passthrough_chains,
+    _optimize_transpose_mean_prepost_nhwc_passthrough_chains,
+    _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
+    _optimize_transpose_input_chains_pre_concat_to_single_post_adapter,
     _optimize_transpose_pre_add_nhwc_chains,
+    _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains,
     _optimize_transpose_pre_concat_nhwc_chains,
     _optimize_transpose_mul_add_const_prepost_nhwc_chains,
+    _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains,
     _reconcile_static_tensor_shapes,
     _resolve_dynamic_reshape_shapes,
     lower_onnx_to_ir,
@@ -491,6 +505,23 @@ def _make_pool_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_average_pool_exclude_pad_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+    node = helper.make_node(
+        "AveragePool",
+        ["x"],
+        ["y"],
+        name="AveragePoolExcludePadNode",
+        kernel_shape=[3, 3],
+        strides=[2, 2],
+        pads=[1, 1, 1, 1],
+        count_include_pad=0,
+    )
+    graph = helper.make_graph([node], "average_pool_exclude_pad_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_maxpool_dynamic_batch_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1, 2, 2])
@@ -917,6 +948,69 @@ def _make_shape_slice_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 15)])
 
 
+def _make_pad_dynamic_pads_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 6])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8])
+    width_index = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="pad_dyn_width_index")
+    pad_limit = numpy_helper.from_array(np.asarray([8], dtype=np.int64), name="pad_dyn_limit")
+    pad_zeros = numpy_helper.from_array(np.asarray([0, 0, 0], dtype=np.int64), name="pad_dyn_zeros")
+    nodes = [
+        helper.make_node("Shape", ["x"], ["x_shape"], name="PadDynShape"),
+        helper.make_node(
+            "Gather",
+            ["x_shape", "pad_dyn_width_index"],
+            ["x_width"],
+            name="PadDynGatherWidth",
+            axis=0,
+        ),
+        helper.make_node("Sub", ["pad_dyn_limit", "x_width"], ["pad_right"], name="PadDynPadRight"),
+        helper.make_node(
+            "Concat",
+            ["pad_dyn_zeros", "pad_right"],
+            ["pads"],
+            name="PadDynConcatPads",
+            axis=0,
+        ),
+        helper.make_node("Pad", ["x", "pads"], ["y"], name="PadDynNode"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "pad_dynamic_pads_graph",
+        [x],
+        [y],
+        initializer=[width_index, pad_limit, pad_zeros],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_min_topk_dynamic_k_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, "K"])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, "K"])
+    axis_index = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="topk_axis_index")
+    k_limit = numpy_helper.from_array(np.asarray([5], dtype=np.int64), name="topk_k_limit")
+    nodes = [
+        helper.make_node("Shape", ["x"], ["x_shape"], name="MinTopKShape"),
+        helper.make_node(
+            "Gather",
+            ["x_shape", "topk_axis_index"],
+            ["x_width"],
+            name="MinTopKGatherWidth",
+            axis=0,
+        ),
+        helper.make_node("Min", ["topk_k_limit", "x_width"], ["k"], name="MinTopKMin"),
+        helper.make_node("TopK", ["x", "k"], ["values", "indices"], name="MinTopKTopK", axis=1),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "min_topk_dynamic_k_graph",
+        [x],
+        [values, indices],
+        initializer=[axis_index, k_limit],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_legacy_slice_attr_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4, 4])
@@ -1012,6 +1106,36 @@ def _make_space_to_depth_model() -> onnx.ModelProto:
         mode="DCR",
     )
     graph = helper.make_graph([node], "space_to_depth_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_depth_to_space_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 8, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 4, 4])
+    node = helper.make_node(
+        "DepthToSpace",
+        ["x"],
+        ["y"],
+        name="DepthToSpaceNode",
+        blocksize=2,
+        mode="DCR",
+    )
+    graph = helper.make_graph([node], "depth_to_space_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_depth_to_space_crd_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 48, 64, 64])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 256, 256])
+    node = helper.make_node(
+        "DepthToSpace",
+        ["x"],
+        ["y"],
+        name="DepthToSpaceCRDNode",
+        blocksize=4,
+        mode="CRD",
+    )
+    graph = helper.make_graph([node], "depth_to_space_crd_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -1868,6 +1992,31 @@ def _make_transpose_dequantize_transpose_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_transpose_cast_sub_mul_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.UINT8, [1, 4, 5, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 5, 3])
+    sub_bias = numpy_helper.from_array(
+        np.asarray([[[[127.5]]]], dtype=np.float32),
+        name="tcsm_sub_bias",
+    )
+    mul_scale = numpy_helper.from_array(np.asarray([0.00784314], dtype=np.float32), name="tcsm_mul_scale")
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TCSM_PreT", perm=[0, 3, 1, 2]),
+        helper.make_node("Cast", ["x_t"], ["x_f"], name="TCSM_Cast", to=TensorProto.FLOAT),
+        helper.make_node("Sub", ["x_f", "tcsm_sub_bias"], ["x_sub"], name="TCSM_Sub"),
+        helper.make_node("Mul", ["x_sub", "tcsm_mul_scale"], ["x_mul"], name="TCSM_Mul"),
+        helper.make_node("Transpose", ["x_mul"], ["y"], name="TCSM_PostT", perm=[0, 2, 3, 1]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_cast_sub_mul_transpose_graph",
+        [x],
+        [y],
+        initializer=[sub_bias, mul_scale],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_transpose_binary_fanout_chain_model() -> onnx.ModelProto:
     a = helper.make_tensor_value_info("a", TensorProto.FLOAT, [1, 2, 3, 4])
     b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 2, 3, 4])
@@ -2021,6 +2170,56 @@ def _make_transpose_swish_transpose_model() -> onnx.ModelProto:
         helper.make_node("Relu", ["y"], ["z"], name="TSWT_Relu"),
     ]
     graph = helper.make_graph(nodes, "transpose_swish_transpose_graph", [x], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_hardsigmoid_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="THST_PreT", perm=[0, 3, 1, 2]),
+        helper.make_node("HardSigmoid", ["x_t"], ["hs_t"], name="THST_HardSigmoid", alpha=0.2, beta=0.5),
+        helper.make_node("Transpose", ["hs_t"], ["y"], name="THST_PostT", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["y"], ["z"], name="THST_Relu"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_hardsigmoid_transpose_graph", [x], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_hardsigmoid_mul_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 3, 4])
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="THSMT_PreT", perm=[0, 3, 1, 2]),
+        helper.make_node("HardSigmoid", ["x_t"], ["hs_t"], name="THSMT_HardSigmoid", alpha=0.2, beta=0.5),
+        helper.make_node("Mul", ["x_t", "hs_t"], ["y_t"], name="THSMT_Mul"),
+        helper.make_node("Transpose", ["y_t"], ["y"], name="THSMT_PostT", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["y"], ["z"], name="THSMT_Relu"),
+    ]
+    graph = helper.make_graph(nodes, "transpose_hardsigmoid_mul_transpose_graph", [x], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_transpose_prelu_transpose_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 3, 4])
+    slope = numpy_helper.from_array(
+        np.asarray([[[1.0]], [[0.5]], [[0.25]], [[0.125]]], dtype=np.float32),
+        name="tpt_alpha",
+    )
+    nodes = [
+        helper.make_node("Transpose", ["x"], ["x_t"], name="TPT_PreT", perm=[0, 3, 1, 2]),
+        helper.make_node("PRelu", ["x_t", "tpt_alpha"], ["p_t"], name="TPT_PRelu"),
+        helper.make_node("Transpose", ["p_t"], ["y"], name="TPT_PostT", perm=[0, 2, 3, 1]),
+        helper.make_node("Relu", ["y"], ["z"], name="TPT_Relu"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "transpose_prelu_transpose_graph",
+        [x],
+        [z],
+        initializer=[slope],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -2920,6 +3119,13 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
             "flatbuffer_direct",
             report_op_coverage=True,
         )
+        fb_no_rewrite_tflite = os.path.join(
+            fb_no_rewrite_out,
+            "hardswish_rewrite_matrix_float32.tflite",
+        )
+        assert os.path.isfile(fb_no_rewrite_tflite)
+        builtin_names = _collect_builtin_op_names(fb_no_rewrite_tflite)
+        assert "HARD_SWISH" in builtin_names
         report_path = os.path.join(
             fb_no_rewrite_out,
             "hardswish_rewrite_matrix_op_coverage_report.json",
@@ -2962,6 +3168,8 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("shape_slice", _make_shape_slice_model),
         ("fused_matmul", _make_fused_matmul_model),
         ("space_to_depth", _make_space_to_depth_model),
+        ("depth_to_space", _make_depth_to_space_model),
+        ("depth_to_space_crd", _make_depth_to_space_crd_model),
         ("resize_nearest", _make_resize_nearest_model),
         ("qlinear_sigmoid", _make_qlinear_sigmoid_model),
         ("qlinear_global_average_pool", _make_qlinear_global_average_pool_model),
@@ -3267,6 +3475,132 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
     )
 
 
+def test_flatbuffer_direct_boundary_input_slice_depthwise_nhwc_propagation_avoids_bridge_transpose() -> None:
+    model_ir = ModelIR(name="boundary_input_slice_depthwise_nhwc_propagation_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 2],
+        shape_signature=[1, 4, 4, 2],
+    )
+    model_ir.tensors["x_onnx_ncx_internal_perm"] = TensorIR(
+        name="x_onnx_ncx_internal_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_onnx_ncx_internal"] = TensorIR(
+        name="x_onnx_ncx_internal",
+        dtype="FLOAT32",
+        shape=[1, 2, 4, 4],
+        shape_signature=[1, 2, 4, 4],
+    )
+    model_ir.tensors["slice_begin"] = TensorIR(
+        name="slice_begin",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 1, 0, 0], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["slice_size"] = TensorIR(
+        name="slice_size",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 1, 4, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["c1"] = TensorIR(
+        name="c1",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_filter"] = TensorIR(
+        name="dw_filter",
+        dtype="FLOAT32",
+        shape=[1, 3, 3, 1],
+        shape_signature=[1, 3, 3, 1],
+        data=np.ones((1, 3, 3, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_bias"] = TensorIR(
+        name="dw_bias",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.zeros((1,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_out"] = TensorIR(
+        name="dw_out",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_out_cast"] = TensorIR(
+        name="dw_out_cast",
+        dtype="FLOAT16",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT16",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "x_onnx_ncx_internal_perm"],
+            outputs=["x_onnx_ncx_internal"],
+        ),
+        OperatorIR(op_type="SLICE", inputs=["x_onnx_ncx_internal", "slice_begin", "slice_size"], outputs=["c1"]),
+        OperatorIR(
+            op_type="DEPTHWISE_CONV_2D",
+            inputs=["c1", "dw_filter", "dw_bias"],
+            outputs=["dw_out"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "depthMultiplier": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="CAST",
+            inputs=["dw_out"],
+            outputs=["dw_out_cast"],
+            options={"inDataType": "FLOAT32", "outDataType": "FLOAT16"},
+        ),
+        OperatorIR(op_type="RELU", inputs=["dw_out_cast"], outputs=["y"]),
+    ]
+
+    stats = _optimize_boundary_input_transpose_channel_slice_blocks(model_ir)
+    assert stats["removed_boundary_input_transpose"] == 1
+    assert stats["inserted_local_boundary_transposes"] == 0
+
+    depthwise_op = next(op for op in model_ir.operators if str(op.op_type) == "DEPTHWISE_CONV_2D")
+    assert list(depthwise_op.inputs) == ["c1", "dw_filter", "dw_bias"]
+
+    assert list(model_ir.tensors["c1"].shape) == [1, 4, 4, 1]
+    assert list(model_ir.tensors["dw_out"].shape) == [1, 4, 4, 1]
+    assert list(model_ir.tensors["dw_out_cast"].shape) == [1, 4, 4, 1]
+    assert list(model_ir.tensors["y"].shape) == [1, 4, 4, 1]
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+
+
 def test_flatbuffer_direct_input_layout_respects_keep_shape_absolute() -> None:
     model = _make_qlinear_conv_chain_model()
     register_default_preprocess_rules()
@@ -3279,6 +3613,253 @@ def test_flatbuffer_direct_input_layout_respects_keep_shape_absolute() -> None:
     )
     assert model_ir.inputs == ["x"]
     assert list(model_ir.tensors["x"].shape) == [1, 1, 2, 2]
+
+
+def test_flatbuffer_direct_depthwise_output_transpose_cast_transpose_chain_elides() -> None:
+    model_ir = ModelIR(name="depthwise_output_transpose_cast_transpose_chain_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["dw_filter"] = TensorIR(
+        name="dw_filter",
+        dtype="FLOAT32",
+        shape=[1, 3, 3, 1],
+        shape_signature=[1, 3, 3, 1],
+        data=np.ones((1, 3, 3, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_bias"] = TensorIR(
+        name="dw_bias",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.zeros((1,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_out_nhwc"] = TensorIR(
+        name="dw_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_out_nchw"] = TensorIR(
+        name="dw_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_cast_nchw"] = TensorIR(
+        name="dw_cast_nchw",
+        dtype="FLOAT16",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_cast_nhwc"] = TensorIR(
+        name="dw_cast_nhwc",
+        dtype="FLOAT16",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT16",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="DEPTHWISE_CONV_2D",
+            inputs=["x_nhwc", "dw_filter", "dw_bias"],
+            outputs=["dw_out_nhwc"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "depthMultiplier": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["dw_out_nhwc", "perm_nhwc_to_nchw"],
+            outputs=["dw_out_nchw"],
+        ),
+        OperatorIR(
+            op_type="CAST",
+            inputs=["dw_out_nchw"],
+            outputs=["dw_cast_nchw"],
+            options={"inDataType": "FLOAT32", "outDataType": "FLOAT16"},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["dw_cast_nchw", "perm_nchw_to_nhwc"],
+            outputs=["dw_cast_nhwc"],
+        ),
+        OperatorIR(op_type="RELU", inputs=["dw_cast_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
+    assert stats["rewritten_transposeconv_output_nhwc_passthrough_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("DEPTHWISE_CONV_2D") == 1
+    assert op_types.count("CAST") == 1
+
+    cast_op = next(op for op in model_ir.operators if str(op.op_type) == "CAST")
+    assert list(cast_op.inputs) == ["dw_out_nhwc"]
+    assert list(cast_op.outputs) == ["dw_cast_nhwc"]
+
+    relu_op = next(op for op in model_ir.operators if str(op.op_type) == "RELU")
+    assert list(relu_op.inputs) == ["dw_cast_nhwc"]
+
+
+def test_flatbuffer_direct_depthwise_output_transpose_hardswish_transpose_chain_elides() -> None:
+    model_ir = ModelIR(name="depthwise_output_transpose_hardswish_transpose_chain_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["dw_filter"] = TensorIR(
+        name="dw_filter",
+        dtype="FLOAT32",
+        shape=[1, 3, 3, 1],
+        shape_signature=[1, 3, 3, 1],
+        data=np.ones((1, 3, 3, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_bias"] = TensorIR(
+        name="dw_bias",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.zeros((1,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_out_nhwc"] = TensorIR(
+        name="dw_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["dw_out_nchw"] = TensorIR(
+        name="dw_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_hswish_nchw"] = TensorIR(
+        name="dw_hswish_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+    )
+    model_ir.tensors["dw_hswish_nhwc"] = TensorIR(
+        name="dw_hswish_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 1],
+        shape_signature=[1, 4, 4, 1],
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="DEPTHWISE_CONV_2D",
+            inputs=["x_nhwc", "dw_filter", "dw_bias"],
+            outputs=["dw_out_nhwc"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "depthMultiplier": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["dw_out_nhwc", "perm_nhwc_to_nchw"],
+            outputs=["dw_out_nchw"],
+        ),
+        OperatorIR(
+            op_type="HARD_SWISH",
+            inputs=["dw_out_nchw"],
+            outputs=["dw_hswish_nchw"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["dw_hswish_nchw", "perm_nchw_to_nhwc"],
+            outputs=["dw_hswish_nhwc"],
+        ),
+        OperatorIR(op_type="RELU", inputs=["dw_hswish_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
+    assert stats["rewritten_transposeconv_output_nhwc_passthrough_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("DEPTHWISE_CONV_2D") == 1
+    assert op_types.count("HARD_SWISH") == 1
+
+    hard_swish_op = next(op for op in model_ir.operators if str(op.op_type) == "HARD_SWISH")
+    assert list(hard_swish_op.inputs) == ["dw_out_nhwc"]
+    assert list(hard_swish_op.outputs) == ["dw_hswish_nhwc"]
+
+    relu_op = next(op for op in model_ir.operators if str(op.op_type) == "RELU")
+    assert list(relu_op.inputs) == ["dw_hswish_nhwc"]
 
 
 def test_flatbuffer_direct_transpose_input_remap_preserves_boundary_transpose_for_multibranch_input() -> None:
@@ -3544,6 +4125,86 @@ def test_flatbuffer_direct_shape_lowering() -> None:
     assert op_types.count("SHAPE") == 1
     assert op_types.count("SLICE") == 1
     assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_min_topk_dynamic_k_lowering() -> None:
+    model = _make_min_topk_dynamic_k_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="min_topk_dynamic_k_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("MINIMUM") == 1
+    assert op_types.count("TOPK_V2") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    topk_op = next(op for op in model_ir.operators if str(op.op_type) == "TOPK_V2")
+    k_input_name = str(topk_op.inputs[1])
+    k_input_tensor = model_ir.tensors[k_input_name]
+    assert str(k_input_tensor.dtype).upper() == "INT32"
+    assert list(k_input_tensor.shape) == [1]
+    k_input_producers = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "SQUEEZE" and str(op.outputs[0]) == k_input_name
+    ]
+    assert len(k_input_producers) == 1
+
+    indices_out = model_ir.tensors["indices"]
+    assert str(indices_out.dtype).upper() == "INT64"
+    cast_to_i64 = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CAST" and str(op.outputs[0]) == "indices"
+    ]
+    assert len(cast_to_i64) == 1
+
+
+def test_flatbuffer_direct_pad_dynamic_pads_lowering() -> None:
+    model = _make_pad_dynamic_pads_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="pad_dynamic_pads_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("PAD") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    pad_op = next(op for op in model_ir.operators if str(op.op_type) == "PAD")
+    pads_name = str(pad_op.inputs[1])
+    pads_tensor = model_ir.tensors[pads_name]
+    assert str(pads_tensor.dtype).upper() == "INT32"
+    assert list(pads_tensor.shape) == [2, 2]
+    assert pads_tensor.data is None
+
+    producers = {}
+    for op in model_ir.operators:
+        for output_name in op.outputs:
+            producers[str(output_name)] = op
+
+    pads_transpose = producers.get(pads_name)
+    assert pads_transpose is not None
+    assert str(pads_transpose.op_type) == "TRANSPOSE"
+
+    pads_2xrank_name = str(pads_transpose.inputs[0])
+    pads_reshape = producers.get(pads_2xrank_name)
+    assert pads_reshape is not None
+    assert str(pads_reshape.op_type) == "RESHAPE"
+
+    pads_vector_name = str(pads_reshape.inputs[0])
+    pads_vector = model_ir.tensors[pads_vector_name]
+    assert str(pads_vector.dtype).upper() == "INT32"
+    pads_cast = producers.get(pads_vector_name)
+    assert pads_cast is not None
+    assert str(pads_cast.op_type) == "CAST"
 
 
 def test_flatbuffer_direct_legacy_slice_attr_lowering() -> None:
@@ -4386,6 +5047,695 @@ def test_flatbuffer_direct_transpose_mul_add_const_rewrite_does_not_mutate_on_pa
     assert list(model_ir.tensors["mul_const"].shape) == [1, 40, 1, 1]
 
 
+def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized() -> None:
+    model_ir = ModelIR(name="transpose_pre_add_mul_add_prelu_nhwc_chain_opt_test")
+    model_ir.inputs = ["a_nhwc", "b_nhwc", "legacy_ref_nchw"]
+    model_ir.outputs = ["z", "legacy_cat"]
+    model_ir.tensors["a_nhwc"] = TensorIR(
+        name="a_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 32],
+        shape_signature=[1, 6, 6, 32],
+    )
+    model_ir.tensors["b_nhwc"] = TensorIR(
+        name="b_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 32],
+        shape_signature=[1, 6, 6, 32],
+    )
+    model_ir.tensors["legacy_ref_nchw"] = TensorIR(
+        name="legacy_ref_nchw",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(
+        name="a_nchw",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["b_nchw"] = TensorIR(
+        name="b_nchw",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["add_out"] = TensorIR(
+        name="add_out",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["mul_const"] = TensorIR(
+        name="mul_const",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.ones((1, 32, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_out"] = TensorIR(
+        name="mul_out",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["add2_const"] = TensorIR(
+        name="add2_const",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.zeros((1, 32, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add2_out"] = TensorIR(
+        name="add2_out",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["prelu_alpha"] = TensorIR(
+        name="prelu_alpha",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.full((1, 32, 1, 1), 0.125, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["prelu_out"] = TensorIR(
+        name="prelu_out",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 32],
+        shape_signature=[1, 6, 6, 32],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 32],
+        shape_signature=[1, 6, 6, 32],
+    )
+    model_ir.tensors["legacy_cat"] = TensorIR(
+        name="legacy_cat",
+        dtype="FLOAT32",
+        shape=[1, 64, 6, 6],
+        shape_signature=[1, 64, 6, 6],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_nhwc", "pre_perm"], outputs=["a_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_nhwc", "pre_perm"], outputs=["b_nchw"]),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["a_nchw", "b_nchw"],
+            outputs=["add_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["add_out", "mul_const"],
+            outputs=["mul_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul_out", "add2_const"],
+            outputs=["add2_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="PRELU", inputs=["add2_out", "prelu_alpha"], outputs=["prelu_out"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["prelu_out", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["legacy_ref_nchw", "prelu_out"],
+            outputs=["legacy_cat"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_pre_add_mul_add_prelu_nhwc_chains"] == 1
+
+    add_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD" and list(op.outputs) == ["add_out"])
+    assert list(add_op.inputs) == ["a_nhwc", "b_nhwc"]
+    assert list(model_ir.tensors["prelu_alpha"].shape) == [1, 1, 1, 32]
+    assert not any(
+        str(op.op_type) == "TRANSPOSE" and list(op.outputs) in (["a_nchw"], ["b_nchw"])
+        for op in model_ir.operators
+    )
+    assert any(
+        str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["prelu_out"]
+        for op in model_ir.operators
+    )
+
+
+def test_flatbuffer_direct_transpose_mul_add_const_prelu_prepost_terminal_optimized() -> None:
+    model_ir = ModelIR(name="transpose_mul_add_const_prelu_prepost_terminal_opt_test")
+    model_ir.inputs = ["x_nhwc", "legacy_nchw"]
+    model_ir.outputs = ["z", "legacy_cat"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["legacy_nchw"] = TensorIR(
+        name="legacy_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["mul_const"] = TensorIR(
+        name="mul_const",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.ones((1, 16, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_out"] = TensorIR(
+        name="mul_out",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["add_const"] = TensorIR(
+        name="add_const",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.zeros((1, 16, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add_out"] = TensorIR(
+        name="add_out",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["prelu_alpha"] = TensorIR(
+        name="prelu_alpha",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.full((1, 16, 1, 1), 0.25, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["prelu_out"] = TensorIR(
+        name="prelu_out",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["legacy_cat"] = TensorIR(
+        name="legacy_cat",
+        dtype="FLOAT32",
+        shape=[1, 32, 8, 8],
+        shape_signature=[1, 32, 8, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "mul_const"],
+            outputs=["mul_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul_out", "add_const"],
+            outputs=["add_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="PRELU", inputs=["add_out", "prelu_alpha"], outputs=["prelu_out"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["prelu_out", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["legacy_nchw", "prelu_out"],
+            outputs=["legacy_cat"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains(model_ir)
+    assert stats["optimized_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains"] == 1
+    assert list(model_ir.tensors["mul_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["add_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["prelu_alpha"].shape) == [1, 1, 1, 16]
+    assert any(
+        str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["prelu_out"]
+        for op in model_ir.operators
+    )
+
+
+def test_flatbuffer_direct_singleton_spatial_transpose_before_flatten_reshape_removed() -> None:
+    model_ir = ModelIR(name="singleton_spatial_transpose_flatten_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 48],
+        shape_signature=[1, 1, 1, 48],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 48, 1, 1],
+        shape_signature=[1, 48, 1, 1],
+    )
+    model_ir.tensors["flat_shape"] = TensorIR(
+        name="flat_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 48], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 48],
+        shape_signature=[1, 48],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 48],
+        shape_signature=[1, 48],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x_nchw", "flat_shape"],
+            outputs=["y"],
+            options={"newShape": [1, 48]},
+        ),
+        OperatorIR(op_type="RELU", inputs=["y"], outputs=["z"]),
+    ]
+
+    stats = _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
+    assert stats["optimized_singleton_spatial_nhwc_transpose_reshape_flatten"] == 1
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    reshape_op = next(op for op in model_ir.operators if str(op.op_type) == "RESHAPE")
+    assert list(reshape_op.inputs) == ["x_nhwc", "flat_shape"]
+
+
+def test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized() -> None:
+    model_ir = ModelIR(name="sinet_concat_resize_affine_transpose_opt_test")
+    model_ir.inputs = ["pre_nhwc", "b0_nhwc", "rz_nhwc"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["pre_nhwc"] = TensorIR(
+        name="pre_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 32],
+        shape_signature=[1, 8, 8, 32],
+    )
+    model_ir.tensors["b0_nhwc"] = TensorIR(
+        name="b0_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["rz_nhwc"] = TensorIR(
+        name="rz_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    for name, shape in [
+        ("pre_nchw", [1, 32, 8, 8]),
+        ("b0_nchw", [1, 16, 8, 8]),
+        ("rz_nchw", [1, 16, 8, 8]),
+        ("b1_mul", [1, 16, 8, 8]),
+        ("b1_add", [1, 16, 8, 8]),
+        ("concat_nchw", [1, 32, 8, 8]),
+        ("add0_out", [1, 32, 8, 8]),
+        ("mul2_out", [1, 32, 8, 8]),
+        ("add2_out", [1, 32, 8, 8]),
+        ("prelu_out", [1, 32, 8, 8]),
+        ("y_nhwc", [1, 8, 8, 32]),
+        ("z", [1, 8, 8, 32]),
+    ]:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=shape,
+            shape_signature=shape,
+        )
+    model_ir.tensors["mul_b_const"] = TensorIR(
+        name="mul_b_const",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.ones((1, 16, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add_b_const"] = TensorIR(
+        name="add_b_const",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.zeros((1, 16, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul2_const"] = TensorIR(
+        name="mul2_const",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.ones((1, 32, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add2_const"] = TensorIR(
+        name="add2_const",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.zeros((1, 32, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["prelu_alpha"] = TensorIR(
+        name="prelu_alpha",
+        dtype="FLOAT32",
+        shape=[1, 32, 1, 1],
+        shape_signature=[1, 32, 1, 1],
+        data=np.full((1, 32, 1, 1), 0.25, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["pre_nhwc", "perm_nhwc_to_nchw"], outputs=["pre_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b0_nhwc", "perm_nhwc_to_nchw"], outputs=["b0_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["rz_nhwc", "perm_nhwc_to_nchw"], outputs=["rz_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["rz_nchw", "mul_b_const"],
+            outputs=["b1_mul"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["b1_mul", "add_b_const"],
+            outputs=["b1_add"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["b0_nchw", "b1_add"],
+            outputs=["concat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["pre_nchw", "concat_nchw"],
+            outputs=["add0_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["add0_out", "mul2_const"],
+            outputs=["mul2_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul2_out", "add2_const"],
+            outputs=["add2_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="PRELU", inputs=["add2_out", "prelu_alpha"], outputs=["prelu_out"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["prelu_out", "perm_nchw_to_nhwc"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)
+    assert stats["optimized_sinet_concat_resize_affine_transpose_chains"] == 1
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    add0_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD" and list(op.outputs) == ["add0_out"])
+    assert "pre_nhwc" in list(add0_op.inputs)
+    mul_b_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL" and list(op.outputs) == ["b1_mul"])
+    assert "rz_nhwc" in list(mul_b_op.inputs)
+    assert list(model_ir.tensors["mul_b_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["add_b_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["mul2_const"].shape) == [1, 1, 1, 32]
+    assert list(model_ir.tensors["add2_const"].shape) == [1, 1, 1, 32]
+    assert list(model_ir.tensors["prelu_alpha"].shape) == [1, 1, 1, 32]
+
+
+def test_flatbuffer_direct_sinet_dual_resize_affine_transpose_chain_optimized() -> None:
+    model_ir = ModelIR(name="sinet_dual_resize_affine_transpose_opt_test")
+    model_ir.inputs = ["pre_nhwc", "r0_nhwc", "r1_nhwc"]
+    model_ir.outputs = ["z"]
+
+    for name, shape in [
+        ("pre_nhwc", [1, 8, 8, 32]),
+        ("r0_nhwc", [1, 8, 8, 16]),
+        ("r1_nhwc", [1, 8, 8, 16]),
+        ("pre_nchw", [1, 32, 8, 8]),
+        ("rz0_nhwc", [1, 8, 8, 16]),
+        ("rz1_nhwc", [1, 8, 8, 16]),
+        ("b0_nchw", [1, 16, 8, 8]),
+        ("b1_nchw", [1, 16, 8, 8]),
+        ("b0_mul", [1, 16, 8, 8]),
+        ("b0_add", [1, 16, 8, 8]),
+        ("b1_mul", [1, 16, 8, 8]),
+        ("b1_add", [1, 16, 8, 8]),
+        ("concat_nchw", [1, 32, 8, 8]),
+        ("add0_out", [1, 32, 8, 8]),
+        ("mul2_out", [1, 32, 8, 8]),
+        ("add2_out", [1, 32, 8, 8]),
+        ("prelu_out", [1, 32, 8, 8]),
+        ("y_nhwc", [1, 8, 8, 32]),
+        ("z", [1, 8, 8, 32]),
+    ]:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=shape,
+            shape_signature=shape,
+        )
+
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["resize0_size"] = TensorIR(
+        name="resize0_size",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([8, 8], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["resize1_size"] = TensorIR(
+        name="resize1_size",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([8, 8], dtype=np.int32),
+        is_variable=False,
+    )
+
+    for const_name, channels, value in [
+        ("b0_mul_const", 16, 1.0),
+        ("b0_add_const", 16, 0.0),
+        ("b1_mul_const", 16, 1.0),
+        ("b1_add_const", 16, 0.0),
+        ("mul2_const", 32, 1.0),
+        ("add2_const", 32, 0.0),
+        ("prelu_alpha", 32, 0.25),
+    ]:
+        arr = np.full((1, channels, 1, 1), value, dtype=np.float32)
+        model_ir.tensors[const_name] = TensorIR(
+            name=const_name,
+            dtype="FLOAT32",
+            shape=list(arr.shape),
+            shape_signature=list(arr.shape),
+            data=np.asarray(arr),
+            is_variable=False,
+        )
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["pre_nhwc", "perm_nhwc_to_nchw"], outputs=["pre_nchw"]),
+        OperatorIR(
+            op_type="RESIZE_BILINEAR",
+            inputs=["r0_nhwc", "resize0_size"],
+            outputs=["rz0_nhwc"],
+            options={"alignCorners": True, "halfPixelCenters": False},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["rz0_nhwc", "perm_nhwc_to_nchw"], outputs=["b0_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["b0_nchw", "b0_mul_const"],
+            outputs=["b0_mul"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["b0_mul", "b0_add_const"],
+            outputs=["b0_add"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="RESIZE_BILINEAR",
+            inputs=["r1_nhwc", "resize1_size"],
+            outputs=["rz1_nhwc"],
+            options={"alignCorners": True, "halfPixelCenters": False},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["rz1_nhwc", "perm_nhwc_to_nchw"], outputs=["b1_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["b1_nchw", "b1_mul_const"],
+            outputs=["b1_mul"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["b1_mul", "b1_add_const"],
+            outputs=["b1_add"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["b0_add", "b1_add"],
+            outputs=["concat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["pre_nchw", "concat_nchw"],
+            outputs=["add0_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["add0_out", "mul2_const"],
+            outputs=["mul2_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul2_out", "add2_const"],
+            outputs=["add2_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="PRELU", inputs=["add2_out", "prelu_alpha"], outputs=["prelu_out"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["prelu_out", "perm_nchw_to_nhwc"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_sinet_dual_resize_affine_transpose_chains(model_ir)
+    assert stats["optimized_sinet_dual_resize_affine_transpose_chains"] == 1
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    add0_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD" and list(op.outputs) == ["add0_out"])
+    assert "pre_nhwc" in list(add0_op.inputs)
+    assert list(model_ir.tensors["b0_mul_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["b0_add_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["b1_mul_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["b1_add_const"].shape) == [1, 1, 1, 16]
+    assert list(model_ir.tensors["mul2_const"].shape) == [1, 1, 1, 32]
+    assert list(model_ir.tensors["add2_const"].shape) == [1, 1, 1, 32]
+    assert list(model_ir.tensors["prelu_alpha"].shape) == [1, 1, 1, 32]
+
+
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_partial_match_does_not_mutate_swish_input() -> None:
     model_ir = ModelIR(name="transpose_pre_concat_nhwc_partial_match_no_mutation_test")
     model_ir.inputs = ["x_nhwc", "residual_nchw"]
@@ -4597,6 +5947,536 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_relu_and_swish_inputs_optim
     assert list(model_ir.tensors["relu_out"].shape) == [1, 6, 6, 192]
     assert list(model_ir.tensors["swish_out"].shape) == [1, 6, 6, 384]
 
+
+def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_relu_inputs() -> None:
+    model_ir = ModelIR(name="transpose_pre_concat_single_post_adapter_relu_test")
+    model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x0_nhwc"] = TensorIR(
+        name="x0_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["x1_nhwc"] = TensorIR(
+        name="x1_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x0_nchw"] = TensorIR(
+        name="x0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["x1_nchw"] = TensorIR(
+        name="x1_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["r0"] = TensorIR(
+        name="r0",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["r1"] = TensorIR(
+        name="r1",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["cat_nchw"] = TensorIR(
+        name="cat_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 4, 4],
+        shape_signature=[1, 16, 4, 4],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 16, 16], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 16, 16],
+        shape_signature=[1, 16, 16],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x0_nhwc", "pre_perm"], outputs=["x0_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["x0_nchw"], outputs=["r0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x1_nhwc", "pre_perm"], outputs=["x1_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["x1_nchw"], outputs=["r1"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["r0", "r1"],
+            outputs=["cat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RESHAPE", inputs=["cat_nchw", "reshape_shape"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+    assert stats["optimized_transpose_input_chains_pre_concat_to_single_post_adapter"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 1
+    concat_idx = op_types.index("CONCATENATION")
+    concat_op = model_ir.operators[concat_idx]
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert str(model_ir.operators[concat_idx + 1].op_type) == "TRANSPOSE"
+    assert model_ir.operators[concat_idx + 1].outputs == ["cat_nchw"]
+    assert model_ir.operators[concat_idx + 2].inputs[0] == "cat_nchw"
+
+    relu_ops = [op for op in model_ir.operators if str(op.op_type) == "RELU"]
+    assert relu_ops[0].inputs == ["x0_nhwc"]
+    assert relu_ops[1].inputs == ["x1_nhwc"]
+    assert list(model_ir.tensors["r0"].shape) == [1, 4, 4, 8]
+    assert list(model_ir.tensors["r1"].shape) == [1, 4, 4, 8]
+
+
+def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_unary_after_singleton_reshape() -> None:
+    model_ir = ModelIR(name="transpose_pre_concat_single_post_adapter_unary_singleton_reshape_test")
+    model_ir.inputs = ["b0_nhwc", "b1_nhwc", "b2_nhwc"]
+    model_ir.outputs = ["out_nchw"]
+    model_ir.tensors["b0_nhwc"] = TensorIR(
+        name="b0_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 22, 22, 1],
+        shape_signature=[1, 22, 22, 1],
+    )
+    model_ir.tensors["b1_nhwc"] = TensorIR(
+        name="b1_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 22, 22, 4],
+        shape_signature=[1, 22, 22, 4],
+    )
+    model_ir.tensors["b2_nhwc"] = TensorIR(
+        name="b2_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 22, 22, 80],
+        shape_signature=[1, 22, 22, 80],
+    )
+    model_ir.tensors["to_nchw_perm"] = TensorIR(
+        name="to_nchw_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_nchw"] = TensorIR(
+        name="shape_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 1, 22, 22], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["b0_nchw"] = TensorIR(
+        name="b0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 22, 22],
+        shape_signature=[1, 1, 22, 22],
+    )
+    model_ir.tensors["s0_nchw"] = TensorIR(
+        name="s0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 22, 22],
+        shape_signature=[1, 1, 22, 22],
+    )
+    model_ir.tensors["b1_nchw"] = TensorIR(
+        name="b1_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 22, 22],
+        shape_signature=[1, 4, 22, 22],
+    )
+    model_ir.tensors["b2_nchw"] = TensorIR(
+        name="b2_nchw",
+        dtype="FLOAT32",
+        shape=[1, 80, 22, 22],
+        shape_signature=[1, 80, 22, 22],
+    )
+    model_ir.tensors["out_nchw"] = TensorIR(
+        name="out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 85, 22, 22],
+        shape_signature=[1, 85, 22, 22],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="RESHAPE", inputs=["b0_nhwc", "shape_nchw"], outputs=["b0_nchw"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["b0_nchw"], outputs=["s0_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b1_nhwc", "to_nchw_perm"], outputs=["b1_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b2_nhwc", "to_nchw_perm"], outputs=["b2_nchw"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["s0_nchw", "b1_nchw", "b2_nchw"],
+            outputs=["out_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+    assert stats["optimized_transpose_input_chains_pre_concat_to_single_post_adapter"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("RESHAPE") == 0
+    assert op_types.count("TRANSPOSE") == 1
+    concat_idx = op_types.index("CONCATENATION")
+    concat_op = model_ir.operators[concat_idx]
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert str(model_ir.operators[concat_idx + 1].op_type) == "TRANSPOSE"
+    assert model_ir.operators[concat_idx + 1].outputs == ["out_nchw"]
+
+    logistic_op = next(op for op in model_ir.operators if str(op.op_type) == "LOGISTIC")
+    assert logistic_op.inputs == ["b0_nhwc"]
+    assert list(model_ir.tensors["s0_nchw"].shape) == [1, 22, 22, 1]
+
+
+def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> None:
+    model_ir = ModelIR(name="shufflenet_transpose_shuffle_chain_opt_test")
+    model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
+    model_ir.outputs = ["out_nchw"]
+
+    model_ir.tensors["x0_nhwc"] = TensorIR(
+        name="x0_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["x1_nhwc"] = TensorIR(
+        name="x1_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["to_nchw_perm"] = TensorIR(
+        name="to_nchw_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["to_nhwc_perm"] = TensorIR(
+        name="to_nhwc_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_102"] = TensorIR(
+        name="perm_102",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 0, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_r1"] = TensorIR(
+        name="shape_r1",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([4, 2, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_r2"] = TensorIR(
+        name="shape_r2",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([2, 1, 4, 2, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["idx0"] = TensorIR(
+        name="idx0",
+        dtype="INT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(0, dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["idx1"] = TensorIR(
+        name="idx1",
+        dtype="INT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(1, dtype=np.int32),
+        is_variable=False,
+    )
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 8],
+        shape_signature=[1, 2, 2, 8],
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 2, 2],
+        shape_signature=[1, 8, 2, 2],
+    )
+    model_ir.tensors["r1"] = TensorIR(
+        name="r1",
+        dtype="FLOAT32",
+        shape=[4, 2, 4],
+        shape_signature=[4, 2, 4],
+    )
+    model_ir.tensors["t1"] = TensorIR(
+        name="t1",
+        dtype="FLOAT32",
+        shape=[2, 4, 4],
+        shape_signature=[2, 4, 4],
+    )
+    model_ir.tensors["r2"] = TensorIR(
+        name="r2",
+        dtype="FLOAT32",
+        shape=[2, 1, 4, 2, 2],
+        shape_signature=[2, 1, 4, 2, 2],
+    )
+    model_ir.tensors["g0_nchw"] = TensorIR(
+        name="g0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 2, 2],
+        shape_signature=[1, 4, 2, 2],
+    )
+    model_ir.tensors["g1_nchw"] = TensorIR(
+        name="g1_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 2, 2],
+        shape_signature=[1, 4, 2, 2],
+    )
+    model_ir.tensors["g1_nhwc"] = TensorIR(
+        name="g1_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["b1"] = TensorIR(
+        name="b1",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["b2"] = TensorIR(
+        name="b2",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["b3"] = TensorIR(
+        name="b3",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 4],
+        shape_signature=[1, 2, 2, 4],
+    )
+    model_ir.tensors["b3_nchw"] = TensorIR(
+        name="b3_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 2, 2],
+        shape_signature=[1, 4, 2, 2],
+    )
+    model_ir.tensors["b3_relu_nchw"] = TensorIR(
+        name="b3_relu_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 2, 2],
+        shape_signature=[1, 4, 2, 2],
+    )
+    model_ir.tensors["out_nchw"] = TensorIR(
+        name="out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 2, 2],
+        shape_signature=[1, 8, 2, 2],
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["x0_nhwc", "x1_nhwc"],
+            outputs=["x_nhwc"],
+            options={"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "to_nchw_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="RESHAPE", inputs=["x_nchw", "shape_r1"], outputs=["r1"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["r1", "perm_102"], outputs=["t1"]),
+        OperatorIR(op_type="RESHAPE", inputs=["t1", "shape_r2"], outputs=["r2"]),
+        OperatorIR(op_type="GATHER", inputs=["r2", "idx0"], outputs=["g0_nchw"], options={"axis": 0, "batchDims": 0}),
+        OperatorIR(op_type="GATHER", inputs=["r2", "idx1"], outputs=["g1_nchw"], options={"axis": 0, "batchDims": 0}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["g1_nchw", "to_nhwc_perm"], outputs=["g1_nhwc"]),
+        OperatorIR(op_type="CONV_2D", inputs=["g1_nhwc"], outputs=["b1"], options={"padding": "SAME", "strideH": 1, "strideW": 1, "filterHeight": 1, "filterWidth": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="DEPTHWISE_CONV_2D", inputs=["b1"], outputs=["b2"], options={"padding": "SAME", "strideH": 1, "strideW": 1, "depthMultiplier": 1, "dilationHFactor": 1, "dilationWFactor": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="CONV_2D", inputs=["b2"], outputs=["b3"], options={"padding": "SAME", "strideH": 1, "strideW": 1, "filterHeight": 1, "filterWidth": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b3", "to_nchw_perm"], outputs=["b3_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["b3_nchw"], outputs=["b3_relu_nchw"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["g0_nchw", "b3_relu_nchw"],
+            outputs=["out_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_shufflenet_transpose_shuffle_chains(model_ir)
+    assert stats["optimized_shufflenet_transpose_shuffle_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") <= 2
+
+    concat_ops = [op for op in model_ir.operators if str(op.op_type) == "CONCATENATION"]
+    assert len(concat_ops) == 2
+    # Tail concat is rewritten to NHWC + post transpose adapter.
+    assert int(concat_ops[1].options.get("axis", -1)) == 3
+    tail_concat_idx = op_types.index("CONCATENATION", op_types.index("CONCATENATION") + 1)
+    assert str(model_ir.operators[tail_concat_idx + 1].op_type) == "TRANSPOSE"
+    assert model_ir.operators[tail_concat_idx + 1].outputs == ["out_nchw"]
+
+    gather_ops = [op for op in model_ir.operators if str(op.op_type) == "GATHER"]
+    assert len(gather_ops) >= 2
+    assert all(int(op.options.get("axis", -1)) == 3 for op in gather_ops[:2])
+
+
+def test_flatbuffer_direct_shufflenet_reshape_transpose_shuffle_nhwc_chain_optimized() -> None:
+    model_ir = ModelIR(name="shufflenet_reshape_transpose_shuffle_nhwc_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y0", "y1"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 80, 80, 24],
+        shape_signature=[1, 80, 80, 24],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_swap"] = TensorIR(
+        name="perm_swap",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([0, 2, 1, 3, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_r1"] = TensorIR(
+        name="shape_r1",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([1, 2, 12, 80, 80], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_r2"] = TensorIR(
+        name="shape_r2",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 24, 80, 80], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 24, 80, 80],
+        shape_signature=[1, 24, 80, 80],
+    )
+    model_ir.tensors["r1"] = TensorIR(
+        name="r1",
+        dtype="FLOAT32",
+        shape=[1, 2, 12, 80, 80],
+        shape_signature=[1, 2, 12, 80, 80],
+    )
+    model_ir.tensors["t1"] = TensorIR(
+        name="t1",
+        dtype="FLOAT32",
+        shape=[1, 12, 2, 80, 80],
+        shape_signature=[1, 12, 2, 80, 80],
+    )
+    model_ir.tensors["r2"] = TensorIR(
+        name="r2",
+        dtype="FLOAT32",
+        shape=[1, 24, 80, 80],
+        shape_signature=[1, 24, 80, 80],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 80, 80, 24],
+        shape_signature=[1, 80, 80, 24],
+    )
+    model_ir.tensors["y0"] = TensorIR(
+        name="y0",
+        dtype="FLOAT32",
+        shape=[1, 80, 80, 24],
+        shape_signature=[1, 80, 80, 24],
+    )
+    model_ir.tensors["y1"] = TensorIR(
+        name="y1",
+        dtype="FLOAT32",
+        shape=[1, 80, 80, 24],
+        shape_signature=[1, 80, 80, 24],
+    )
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "perm_nhwc_to_nchw"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x_nchw", "shape_r1"],
+            outputs=["r1"],
+            options={"newShape": [1, 2, 12, 80, 80]},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["r1", "perm_swap"], outputs=["t1"]),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["t1", "shape_r2"],
+            outputs=["r2"],
+            options={"newShape": [1, 24, 80, 80]},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["r2", "perm_nchw_to_nhwc"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["y0"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["y1"]),
+    ]
+
+    stats = _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+    assert stats["optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["GATHER", "RELU", "RELU"]
+    gather_op = model_ir.operators[0]
+    assert int(gather_op.options.get("axis", -1)) == 3
+    gather_indices_name = str(gather_op.inputs[1])
+    gather_indices = np.asarray(model_ir.tensors[gather_indices_name].data, dtype=np.int32).reshape(-1)
+    expected = np.asarray([int((k % 2) * 12 + (k // 2)) for k in range(24)], dtype=np.int32)
+    assert np.array_equal(gather_indices, expected)
 
 def test_flatbuffer_direct_transpose_pre_add_nhwc_shared_concat_and_unary_input() -> None:
     model_ir = ModelIR(name="transpose_pre_add_shared_concat_and_unary_test")
@@ -5166,6 +7046,129 @@ def test_flatbuffer_direct_transpose_elementwise_concat_conv_nhwc_groups_optimiz
     assert list(conv_ops[1].inputs)[0] == "cat1_nhwc"
 
 
+def test_flatbuffer_direct_transpose_leakyrelu_concat_conv_nhwc_groups_optimized() -> None:
+    model_ir = ModelIR(name="transpose_leakyrelu_concat_conv_nhwc_groups_opt_test")
+    model_ir.inputs = ["a_nhwc", "b_nhwc"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["a_nhwc"] = TensorIR(
+        name="a_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 16],
+        shape_signature=[1, 6, 6, 16],
+    )
+    model_ir.tensors["b_nhwc"] = TensorIR(
+        name="b_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 16],
+        shape_signature=[1, 6, 6, 16],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(
+        name="a_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 6, 6],
+        shape_signature=[1, 16, 6, 6],
+    )
+    model_ir.tensors["b_nchw"] = TensorIR(
+        name="b_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 6, 6],
+        shape_signature=[1, 16, 6, 6],
+    )
+    model_ir.tensors["a_act_nchw"] = TensorIR(
+        name="a_act_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 6, 6],
+        shape_signature=[1, 16, 6, 6],
+    )
+    model_ir.tensors["b_act_nchw"] = TensorIR(
+        name="b_act_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 6, 6],
+        shape_signature=[1, 16, 6, 6],
+    )
+    model_ir.tensors["cat_nchw"] = TensorIR(
+        name="cat_nchw",
+        dtype="FLOAT32",
+        shape=[1, 32, 6, 6],
+        shape_signature=[1, 32, 6, 6],
+    )
+    model_ir.tensors["cat_nhwc"] = TensorIR(
+        name="cat_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 32],
+        shape_signature=[1, 6, 6, 32],
+    )
+    model_ir.tensors["conv_w"] = TensorIR(
+        name="conv_w",
+        dtype="FLOAT32",
+        shape=[8, 1, 1, 32],
+        shape_signature=[8, 1, 1, 32],
+        data=np.ones((8, 1, 1, 32), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_b"] = TensorIR(
+        name="conv_b",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    conv_options = {
+        "padding": "SAME",
+        "strideH": 1,
+        "strideW": 1,
+        "dilationHFactor": 1,
+        "dilationWFactor": 1,
+        "fusedActivationFunction": "NONE",
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_nhwc", "pre_perm"], outputs=["a_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_nhwc", "pre_perm"], outputs=["b_nchw"]),
+        OperatorIR(op_type="LEAKY_RELU", inputs=["a_nchw"], outputs=["a_act_nchw"], options={"alpha": 0.125}),
+        OperatorIR(op_type="LEAKY_RELU", inputs=["b_nchw"], outputs=["b_act_nchw"], options={"alpha": 0.125}),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["a_act_nchw", "b_act_nchw"],
+            outputs=["cat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_nchw", "post_perm"], outputs=["cat_nhwc"]),
+        OperatorIR(op_type="CONV_2D", inputs=["cat_nhwc", "conv_w", "conv_b"], outputs=["y"], options=conv_options),
+    ]
+
+    stats = _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
+    assert stats["optimized_transpose_elementwise_concat_conv_nhwc_groups"] == 1
+    assert [str(op.op_type) for op in model_ir.operators].count("TRANSPOSE") == 0
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    leaky_ops = [op for op in model_ir.operators if str(op.op_type) == "LEAKY_RELU"]
+    assert [str(v) for v in list(leaky_ops[0].inputs)] == ["a_nhwc"]
+    assert [str(v) for v in list(leaky_ops[1].inputs)] == ["b_nhwc"]
+
+
 def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized() -> None:
     model_ir = ModelIR(name="transpose_conv_attention_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
@@ -5339,6 +7342,1167 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
     mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
     assert list(mul_op.outputs) == ["y_nhwc"]
     assert list(model_ir.tensors["a_nchw"].shape) == [1, 8, 8, 16]
+
+
+def test_flatbuffer_direct_transpose_conv_attention_hardsigmoid_nhwc_propagation_optimized() -> None:
+    model_ir = ModelIR(name="transpose_conv_attention_hardsigmoid_nhwc_propagation_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes"] = TensorIR(
+        name="mean_axes",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(
+        name="a_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["mean_nchw"] = TensorIR(
+        name="mean_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["mean_nhwc"] = TensorIR(
+        name="mean_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 16],
+        shape_signature=[1, 1, 1, 16],
+    )
+    model_ir.tensors["conv1_w"] = TensorIR(
+        name="conv1_w",
+        dtype="FLOAT32",
+        shape=[8, 1, 1, 16],
+        shape_signature=[8, 1, 1, 16],
+        data=np.ones((8, 1, 1, 16), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv1_b"] = TensorIR(
+        name="conv1_b",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv1_out"] = TensorIR(
+        name="conv1_out",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 8],
+        shape_signature=[1, 1, 1, 8],
+    )
+    model_ir.tensors["conv2_w"] = TensorIR(
+        name="conv2_w",
+        dtype="FLOAT32",
+        shape=[16, 1, 1, 8],
+        shape_signature=[16, 1, 1, 8],
+        data=np.ones((16, 1, 1, 8), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv2_b"] = TensorIR(
+        name="conv2_b",
+        dtype="FLOAT32",
+        shape=[16],
+        shape_signature=[16],
+        data=np.zeros((16,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv2_out_nhwc"] = TensorIR(
+        name="conv2_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 16],
+        shape_signature=[1, 1, 1, 16],
+    )
+    model_ir.tensors["sig_in_nchw"] = TensorIR(
+        name="sig_in_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["hs_alpha"] = TensorIR(
+        name="hs_alpha",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1.0 / 6.0], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["hs_beta"] = TensorIR(
+        name="hs_beta",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["sig_mul_nchw"] = TensorIR(
+        name="sig_mul_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["sig_add_nchw"] = TensorIR(
+        name="sig_add_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["sig_nchw"] = TensorIR(
+        name="sig_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["mul_nchw"] = TensorIR(
+        name="mul_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    conv_options = {
+        "padding": "SAME",
+        "strideH": 1,
+        "strideW": 1,
+        "dilationHFactor": 1,
+        "dilationWFactor": 1,
+        "fusedActivationFunction": "NONE",
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["x_nchw"], outputs=["a_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["a_nchw", "mean_axes"], outputs=["mean_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mean_nchw", "post_perm"], outputs=["mean_nhwc"]),
+        OperatorIR(op_type="CONV_2D", inputs=["mean_nhwc", "conv1_w", "conv1_b"], outputs=["conv1_out"], options=conv_options),
+        OperatorIR(op_type="CONV_2D", inputs=["conv1_out", "conv2_w", "conv2_b"], outputs=["conv2_out_nhwc"], options=conv_options),
+        OperatorIR(op_type="TRANSPOSE", inputs=["conv2_out_nhwc", "pre_perm"], outputs=["sig_in_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["sig_in_nchw", "hs_alpha"],
+            outputs=["sig_mul_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["sig_mul_nchw", "hs_beta"],
+            outputs=["sig_add_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["sig_add_nchw"], outputs=["sig_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["a_nchw", "sig_nchw"],
+            outputs=["mul_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_nchw", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+    assert stats["optimized_transpose_conv_attention_nhwc_propagation_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert np.array_equal(np.asarray(model_ir.tensors["mean_axes"].data), np.asarray([1, 2], dtype=np.int32))
+
+    gate_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["sig_mul_nchw"])
+    assert list(gate_mul_op.inputs) == ["conv2_out_nhwc", "hs_alpha"]
+    final_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["y_nhwc"])
+    assert list(final_mul_op.inputs)[0] == "a_nchw"
+    assert list(model_ir.tensors["a_nchw"].shape) == [1, 8, 8, 16]
+
+
+def test_flatbuffer_direct_transpose_conv_attention_hardswish_activation_nhwc_propagation_optimized() -> None:
+    model_ir = ModelIR(name="transpose_conv_attention_hardswish_activation_nhwc_propagation_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes"] = TensorIR(
+        name="mean_axes",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["act_sig_mul_nchw"] = TensorIR(
+        name="act_sig_mul_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["act_sig_add_nchw"] = TensorIR(
+        name="act_sig_add_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["act_sig_nchw"] = TensorIR(
+        name="act_sig_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(
+        name="a_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["mean_nchw"] = TensorIR(
+        name="mean_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["mean_nhwc"] = TensorIR(
+        name="mean_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 16],
+        shape_signature=[1, 1, 1, 16],
+    )
+    model_ir.tensors["conv1_w"] = TensorIR(
+        name="conv1_w",
+        dtype="FLOAT32",
+        shape=[8, 1, 1, 16],
+        shape_signature=[8, 1, 1, 16],
+        data=np.ones((8, 1, 1, 16), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv1_b"] = TensorIR(
+        name="conv1_b",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv1_out"] = TensorIR(
+        name="conv1_out",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 8],
+        shape_signature=[1, 1, 1, 8],
+    )
+    model_ir.tensors["conv2_w"] = TensorIR(
+        name="conv2_w",
+        dtype="FLOAT32",
+        shape=[16, 1, 1, 8],
+        shape_signature=[16, 1, 1, 8],
+        data=np.ones((16, 1, 1, 8), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv2_b"] = TensorIR(
+        name="conv2_b",
+        dtype="FLOAT32",
+        shape=[16],
+        shape_signature=[16],
+        data=np.zeros((16,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv2_out_nhwc"] = TensorIR(
+        name="conv2_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 16],
+        shape_signature=[1, 1, 1, 16],
+    )
+    model_ir.tensors["gate_in_nchw"] = TensorIR(
+        name="gate_in_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["hs_alpha"] = TensorIR(
+        name="hs_alpha",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1.0 / 6.0], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["hs_beta"] = TensorIR(
+        name="hs_beta",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["gate_mul_nchw"] = TensorIR(
+        name="gate_mul_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["gate_add_nchw"] = TensorIR(
+        name="gate_add_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["sig_nchw"] = TensorIR(
+        name="sig_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+    )
+    model_ir.tensors["mul_nchw"] = TensorIR(
+        name="mul_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 8, 8, 16],
+        shape_signature=[1, 8, 8, 16],
+    )
+    conv_options = {
+        "padding": "SAME",
+        "strideH": 1,
+        "strideW": 1,
+        "dilationHFactor": 1,
+        "dilationWFactor": 1,
+        "fusedActivationFunction": "NONE",
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "hs_alpha"],
+            outputs=["act_sig_mul_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["act_sig_mul_nchw", "hs_beta"],
+            outputs=["act_sig_add_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["act_sig_add_nchw"], outputs=["act_sig_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "act_sig_nchw"],
+            outputs=["a_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="MEAN", inputs=["a_nchw", "mean_axes"], outputs=["mean_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mean_nchw", "post_perm"], outputs=["mean_nhwc"]),
+        OperatorIR(op_type="CONV_2D", inputs=["mean_nhwc", "conv1_w", "conv1_b"], outputs=["conv1_out"], options=conv_options),
+        OperatorIR(op_type="CONV_2D", inputs=["conv1_out", "conv2_w", "conv2_b"], outputs=["conv2_out_nhwc"], options=conv_options),
+        OperatorIR(op_type="TRANSPOSE", inputs=["conv2_out_nhwc", "pre_perm"], outputs=["gate_in_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["gate_in_nchw", "hs_alpha"],
+            outputs=["gate_mul_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["gate_mul_nchw", "hs_beta"],
+            outputs=["gate_add_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["gate_add_nchw"], outputs=["sig_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["a_nchw", "sig_nchw"],
+            outputs=["mul_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_nchw", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+    assert stats["optimized_transpose_conv_attention_nhwc_propagation_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert np.array_equal(np.asarray(model_ir.tensors["mean_axes"].data), np.asarray([1, 2], dtype=np.int32))
+
+    act_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["a_nchw"])
+    assert list(act_mul_op.inputs)[0] == "x_nhwc"
+    act_gate_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["act_sig_mul_nchw"])
+    assert list(act_gate_mul_op.inputs)[0] == "x_nhwc"
+    gate_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["gate_mul_nchw"])
+    assert list(gate_mul_op.inputs) == ["conv2_out_nhwc", "hs_alpha"]
+    final_mul_op = next(op for op in model_ir.operators if list(op.outputs) == ["y_nhwc"])
+    assert list(final_mul_op.inputs)[0] == "a_nchw"
+    assert list(model_ir.tensors["a_nchw"].shape) == [1, 8, 8, 16]
+
+
+def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fanout_keeps_adapter() -> None:
+    model_ir = ModelIR(name="hardsigmoid_mul_transpose_passthrough_legacy_fanout_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc", "m_nhwc"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["hs_alpha"] = TensorIR(
+        name="hs_alpha",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1.0 / 6.0], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["hs_beta"] = TensorIR(
+        name="hs_beta",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["hs_mul_out"] = TensorIR(
+        name="hs_mul_out",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["hs_add_out"] = TensorIR(
+        name="hs_add_out",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["hs_out"] = TensorIR(
+        name="hs_out",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["mul_out_nchw"] = TensorIR(
+        name="mul_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["mean_axes_nchw"] = TensorIR(
+        name="mean_axes_nchw",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["m_nchw"] = TensorIR(
+        name="m_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+    )
+    model_ir.tensors["m_nhwc"] = TensorIR(
+        name="m_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 8],
+        shape_signature=[1, 1, 1, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "hs_alpha"],
+            outputs=["hs_mul_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["hs_mul_out", "hs_beta"],
+            outputs=["hs_add_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["hs_add_out"], outputs=["hs_out"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "hs_out"],
+            outputs=["mul_out_nchw"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_out_nchw", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="MEAN", inputs=["mul_out_nchw", "mean_axes_nchw"], outputs=["m_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["m_nchw", "post_perm"], outputs=["m_nhwc"]),
+    ]
+
+    stats = _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+    assert stats["rewritten_hardsigmoid_mul_transpose_passthrough_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    # Keep one adapter for the legacy MEAN branch, but drop the original pre/post pair.
+    assert op_types.count("TRANSPOSE") == 2
+    assert op_types[0] == "MUL"
+    hs_mul_op = model_ir.operators[0]
+    assert list(hs_mul_op.inputs)[0] == "x_nhwc"
+    residual_mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL" and list(op.outputs) == ["y_nhwc"])
+    assert list(residual_mul_op.inputs)[0] == "x_nhwc"
+    mean_op = next(op for op in model_ir.operators if str(op.op_type) == "MEAN")
+    assert list(mean_op.inputs)[0] == "mul_out_nchw"
+    adapter_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "TRANSPOSE"
+        and list(op.outputs) == ["mul_out_nchw"]
+    )
+    assert list(adapter_op.inputs)[0] == "y_nhwc"
+
+
+def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_single_path() -> None:
+    model_ir = ModelIR(name="fold_conv_mul_add_affine_single_path_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 2],
+        shape_signature=[1, 4, 4, 2],
+    )
+    base_filter = np.asarray(
+        [
+            [[[1.0, 2.0]]],
+            [[[3.0, 4.0]]],
+            [[[5.0, 6.0]]],
+        ],
+        dtype=np.float32,
+    )  # [O,H,W,I] = [3,1,1,2]
+    base_bias = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
+    mul_coeff = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    add_coeff = np.asarray([0.01, 0.02, 0.03], dtype=np.float32)
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[3, 1, 1, 2],
+        shape_signature=[3, 1, 1, 2],
+        data=np.asarray(base_filter),
+        is_variable=False,
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray(base_bias),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_c"] = TensorIR(
+        name="mul_c",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray(mul_coeff),
+        is_variable=False,
+    )
+    model_ir.tensors["add_c"] = TensorIR(
+        name="add_c",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray(add_coeff),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_out"] = TensorIR(
+        name="conv_out",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+    )
+    model_ir.tensors["mul_out"] = TensorIR(
+        name="mul_out",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+    )
+    model_ir.tensors["add_out"] = TensorIR(
+        name="add_out",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+    )
+    conv_options = {
+        "padding": "SAME",
+        "strideH": 1,
+        "strideW": 1,
+        "dilationHFactor": 1,
+        "dilationWFactor": 1,
+        "fusedActivationFunction": "NONE",
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="CONV_2D", inputs=["x", "w", "b"], outputs=["conv_out"], options=conv_options),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["conv_out", "mul_c"],
+            outputs=["mul_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul_out", "add_c"],
+            outputs=["add_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU", inputs=["add_out"], outputs=["y"]),
+    ]
+
+    stats = _optimize_fold_conv_mul_add_affine_chains(model_ir)
+    assert stats["folded_conv_mul_add_affine_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["CONV_2D", "RELU"]
+    conv_op = model_ir.operators[0]
+    assert list(conv_op.outputs) == ["add_out"]
+    relu_op = model_ir.operators[1]
+    assert list(relu_op.inputs) == ["add_out"]
+
+    expected_w = base_filter * mul_coeff.reshape(3, 1, 1, 1)
+    expected_b = base_bias * mul_coeff + add_coeff
+    assert np.allclose(np.asarray(model_ir.tensors["w"].data), expected_w, rtol=0.0, atol=1e-7)
+    assert np.allclose(np.asarray(model_ir.tensors["b"].data), expected_b, rtol=0.0, atol=1e-7)
+
+
+def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_skips_conv_fanout() -> None:
+    model_ir = ModelIR(name="fold_conv_mul_add_affine_conv_fanout_skip_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y", "branch"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 2],
+        shape_signature=[1, 4, 4, 2],
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[3, 1, 1, 2],
+        shape_signature=[3, 1, 1, 2],
+        data=np.ones((3, 1, 1, 2), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.zeros((3,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_c"] = TensorIR(
+        name="mul_c",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2.0], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add_c"] = TensorIR(
+        name="add_c",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+        is_variable=False,
+    )
+    for name in ["conv_out", "mul_out", "add_out", "y", "branch"]:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=[1, 4, 4, 3],
+            shape_signature=[1, 4, 4, 3],
+        )
+    conv_options = {
+        "padding": "SAME",
+        "strideH": 1,
+        "strideW": 1,
+        "dilationHFactor": 1,
+        "dilationWFactor": 1,
+        "fusedActivationFunction": "NONE",
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="CONV_2D", inputs=["x", "w", "b"], outputs=["conv_out"], options=conv_options),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["conv_out", "mul_c"],
+            outputs=["mul_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["mul_out", "add_c"],
+            outputs=["add_out"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="RELU", inputs=["add_out"], outputs=["y"]),
+        OperatorIR(op_type="RELU", inputs=["conv_out"], outputs=["branch"]),
+    ]
+
+    stats = _optimize_fold_conv_mul_add_affine_chains(model_ir)
+    assert stats["folded_conv_mul_add_affine_chains"] == 0
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["CONV_2D", "MUL", "ADD", "RELU", "RELU"]
+
+
+def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_chain() -> None:
+    model_ir = ModelIR(name="transpose_mean_prepost_nhwc_passthrough_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes_nchw"] = TensorIR(
+        name="mean_axes_nchw",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["m_nchw"] = TensorIR(
+        name="m_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 8],
+        shape_signature=[1, 1, 1, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["x_nchw", "mean_axes_nchw"], outputs=["m_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["m_nchw", "post_perm"], outputs=["y_nhwc"]),
+    ]
+
+    stats = _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
+    assert stats["optimized_transpose_mean_prepost_nhwc_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["MEAN"]
+    mean_op = model_ir.operators[0]
+    assert list(mean_op.inputs) == ["x_nhwc", "mean_axes_nchw"]
+    assert list(mean_op.outputs) == ["y_nhwc"]
+    assert np.array_equal(np.asarray(model_ir.tensors["mean_axes_nchw"].data, dtype=np.int32), np.asarray([1, 2], dtype=np.int32))
+
+
+def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_keeps_pre_on_fanout() -> None:
+    model_ir = ModelIR(name="transpose_mean_prepost_nhwc_pre_fanout_keep_pre_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc", "side_nchw"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes_nchw"] = TensorIR(
+        name="mean_axes_nchw",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    for name, shape in [
+        ("x_nchw", [1, 8, 4, 4]),
+        ("m_nchw", [1, 8, 1, 1]),
+        ("y_nhwc", [1, 1, 1, 8]),
+        ("side_nchw", [1, 8, 4, 4]),
+    ]:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=shape,
+            shape_signature=shape,
+        )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["x_nchw", "mean_axes_nchw"], outputs=["m_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["m_nchw", "post_perm"], outputs=["y_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["x_nchw"], outputs=["side_nchw"]),
+    ]
+
+    stats = _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
+    assert stats["optimized_transpose_mean_prepost_nhwc_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["TRANSPOSE", "MEAN", "RELU"]
+    mean_op = model_ir.operators[1]
+    assert list(mean_op.inputs) == ["x_nhwc", "mean_axes_nchw"]
+    assert list(mean_op.outputs) == ["y_nhwc"]
+    assert np.array_equal(
+        np.asarray(model_ir.tensors["mean_axes_nchw"].data, dtype=np.int32),
+        np.asarray([1, 2], dtype=np.int32),
+    )
+    relu_op = model_ir.operators[2]
+    assert list(relu_op.inputs) == ["x_nchw"]
+
+
+def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain() -> None:
+    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+            data=data,
+            is_variable=False if data is not None else True,
+        )
+
+    _add_tensor("x_nhwc", [1, 80, 80, 12])
+    _add_tensor("x_nchw", [1, 12, 80, 80])
+    _add_tensor("pool_nhwc", [1, 1, 1, 12])
+    _add_tensor("pool_nchw", [1, 12, 1, 1])
+    _add_tensor("fc_in", [1, 12])
+    _add_tensor("fc0_out", [1, 12])
+    _add_tensor("fc0_act", [1, 12])
+    _add_tensor("fc1_out", [1, 12])
+    _add_tensor("gate_fc", [1, 12])
+    _add_tensor("gate_nchw", [1, 12, 1, 1])
+    _add_tensor("mul_out_nchw", [1, 12, 80, 80])
+    _add_tensor("mul_out_nhwc", [1, 80, 80, 12])
+    _add_tensor("y", [1, 80, 80, 16])
+    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
+    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
+    _add_tensor("shape_fc_in", [2], "INT32", np.asarray([1, 12], dtype=np.int32))
+    _add_tensor("shape_gate", [4], "INT32", np.asarray([1, 12, 1, 1], dtype=np.int32))
+    _add_tensor("fc0_w", [12, 12], data=np.ones((12, 12), dtype=np.float32))
+    _add_tensor("fc0_b", [12], data=np.zeros((12,), dtype=np.float32))
+    _add_tensor("prelu0_slope", [12], data=np.ones((12,), dtype=np.float32))
+    _add_tensor("fc1_w", [12, 12], data=np.ones((12, 12), dtype=np.float32))
+    _add_tensor("fc1_b", [12], data=np.zeros((12,), dtype=np.float32))
+    _add_tensor("prelu1_slope", [12], data=np.ones((12,), dtype=np.float32))
+    _add_tensor("conv_w", [1, 1, 12, 16], data=np.ones((1, 1, 12, 16), dtype=np.float32))
+    _add_tensor("conv_b", [16], data=np.zeros((16,), dtype=np.float32))
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "perm_nhwc_to_nchw"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["x_nhwc"],
+            outputs=["pool_nhwc"],
+            options={
+                "padding": "VALID",
+                "strideH": 80,
+                "strideW": 80,
+                "filterHeight": 80,
+                "filterWidth": 80,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["pool_nhwc", "perm_nhwc_to_nchw"], outputs=["pool_nchw"]),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["pool_nchw", "shape_fc_in"],
+            outputs=["fc_in"],
+            options={"newShape": [1, 12], "onnxRawNewShape": [1, 12]},
+        ),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc_in", "fc0_w", "fc0_b"], outputs=["fc0_out"], options={}),
+        OperatorIR(op_type="PRELU", inputs=["fc0_out", "prelu0_slope"], outputs=["fc0_act"], options={}),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc0_act", "fc1_w", "fc1_b"], outputs=["fc1_out"], options={}),
+        OperatorIR(op_type="PRELU", inputs=["fc1_out", "prelu1_slope"], outputs=["gate_fc"], options={}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["gate_fc", "shape_gate"],
+            outputs=["gate_nchw"],
+            options={"newShape": [1, 12, 1, 1], "onnxRawNewShape": [1, 12, 1, 1]},
+        ),
+        OperatorIR(op_type="MUL", inputs=["gate_nchw", "x_nchw"], outputs=["mul_out_nchw"], options={}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_out_nchw", "perm_nchw_to_nhwc"], outputs=["mul_out_nhwc"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["mul_out_nhwc", "conv_w", "conv_b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+    ]
+
+    stats = _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_se_fc_mul_prepost_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == [
+        "AVERAGE_POOL_2D",
+        "RESHAPE",
+        "FULLY_CONNECTED",
+        "PRELU",
+        "FULLY_CONNECTED",
+        "PRELU",
+        "RESHAPE",
+        "MUL",
+        "CONV_2D",
+    ]
+    assert op_types.count("TRANSPOSE") == 0
+
+    gate_shape_vals = np.asarray(model_ir.tensors["shape_gate"].data, dtype=np.int32).reshape(-1).tolist()
+    assert gate_shape_vals == [1, 1, 1, 12]
+
+    gate_reshape_op = model_ir.operators[6]
+    assert list(gate_reshape_op.options.get("newShape", [])) == [1, 1, 1, 12]
+    assert list(gate_reshape_op.options.get("onnxRawNewShape", [])) == [1, 1, 1, 12]
+
+    mul_op = model_ir.operators[7]
+    assert "x_nhwc" in list(mul_op.inputs)
+    assert "gate_nchw" in list(mul_op.inputs)
+
+    conv_op = model_ir.operators[8]
+    assert list(conv_op.inputs)[0] == "mul_out_nhwc"
+
+
+def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_without_pool_pretranspose() -> None:
+    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_no_pool_pretranspose_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+            data=data,
+            is_variable=False if data is not None else True,
+        )
+
+    _add_tensor("x_nhwc", [1, 80, 80, 12])
+    _add_tensor("x_nchw", [1, 12, 80, 80])
+    _add_tensor("pool_nhwc", [1, 1, 1, 12])
+    _add_tensor("fc_in", [1, 12])
+    _add_tensor("fc_out", [1, 12])
+    _add_tensor("gate_fc", [1, 12])
+    _add_tensor("gate_nchw", [1, 12, 1, 1])
+    _add_tensor("mul_out_nchw", [1, 12, 80, 80])
+    _add_tensor("mul_out_nhwc", [1, 80, 80, 12])
+    _add_tensor("y", [1, 80, 80, 16])
+    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
+    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
+    _add_tensor("shape_fc_in", [2], "INT32", np.asarray([1, 12], dtype=np.int32))
+    _add_tensor("shape_gate", [4], "INT32", np.asarray([1, 12, 1, 1], dtype=np.int32))
+    _add_tensor("fc_w", [12, 12], data=np.ones((12, 12), dtype=np.float32))
+    _add_tensor("fc_b", [12], data=np.zeros((12,), dtype=np.float32))
+    _add_tensor("prelu_slope", [12], data=np.ones((12,), dtype=np.float32))
+    _add_tensor("conv_w", [1, 1, 12, 16], data=np.ones((1, 1, 12, 16), dtype=np.float32))
+    _add_tensor("conv_b", [16], data=np.zeros((16,), dtype=np.float32))
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "perm_nhwc_to_nchw"], outputs=["x_nchw"]),
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["x_nhwc"],
+            outputs=["pool_nhwc"],
+            options={
+                "padding": "VALID",
+                "strideH": 80,
+                "strideW": 80,
+                "filterHeight": 80,
+                "filterWidth": 80,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["pool_nhwc", "shape_fc_in"],
+            outputs=["fc_in"],
+            options={"newShape": [1, 12], "onnxRawNewShape": [1, 12]},
+        ),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc_in", "fc_w", "fc_b"], outputs=["fc_out"], options={}),
+        OperatorIR(op_type="PRELU", inputs=["fc_out", "prelu_slope"], outputs=["gate_fc"], options={}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["gate_fc", "shape_gate"],
+            outputs=["gate_nchw"],
+            options={"newShape": [1, 12, 1, 1], "onnxRawNewShape": [1, 12, 1, 1]},
+        ),
+        OperatorIR(op_type="MUL", inputs=["gate_nchw", "x_nchw"], outputs=["mul_out_nchw"], options={}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_out_nchw", "perm_nchw_to_nhwc"], outputs=["mul_out_nhwc"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["mul_out_nhwc", "conv_w", "conv_b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+    ]
+
+    stats = _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_se_fc_mul_prepost_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["AVERAGE_POOL_2D", "RESHAPE", "FULLY_CONNECTED", "PRELU", "RESHAPE", "MUL", "CONV_2D"]
+    assert op_types.count("TRANSPOSE") == 0
+    gate_shape_vals = np.asarray(model_ir.tensors["shape_gate"].data, dtype=np.int32).reshape(-1).tolist()
+    assert gate_shape_vals == [1, 1, 1, 12]
+    mul_op = model_ir.operators[5]
+    assert "x_nhwc" in list(mul_op.inputs)
+    assert "gate_nchw" in list(mul_op.inputs)
 
 
 def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_reshape() -> None:
@@ -5946,6 +9110,23 @@ def test_flatbuffer_direct_leakyrelu_lowering_uses_builtin_without_layout_optimi
     assert math.isclose(float(leaky_op.options.get("alpha", -1.0)), 0.2, rel_tol=0.0, abs_tol=1e-7)
 
 
+def test_flatbuffer_direct_hardswish_lowering_uses_builtin_without_layout_optimizations() -> None:
+    model = _make_hardswish_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="hardswish_builtin_no_layout_opt_test",
+        optimize_layout_transpose_chains=False,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["HARD_SWISH"]
+    hardswish_op = model_ir.operators[0]
+    assert list(hardswish_op.inputs) == ["x"]
+    assert list(hardswish_op.outputs) == ["y"]
+
+
 @pytest.mark.parametrize(
     ("activation", "activation_params", "expected_terminal_op", "expected_conv_fused_activation"),
     [
@@ -5954,7 +9135,7 @@ def test_flatbuffer_direct_leakyrelu_lowering_uses_builtin_without_layout_optimi
         ("Sigmoid", None, "LOGISTIC", None),
         ("LeakyRelu", [0.125], "LEAKY_RELU", None),
         ("Clip", [0.0, 6.0], "CONV_2D", "RELU6"),
-        ("HardSigmoid", [0.2, 0.5], "MINIMUM", None),
+        ("HardSigmoid", [0.2, 0.5], "RELU_0_TO_1", None),
     ],
 )
 def test_flatbuffer_direct_fused_conv_builtin_lowering(
@@ -5988,8 +9169,9 @@ def test_flatbuffer_direct_fused_conv_builtin_lowering(
         )
 
     if str(activation).lower() == "hardsigmoid":
-        for required_op in ["MUL", "ADD", "MAXIMUM", "MINIMUM"]:
-            assert op_types.count(required_op) >= 1
+        # MAXIMUM(0.0)->MINIMUM(1.0) folding may collapse HardSigmoid affine
+        # scaffolding into RELU_0_TO_1 without explicit MUL/ADD.
+        assert op_types.count("RELU_0_TO_1") >= 1
 
     if expected_terminal_op == "LEAKY_RELU":
         assert math.isclose(
@@ -6367,6 +9549,34 @@ def test_flatbuffer_direct_nms_scalar_const_inputs_do_not_emit_squeeze() -> None
         assert list(scalar_tensor.shape) == []
 
 
+def test_flatbuffer_direct_multiclass_nms_without_onwa_matches_default_behavior() -> None:
+    model = _make_non_max_suppression_multiclass_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="nms_multiclass_without_onwa_test",
+        output_nms_with_argmax=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("NON_MAX_SUPPRESSION_V4") == 3
+    assert op_types.count("ARG_MAX") == 0
+    assert op_types.count("REDUCE_MAX") == 0
+    assert op_types.count("CUSTOM") == 0
+
+    concat_axis0_ops = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CONCATENATION" and int(op.options.get("axis", -1)) == 0
+    ]
+    assert len(concat_axis0_ops) >= 1
+    assert any(len(list(op.inputs)) == 3 for op in concat_axis0_ops)
+
+    output_tensor = model_ir.tensors.get("selected_indices")
+    assert output_tensor is not None
+    assert list(output_tensor.shape_signature) == [-1, 3]
+
+
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
 def test_flatbuffer_direct_multiclass_nms_auto_argmax_retry_avoids_custom_lowering() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -6456,6 +9666,64 @@ def test_flatbuffer_direct_maxpool2d_intermediate_preserves_dynamic_batch_signat
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor.shape_signature is not None
     assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() -> None:
+    model = _make_average_pool_exclude_pad_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="average_pool_exclude_pad_correction_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("AVERAGE_POOL_2D") == 2
+    assert op_types.count("DIV") == 1
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_average_pool_exclude_pad_runtime_match() -> None:
+    def _reference_avgpool_exclude_pad(x_nchw: np.ndarray) -> np.ndarray:
+        out = np.zeros((1, 1, 2, 2), dtype=np.float32)
+        for oh in range(2):
+            for ow in range(2):
+                h_start = int(oh * 2 - 1)
+                w_start = int(ow * 2 - 1)
+                vals: list[float] = []
+                for ih in range(h_start, h_start + 3):
+                    for iw in range(w_start, w_start + 3):
+                        if 0 <= ih < 4 and 0 <= iw < 4:
+                            vals.append(float(x_nchw[0, 0, ih, iw]))
+                out[0, 0, oh, ow] = float(sum(vals) / max(len(vals), 1))
+        return out
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_average_pool_exclude_pad_model()
+        model_path = _save_model(tmpdir, "average_pool_exclude_pad", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.asarray(
+            [[[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0], [13.0, 14.0, 15.0, 16.0]]]],
+            dtype=np.float32,
+        )
+        input_shape = tuple(int(v) for v in input_details[0]["shape"])
+        if input_shape == tuple(x.shape):
+            x_feed = x
+        elif input_shape == (1, 4, 4, 1):
+            x_feed = np.transpose(x, (0, 2, 3, 1))
+        else:
+            raise AssertionError(f"Unexpected input shape: {input_shape}")
+        interpreter.set_tensor(input_details[0]["index"], x_feed)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        if tuple(y.shape) == (1, 2, 2, 1):
+            y = np.transpose(y, (0, 3, 1, 2))
+        ref = _reference_avgpool_exclude_pad(x)
+        np.testing.assert_allclose(y, ref, rtol=0.0, atol=1e-6)
 
 
 def test_flatbuffer_direct_qlinear_conv2d_intermediate_preserves_dynamic_batch_signature() -> None:
@@ -6756,6 +10024,30 @@ def test_flatbuffer_direct_transpose_dequantize_transpose_optimization() -> None
     assert op_types.count("DEQUANTIZE") == 1
 
 
+def test_flatbuffer_direct_transpose_cast_sub_mul_transpose_optimization() -> None:
+    model = _make_transpose_cast_sub_mul_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_cast_sub_mul_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("CAST") == 1
+    assert op_types.count("SUB") == 1
+    assert op_types.count("MUL") == 1
+
+    cast_op = next(op for op in model_ir.operators if str(op.op_type) == "CAST")
+    assert [str(v) for v in list(cast_op.inputs)] == ["x"]
+    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
+    assert [str(v) for v in list(mul_op.outputs)] == ["y"]
+
+    y_tensor = model_ir.tensors.get("y")
+    assert y_tensor is not None
+    assert list(y_tensor.shape) == [1, 4, 5, 3]
+
+
 def test_flatbuffer_direct_transpose_dequantize_transpose_optimization_fanout_safe() -> None:
     model = _make_transpose_dequantize_transpose_with_fanout_model()
     register_default_preprocess_rules()
@@ -6937,6 +10229,113 @@ def test_flatbuffer_direct_transpose_swish_transpose_optimization() -> None:
     assert op_types.count("LOGISTIC") == 1
     assert op_types.count("MUL") == 1
     assert op_types.count("RELU") == 0
+
+
+def test_flatbuffer_direct_maximum_minimum_chain_rewrites_to_relu_0_to_1() -> None:
+    model_ir = ModelIR(name="maximum_minimum_relu0to1_opt_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 4],
+        shape_signature=[1, 2, 3, 4],
+    )
+    model_ir.tensors["zero"] = TensorIR(
+        name="zero",
+        dtype="FLOAT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(0.0, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["one"] = TensorIR(
+        name="one",
+        dtype="FLOAT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(1.0, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["m"] = TensorIR(
+        name="m",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 4],
+        shape_signature=[1, 2, 3, 4],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 4],
+        shape_signature=[1, 2, 3, 4],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="MAXIMUM", inputs=["x", "zero"], outputs=["m"]),
+        OperatorIR(op_type="MINIMUM", inputs=["m", "one"], outputs=["y"]),
+    ]
+
+    stats = _optimize_maximum_minimum_relu0to1_chains(model_ir)
+    assert stats["rewritten_maximum_minimum_relu0to1_chains"] == 1
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["RELU_0_TO_1"]
+    assert [str(v) for v in list(model_ir.operators[0].inputs)] == ["x"]
+    assert [str(v) for v in list(model_ir.operators[0].outputs)] == ["y"]
+
+
+def test_flatbuffer_direct_transpose_hardsigmoid_transpose_optimization() -> None:
+    model = _make_transpose_hardsigmoid_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_hardsigmoid_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("MUL") == 1
+    assert op_types.count("ADD") == 1
+    assert op_types.count("MAXIMUM") == 0
+    assert op_types.count("MINIMUM") == 0
+    assert op_types.count("RELU_0_TO_1") == 1
+    assert op_types.count("RELU") == 1
+
+
+def test_flatbuffer_direct_transpose_hardsigmoid_mul_transpose_optimization() -> None:
+    model = _make_transpose_hardsigmoid_mul_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_hardsigmoid_mul_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("MUL") == 2
+    assert op_types.count("ADD") == 1
+    assert op_types.count("MAXIMUM") == 0
+    assert op_types.count("MINIMUM") == 0
+    assert op_types.count("RELU_0_TO_1") == 1
+
+
+def test_flatbuffer_direct_transpose_prelu_transpose_optimization() -> None:
+    model = _make_transpose_prelu_transpose_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_prelu_transpose_opt_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("PRELU") == 1
+    prelu_op = next(op for op in model_ir.operators if str(op.op_type) == "PRELU")
+    assert [str(v) for v in list(prelu_op.inputs)][0] == "x"
+    assert [str(v) for v in list(prelu_op.outputs)][0] == "y"
+    alpha_name = str(prelu_op.inputs[1])
+    alpha_tensor = model_ir.tensors.get(alpha_name, None)
+    assert alpha_tensor is not None
+    assert isinstance(alpha_tensor.data, np.ndarray)
+    assert list(np.asarray(alpha_tensor.data).shape) == [1, 1, 1, 4]
 
 
 def test_flatbuffer_direct_transpose_gelu_transpose_optimization() -> None:

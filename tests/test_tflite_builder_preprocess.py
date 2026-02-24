@@ -226,16 +226,15 @@ def _make_dq_bn_prelu_q_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
-def test_preprocess_wave1_rewrites_hardswish() -> None:
+def test_preprocess_wave1_keeps_hardswish_builtin() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
     model = _make_hardswish_model()
     preprocessed, report = run_preprocess_pipeline(onnx_graph=model)
     assert report["summary"]["executed_rule_count"] >= 1
-    assert report["summary"]["changed_rule_count"] >= 1
+    assert report["summary"]["changed_rule_count"] == 0
     ops = [str(node.op_type) for node in preprocessed.graph.node]
-    assert "HardSwish" not in ops
-    assert ops == ["Add", "Clip", "Div", "Mul"]
+    assert ops == ["HardSwish"]
 
 
 def test_preprocess_wave1_keeps_gelu_op() -> None:

@@ -322,7 +322,7 @@ Notes:
 |Asinh|MUL + ADD + SQRT + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Atan|ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Atanh|ADD + SUB + DIV + LOG + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
-|AveragePool|AVERAGE_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|AveragePool|AVERAGE_POOL_2D (+ optional PAD/PADV2 + divisor correction DIV)|2D only (rank=4), `ceil_mode=0`, `count_include_pad` in `{0,1}`. Supports `auto_pad` in `{NOTSET,VALID,SAME_*,SAME_LOWER}` and explicit pads. For `count_include_pad=0` with non-zero effective pads, a correction path (`AVERAGE_POOL_2D` on mask + `DIV`) is applied|
 |BatchNormalization|MUL + ADD|All parameter inputs (`scale`, `bias`, `mean`, `var`) must be constant|
 |BitShift|RIGHT_SHIFT (RIGHT) or MUL-based (LEFT)|LHS/RHS must be integer tensors, `direction` must be `LEFT` or `RIGHT`; `LEFT` requires constant shift input|
 |BitwiseAnd|LOGICAL_AND|BOOL tensors only|
@@ -340,6 +340,7 @@ Notes:
 |Cos|COS|-|
 |Cosh|SUB + EXP + ADD + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |DequantizeLinear|DEQUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
+|DepthToSpace|DEPTH_TO_SPACE (DCR) / RESHAPE + TRANSPOSE + RESHAPE (CRD)|Rank-4 only, `blocksize > 1`, `mode` in `{DCR,CRD}`|
 |Div|DIV or MUL (when divisor is constant reciprocal)|For non-floating outputs, lowered as `CAST -> MUL(reciprocal) -> CAST` to preserve output dtype without using unsupported integer DIV paths|
 |DynamicQuantizeLinear|NEG + REDUCE_MAX + MINIMUM + MAXIMUM + SUB + DIV + ADD + CAST|Input dtype must be `FLOAT16/FLOAT32`, output dtypes must be `Y=UINT8`, `Y_Scale=FLOAT16/FLOAT32`, `Y_ZeroPoint=UINT8`; scale/zero-point outputs must be scalar|
 |Einsum|FULLY_CONNECTED|Rank-2 matmul-style equation only (`ij,jk->ik`), rhs input must be constant weights|
@@ -362,6 +363,7 @@ Notes:
 |GRU|TRANSPOSE + SLICE + SQUEEZE + BATCH_MATMUL + ADD + MUL + SUB + LOGISTIC + TANH + RESHAPE + CONCATENATION + EXPAND_DIMS|`layout=0`; `direction` in `{forward, reverse, bidirectional}`; `sequence_lens` unsupported; `W/R` must be constant rank-3; `linear_before_reset` in `{0,1}`; activations `[Sigmoid,Tanh]`; `clip=0`|
 |Hardmax|TRANSPOSE + ARG_MAX + ONE_HOT|`axis` must be in range; target axis size must be static positive|
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
+|HardSwish|HARD_SWISH|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Identity|RESHAPE|-|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
@@ -372,16 +374,17 @@ Notes:
 |MatMul|BATCH_MATMUL|Input rank >= 2. Dynamic rhs input is supported (no constant-weight requirement)|
 |MatMulInteger|CAST + SUB + BATCH_MATMUL|A/B input rank must be >=2 (rank=1 placeholder allowed), A/B dtypes must be integer tensor types (`INT8/UINT8/INT16/UINT16/INT32`), output dtype must be `INT32/INT64`; optional zero-point inputs must be scalar/1D and shape-compatible|
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
+|Min|MINIMUM (chained for >2 inputs)|At least 2 inputs|
 |Mish|EXP + ADD + LOG + TANH + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Mod|FLOOR_MOD|`fmod=0` only|
 |Mul|MUL|-|
 |Neg|NEG|-|
-|NonMaxSuppression|ARG_MAX + REDUCE_MAX + SQUEEZE + NON_MAX_SUPPRESSION_V4 + SLICE + GATHER + SUB + CAST + RESHAPE + CONCATENATION|Rank-3 boxes/scores only; `center_point_box=0`; currently `batch=1`; class dim `>1` requires `--output_nms_with_argmax`; optional thresholds/max_output must be scalar constants|
+|NonMaxSuppression|NON_MAX_SUPPRESSION_V4 + SLICE + GATHER + SUB + CAST + RESHAPE + CONCATENATION (+ optional ARG_MAX + REDUCE_MAX)|Rank-3 boxes/scores only; `center_point_box=0`; currently `batch=1`; boxes last dim must be `4`; static positive `num_boxes`; `scores_shape[2] == boxes_shape[1]`; optional thresholds/max_output must be scalar constants; output dtype must be `INT32` or `INT64`; when `--output_nms_with_argmax` is disabled, class dim must be static positive (class dim `>1` is supported via class-wise NMS)|
 |NonZero|NOT_EQUAL + WHERE + TRANSPOSE + CAST|Input rank must be `>=1`; output rank must be `2`|
 |Not|LOGICAL_NOT|-|
 |OneHot|CAST + ADD + FLOOR_MOD + ONE_HOT|`depth` input must be constant scalar and `>0`; `values` input must be constant 2-element tensor `[off_value,on_value]`; normalized `axis` must be in range|
 |Or|LOGICAL_OR|-|
-|Pad|PAD|`mode=constant` only, `pads` must be constant, constant pad value (if provided) must be zero|
+|Pad|PAD (+ dynamic pads bridge: CAST + RESHAPE + TRANSPOSE)|`mode=constant` only; `pads` may be constant or dynamic rank-1 tensor of length `2*rank` (integer type, internally cast to `INT32`); constant pad value (if provided) must be constant zero|
 |Pow|POW|Output dtype must be `FLOAT16` or `FLOAT32`|
 |PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QGemm|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, bias must be constant, quantization params must be constant, `transA=0`, `transB` in `{0,1}`|
@@ -427,6 +430,7 @@ Notes:
 |Tan|SIN + COS + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Tanh|TANH|-|
 |Tile|CAST + TILE|`multiples` must be rank-1 integer tensor; if input rank is static, `len(multiples)` must match input rank; constant `multiples` must be non-negative|
+|TopK|TOPK_V2 (+ optional TRANSPOSE + NEG + CAST + SQUEEZE)|Input rank must be `>=1`; input dtype must be `FLOAT16/FLOAT32`; `axis` must be in range; `largest` must be `0` or `1`; `sorted` must be `1`; `k` must be scalar-like (`[]` or `[1]`) and integer dtype; indices output dtype must be `INT32` or `INT64`|
 |Transpose|TRANSPOSE|Permutation input must be constant|
 |Trilu|MUL / LOGICAL_AND|Input rank must be `>=2`; matrix dims must be static positive; optional `k` input must be constant|
 |Unsqueeze|RESHAPE|Axes must be constant and in range|
@@ -451,7 +455,6 @@ Notes:
 |SequenceErase|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |SequenceInsert|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |SequenceLength|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|TopK|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Unique|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 
 </div></details>
@@ -464,6 +467,12 @@ Notes:
 - `NonMaxSuppression` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
+- `Min` and `TopK` are now treated as `builtin_supported` under builtin constraints, reducing `ONNX_MIN` / `ONNX_TOPK` custom-op fallbacks.
+- `DepthToSpace` and `HardSwish` are now treated as `builtin_supported` under builtin constraints (`HardSwish` is lowered directly as TFLite `HARD_SWISH`).
+- `Pad` builtin path now supports dynamic `pads` input (rank-1 length `2*rank`) via `CAST + RESHAPE + TRANSPOSE` bridge before `PAD`.
+- `NonMaxSuppression` builtin path now supports class dim `>1` without forcing `--output_nms_with_argmax` by using per-class `NON_MAX_SUPPRESSION_V4` and concatenating `[batch, class, index]` triplets (matching default `onnx2tf/ops/NonMaxSuppression.py` behavior when `-onwa` is not set).
+- `AveragePool` builtin path now supports explicit pads and `count_include_pad` in `{0,1}`; when `count_include_pad=0` with non-zero effective pads, divisor correction is applied to keep ONNX semantics.
+- Leading input transpose passthrough optimization now treats `CAST` as passthrough, reducing redundant `Transpose -> Cast -> (Sub/Mul/...) -> Transpose` chains.
 - Newly added builtin-covered ops in this update include:
   `Abs`, `Acos`, `Acosh`, `And`, `ArgMin`, `Asin`, `Asinh`, `Atan`, `Atanh`, `BitShift`,
   `BitwiseAnd`, `BitwiseNot`, `BitwiseOr`, `BitwiseXor`, `Ceil`, `Celu`, `Cos`, `Cosh`,
@@ -478,6 +487,15 @@ Notes:
 - `Resize(cubic)` now uses strict ONNX cubic semantics (including `cubic_coeff_a` and `exclude_outside`) in both `tf_converter` and `flatbuffer_direct`.
 - `tf_converter` now prefers a non-Flex cubic lowering (`RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL`) when rank-4 input and static spatial sizes are available, reducing `FlexResizeBicubic` generation.
 - `flatbuffer_direct` cubic lowering now preserves batch metadata on intermediate tensors and output tensors (no batch-dimension drop in `RESHAPE`/`BATCH_MATMUL` chain).
+- NHWC propagation around Conv-family outputs has been tightened: `CONV_2D` / `DEPTHWISE_CONV_2D` outputs now avoid redundant immediate post-transpose insertion when layout is already NHWC.
+- Added direct NHWC passthrough optimization for `TRANSPOSE(0,3,1,2) -> MEAN(keepDims=True) -> TRANSPOSE(0,2,3,1)` by removing both transposes and remapping reduction axes.
+- HardSigmoid-related transpose passthrough has been strengthened (including expanded `MUL+ADD+RELU_0_TO_1` form), reducing redundant transpose wrappers in activation/residual chains.
+- Added PReLU transpose passthrough optimization for `TRANSPOSE(0,3,1,2) -> PRELU -> TRANSPOSE(0,2,3,1)` style chains (including per-channel slope remap).
+- Extended pre-concat transpose-chain optimization to handle broader unary ops and singleton-channel reshape adapters before `CONCATENATION`.
+- Added ShuffleNet-style transpose-shuffle optimization to reduce long `Transpose/Reshape/Transpose/Reshape/Gather` chains while preserving downstream layout contracts.
+- Added SiNet-tail NHWC optimization for Softmax-mask residual blocks: removes redundant pre/post transpose adapters around `MUL/ADD/PRELU + SOFTMAX + REDUCE_MAX + RESHAPE + MUL + ADD` and remaps axis/shape constants to NHWC to avoid terminal transpose bridges.
+- Added affine fold for single-path conv chains: `CONV_2D -> MUL(const) -> ADD(const)` is folded into Conv weights/bias when the Conv output is not multi-fanout.
+- Added clamp canonicalization: `MAXIMUM(0.0) -> MINIMUM(1.0)` is rewritten to `RELU_0_TO_1` to reduce op count and improve downstream transpose/activation fusion opportunities.
 - Recurrent lowering practical notes:
   - `LSTM` builtin requires zero-initialized `initial_h/initial_c` and rejects consumed `Y_h`/`Y_c` (`reason_code=unsupported_output_usage`).
   - `GRU` builtin supports `forward/reverse/bidirectional`, but requires activations `[Sigmoid,Tanh]`, `clip=0`, and no `sequence_lens`.
@@ -505,7 +523,7 @@ Notes:
    - `DequantizeLinear -> BatchNormalization -> PRelu -> QuantizeLinear` chain rewrite
    - BatchNormalization parameter folding into `Mul + Add`
 3. `pseudo_ops_wave1`
-   - `HardSwish`, `LeakyRelu`, `Gelu`, limited `Pow` rewrites to builtin-friendly forms
+   - `LeakyRelu`, limited `Pow`, and `MatMulInteger` rewrites to builtin-friendly forms
 4. `constant_fold_a5`
    - Limited constant folding for shape/axes and arithmetic helper chains
    - Includes `DequantizeLinear` (axis/block-size aware) and downstream `Reshape` folding for constant-weight subgraphs
@@ -592,7 +610,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.20
+  ghcr.io/pinto0309/onnx2tf:2.0.21
 
   or
 
@@ -601,7 +619,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.20
+  docker.io/pinto0309/onnx2tf:2.0.21
 
   or
 
@@ -611,7 +629,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.20 \
+  docker.io/pinto0309/onnx2tf:2.0.21 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
