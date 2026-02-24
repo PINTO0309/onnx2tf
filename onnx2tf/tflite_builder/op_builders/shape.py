@@ -377,6 +377,62 @@ def _parse_split_sizes(
     return [int(v) for v in split_sizes]
 
 
+def _find_producer_op(ctx: Any, tensor_name: str) -> Any:
+    for op in reversed(ctx.model_ir.operators):
+        if str(tensor_name) in set(str(v) for v in op.outputs):
+            return op
+    return None
+
+
+def _infer_static_template_from_dynamic_reshape_shape_input(
+    *,
+    ctx: Any,
+    shape_input_name: str,
+) -> list[int] | None:
+    """
+    Infer static reshape template from:
+      CONCATENATION(axis=0, [const_prefix, SHAPE(x)])
+    """
+    concat_op = _find_producer_op(ctx, shape_input_name)
+    if concat_op is None or str(concat_op.op_type) != "CONCATENATION":
+        return None
+    if int(concat_op.options.get("axis", -1)) != 0 or len(concat_op.inputs) != 2:
+        return None
+
+    prefix_tensor = ctx.model_ir.tensors.get(str(concat_op.inputs[0]), None)
+    if prefix_tensor is None or prefix_tensor.data is None:
+        return None
+    prefix_vals = [int(v) for v in np.asarray(prefix_tensor.data).reshape(-1).tolist()]
+    if len(prefix_vals) == 0 or any(int(v) <= 0 for v in prefix_vals):
+        return None
+
+    shape_output_name = str(concat_op.inputs[1])
+    shape_op = _find_producer_op(ctx, shape_output_name)
+    if shape_op is None or str(shape_op.op_type) != "SHAPE" or len(shape_op.inputs) != 1:
+        return None
+
+    source_tensor = ctx.model_ir.tensors.get(str(shape_op.inputs[0]), None)
+    if source_tensor is None:
+        return None
+    source_signature = (
+        [int(v) for v in list(source_tensor.shape_signature)]
+        if source_tensor.shape_signature is not None
+        else [int(v) for v in list(source_tensor.shape)]
+    )
+    if len(source_signature) == 0:
+        return None
+
+    template = [int(v) for v in prefix_vals]
+    template.extend(int(v) if int(v) >= 0 else -1 for v in source_signature)
+    if any(int(v) == 0 for v in template):
+        return None
+    if sum(1 for v in template if int(v) < 0) > 1:
+        return None
+    if not any(int(v) < 0 for v in template):
+        template[-1] = -1
+    return [int(v) for v in template]
+
+
 def build_split_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_names = [o.name for o in node.outputs]
@@ -520,33 +576,76 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    shape_values = ctx.get_constant_array(shape_name)
-    if shape_values is None:
-        raise NotImplementedError(
-            f"Reshape shape tensor must be constant for flatbuffer_direct. op={node.name}"
-        )
-    raw_new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
-    new_shape = list(raw_new_shape)
     allowzero = bool(node.attrs.get("allowzero", 0))
     input_tensor = ctx.model_ir.tensors[input_name]
     output_tensor = ctx.model_ir.tensors[output_name]
-    new_shape = _resolve_reshape_shape_with_static_dims(
-        new_shape=new_shape,
-        input_tensor=input_tensor,
-        output_tensor=output_tensor,
-        allowzero=allowzero,
-    )
-    if len(new_shape) > 0 and all(int(dim) >= 0 for dim in new_shape):
-        output_tensor.shape = [int(dim) for dim in new_shape]
-        output_tensor.shape_signature = [int(dim) for dim in new_shape]
-    shape_const = ctx.add_const_tensor(
-        f"{output_name}_reshape_shape",
-        np.asarray(new_shape, dtype=np.int32),
-    )
+    shape_values = ctx.get_constant_array(shape_name)
+    raw_new_shape: list[int] = []
+    new_shape: list[int] = []
+    reshape_shape_input_name = shape_name
+
+    if shape_values is not None:
+        raw_new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
+        new_shape = _resolve_reshape_shape_with_static_dims(
+            new_shape=list(raw_new_shape),
+            input_tensor=input_tensor,
+            output_tensor=output_tensor,
+            allowzero=allowzero,
+        )
+        if len(new_shape) > 0 and all(int(dim) >= 0 for dim in new_shape):
+            output_tensor.shape = [int(dim) for dim in new_shape]
+            output_tensor.shape_signature = [int(dim) for dim in new_shape]
+        reshape_shape_input_name = ctx.add_const_tensor(
+            f"{output_name}_reshape_shape",
+            np.asarray(new_shape, dtype=np.int32),
+        )
+    else:
+        inferred_template = _infer_static_template_from_dynamic_reshape_shape_input(
+            ctx=ctx,
+            shape_input_name=shape_name,
+        )
+        if inferred_template is not None:
+            new_shape = [int(v) for v in inferred_template]
+            raw_new_shape = [int(v) for v in inferred_template]
+            output_tensor.shape_signature = [int(v) for v in inferred_template]
+            output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in inferred_template]
+            reshape_shape_input_name = ctx.add_const_tensor(
+                f"{output_name}_reshape_shape",
+                np.asarray(inferred_template, dtype=np.int32),
+            )
+        else:
+            shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
+            if shape_dtype not in {"INT32", "INT64"}:
+                raise NotImplementedError(
+                    f"Reshape dynamic shape input dtype must be INT32/INT64. "
+                    f"op={node.name} tensor={shape_name} dtype={shape_dtype}"
+                )
+            if shape_dtype == "INT64":
+                reshape_shape_input_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_reshape_shape_i32",
+                    dtype="INT32",
+                    shape=[int(v) for v in ctx.get_tensor_shape(shape_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[shape_name],
+                        outputs=[reshape_shape_input_name],
+                        options={
+                            "inDataType": "INT64",
+                            "outDataType": "INT32",
+                        },
+                    )
+                )
+            # Dynamic shape input drives runtime reshape dimensions. Keep options empty
+            # to avoid static-shape rewrite passes from clobbering this tensor.
+            new_shape = []
+            raw_new_shape = []
+
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
-            inputs=[input_name, shape_const],
+            inputs=[input_name, reshape_shape_input_name],
             outputs=[output_name],
             options={
                 "newShape": new_shape,
@@ -647,6 +746,57 @@ def build_identity_op(node: Any, ctx: Any) -> None:
             inputs=[input_name, shape_const],
             outputs=[output_name],
             options={"newShape": [int(v) for v in output_shape]},
+        )
+    )
+
+
+def build_dropout_op(node: Any, ctx: Any) -> None:
+    # Dropout is treated as inference-time no-op in flatbuffer_direct.
+    build_identity_op(node, ctx)
+
+    if len(node.outputs) < 2:
+        return
+
+    input_name = node.inputs[0].name
+    mask_output_name = node.outputs[1].name
+    if str(mask_output_name) == "":
+        return
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(mask_output_name)
+    _propagate_passthrough_shape_signature(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=mask_output_name,
+    )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_rank = len(input_shape)
+    shape_name = ctx.add_intermediate_tensor(
+        f"{mask_output_name}_dropout_mask_shape",
+        dtype="INT32",
+        shape=[int(input_rank)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[shape_name],
+        )
+    )
+
+    mask_dtype = str(ctx.get_tensor_dtype(mask_output_name)).upper()
+    mask_np_dtype = _numpy_dtype_from_tflite_dtype(mask_dtype)
+    fill_value = True if mask_dtype == "BOOL" else 1
+    fill_value_name = ctx.add_const_tensor(
+        f"{mask_output_name}_dropout_mask_fill_value",
+        np.asarray(fill_value, dtype=mask_np_dtype),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="FILL",
+            inputs=[shape_name, fill_value_name],
+            outputs=[mask_output_name],
         )
     )
 
@@ -1352,7 +1502,31 @@ def build_squeeze_op(node: Any, ctx: Any) -> None:
     )
     rank = len(input_shape)
     axes = _resolve_axes_from_attr_or_input(node, ctx)
-    explicit_axes = len(axes) > 0
+    axes_source_provided = (
+        (len(node.inputs) >= 2 and str(node.inputs[1].name) != "")
+        or ("axes" in node.attrs)
+    )
+    if len(axes) == 0 and not axes_source_provided:
+        # ONNX Squeeze without axes removes all runtime singleton dimensions.
+        # Preserve this behavior by passing empty squeezeDims.
+        existing_output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_tensor.shape)]
+        )
+        output_tensor.shape_signature = [int(v) for v in existing_output_signature]
+        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in existing_output_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[input_name],
+                outputs=[output_name],
+                options={"squeezeDims": []},
+            )
+        )
+        return
+
+    explicit_axes = axes_source_provided and len(axes) > 0
     if len(axes) == 0:
         axes = []
         for idx in range(rank):
@@ -1413,6 +1587,15 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
 
     axes = _resolve_axes_from_attr_or_input(node, ctx)
     input_rank = len(ctx.get_tensor_shape(input_name))
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_shape = ctx.get_tensor_shape(output_name)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+    if input_rank == 0 and len(output_signature) > 0:
+        input_rank = int(max(len(output_signature) - len(axes), 0))
     normalized_axes: list[int] = []
     for axis in axes:
         a = int(axis)
@@ -1426,29 +1609,20 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
             normalized_axes.append(a)
     normalized_axes = sorted([int(v) for v in normalized_axes])
     input_tensor = ctx.model_ir.tensors[input_name]
-    output_tensor = ctx.model_ir.tensors[output_name]
     input_signature = (
         [int(v) for v in list(input_tensor.shape_signature)]
         if input_tensor.shape_signature is not None
         else [int(v) for v in list(ctx.get_tensor_shape(input_name))]
     )
-    if (
-        input_rank == 1
-        and len(normalized_axes) == 1
-        and any(int(v) < 0 for v in input_signature)
-    ):
-        axis = int(normalized_axes[0])
-        if axis not in (0, 1):
-            raise NotImplementedError(
-                f"Unsqueeze axis out of range for dynamic rank-1 input in flatbuffer_direct. "
-                f"op={node.name} axis={axis}"
-            )
-        reshape_shape = [1, -1] if axis == 0 else [-1, 1]
-        inferred_signature = (
-            [1, int(input_signature[0])] if axis == 0 else [int(input_signature[0]), 1]
+    if input_rank == 0 and len(output_signature) > 0:
+        reshape_shape = [int(v) for v in output_signature]
+        output_tensor.shape_signature = [int(v) for v in reshape_shape]
+        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in reshape_shape]
+        reshape_options_shape = (
+            []
+            if any(int(v) < 0 for v in reshape_shape)
+            else [int(v) for v in reshape_shape]
         )
-        output_tensor.shape_signature = [int(v) for v in inferred_signature]
-        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in inferred_signature]
         reshape_shape_name = ctx.add_const_tensor(
             f"{output_name}_unsqueeze_shape",
             np.asarray(reshape_shape, dtype=np.int32),
@@ -1458,20 +1632,43 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
                 op_type="RESHAPE",
                 inputs=[input_name, reshape_shape_name],
                 outputs=[output_name],
-                options={"newShape": [int(v) for v in reshape_shape]},
+                options={"newShape": reshape_options_shape},
+            )
+        )
+        return
+    if input_rank == 1 and len(normalized_axes) == 1:
+        axis = int(normalized_axes[0])
+        if axis not in (0, 1):
+            raise NotImplementedError(
+                f"Unsqueeze axis out of range for dynamic rank-1 input in flatbuffer_direct. "
+                f"op={node.name} axis={axis}"
+            )
+        reshape_shape = [1, -1] if axis == 0 else [-1, 1]
+        inferred_signature = [1, -1] if axis == 0 else [-1, 1]
+        output_tensor.shape_signature = [int(v) for v in inferred_signature]
+        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in inferred_signature]
+        reshape_options_shape = (
+            []
+            if any(int(v) < 0 for v in reshape_shape)
+            else [int(v) for v in reshape_shape]
+        )
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{output_name}_unsqueeze_shape",
+            np.asarray(reshape_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, reshape_shape_name],
+                outputs=[output_name],
+                options={"newShape": reshape_options_shape},
             )
         )
         return
 
-    output_shape = ctx.get_tensor_shape(output_name)
-    output_signature = (
-        [int(v) for v in list(output_tensor.shape_signature)]
-        if output_tensor.shape_signature is not None
-        else [int(v) for v in list(output_shape)]
-    )
     has_dynamic_dim = any(int(v) < 0 for v in output_signature)
 
-    if all(int(v) >= 0 for v in input_signature):
+    if len(input_signature) == int(input_rank) and all(int(v) >= 0 for v in input_signature):
         inferred_shape: list[int] = []
         src_dim_idx = 0
         output_rank = int(input_rank + len(normalized_axes))

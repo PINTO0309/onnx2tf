@@ -467,7 +467,7 @@ wheels = [
 
 [[package]]
 name = "onnx2tf"
-version = "2.0.19"
+version = "2.0.22"
 source = { editable = "." }
 dependencies = [
     { name = "ai-edge-litert" },
@@ -510,8 +510,8 @@ requires-dist = [
     { name = "protobuf", specifier = "==4.25.5" },
     { name = "psutil", specifier = "==5.9.5" },
     { name = "requests", specifier = "==2.32.5" },
-    { name = "sne4onnx", specifier = "==2.0.0" },
-    { name = "sng4onnx", specifier = "==2.0.0" },
+    { name = "sne4onnx", specifier = "==2.0.1" },
+    { name = "sng4onnx", specifier = "==2.0.1" },
     { name = "tensorflow", specifier = "==2.19.0" },
     { name = "tf-keras", specifier = "==2.19.0" },
 ]
@@ -771,20 +771,20 @@ wheels = [
 
 [[package]]
 name = "sne4onnx"
-version = "2.0.0"
+version = "2.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4e/d3/c342932baf64a3f0f23e4c9973e2021144ee869136fae8e2e58027de119e/sne4onnx-2.0.0.tar.gz", hash = "sha256:f70ece102a249fbbc126b38090c61fb835f207bd880a41d68d41b2a98991c63a", size = 13229, upload-time = "2026-02-06T10:44:56.119Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/66/0d4b261c30d381b563405714f5fc18491c66bb8891b4cd69065021c9a037/sne4onnx-2.0.1.tar.gz", hash = "sha256:3fb4c166044fe11a480c5b739f78f8c10a28bd60163617dc549bcbeee6628ee9", size = 13412, upload-time = "2026-02-24T12:47:55.974Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/cf/cea7c9ae642958b65e2cc21c452ecfe593fed7239a3a7f28bef2f7bdcb13/sne4onnx-2.0.0-py3-none-any.whl", hash = "sha256:1e05af6d3e5f5da98e9dffd8aabac33765665c5a7f5c320e4c9ee115d6181bf6", size = 12022, upload-time = "2026-02-06T10:44:54.752Z" },
+    { url = "https://files.pythonhosted.org/packages/59/01/47cfa97ff6605ffaa7c72db514dc0900dd458529c17692d78a5c3c8d1374/sne4onnx-2.0.1-py3-none-any.whl", hash = "sha256:d25597a0684884f3764ad06dc1e81d9e0e5892a8edf48dc538a992379701f164", size = 12237, upload-time = "2026-02-24T12:47:54.845Z" },
 ]
 
 [[package]]
 name = "sng4onnx"
-version = "2.0.0"
+version = "2.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2a/47/04174bca0a7205e169861f91f8931ef31258507277dc6182ee105fde607c/sng4onnx-2.0.0.tar.gz", hash = "sha256:e6775729ab31c7f6fe9577322bbaede921ce6e36fa0bf5193159af8eba96b426", size = 11437, upload-time = "2026-02-06T10:37:40.97Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/b2/7ecba71e1639b4e6e17abf52d1f9632c48dd64629e49b9d2524ea6b8ecaa/sng4onnx-2.0.1.tar.gz", hash = "sha256:698269a4315c5e8ae242f5d54df7ecdf1b1b07317b15e0e91257893b473e7409", size = 11630, upload-time = "2026-02-24T12:52:18.815Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/07/cd0be9b7899a933dbc9b8f5f811e36ac4d3395a5d563c783e01e25e4a622/sng4onnx-2.0.0-py3-none-any.whl", hash = "sha256:17cb57c47348ab8fc0efc3ef55652565378fb046641f7f089fa7ef9a6e19b373", size = 10872, upload-time = "2026-02-06T10:37:39.755Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/51/3811b2e41946dade6f7c79d015b37d6dcbb867bfcb7551ab844b3f88d4bf/sng4onnx-2.0.1-py3-none-any.whl", hash = "sha256:3bcbdaf79c8c4f107a340802f9562620ac5b3c83b3b8e8d08a553276d754168f", size = 11084, upload-time = "2026-02-24T12:52:17.811Z" },
 ]
 
 [[package]]

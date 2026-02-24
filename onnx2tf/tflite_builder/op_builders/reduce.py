@@ -223,13 +223,11 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    sum_name = output_name
-    if output_dtype != compute_dtype:
-        sum_name = ctx.add_intermediate_tensor(
-            f"{output_name}_reduce_l2_sum",
-            dtype=compute_dtype,
-            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
-        )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_l2_sum",
+        dtype=compute_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+    )
     _build_sum_reduce_from_input(
         node=node,
         ctx=ctx,
@@ -237,13 +235,11 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
         output_name=sum_name,
     )
 
-    sqrt_name = output_name
-    if output_dtype != compute_dtype:
-        sqrt_name = ctx.add_intermediate_tensor(
-            f"{output_name}_reduce_l2_sqrt",
-            dtype=compute_dtype,
-            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
-        )
+    sqrt_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_l2_sqrt",
+        dtype=compute_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="SQRT",
@@ -252,7 +248,7 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    if sqrt_name != output_name:
+    if output_dtype != compute_dtype:
         ctx.add_operator(
             OperatorIR(
                 op_type="CAST",
@@ -262,5 +258,29 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
                     "inDataType": compute_dtype,
                     "outDataType": output_dtype,
                 },
+            )
+        )
+    else:
+        # Keep SQRT result in a dedicated tensor for graph readability and avoid
+        # in-place aliasing in tooling output.
+        identity_shape_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_l2_identity_shape",
+            dtype="INT32",
+            shape=[int(len(ctx.get_tensor_shape(output_name)))],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[sqrt_name],
+                outputs=[identity_shape_name],
+                options={"outType": "INT32"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[sqrt_name, identity_shape_name],
+                outputs=[output_name],
+                options={"newShape": []},
             )
         )

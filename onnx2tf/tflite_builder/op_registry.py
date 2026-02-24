@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_atan_op,
     build_atanh_op,
     build_batch_normalization_op,
+    build_instance_normalization_op,
     build_binary_op,
     build_bitshift_op,
     build_bitwise_not_op,
@@ -26,6 +27,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
     build_fused_conv_op,
+    build_dropout_op,
     build_cosh_op,
     build_custom_passthrough_op,
     build_dequantize_linear_op,
@@ -922,7 +924,34 @@ def _validate_softmax(node: Any, ctx: Any) -> None:
 
 
 def _validate_reshape(node: Any, ctx: Any) -> None:
-    _require_const_input(node, ctx, 1, "reshape shape")
+    shape_name = node.inputs[1].name
+    shape_const = ctx.get_constant_array(shape_name)
+    if shape_const is not None:
+        return
+
+    shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
+    if shape_dtype not in {"INT32", "INT64"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_type",
+            message=(
+                "Reshape dynamic shape input must be INT32 or INT64 for flatbuffer_direct. "
+                f"dtype={shape_dtype} tensor={shape_name}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    shape_tensor_shape = [int(v) for v in ctx.get_tensor_shape(shape_name)]
+    if len(shape_tensor_shape) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Reshape dynamic shape input must be rank-1 for flatbuffer_direct. "
+                f"shape={shape_tensor_shape} tensor={shape_name}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_slice(node: Any, ctx: Any) -> None:
@@ -1991,6 +2020,10 @@ def _validate_unsqueeze(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
+    if input_rank == 0:
+        output_rank = len(ctx.get_tensor_shape(node.outputs[0].name))
+        if output_rank > 0:
+            input_rank = int(max(output_rank - len(axes), 0))
     for axis in axes:
         a = int(axis)
         if a < 0:
@@ -3007,6 +3040,98 @@ def _validate_batch_norm(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_instance_norm(node: Any, ctx: Any) -> None:
+    if len(node.inputs) < 3:
+        raise NodeValidationError(
+            reason_code="invalid_input_count",
+            message="InstanceNormalization expects 3 inputs.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    scale = _require_const_input(node, ctx, 1, "InstanceNormalization scale")
+    bias = _require_const_input(node, ctx, 2, "InstanceNormalization bias")
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    input_rank = len(input_shape)
+    if input_rank < 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"InstanceNormalization input rank must be >= 3. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "InstanceNormalization input dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "InstanceNormalization output dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    scale_size = int(np.asarray(scale).size)
+    bias_size = int(np.asarray(bias).size)
+    if scale_size <= 0 or bias_size <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "InstanceNormalization scale/bias must be non-empty. "
+                f"scale_size={scale_size} bias_size={bias_size}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if scale_size != bias_size:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "InstanceNormalization scale/bias sizes must match. "
+                f"scale_size={scale_size} bias_size={bias_size}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_tensor = ctx.model_ir.tensors.get(node.inputs[0].name, None)
+    if input_tensor is not None and input_tensor.shape_signature is not None and len(input_tensor.shape_signature) >= 2:
+        channel_dim = int(input_tensor.shape_signature[1])
+        if channel_dim > 0 and scale_size != channel_dim:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "InstanceNormalization scale/bias size must match input channel dimension. "
+                    f"channels={channel_dim} scale_size={scale_size} bias_size={bias_size}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    epsilon = float(node.attrs.get("epsilon", 1e-5))
+    if not np.isfinite(epsilon) or epsilon < 0.0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"InstanceNormalization epsilon must be finite and >= 0. got={epsilon}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_flatten(node: Any, ctx: Any) -> None:
     input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
     if input_rank < 1:
@@ -4014,6 +4139,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
         extra_validator=_validate_batch_norm,
     ),
+    "InstanceNormalization": DispatchEntry(
+        onnx_op="InstanceNormalization",
+        tflite_ops=["MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV"],
+        builder=build_instance_normalization_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_instance_norm,
+    ),
     "ReduceMean": DispatchEntry(
         onnx_op="ReduceMean",
         tflite_ops=["MEAN"],
@@ -4360,6 +4492,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_flatten_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_flatten,
+    ),
+    "Dropout": DispatchEntry(
+        onnx_op="Dropout",
+        tflite_ops=["RESHAPE", "SHAPE", "FILL"],
+        builder=build_dropout_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=2),
     ),
     "Transpose": DispatchEntry(
         onnx_op="Transpose",

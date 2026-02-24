@@ -36,6 +36,7 @@ from onnx2tf.tflite_builder.op_builders.shape import (
     build_concat_op,
     build_constant_of_shape_op,
     build_depth_to_space_op,
+    build_dropout_op,
     build_eyelike_op,
     build_expand_op,
     build_flatten_op,
@@ -95,6 +96,7 @@ from onnx2tf.tflite_builder.op_builders.index import (
 )
 from onnx2tf.tflite_builder.op_builders.norm import (
     build_batch_normalization_op,
+    build_instance_normalization_op,
     build_l2_normalization_op,
     build_lrn_op,
 )
@@ -154,6 +156,7 @@ __all__ = [
     "build_concat_op",
     "build_constant_of_shape_op",
     "build_depth_to_space_op",
+    "build_dropout_op",
     "build_eyelike_op",
     "build_expand_op",
     "build_flatten_op",
@@ -199,6 +202,7 @@ __all__ = [
     "build_one_hot_op",
     "build_topk_op",
     "build_batch_normalization_op",
+    "build_instance_normalization_op",
     "build_l2_normalization_op",
     "build_lrn_op",
     "build_custom_passthrough_op",
