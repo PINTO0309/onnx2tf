@@ -47,6 +47,61 @@ def _resolve_reduce_axes(node: Any, ctx: Any, input_rank: int) -> List[int]:
     return _normalize_axes(axes, input_rank, node.name)
 
 
+def _resolve_cumsum_axis(node: Any, ctx: Any, input_rank: int) -> int:
+    axis_raw: int
+    if len(node.inputs) >= 2 and str(node.inputs[1].name) != "":
+        axis_arr = ctx.get_constant_array(node.inputs[1].name)
+        if axis_arr is None:
+            raise NotImplementedError(
+                f"CumSum axis must be constant for flatbuffer_direct. op={node.name}"
+            )
+        axis_values = np.asarray(axis_arr).reshape(-1)
+        if int(axis_values.size) != 1:
+            raise NotImplementedError(
+                f"CumSum axis must be scalar. op={node.name} axis_shape={list(np.asarray(axis_arr).shape)}"
+            )
+        axis_raw = int(axis_values[0])
+    else:
+        axis_raw = int(node.attrs.get("axis", 0))
+
+    axis = int(axis_raw)
+    if axis < 0:
+        axis += int(input_rank)
+    if axis < 0 or axis >= int(input_rank):
+        raise NotImplementedError(
+            f"CumSum axis is out of range. op={node.name} axis={axis_raw} rank={input_rank}"
+        )
+    return int(axis)
+
+
+def build_cumsum_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    axis = _resolve_cumsum_axis(node=node, ctx=ctx, input_rank=len(input_shape))
+    axis_const = ctx.add_const_tensor(
+        f"{output_name}_cumsum_axis",
+        np.asarray([axis], dtype=np.int32),
+    )
+    exclusive = bool(int(node.attrs.get("exclusive", 0)))
+    reverse = bool(int(node.attrs.get("reverse", 0)))
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CUMSUM",
+            inputs=[input_name, axis_const],
+            outputs=[output_name],
+            options={
+                "exclusive": exclusive,
+                "reverse": reverse,
+            },
+        )
+    )
+
+
 def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -106,6 +161,33 @@ def build_global_average_pool_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="MEAN",
+            inputs=[input_name, axes_const],
+            outputs=[output_name],
+            options={"keepDims": True},
+        )
+    )
+
+
+def build_global_max_pool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 3:
+        raise NotImplementedError(
+            f"GlobalMaxPool requires rank>=3. op={node.name} input_shape={input_shape}"
+        )
+
+    spatial_axes = [int(v) for v in range(2, len(input_shape))]
+    axes_const = ctx.add_const_tensor(
+        f"{output_name}_global_max_axes",
+        np.asarray(spatial_axes, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="REDUCE_MAX",
             inputs=[input_name, axes_const],
             outputs=[output_name],
             options={"keepDims": True},
@@ -235,11 +317,13 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
         output_name=sum_name,
     )
 
-    sqrt_name = ctx.add_intermediate_tensor(
-        f"{output_name}_reduce_l2_sqrt",
-        dtype=compute_dtype,
-        shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
-    )
+    sqrt_name = output_name
+    if output_dtype != compute_dtype:
+        sqrt_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_l2_sqrt",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
     ctx.add_operator(
         OperatorIR(
             op_type="SQRT",
@@ -258,29 +342,5 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
                     "inDataType": compute_dtype,
                     "outDataType": output_dtype,
                 },
-            )
-        )
-    else:
-        # Keep SQRT result in a dedicated tensor for graph readability and avoid
-        # in-place aliasing in tooling output.
-        identity_shape_name = ctx.add_intermediate_tensor(
-            f"{output_name}_reduce_l2_identity_shape",
-            dtype="INT32",
-            shape=[int(len(ctx.get_tensor_shape(output_name)))],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SHAPE",
-                inputs=[sqrt_name],
-                outputs=[identity_shape_name],
-                options={"outType": "INT32"},
-            )
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="RESHAPE",
-                inputs=[sqrt_name, identity_shape_name],
-                outputs=[output_name],
-                options={"newShape": []},
             )
         )

@@ -81,12 +81,47 @@ def _generate_seeded_input(
     if np.issubdtype(np_dtype, np.bool_):
         return (rng.random(shape) > 0.5).astype(np_dtype)
     if np.issubdtype(np_dtype, np.floating):
+        distribution = _resolve_float_seeded_distribution(shape=shape)
+        if distribution == "uniform_0_1":
+            return rng.uniform(0.0, 1.0, size=shape).astype(np_dtype)
+        if distribution == "uniform_-1_1":
+            return rng.uniform(-1.0, 1.0, size=shape).astype(np_dtype)
         return rng.standard_normal(shape).astype(np_dtype)
     if np.issubdtype(np_dtype, np.signedinteger):
         return rng.integers(low=-8, high=9, size=shape, dtype=np_dtype)
     if np.issubdtype(np_dtype, np.unsignedinteger):
         return rng.integers(low=0, high=17, size=shape, dtype=np_dtype)
     return rng.standard_normal(shape).astype(np.float32).astype(np_dtype)
+
+
+def _is_likely_image_tensor_shape(shape: Tuple[int, ...]) -> bool:
+    if len(shape) != 4:
+        return False
+    c_first = int(shape[1]) if int(shape[1]) > 0 else -1
+    c_last = int(shape[3]) if int(shape[3]) > 0 else -1
+    return (c_first in (1, 3, 4)) or (c_last in (1, 3, 4))
+
+
+def _resolve_float_seeded_distribution(*, shape: Tuple[int, ...]) -> str:
+    env_value = str(
+        os.environ.get("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", "auto")
+    ).strip().lower()
+    if env_value in {"", "auto"}:
+        # Most image models expect normalized non-negative inputs.
+        if _is_likely_image_tensor_shape(shape):
+            return "uniform_0_1"
+        return "normal"
+    if env_value in {"normal", "gaussian", "standard_normal"}:
+        return "normal"
+    if env_value in {"uniform_0_1", "uniform01", "0_1"}:
+        return "uniform_0_1"
+    if env_value in {"uniform_-1_1", "uniform_m1_p1", "uniform11", "-1_1"}:
+        return "uniform_-1_1"
+    raise ValueError(
+        "Invalid ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION. "
+        "Expected one of: auto, normal, uniform_0_1, uniform_-1_1. "
+        f"got: {env_value}"
+    )
 
 
 def _extract_sample_from_custom(

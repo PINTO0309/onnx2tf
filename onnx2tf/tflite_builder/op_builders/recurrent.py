@@ -80,16 +80,22 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
     initial_h_name = _input_name(original_inputs, 5)
     initial_c_name = _input_name(original_inputs, 6)
     direction = str(node.attrs.get("direction", "forward")).lower()
-    if direction not in {"forward", "bidirectional"}:
+    if direction not in {"forward", "reverse", "bidirectional"}:
         raise NotImplementedError(
-            f"LSTM direction must be forward or bidirectional for flatbuffer_direct. op={node.name} direction={direction}"
+            f"LSTM direction must be forward/reverse/bidirectional for flatbuffer_direct. op={node.name} direction={direction}"
         )
     expected_num_directions = 2 if direction == "bidirectional" else 1
 
     y_name = node.outputs[0].name
+    y_h_name = node.outputs[1].name if len(node.outputs) > 1 else ""
+    y_c_name = node.outputs[2].name if len(node.outputs) > 2 else ""
     y_dtype = str(ctx.get_tensor_dtype(y_name))
     ctx.ensure_tensor(x_name)
     ctx.ensure_tensor(y_name)
+    if y_h_name != "":
+        ctx.ensure_tensor(y_h_name)
+    if y_c_name != "":
+        ctx.ensure_tensor(y_c_name)
 
     w_value = ctx.get_constant_array(w_name)
     r_value = ctx.get_constant_array(r_name)
@@ -139,24 +145,46 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             f"hidden_size={hidden_size} B_shape={list(B.shape)}"
         )
 
-    h0_value = ctx.get_constant_array(initial_h_name)
-    c0_value = ctx.get_constant_array(initial_c_name)
-    if h0_value is None or c0_value is None:
+    has_initial_state_inputs = (
+        initial_h_name != ""
+        and initial_c_name != ""
+    )
+    if (initial_h_name == "") ^ (initial_c_name == ""):
         raise NotImplementedError(
-            f"LSTM initial_h/initial_c must be constant for flatbuffer_direct. op={node.name}"
+            f"LSTM initial_h and initial_c must be both present or both absent. op={node.name}"
         )
-    H0 = np.asarray(h0_value, dtype=np.float32)
-    C0 = np.asarray(c0_value, dtype=np.float32)
-    if H0.ndim != 3 or C0.ndim != 3:
-        raise NotImplementedError(
-            f"LSTM initial_h/initial_c must be rank-3. op={node.name}"
-        )
-    if int(H0.shape[0]) != expected_num_directions or int(C0.shape[0]) != expected_num_directions:
-        raise NotImplementedError(
-            "LSTM initial_h/initial_c first dim must match num_directions. "
-            f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
-            f"H0_shape={list(H0.shape)} C0_shape={list(C0.shape)}"
-        )
+    initial_h_shape = [expected_num_directions, 1, hidden_size]
+    initial_c_shape = [expected_num_directions, 1, hidden_size]
+    if has_initial_state_inputs:
+        ctx.ensure_tensor(initial_h_name)
+        ctx.ensure_tensor(initial_c_name)
+        initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
+        initial_c_shape = [int(v) for v in ctx.get_tensor_shape(initial_c_name)]
+        if len(initial_h_shape) != 3 or len(initial_c_shape) != 3:
+            raise NotImplementedError(
+                "LSTM initial_h/initial_c must be rank-3. "
+                f"op={node.name} initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+            )
+        if (
+            int(initial_h_shape[0]) > 0 and int(initial_h_shape[0]) != expected_num_directions
+        ) or (
+            int(initial_c_shape[0]) > 0 and int(initial_c_shape[0]) != expected_num_directions
+        ):
+            raise NotImplementedError(
+                "LSTM initial_h/initial_c first dim must match num_directions. "
+                f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+                f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+            )
+        if (
+            int(initial_h_shape[2]) > 0 and int(initial_h_shape[2]) != hidden_size
+        ) or (
+            int(initial_c_shape[2]) > 0 and int(initial_c_shape[2]) != hidden_size
+        ):
+            raise NotImplementedError(
+                "LSTM initial_h/initial_c hidden dim must match hidden_size. "
+                f"op={node.name} hidden_size={hidden_size} "
+                f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+            )
 
     fw_w_i, fw_w_f, fw_w_c, fw_w_o = _split_onnx_lstm_gates(
         np.asarray(W[0], dtype=np.float32),
@@ -188,6 +216,62 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         state_tensor.data = None
         return state_name
 
+    def _prepare_lstm_state_input(
+        *,
+        state_input_name: str,
+        dir_index: int,
+        state_tag: str,
+    ) -> str:
+        if state_input_name == "":
+            reference = np.zeros((int(batch_dim), int(hidden_size)), dtype=np.float32)
+            return _add_zero_variable_state(f"{state_tag}_state", reference)
+
+        slice_input_name = state_input_name
+        state_shape = [int(v) for v in ctx.get_tensor_shape(state_input_name)]
+        if len(state_shape) != 3:
+            raise NotImplementedError(
+                f"LSTM {state_tag} must be rank-3. op={node.name} shape={state_shape}"
+            )
+        if not (expected_num_directions == 1 and int(state_shape[0]) == 1):
+            slice_input_name = ctx.add_intermediate_tensor(
+                f"{node.name}_{state_tag}_dir{dir_index}_slice",
+                dtype="FLOAT32",
+                shape=[1, int(batch_dim), int(hidden_size)],
+            )
+            begin_name = _add_const(
+                f"{state_tag}_dir{dir_index}_begin",
+                np.asarray([int(dir_index), 0, 0], dtype=np.int32),
+                dtype=np.int32,
+            )
+            size_name = _add_const(
+                f"{state_tag}_dir{dir_index}_size",
+                np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+                dtype=np.int32,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[state_input_name, begin_name, size_name],
+                    outputs=[slice_input_name],
+                )
+            )
+        state_2d_name = ctx.add_intermediate_tensor(
+            f"{node.name}_{state_tag}_dir{dir_index}_2d",
+            dtype="FLOAT32",
+            shape=[int(batch_dim), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[slice_input_name],
+                outputs=[state_2d_name],
+                options={"squeezeDims": [0]},
+            )
+        )
+        state_tensor = ctx.model_ir.tensors[state_2d_name]
+        state_tensor.is_variable = True
+        return state_2d_name
+
     input_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
     x_tensor = ctx.model_ir.tensors.get(x_name, None)
     input_signature = None
@@ -218,6 +302,18 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             int(batch_signature_dim) if batch_signature_dim is not None else int(batch_dim),
             int(hidden_size),
         ]
+    y_h_shape = [int(expected_num_directions), int(batch_dim), int(hidden_size)]
+    y_c_shape = [int(expected_num_directions), int(batch_dim), int(hidden_size)]
+    if y_h_name != "":
+        y_h_tensor = ctx.model_ir.tensors.get(y_h_name, None)
+        if y_h_tensor is not None:
+            y_h_tensor.shape = [int(v) for v in y_h_shape]
+            y_h_tensor.shape_signature = [int(v) for v in y_h_shape]
+    if y_c_name != "":
+        y_c_tensor = ctx.model_ir.tensors.get(y_c_name, None)
+        if y_c_tensor is not None:
+            y_c_tensor.shape = [int(v) for v in y_c_shape]
+            y_c_tensor.shape_signature = [int(v) for v in y_c_shape]
     use_reshape_expand = (
         seq_signature_dim is not None
         and batch_signature_dim is not None
@@ -225,15 +321,43 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         and int(batch_signature_dim) > 0
     )
     if expected_num_directions == 1:
-        fw_h0_name = _add_zero_variable_state("fw_h0_state", np.asarray(H0[0], dtype=np.float32))
-        fw_c0_name = _add_zero_variable_state("fw_c0_state", np.asarray(C0[0], dtype=np.float32))
+        lstm_input_name = x_name
+        if direction == "reverse":
+            reverse_axis_input_name = _add_const(
+                "reverse_time_axis_input",
+                np.asarray([0], dtype=np.int32),
+                dtype=np.int32,
+            )
+            lstm_input_name = ctx.add_intermediate_tensor(
+                f"{y_name}_lstm_reverse_input",
+                dtype=str(ctx.get_tensor_dtype(x_name)),
+                shape=[int(v) for v in list(input_shape)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="REVERSE_V2",
+                    inputs=[x_name, reverse_axis_input_name],
+                    outputs=[lstm_input_name],
+                )
+            )
+
+        fw_h0_name = _prepare_lstm_state_input(
+            state_input_name=initial_h_name if has_initial_state_inputs else "",
+            dir_index=0,
+            state_tag="h0",
+        )
+        fw_c0_name = _prepare_lstm_state_input(
+            state_input_name=initial_c_name if has_initial_state_inputs else "",
+            dir_index=0,
+            state_tag="c0",
+        )
         uni_output_name = ctx.add_intermediate_tensor(
             f"{y_name}_lstm_uni",
             dtype=y_dtype,
             shape=[int(seq_dim), int(batch_dim), int(hidden_size)],
         )
         uni_inputs = [
-            x_name,
+            lstm_input_name,
             _add_const("fw_w_i", fw_w_i),
             _add_const("fw_w_f", fw_w_f),
             _add_const("fw_w_c", fw_w_c),
@@ -277,6 +401,25 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+        uni_output_final_name = uni_output_name
+        if direction == "reverse":
+            reverse_axis_output_name = _add_const(
+                "reverse_time_axis_output",
+                np.asarray([0], dtype=np.int32),
+                dtype=np.int32,
+            )
+            uni_output_final_name = ctx.add_intermediate_tensor(
+                f"{y_name}_lstm_reverse_output",
+                dtype=y_dtype,
+                shape=[int(seq_dim), int(batch_dim), int(hidden_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="REVERSE_V2",
+                    inputs=[uni_output_name, reverse_axis_output_name],
+                    outputs=[uni_output_final_name],
+                )
+            )
         if use_reshape_expand:
             expand_shape = np.asarray(
                 [int(seq_dim), 1, int(batch_dim), int(hidden_size)],
@@ -286,7 +429,7 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
-                    inputs=[uni_output_name, expand_shape_name],
+                    inputs=[uni_output_final_name, expand_shape_name],
                     outputs=[y_name],
                     options={"newShape": [int(v) for v in list(expand_shape)]},
                 )
@@ -296,8 +439,36 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="EXPAND_DIMS",
-                    inputs=[uni_output_name, expand_axis_name],
+                    inputs=[uni_output_final_name, expand_axis_name],
                     outputs=[y_name],
+                )
+            )
+        if y_h_name != "":
+            y_h_shape_name = _add_const(
+                "y_h_shape",
+                np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+                dtype=np.int32,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[fw_h0_name, y_h_shape_name],
+                    outputs=[y_h_name],
+                    options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+                )
+            )
+        if y_c_name != "":
+            y_c_shape_name = _add_const(
+                "y_c_shape",
+                np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+                dtype=np.int32,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[fw_c0_name, y_c_shape_name],
+                    outputs=[y_c_name],
+                    options={"newShape": [1, int(batch_dim), int(hidden_size)]},
                 )
             )
         return
@@ -315,10 +486,26 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         hidden_size,
     )
 
-    fw_h0_name = _add_zero_variable_state("fw_h0_state", np.asarray(H0[0], dtype=np.float32))
-    fw_c0_name = _add_zero_variable_state("fw_c0_state", np.asarray(C0[0], dtype=np.float32))
-    bw_h0_name = _add_zero_variable_state("bw_h0_state", np.asarray(H0[1], dtype=np.float32))
-    bw_c0_name = _add_zero_variable_state("bw_c0_state", np.asarray(C0[1], dtype=np.float32))
+    fw_h0_name = _prepare_lstm_state_input(
+        state_input_name=initial_h_name if has_initial_state_inputs else "",
+        dir_index=0,
+        state_tag="h0_fw",
+    )
+    fw_c0_name = _prepare_lstm_state_input(
+        state_input_name=initial_c_name if has_initial_state_inputs else "",
+        dir_index=0,
+        state_tag="c0_fw",
+    )
+    bw_h0_name = _prepare_lstm_state_input(
+        state_input_name=initial_h_name if has_initial_state_inputs else "",
+        dir_index=1,
+        state_tag="h0_bw",
+    )
+    bw_c0_name = _prepare_lstm_state_input(
+        state_input_name=initial_c_name if has_initial_state_inputs else "",
+        dir_index=1,
+        state_tag="c0_bw",
+    )
 
     merged_output_name = ctx.add_intermediate_tensor(
         f"{y_name}_bilstm_merged",
@@ -483,6 +670,132 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             },
         )
     )
+    if y_h_name != "":
+        fw_h_3d_name = ctx.add_intermediate_tensor(
+            f"{y_h_name}_fw_3d",
+            dtype="FLOAT32",
+            shape=[1, int(batch_dim), int(hidden_size)],
+        )
+        bw_h_3d_name = ctx.add_intermediate_tensor(
+            f"{y_h_name}_bw_3d",
+            dtype="FLOAT32",
+            shape=[1, int(batch_dim), int(hidden_size)],
+        )
+        fw_h_shape_name = _add_const(
+            "y_h_fw_shape",
+            np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+            dtype=np.int32,
+        )
+        bw_h_shape_name = _add_const(
+            "y_h_bw_shape",
+            np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+            dtype=np.int32,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[fw_h0_name, fw_h_shape_name],
+                outputs=[fw_h_3d_name],
+                options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[bw_h0_name, bw_h_shape_name],
+                outputs=[bw_h_3d_name],
+                options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+            )
+        )
+        y_h_merged_name = ctx.add_intermediate_tensor(
+            f"{y_h_name}_merged",
+            dtype="FLOAT32",
+            shape=[2, int(batch_dim), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[fw_h_3d_name, bw_h_3d_name],
+                outputs=[y_h_merged_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+        y_h_shape_name = _add_const(
+            "y_h_shape",
+            np.asarray(y_h_shape, dtype=np.int32),
+            dtype=np.int32,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[y_h_merged_name, y_h_shape_name],
+                outputs=[y_h_name],
+                options={"newShape": [int(v) for v in y_h_shape]},
+            )
+        )
+    if y_c_name != "":
+        fw_c_3d_name = ctx.add_intermediate_tensor(
+            f"{y_c_name}_fw_3d",
+            dtype="FLOAT32",
+            shape=[1, int(batch_dim), int(hidden_size)],
+        )
+        bw_c_3d_name = ctx.add_intermediate_tensor(
+            f"{y_c_name}_bw_3d",
+            dtype="FLOAT32",
+            shape=[1, int(batch_dim), int(hidden_size)],
+        )
+        fw_c_shape_name = _add_const(
+            "y_c_fw_shape",
+            np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+            dtype=np.int32,
+        )
+        bw_c_shape_name = _add_const(
+            "y_c_bw_shape",
+            np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+            dtype=np.int32,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[fw_c0_name, fw_c_shape_name],
+                outputs=[fw_c_3d_name],
+                options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[bw_c0_name, bw_c_shape_name],
+                outputs=[bw_c_3d_name],
+                options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+            )
+        )
+        y_c_merged_name = ctx.add_intermediate_tensor(
+            f"{y_c_name}_merged",
+            dtype="FLOAT32",
+            shape=[2, int(batch_dim), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[fw_c_3d_name, bw_c_3d_name],
+                outputs=[y_c_merged_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+        y_c_shape_name = _add_const(
+            "y_c_shape",
+            np.asarray(y_c_shape, dtype=np.int32),
+            dtype=np.int32,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[y_c_merged_name, y_c_shape_name],
+                outputs=[y_c_name],
+                options={"newShape": [int(v) for v in y_c_shape]},
+            )
+        )
 
 
 def build_rnn_op(node: Any, ctx: Any) -> None:
@@ -493,9 +806,16 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
     b_name = _input_name(original_inputs, 3)
     sequence_lens_name = _input_name(original_inputs, 4)
     initial_h_name = _input_name(original_inputs, 5)
+    direction = str(node.attrs.get("direction", "forward")).lower()
+    if direction not in {"forward", "reverse", "bidirectional"}:
+        raise NotImplementedError(
+            f"RNN direction is not supported in flatbuffer_direct. op={node.name} direction={direction}"
+        )
+    expected_num_directions = 2 if direction == "bidirectional" else 1
 
     y_name = node.outputs[0].name
     y_h_name = node.outputs[1].name if len(node.outputs) > 1 else ""
+    y_dtype = str(ctx.get_tensor_dtype(y_name)).upper()
     ctx.ensure_tensor(x_name)
     ctx.ensure_tensor(y_name)
     if y_h_name != "":
@@ -513,9 +833,11 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"RNN W/R must be rank-3. op={node.name} W_shape={list(W.shape)} R_shape={list(R.shape)}"
         )
-    if int(W.shape[0]) != 1 or int(R.shape[0]) != 1:
+    if int(W.shape[0]) != expected_num_directions or int(R.shape[0]) != expected_num_directions:
         raise NotImplementedError(
-            f"RNN builtin lowering currently supports num_directions=1 only. op={node.name}"
+            "RNN num_directions mismatch for flatbuffer_direct. "
+            f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+            f"W_shape={list(W.shape)} R_shape={list(R.shape)}"
         )
     hidden_size = int(node.attrs.get("hidden_size", int(W.shape[1])))
     if int(W.shape[1]) != hidden_size or int(R.shape[1]) != hidden_size:
@@ -531,6 +853,12 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
         )
 
     input_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
+    x_tensor = ctx.model_ir.tensors.get(x_name, None)
+    input_signature = None
+    if x_tensor is not None and x_tensor.shape_signature is not None:
+        input_signature = [int(v) for v in list(x_tensor.shape_signature)]
+    else:
+        input_signature = [int(v) for v in input_shape]
     if len(input_shape) != 3:
         raise NotImplementedError(
             f"RNN input must be rank-3 [seq,batch,input] in flatbuffer_direct. op={node.name} input_shape={input_shape}"
@@ -554,8 +882,21 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
         )
         x_name = transposed_x_name
         input_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
-    seq_len = int(input_shape[0]) if int(input_shape[0]) > 0 else 1
-    batch = int(input_shape[1]) if int(input_shape[1]) > 0 else 1
+        input_signature = [input_signature[0], input_signature[2], input_signature[1]]
+    seq_signature_dim = input_signature[0] if len(input_signature) >= 1 else None
+    batch_signature_dim = input_signature[1] if len(input_signature) >= 2 else None
+    seq_len = _normalized_shape_dim(
+        seq_signature_dim if seq_signature_dim is not None and int(seq_signature_dim) > 0 else (
+            input_shape[0] if len(input_shape) >= 1 else 1
+        ),
+        fallback=1,
+    )
+    batch = _normalized_shape_dim(
+        batch_signature_dim if batch_signature_dim is not None and int(batch_signature_dim) > 0 else (
+            input_shape[1] if len(input_shape) >= 2 else 1
+        ),
+        fallback=1,
+    )
     if int(input_shape[2]) != input_size:
         raise NotImplementedError(
             "RNN input size mismatch with W in flatbuffer_direct. "
@@ -574,95 +915,366 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
                 f"RNN bias must be constant when provided. op={node.name}"
             )
         B = np.asarray(b_value, dtype=np.float32)
-        if B.ndim != 2 or int(B.shape[0]) != 1 or int(B.shape[1]) != 2 * hidden_size:
+        if (
+            B.ndim != 2
+            or int(B.shape[0]) != expected_num_directions
+            or int(B.shape[1]) != 2 * hidden_size
+        ):
             raise NotImplementedError(
-                "RNN bias shape must be [1, 2*hidden_size] in flatbuffer_direct. "
-                f"op={node.name} B_shape={list(B.shape)} hidden_size={hidden_size}"
+                "RNN bias shape must be [num_directions, 2*hidden_size] in flatbuffer_direct. "
+                f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+                f"B_shape={list(B.shape)} hidden_size={hidden_size}"
             )
-        bias = np.asarray(B[0, :hidden_size] + B[0, hidden_size:], dtype=np.float32)
     else:
-        bias = np.zeros((hidden_size,), dtype=np.float32)
+        B = np.zeros((expected_num_directions, 2 * hidden_size), dtype=np.float32)
 
     if initial_h_name != "":
-        initial_h = ctx.get_constant_array(initial_h_name)
-        if initial_h is None:
+        ctx.ensure_tensor(initial_h_name)
+        initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
+        if len(initial_h_shape) != 3:
             raise NotImplementedError(
-                f"RNN initial_h must be constant when provided. op={node.name}"
+                "RNN initial_h must be rank-3 [num_directions, batch, hidden_size] in flatbuffer_direct. "
+                f"op={node.name} initial_h_shape={initial_h_shape}"
             )
-        init_h = np.asarray(initial_h, dtype=np.float32)
-        if init_h.ndim != 3 or int(init_h.shape[0]) != 1 or int(init_h.shape[2]) != hidden_size:
+        if int(initial_h_shape[0]) > 0 and int(initial_h_shape[0]) != expected_num_directions:
             raise NotImplementedError(
-                "RNN initial_h shape must be [1, batch, hidden_size] in flatbuffer_direct. "
-                f"op={node.name} initial_h_shape={list(init_h.shape)} hidden_size={hidden_size}"
+                "RNN initial_h first dimension must match num_directions in flatbuffer_direct. "
+                f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+                f"initial_h_shape={initial_h_shape}"
+            )
+        if int(initial_h_shape[1]) > 0 and int(initial_h_shape[1]) != int(batch):
+            raise NotImplementedError(
+                "RNN initial_h batch dimension must match input batch in flatbuffer_direct. "
+                f"op={node.name} initial_h_shape={initial_h_shape} batch={int(batch)}"
+            )
+        if int(initial_h_shape[2]) > 0 and int(initial_h_shape[2]) != hidden_size:
+            raise NotImplementedError(
+                "RNN initial_h hidden dimension must match hidden_size in flatbuffer_direct. "
+                f"op={node.name} initial_h_shape={initial_h_shape} hidden_size={hidden_size}"
             )
 
     activations = node.attrs.get("activations", ["Tanh"])
     if not isinstance(activations, (list, tuple)) or len(activations) == 0:
         activations = ["Tanh"]
-    activation = str(activations[0]).lower()
-    fused_activation = "TANH"
-    if activation in {"tanh"}:
-        fused_activation = "TANH"
-    elif activation in {"relu"}:
-        fused_activation = "RELU"
-    elif activation in {"sigmoid"}:
-        fused_activation = "LOGISTIC"
-    else:
-        raise NotImplementedError(
-            f"RNN activation is not supported in flatbuffer_direct. op={node.name} activation={activation}"
-        )
+    fused_activations: List[str] = []
+    for dir_index in range(expected_num_directions):
+        activation = str(activations[min(dir_index, len(activations) - 1)]).lower()
+        if activation in {"tanh"}:
+            fused_activations.append("TANH")
+        elif activation in {"relu"}:
+            fused_activations.append("RELU")
+        elif activation in {"sigmoid"}:
+            fused_activations.append("LOGISTIC")
+        else:
+            raise NotImplementedError(
+                "RNN activation is not supported in flatbuffer_direct. "
+                f"op={node.name} direction={direction} direction_index={dir_index} activation={activation}"
+            )
     clip = float(node.attrs.get("clip", 0.0))
     if abs(clip) > 1e-6:
         raise NotImplementedError(
             f"RNN clip is not supported in flatbuffer_direct. op={node.name} clip={clip}"
         )
 
-    input_weights_name = ctx.add_const_tensor(
-        f"{node.name}_rnn_input_weights",
-        np.asarray(W[0], dtype=np.float32),
-    )
-    recurrent_weights_name = ctx.add_const_tensor(
-        f"{node.name}_rnn_recurrent_weights",
-        np.asarray(R[0], dtype=np.float32),
-    )
-    bias_name = ctx.add_const_tensor(
-        f"{node.name}_rnn_bias",
-        np.asarray(bias, dtype=np.float32),
-    )
+    def _prepare_rnn_state_input(*, dir_index: int, dir_tag: str) -> str:
+        if initial_h_name == "":
+            state_name = ctx.add_intermediate_tensor(
+                f"{node.name}_rnn_{dir_tag}_h0_zero",
+                dtype="FLOAT32",
+                shape=[int(batch), int(hidden_size)],
+            )
+            state_tensor = ctx.model_ir.tensors[state_name]
+            state_tensor.is_variable = True
+            state_tensor.data = None
+            return state_name
 
-    hidden_state_name = ctx.add_intermediate_tensor(
-        f"{node.name}_rnn_hidden_state",
-        dtype="FLOAT32",
-        shape=[int(batch), int(hidden_size)],
-    )
-    hidden_state_tensor = ctx.model_ir.tensors[hidden_state_name]
-    hidden_state_tensor.is_variable = True
-    hidden_state_tensor.data = None
-
-    y_seq_name = ctx.add_intermediate_tensor(
-        f"{y_name}_rnn_seq",
-        dtype=str(ctx.get_tensor_dtype(y_name)).upper(),
-        shape=[int(seq_len), int(batch), int(hidden_size)],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="UNIDIRECTIONAL_SEQUENCE_RNN",
-            inputs=[
-                x_name,
-                input_weights_name,
-                recurrent_weights_name,
-                bias_name,
-                hidden_state_name,
-            ],
-            outputs=[y_seq_name],
-            options={
-                "timeMajor": True,
-                "fusedActivationFunction": fused_activation,
-                "asymmetricQuantizeInputs": False,
-            },
+        state_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
+        slice_input_name = initial_h_name
+        if not (expected_num_directions == 1 and int(state_shape[0]) == 1):
+            slice_input_name = ctx.add_intermediate_tensor(
+                f"{node.name}_rnn_{dir_tag}_h0_slice",
+                dtype="FLOAT32",
+                shape=[1, int(batch), int(hidden_size)],
+            )
+            begin_name = ctx.add_const_tensor(
+                f"{node.name}_rnn_{dir_tag}_h0_begin",
+                np.asarray([int(dir_index), 0, 0], dtype=np.int32),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{node.name}_rnn_{dir_tag}_h0_size",
+                np.asarray([1, int(batch), int(hidden_size)], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[initial_h_name, begin_name, size_name],
+                    outputs=[slice_input_name],
+                )
+            )
+        state_name = ctx.add_intermediate_tensor(
+            f"{node.name}_rnn_{dir_tag}_h0_2d",
+            dtype="FLOAT32",
+            shape=[int(batch), int(hidden_size)],
         )
-    )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[slice_input_name],
+                outputs=[state_name],
+                options={"squeezeDims": [0]},
+            )
+        )
+        state_tensor = ctx.model_ir.tensors[state_name]
+        state_tensor.is_variable = True
+        return state_name
 
+    def _run_rnn_direction(
+        *,
+        dir_index: int,
+        reverse: bool,
+        dir_tag: str,
+    ) -> Tuple[str, str]:
+        Wd = np.asarray(W[dir_index], dtype=np.float32)
+        Rd = np.asarray(R[dir_index], dtype=np.float32)
+        Bd = np.asarray(B[dir_index], dtype=np.float32)
+        bias = np.asarray(Bd[:hidden_size] + Bd[hidden_size:], dtype=np.float32)
+
+        input_weights_name = ctx.add_const_tensor(
+            f"{node.name}_rnn_{dir_tag}_input_weights",
+            Wd,
+        )
+        recurrent_weights_name = ctx.add_const_tensor(
+            f"{node.name}_rnn_{dir_tag}_recurrent_weights",
+            Rd,
+        )
+        bias_name = ctx.add_const_tensor(
+            f"{node.name}_rnn_{dir_tag}_bias",
+            bias,
+        )
+        hidden_state_name = _prepare_rnn_state_input(dir_index=dir_index, dir_tag=dir_tag)
+
+        rnn_input_name = x_name
+        if reverse:
+            reverse_axis_name = ctx.add_const_tensor(
+                f"{node.name}_rnn_{dir_tag}_reverse_axis_input",
+                np.asarray([0], dtype=np.int32),
+            )
+            reversed_input_name = ctx.add_intermediate_tensor(
+                f"{node.name}_rnn_{dir_tag}_input_reversed",
+                dtype="FLOAT32",
+                shape=[int(seq_len), int(batch), int(input_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="REVERSE_V2",
+                    inputs=[x_name, reverse_axis_name],
+                    outputs=[reversed_input_name],
+                )
+            )
+            rnn_input_name = reversed_input_name
+
+        y_seq_raw_name = ctx.add_intermediate_tensor(
+            f"{y_name}_rnn_{dir_tag}_seq_raw",
+            dtype=y_dtype,
+            shape=[int(seq_len), int(batch), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="UNIDIRECTIONAL_SEQUENCE_RNN",
+                inputs=[
+                    rnn_input_name,
+                    input_weights_name,
+                    recurrent_weights_name,
+                    bias_name,
+                    hidden_state_name,
+                ],
+                outputs=[y_seq_raw_name],
+                options={
+                    "timeMajor": True,
+                    "fusedActivationFunction": fused_activations[dir_index],
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+        y_seq_aligned_name = y_seq_raw_name
+        if reverse:
+            reverse_axis_output_name = ctx.add_const_tensor(
+                f"{node.name}_rnn_{dir_tag}_reverse_axis_output",
+                np.asarray([0], dtype=np.int32),
+            )
+            y_seq_aligned_name = ctx.add_intermediate_tensor(
+                f"{y_name}_rnn_{dir_tag}_seq_aligned",
+                dtype=y_dtype,
+                shape=[int(seq_len), int(batch), int(hidden_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="REVERSE_V2",
+                    inputs=[y_seq_raw_name, reverse_axis_output_name],
+                    outputs=[y_seq_aligned_name],
+                )
+            )
+        return y_seq_aligned_name, hidden_state_name
+
+    if direction == "bidirectional":
+        fw_seq_name, fw_h_name = _run_rnn_direction(
+            dir_index=0,
+            reverse=False,
+            dir_tag="fw",
+        )
+        bw_seq_name, bw_h_name = _run_rnn_direction(
+            dir_index=1,
+            reverse=True,
+            dir_tag="bw",
+        )
+
+        fw_axis_name = ctx.add_const_tensor(
+            f"{node.name}_rnn_fw_expand_axis",
+            np.asarray(1, dtype=np.int32),
+        )
+        bw_axis_name = ctx.add_const_tensor(
+            f"{node.name}_rnn_bw_expand_axis",
+            np.asarray(1, dtype=np.int32),
+        )
+        fw_seq_4d_name = ctx.add_intermediate_tensor(
+            f"{y_name}_rnn_fw_seq_4d",
+            dtype=y_dtype,
+            shape=[int(seq_len), 1, int(batch), int(hidden_size)],
+        )
+        bw_seq_4d_name = ctx.add_intermediate_tensor(
+            f"{y_name}_rnn_bw_seq_4d",
+            dtype=y_dtype,
+            shape=[int(seq_len), 1, int(batch), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EXPAND_DIMS",
+                inputs=[fw_seq_name, fw_axis_name],
+                outputs=[fw_seq_4d_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EXPAND_DIMS",
+                inputs=[bw_seq_name, bw_axis_name],
+                outputs=[bw_seq_4d_name],
+            )
+        )
+        y_merged_name = ctx.add_intermediate_tensor(
+            f"{y_name}_rnn_bi_merged",
+            dtype=y_dtype,
+            shape=[int(seq_len), 2, int(batch), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[fw_seq_4d_name, bw_seq_4d_name],
+                outputs=[y_merged_name],
+                options={"axis": 1, "fusedActivationFunction": "NONE"},
+            )
+        )
+
+        y_shape = [int(v) for v in ctx.get_tensor_shape(y_name)]
+        if len(y_shape) == 4:
+            y_shape_name = ctx.add_const_tensor(
+                f"{y_name}_rnn_bi_y_shape",
+                np.asarray(y_shape, dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[y_merged_name, y_shape_name],
+                    outputs=[y_name],
+                    options={"newShape": [int(v) for v in y_shape]},
+                )
+            )
+        elif len(y_shape) == 3:
+            y_shape_name = ctx.add_const_tensor(
+                f"{y_name}_rnn_bi_y_shape",
+                np.asarray(y_shape, dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[y_merged_name, y_shape_name],
+                    outputs=[y_name],
+                    options={"newShape": [int(v) for v in y_shape]},
+                )
+            )
+        else:
+            raise NotImplementedError(
+                f"RNN Y output rank must be 3 or 4 for flatbuffer_direct. op={node.name} y_shape={y_shape}"
+            )
+
+        if y_h_name != "":
+            fw_h_3d_name = ctx.add_intermediate_tensor(
+                f"{y_h_name}_rnn_fw_3d",
+                dtype="FLOAT32",
+                shape=[1, int(batch), int(hidden_size)],
+            )
+            bw_h_3d_name = ctx.add_intermediate_tensor(
+                f"{y_h_name}_rnn_bw_3d",
+                dtype="FLOAT32",
+                shape=[1, int(batch), int(hidden_size)],
+            )
+            fw_h_shape_name = ctx.add_const_tensor(
+                f"{y_h_name}_rnn_fw_shape",
+                np.asarray([1, int(batch), int(hidden_size)], dtype=np.int32),
+            )
+            bw_h_shape_name = ctx.add_const_tensor(
+                f"{y_h_name}_rnn_bw_shape",
+                np.asarray([1, int(batch), int(hidden_size)], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[fw_h_name, fw_h_shape_name],
+                    outputs=[fw_h_3d_name],
+                    options={"newShape": [1, int(batch), int(hidden_size)]},
+                )
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[bw_h_name, bw_h_shape_name],
+                    outputs=[bw_h_3d_name],
+                    options={"newShape": [1, int(batch), int(hidden_size)]},
+                )
+            )
+            y_h_merged_name = ctx.add_intermediate_tensor(
+                f"{y_h_name}_rnn_bi_merged",
+                dtype="FLOAT32",
+                shape=[2, int(batch), int(hidden_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=[fw_h_3d_name, bw_h_3d_name],
+                    outputs=[y_h_merged_name],
+                    options={"axis": 0, "fusedActivationFunction": "NONE"},
+                )
+            )
+            y_h_shape = [int(v) for v in ctx.get_tensor_shape(y_h_name)]
+            y_h_target_shape = [2, int(batch), int(hidden_size)] if len(y_h_shape) == 0 else y_h_shape
+            y_h_shape_name = ctx.add_const_tensor(
+                f"{y_h_name}_rnn_bi_shape",
+                np.asarray(y_h_target_shape, dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[y_h_merged_name, y_h_shape_name],
+                    outputs=[y_h_name],
+                    options={"newShape": [int(v) for v in y_h_target_shape]},
+                )
+            )
+        return
+
+    y_seq_name, y_h_state_name = _run_rnn_direction(
+        dir_index=0,
+        reverse=(direction == "reverse"),
+        dir_tag="rev" if direction == "reverse" else "fw",
+    )
     y_shape = [int(v) for v in ctx.get_tensor_shape(y_name)]
     if len(y_shape) == 4:
         axis_name = ctx.add_const_tensor(
@@ -695,53 +1307,20 @@ def build_rnn_op(node: Any, ctx: Any) -> None:
         )
 
     if y_h_name != "":
-        begin_name = ctx.add_const_tensor(
-            f"{y_h_name}_rnn_begin",
-            np.asarray([max(seq_len - 1, 0), 0, 0], dtype=np.int32),
-        )
-        size_name = ctx.add_const_tensor(
-            f"{y_h_name}_rnn_size",
-            np.asarray([1, int(batch), int(hidden_size)], dtype=np.int32),
-        )
-        y_h_seq_name = ctx.add_intermediate_tensor(
-            f"{y_h_name}_rnn_seq_slice",
-            dtype=str(ctx.get_tensor_dtype(y_h_name)).upper(),
-            shape=[1, int(batch), int(hidden_size)],
+        y_h_shape = [int(v) for v in ctx.get_tensor_shape(y_h_name)]
+        y_h_target_shape = [1, int(batch), int(hidden_size)] if len(y_h_shape) == 0 else y_h_shape
+        y_h_shape_name = ctx.add_const_tensor(
+            f"{y_h_name}_rnn_shape",
+            np.asarray(y_h_target_shape, dtype=np.int32),
         )
         ctx.add_operator(
             OperatorIR(
-                op_type="SLICE",
-                inputs=[y_seq_name, begin_name, size_name],
-                outputs=[y_h_seq_name],
+                op_type="RESHAPE",
+                inputs=[y_h_state_name, y_h_shape_name],
+                outputs=[y_h_name],
+                options={"newShape": [int(v) for v in y_h_target_shape]},
             )
         )
-        y_h_shape = [int(v) for v in ctx.get_tensor_shape(y_h_name)]
-        if y_h_shape != [1, int(batch), int(hidden_size)]:
-            y_h_shape_name = ctx.add_const_tensor(
-                f"{y_h_name}_rnn_shape",
-                np.asarray(y_h_shape, dtype=np.int32),
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="RESHAPE",
-                    inputs=[y_h_seq_name, y_h_shape_name],
-                    outputs=[y_h_name],
-                    options={"newShape": y_h_shape},
-                )
-            )
-        else:
-            pass_shape = ctx.add_const_tensor(
-                f"{y_h_name}_rnn_identity_shape",
-                np.asarray(y_h_shape, dtype=np.int32),
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="RESHAPE",
-                    inputs=[y_h_seq_name, pass_shape],
-                    outputs=[y_h_name],
-                    options={"newShape": y_h_shape},
-                )
-            )
 
 
 def build_gru_op(node: Any, ctx: Any) -> None:

@@ -282,6 +282,21 @@ def _build_transpose_conv_options(schema_tflite: Dict[str, Any], op: OperatorIR)
     return _enum(schema_tflite, "BuiltinOptions", "TransposeConvOptions"), options
 
 
+def _build_conv3d_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["Conv3DOptionsT"]()
+    options.padding = _enum(schema_tflite, "Padding", str(op.options["padding"]))
+    options.strideD = int(op.options["strideD"])
+    options.strideH = int(op.options["strideH"])
+    options.strideW = int(op.options["strideW"])
+    options.dilationDFactor = int(op.options.get("dilationDFactor", 1))
+    options.dilationHFactor = int(op.options.get("dilationHFactor", 1))
+    options.dilationWFactor = int(op.options.get("dilationWFactor", 1))
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    if hasattr(options, "fusedActivationFunction"):
+        options.fusedActivationFunction = _enum(schema_tflite, "ActivationFunctionType", fused)
+    return _enum(schema_tflite, "BuiltinOptions", "Conv3DOptions"), options
+
+
 def _build_pool2d_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["Pool2DOptionsT"]()
     options.padding = _enum(schema_tflite, "Padding", str(op.options["padding"]))
@@ -336,6 +351,40 @@ def _build_split_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple
 def _build_expand_dims_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["ExpandDimsOptionsT"]()
     return _enum(schema_tflite, "BuiltinOptions", "ExpandDimsOptions"), options
+
+
+def _build_mirror_pad_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["MirrorPadOptionsT"]()
+    mode = str(op.options.get("mode", "REFLECT")).upper()
+    options.mode = _enum(schema_tflite, "MirrorPadMode", mode)
+    return _enum(schema_tflite, "BuiltinOptions", "MirrorPadOptions"), options
+
+
+def _build_cumsum_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["CumsumOptionsT"]()
+    options.exclusive = bool(op.options.get("exclusive", False))
+    options.reverse = bool(op.options.get("reverse", False))
+    return _enum(schema_tflite, "BuiltinOptions", "CumsumOptions"), options
+
+
+def _build_reverse_v2_options(
+    schema_tflite: Dict[str, Any],
+    _op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["ReverseV2OptionsT"]()
+    return _enum(schema_tflite, "BuiltinOptions", "ReverseV2Options"), options
+
+
+def _build_random_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["RandomOptionsT"]()
+    if hasattr(options, "seed"):
+        options.seed = int(op.options.get("seed", 0))
+    if hasattr(options, "seed2"):
+        options.seed2 = int(op.options.get("seed2", 0))
+    return _enum(schema_tflite, "BuiltinOptions", "RandomOptions"), options
 
 
 def _build_bidirectional_sequence_lstm_options(
@@ -449,7 +498,7 @@ def _build_builtin_options(
         return _build_softmax_options(schema_tflite, op)
     if op.op_type == "TRANSPOSE":
         return _build_transpose_options(schema_tflite, op)
-    if op.op_type in ["MEAN", "SUM", "REDUCE_MAX"]:
+    if op.op_type in ["MEAN", "SUM", "REDUCE_MAX", "REDUCE_PROD"]:
         return _build_reducer_options(schema_tflite, op)
     if op.op_type == "SQUEEZE":
         return _build_squeeze_options(schema_tflite, op)
@@ -491,6 +540,8 @@ def _build_builtin_options(
         return _build_depthwise_conv_options(schema_tflite, op)
     if op.op_type == "TRANSPOSE_CONV":
         return _build_transpose_conv_options(schema_tflite, op)
+    if op.op_type in ["CONV_3D", "CONV_3D_TRANSPOSE"]:
+        return _build_conv3d_options(schema_tflite, op)
     if op.op_type in ["AVERAGE_POOL_2D", "MAX_POOL_2D"]:
         return _build_pool2d_options(schema_tflite, op)
     if op.op_type == "RESIZE_NEAREST_NEIGHBOR":
@@ -507,6 +558,14 @@ def _build_builtin_options(
         return _build_split_options(schema_tflite, op)
     if op.op_type == "EXPAND_DIMS":
         return _build_expand_dims_options(schema_tflite, op)
+    if op.op_type == "MIRROR_PAD":
+        return _build_mirror_pad_options(schema_tflite, op)
+    if op.op_type == "CUMSUM":
+        return _build_cumsum_options(schema_tflite, op)
+    if op.op_type == "REVERSE_V2":
+        return _build_reverse_v2_options(schema_tflite, op)
+    if op.op_type == "RANDOM_STANDARD_NORMAL":
+        return _build_random_options(schema_tflite, op)
     if op.op_type == "FULLY_CONNECTED":
         return _build_fully_connected_options(schema_tflite, op)
     if op.op_type == "BATCH_MATMUL":
@@ -527,6 +586,7 @@ def _build_builtin_options(
         "EQUAL",
         "NOT_EQUAL",
         "GREATER",
+        "GREATER_EQUAL",
         "LESS",
         "LESS_EQUAL",
         "RELU",

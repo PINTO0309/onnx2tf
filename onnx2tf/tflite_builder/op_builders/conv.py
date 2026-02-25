@@ -536,9 +536,16 @@ def _build_conv_transpose1d_via_conv2d(node: Any, ctx: Any) -> None:
         )
     if len(output_padding_1d) == 0:
         output_padding_1d = [0]
+    elif len(output_padding_1d) == 2:
+        output_padding_1d = [int(output_padding_1d[1])]
     elif len(output_padding_1d) != 1:
         raise NotImplementedError(
             f"ConvTranspose1D output_padding must have length 1. op={node.name} output_padding={output_padding_1d}"
+        )
+    if output_padding_1d[0] < 0 or output_padding_1d[0] >= int(strides_1d[0]):
+        raise NotImplementedError(
+            "ConvTranspose1D output_padding must satisfy "
+            f"0 <= output_padding < stride. op={node.name} output_padding={output_padding_1d} strides={strides_1d}"
         )
 
     attrs_2d = dict(node.attrs)
@@ -656,9 +663,26 @@ def _infer_conv_transpose_output_shape_nchw(
     else:
         kernel_h, kernel_w = [int(v) for v in list(kernel_shape_attr)]
     strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    if len(strides) == 0:
+        strides = [1, 1]
+    elif len(strides) == 1:
+        strides = [int(strides[0]), int(strides[0])]
+    elif len(strides) != 2:
+        raise NotImplementedError(
+            f"ConvTranspose strides must have length 2 for shape inference. op={node.name} strides={strides}"
+        )
     dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
     pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
-    output_padding = [int(v) for v in list(node.attrs.get("output_padding", [0, 0]))]
+    output_padding = [int(v) for v in list(node.attrs.get("output_padding", []))]
+    if len(output_padding) == 0:
+        output_padding = [0, 0]
+    elif len(output_padding) == 1:
+        output_padding = [int(output_padding[0]), int(output_padding[0])]
+    elif len(output_padding) != 2:
+        raise NotImplementedError(
+            "ConvTranspose output_padding must have length 2 for shape inference. "
+            f"op={node.name} output_padding={output_padding}"
+        )
 
     in_n = int(input_shape_nchw[0])
     in_h = int(input_shape_nchw[2])
@@ -832,6 +856,300 @@ def _resolve_conv_padding_and_explicit_pads(
     )
 
 
+def _resolve_conv3d_padding_and_explicit_pads(
+    *,
+    node: Any,
+    input_shape_ncdhw: list[int],
+    output_shape_ncdhw: list[int],
+) -> tuple[str, list[int] | None]:
+    auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0, 0, 0]))]
+    if len(raw_pads) < 6:
+        raw_pads = [0, 0, 0, 0, 0, 0]
+    pads = [int(raw_pads[0]), int(raw_pads[1]), int(raw_pads[2]), int(raw_pads[3]), int(raw_pads[4]), int(raw_pads[5])]
+    pad_front, pad_top, pad_left, pad_back, pad_bottom, pad_right = pads
+    pads_axes_opposite_same = bool(
+        (pad_front == pad_back)
+        and (pad_top == pad_bottom)
+        and (pad_left == pad_right)
+    )
+
+    if auto_pad == "NOTSET":
+        if (
+            pads_axes_opposite_same
+            and len(input_shape_ncdhw) == 5
+            and len(output_shape_ncdhw) == 5
+            and list(input_shape_ncdhw[2:]) == list(output_shape_ncdhw[2:])
+        ):
+            return "SAME", None
+        if any(int(v) != 0 for v in pads):
+            return "VALID", pads
+        return "VALID", None
+
+    if auto_pad == "SAME_UPPER":
+        return "SAME", None
+    if auto_pad == "VALID":
+        if any(int(v) != 0 for v in pads):
+            return "VALID", pads
+        return "VALID", None
+    if auto_pad == "SAME_LOWER":
+        raise NotImplementedError(
+            f"Conv auto_pad=SAME_LOWER is not supported in flatbuffer_direct. op={node.name}"
+        )
+    raise NotImplementedError(
+        f"Conv auto_pad attribute is invalid for flatbuffer_direct. op={node.name} auto_pad={auto_pad}"
+    )
+
+
+def _build_conv_transpose3d_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    weight_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    if len(input_shape) != 5 or len(output_shape) != 5:
+        raise NotImplementedError(
+            f"ConvTranspose3D supports rank-5 input/output only in flatbuffer_direct. op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    if any(int(v) <= 0 for v in output_shape):
+        raise NotImplementedError(
+            f"ConvTranspose3D requires static positive output shape in flatbuffer_direct. op={node.name} output_shape={output_shape}"
+        )
+
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        raise NotImplementedError(
+            f"ConvTranspose weights must be constant for flatbuffer_direct. op={node.name}"
+        )
+    weights = np.asarray(weights)
+    if weights.ndim != 5:
+        raise NotImplementedError(
+            f"ConvTranspose3D weight rank must be 5. op={node.name} weight_shape={list(weights.shape)}"
+        )
+
+    group = int(node.attrs.get("group", 1))
+    if group != 1:
+        raise NotImplementedError(
+            f"ConvTranspose3D currently supports group=1 only. op={node.name} group={group}"
+        )
+
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1, 1]))]
+    if len(strides) == 0:
+        strides = [1, 1, 1]
+    elif len(strides) == 1:
+        strides = [int(strides[0]), int(strides[0]), int(strides[0])]
+    elif len(strides) != 3:
+        raise NotImplementedError(
+            f"ConvTranspose3D strides must have length 3 in flatbuffer_direct. op={node.name} strides={strides}"
+        )
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1, 1]))]
+    if len(dilations) == 0:
+        dilations = [1, 1, 1]
+    elif len(dilations) == 1:
+        dilations = [int(dilations[0]), int(dilations[0]), int(dilations[0])]
+    elif len(dilations) != 3:
+        raise NotImplementedError(
+            f"ConvTranspose3D dilations must have length 3 in flatbuffer_direct. op={node.name} dilations={dilations}"
+        )
+    if dilations != [1, 1, 1]:
+        raise NotImplementedError(
+            f"ConvTranspose3D dilations must be [1,1,1] in flatbuffer_direct. op={node.name} dilations={dilations}"
+        )
+    output_padding = [int(v) for v in list(node.attrs.get("output_padding", []))]
+    if len(output_padding) == 0:
+        output_padding = [0, 0, 0]
+    elif len(output_padding) == 1:
+        output_padding = [int(output_padding[0]), int(output_padding[0]), int(output_padding[0])]
+    elif len(output_padding) != 3:
+        raise NotImplementedError(
+            "ConvTranspose3D output_padding must have length 3 in flatbuffer_direct. "
+            f"op={node.name} output_padding={output_padding}"
+        )
+    if any(v < 0 for v in output_padding):
+        raise NotImplementedError(
+            f"ConvTranspose3D output_padding must be non-negative in flatbuffer_direct. op={node.name} output_padding={output_padding}"
+        )
+    if any(int(v) >= int(s) for v, s in zip(output_padding, strides)):
+        raise NotImplementedError(
+            "ConvTranspose3D output_padding must satisfy "
+            f"0 <= output_padding < stride in flatbuffer_direct. op={node.name} output_padding={output_padding} strides={strides}"
+        )
+
+    # ONNX ConvTranspose3D weights are [C_in, C_out/group, kD, kH, kW].
+    # TFLite CONV_3D_TRANSPOSE expects [kD, kH, kW, C_out, C_in].
+    w_deconv = np.transpose(weights, (2, 3, 4, 1, 0)).astype(np.float32)
+    w_name = ctx.add_const_tensor(
+        f"{node.name}_conv3d_transpose_filter",
+        w_deconv,
+    )
+
+    ndhwc_input_shape = [
+        int(input_shape[0]),
+        int(input_shape[2]),
+        int(input_shape[3]),
+        int(input_shape[4]),
+        int(input_shape[1]),
+    ]
+    ndhwc_output_shape = [
+        int(output_shape[0]),
+        int(output_shape[2]),
+        int(output_shape[3]),
+        int(output_shape[4]),
+        int(output_shape[1]),
+    ]
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0, 0, 0]))]
+    if len(raw_pads) < 6:
+        raw_pads = [0, 0, 0, 0, 0, 0]
+    pad_front, pad_top, pad_left, pad_back, pad_bottom, pad_right = [int(v) for v in raw_pads[:6]]
+    needs_spatial_crop = any(
+        int(v) != 0 for v in [pad_front, pad_top, pad_left, pad_back, pad_bottom, pad_right]
+    )
+    ndhwc_transpose_conv_output_shape = [int(v) for v in list(ndhwc_output_shape)]
+    if needs_spatial_crop:
+        raw_out_d = int(ndhwc_output_shape[1]) + int(pad_front) + int(pad_back) - int(output_padding[0])
+        raw_out_h = int(ndhwc_output_shape[2]) + int(pad_top) + int(pad_bottom) - int(output_padding[1])
+        raw_out_w = int(ndhwc_output_shape[3]) + int(pad_left) + int(pad_right) - int(output_padding[2])
+        if raw_out_d <= 0 or raw_out_h <= 0 or raw_out_w <= 0:
+            raise NotImplementedError(
+                "ConvTranspose3D explicit pads produce invalid pre-crop output shape. "
+                f"op={node.name} output_shape={ndhwc_output_shape} pads={raw_pads} output_padding={output_padding}"
+            )
+        ndhwc_transpose_conv_output_shape = [
+            int(ndhwc_output_shape[0]),
+            int(raw_out_d),
+            int(raw_out_h),
+            int(raw_out_w),
+            int(ndhwc_output_shape[4]),
+        ]
+
+    x_ndhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_ndhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=ndhwc_input_shape,
+    )
+    x_ndhwc = make_transpose(
+        ctx,
+        input_name,
+        x_ndhwc,
+        [0, 2, 3, 4, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    out_shape_name = ctx.add_const_tensor(
+        f"{node.name}_conv3d_transpose_output_shape",
+        np.asarray(ndhwc_transpose_conv_output_shape, dtype=np.int32),
+    )
+
+    out_channels = int(ndhwc_output_shape[4])
+    bias_values = None
+    if len(node.inputs) >= 3:
+        bias_values = ctx.get_constant_array(node.inputs[2].name)
+    if bias_values is None:
+        bias_values = np.zeros((out_channels,), dtype=np.float32)
+    bias_values = np.asarray(bias_values, dtype=np.float32).reshape(-1)
+    if int(bias_values.size) != out_channels:
+        raise NotImplementedError(
+            f"ConvTranspose3D bias size must match output channels. op={node.name} bias_size={int(bias_values.size)} out_channels={out_channels}"
+        )
+    b_name = ctx.add_const_tensor(
+        f"{node.name}_conv3d_transpose_bias",
+        bias_values,
+    )
+
+    y_ndhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_ndhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=ndhwc_transpose_conv_output_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONV_3D_TRANSPOSE",
+            inputs=[out_shape_name, w_name, x_ndhwc, b_name],
+            outputs=[y_ndhwc],
+            options={
+                "padding": _resolve_conv_transpose_padding(node),
+                "strideD": int(strides[0]),
+                "strideH": int(strides[1]),
+                "strideW": int(strides[2]),
+                "dilationDFactor": int(dilations[0]),
+                "dilationHFactor": int(dilations[1]),
+                "dilationWFactor": int(dilations[2]),
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+
+    y_after_crop_ndhwc = y_ndhwc
+    if needs_spatial_crop:
+        crop_begin_name = ctx.add_const_tensor(
+            f"{node.name}_conv3d_transpose_crop_begin",
+            np.asarray([0, int(pad_front), int(pad_top), int(pad_left), 0], dtype=np.int32),
+        )
+        crop_end_name = ctx.add_const_tensor(
+            f"{node.name}_conv3d_transpose_crop_end",
+            np.asarray(
+                [
+                    int(ndhwc_transpose_conv_output_shape[0]),
+                    int(ndhwc_transpose_conv_output_shape[1]) - int(pad_back) + int(output_padding[0]),
+                    int(ndhwc_transpose_conv_output_shape[2]) - int(pad_bottom) + int(output_padding[1]),
+                    int(ndhwc_transpose_conv_output_shape[3]) - int(pad_right) + int(output_padding[2]),
+                    int(ndhwc_transpose_conv_output_shape[4]),
+                ],
+                dtype=np.int32,
+            ),
+        )
+        crop_stride_name = ctx.add_const_tensor(
+            f"{node.name}_conv3d_transpose_crop_stride",
+            np.asarray([1, 1, 1, 1, 1], dtype=np.int32),
+        )
+        y_cropped_ndhwc = ctx.add_intermediate_tensor(
+            f"{node.name}_output_ndhwc_cropped",
+            dtype=ctx.get_tensor_dtype(output_name),
+            shape=ndhwc_output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=[y_ndhwc, crop_begin_name, crop_end_name, crop_stride_name],
+                outputs=[y_cropped_ndhwc],
+                options={
+                    "beginMask": 0,
+                    "endMask": 0,
+                    "ellipsisMask": 0,
+                    "newAxisMask": 0,
+                    "shrinkAxisMask": 0,
+                    "offset": False,
+                },
+            )
+        )
+        y_after_crop_ndhwc = y_cropped_ndhwc
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_shape)
+    )
+    ndhwc_output_signature = list(ndhwc_output_shape)
+    if len(output_signature) == 5:
+        ndhwc_output_signature = [
+            int(output_signature[0]),
+            int(output_signature[2]),
+            int(output_signature[3]),
+            int(output_signature[4]),
+            int(output_signature[1]),
+        ]
+    ctx.model_ir.tensors[y_after_crop_ndhwc].shape_signature = [int(v) for v in ndhwc_output_signature]
+
+    make_transpose(
+        ctx,
+        y_after_crop_ndhwc,
+        output_name,
+        [0, 4, 1, 2, 3],
+    )
+
+
 def build_conv_transpose_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     weight_name = node.inputs[1].name
@@ -867,6 +1185,14 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         and np.asarray(weights_1d).ndim == 3
     ):
         _build_conv_transpose1d_via_conv2d(node, ctx)
+        return
+    if (
+        len(input_shape) == 5
+        and len(output_shape) == 5
+        and weights_1d is not None
+        and np.asarray(weights_1d).ndim == 5
+    ):
+        _build_conv_transpose3d_op(node, ctx)
         return
 
     def _shape_from_rank4_signature(signature: list[int]) -> list[int] | None:
@@ -935,15 +1261,38 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"ConvTranspose currently supports group=1 only. op={node.name} group={group}"
         )
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    if len(strides) == 0:
+        strides = [1, 1]
+    elif len(strides) == 1:
+        strides = [int(strides[0]), int(strides[0])]
+    elif len(strides) != 2:
+        raise NotImplementedError(
+            f"ConvTranspose strides must have length 2 in flatbuffer_direct. op={node.name} strides={strides}"
+        )
     dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
     if dilations != [1, 1]:
         raise NotImplementedError(
             f"ConvTranspose dilations must be [1,1] in flatbuffer_direct. op={node.name} dilations={dilations}"
         )
-    output_padding = [int(v) for v in list(node.attrs.get("output_padding", [0, 0]))]
-    if any(v != 0 for v in output_padding):
+    output_padding = [int(v) for v in list(node.attrs.get("output_padding", []))]
+    if len(output_padding) == 0:
+        output_padding = [0, 0]
+    elif len(output_padding) == 1:
+        output_padding = [int(output_padding[0]), int(output_padding[0])]
+    elif len(output_padding) != 2:
         raise NotImplementedError(
-            f"ConvTranspose output_padding must be [0,0] in flatbuffer_direct. op={node.name} output_padding={output_padding}"
+            "ConvTranspose output_padding must have length 2 in flatbuffer_direct. "
+            f"op={node.name} output_padding={output_padding}"
+        )
+    if any(v < 0 for v in output_padding):
+        raise NotImplementedError(
+            f"ConvTranspose output_padding must be non-negative in flatbuffer_direct. op={node.name} output_padding={output_padding}"
+        )
+    if any(int(v) >= int(s) for v, s in zip(output_padding, strides)):
+        raise NotImplementedError(
+            "ConvTranspose output_padding must satisfy "
+            f"0 <= output_padding < stride in flatbuffer_direct. op={node.name} output_padding={output_padding} strides={strides}"
         )
 
     output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
@@ -1087,11 +1436,11 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         )
         stride_h_vec = ctx.add_const_tensor(
             f"{node.name}_transpose_conv_stride_h",
-            np.asarray([int(dilations[0] * 0 + node.attrs.get('strides', [1, 1])[0])], dtype=np.int32),
+            np.asarray([int(strides[0])], dtype=np.int32),
         )
         stride_w_vec = ctx.add_const_tensor(
             f"{node.name}_transpose_conv_stride_w",
-            np.asarray([int(dilations[1] * 0 + node.attrs.get('strides', [1, 1])[1])], dtype=np.int32),
+            np.asarray([int(strides[1])], dtype=np.int32),
         )
         adjust_h_vec = ctx.add_const_tensor(
             f"{node.name}_transpose_conv_adjust_h",
@@ -1218,13 +1567,13 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             op_type="TRANSPOSE_CONV",
             inputs=[out_shape_name, w_name, x_nhwc],
             outputs=[y_nhwc],
-            options={
-                "padding": _resolve_conv_transpose_padding(node),
-                "strideH": int(node.attrs.get("strides", [1, 1])[0]),
-                "strideW": int(node.attrs.get("strides", [1, 1])[1]),
-            },
+                options={
+                    "padding": _resolve_conv_transpose_padding(node),
+                    "strideH": int(strides[0]),
+                    "strideW": int(strides[1]),
+                },
+            )
         )
-    )
 
     y_after_crop_nhwc = y_nhwc
     if needs_spatial_crop:
@@ -1334,6 +1683,225 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
     )
 
 
+def _build_conv3d_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    weight_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    if len(input_shape) != 5 or len(output_shape) != 5:
+        raise NotImplementedError(
+            f"Only 3D Conv (rank=5) is supported by CONV_3D lowering. op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        raise NotImplementedError(
+            f"Conv weights must be constant for flatbuffer_direct. op={node.name}"
+        )
+    weights = np.asarray(weights)
+    if weights.ndim != 5:
+        raise NotImplementedError(
+            f"Conv3D weight rank must be 5. op={node.name} shape={weights.shape}"
+        )
+
+    group = int(node.attrs.get("group", 1))
+    if group != 1:
+        raise NotImplementedError(
+            f"Conv3D currently supports group=1 only. op={node.name} group={group}"
+        )
+
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1, 1]))]
+    if len(strides) == 0:
+        strides = [1, 1, 1]
+    elif len(strides) == 1:
+        strides = [int(strides[0]), int(strides[0]), int(strides[0])]
+    elif len(strides) != 3:
+        raise NotImplementedError(
+            f"Conv3D strides must have length 3 in flatbuffer_direct. op={node.name} strides={strides}"
+        )
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1, 1]))]
+    if len(dilations) == 0:
+        dilations = [1, 1, 1]
+    elif len(dilations) == 1:
+        dilations = [int(dilations[0]), int(dilations[0]), int(dilations[0])]
+    elif len(dilations) != 3:
+        raise NotImplementedError(
+            f"Conv3D dilations must have length 3 in flatbuffer_direct. op={node.name} dilations={dilations}"
+        )
+
+    padding, explicit_pads = _resolve_conv3d_padding_and_explicit_pads(
+        node=node,
+        input_shape_ncdhw=input_shape,
+        output_shape_ncdhw=output_shape,
+    )
+    ndhwc_input_shape = [
+        int(input_shape[0]),
+        int(input_shape[2]),
+        int(input_shape[3]),
+        int(input_shape[4]),
+        int(input_shape[1]),
+    ]
+    ndhwc_output_shape = [
+        int(output_shape[0]),
+        int(output_shape[2]),
+        int(output_shape[3]),
+        int(output_shape[4]),
+        int(output_shape[1]),
+    ]
+
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_signature = (
+        list(input_tensor.shape_signature)
+        if input_tensor.shape_signature is not None
+        else list(input_shape)
+    )
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_shape)
+    )
+    ndhwc_output_signature = list(ndhwc_output_shape)
+    if len(output_signature) == 5:
+        ndhwc_output_signature = [
+            int(output_signature[0]),
+            int(output_signature[2]),
+            int(output_signature[3]),
+            int(output_signature[4]),
+            int(output_signature[1]),
+        ]
+        if len(input_signature) == 5:
+            if int(input_signature[0]) < 0:
+                ndhwc_output_signature[0] = -1
+            if int(input_signature[2]) < 0:
+                ndhwc_output_signature[1] = -1
+            if int(input_signature[3]) < 0:
+                ndhwc_output_signature[2] = -1
+            if int(input_signature[4]) < 0:
+                ndhwc_output_signature[3] = -1
+
+    x_ndhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_ndhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=ndhwc_input_shape,
+    )
+    x_ndhwc = make_transpose(
+        ctx,
+        input_name,
+        x_ndhwc,
+        [0, 2, 3, 4, 1],
+        allow_elide_inverse_chain=True,
+    )
+    x_ndhwc_conv = x_ndhwc
+    if explicit_pads is not None:
+        pad_front, pad_top, pad_left, pad_back, pad_bottom, pad_right = [int(v) for v in explicit_pads]
+        if any(int(v) != 0 for v in [pad_front, pad_top, pad_left, pad_back, pad_bottom, pad_right]):
+            x_tensor = ctx.model_ir.tensors[x_ndhwc_conv]
+            padded_shape = list(x_tensor.shape)
+            padded_shape[1] = int(padded_shape[1]) + int(pad_front) + int(pad_back)
+            padded_shape[2] = int(padded_shape[2]) + int(pad_top) + int(pad_bottom)
+            padded_shape[3] = int(padded_shape[3]) + int(pad_left) + int(pad_right)
+            x_ndhwc_padded = ctx.add_intermediate_tensor(
+                f"{node.name}_input_ndhwc_padded",
+                dtype=ctx.get_tensor_dtype(x_ndhwc_conv),
+                shape=padded_shape,
+            )
+            x_ndhwc_padded_tensor = ctx.model_ir.tensors[x_ndhwc_padded]
+            x_sig = (
+                list(x_tensor.shape_signature)
+                if x_tensor.shape_signature is not None
+                else list(x_tensor.shape)
+            )
+            if len(x_sig) == 5:
+                padded_sig = list(x_sig)
+                if int(padded_sig[1]) >= 0:
+                    padded_sig[1] = int(padded_sig[1]) + int(pad_front) + int(pad_back)
+                if int(padded_sig[2]) >= 0:
+                    padded_sig[2] = int(padded_sig[2]) + int(pad_top) + int(pad_bottom)
+                if int(padded_sig[3]) >= 0:
+                    padded_sig[3] = int(padded_sig[3]) + int(pad_left) + int(pad_right)
+                x_ndhwc_padded_tensor.shape_signature = [int(v) for v in padded_sig]
+
+            pads_name = ctx.add_const_tensor(
+                f"{node.name}_pads_ndhwc",
+                np.asarray(
+                    [
+                        [0, 0],
+                        [pad_front, pad_back],
+                        [pad_top, pad_bottom],
+                        [pad_left, pad_right],
+                        [0, 0],
+                    ],
+                    dtype=np.int32,
+                ),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="PAD",
+                    inputs=[x_ndhwc_conv, pads_name],
+                    outputs=[x_ndhwc_padded],
+                )
+            )
+            x_ndhwc_conv = x_ndhwc_padded
+
+    # ONNX Conv3D weights are OI(DHW); TFLite CONV_3D expects DHWIO.
+    w_conv = np.transpose(weights, (2, 3, 4, 1, 0))
+    w_name = ctx.add_const_tensor(
+        f"{node.name}_conv3d_filter",
+        w_conv.astype(np.float32),
+    )
+
+    out_channels = int(weights.shape[0])
+    bias_values = None
+    if len(node.inputs) >= 3:
+        bias_values = ctx.get_constant_array(node.inputs[2].name)
+    if bias_values is None:
+        bias_values = np.zeros((out_channels,), dtype=np.float32)
+    bias_values = np.asarray(bias_values, dtype=np.float32).reshape(-1)
+    if int(bias_values.size) != out_channels:
+        raise NotImplementedError(
+            "Conv3D bias size must match output channels. "
+            f"op={node.name} bias_size={int(bias_values.size)} out_channels={out_channels}"
+        )
+    b_name = ctx.add_const_tensor(
+        f"{node.name}_conv3d_bias",
+        bias_values,
+    )
+
+    y_ndhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_output_ndhwc",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=ndhwc_output_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONV_3D",
+            inputs=[x_ndhwc_conv, w_name, b_name],
+            outputs=[y_ndhwc],
+            options={
+                "padding": padding,
+                "strideD": int(strides[0]),
+                "strideH": int(strides[1]),
+                "strideW": int(strides[2]),
+                "dilationDFactor": int(dilations[0]),
+                "dilationHFactor": int(dilations[1]),
+                "dilationWFactor": int(dilations[2]),
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+    ctx.model_ir.tensors[y_ndhwc].shape_signature = [int(v) for v in ndhwc_output_signature]
+
+    make_transpose(
+        ctx,
+        y_ndhwc,
+        output_name,
+        [0, 4, 1, 2, 3],
+    )
+
+
 def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     weight_name = node.inputs[1].name
@@ -1348,6 +1916,11 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
     if len(input_shape) == 3 and len(output_shape) == 3:
         _build_conv1d_via_conv2d(node, ctx)
         return
+    if len(input_shape) == 5 and len(output_shape) == 5:
+        weights_3d = ctx.get_constant_array(weight_name)
+        if weights_3d is not None and np.asarray(weights_3d).ndim == 5:
+            _build_conv3d_op(node, ctx)
+            return
     if len(input_shape) != 4 or len(output_shape) != 4:
         raise NotImplementedError(f"Only 2D Conv (rank=4) is supported. op={node.name}")
 

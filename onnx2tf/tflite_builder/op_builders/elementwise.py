@@ -36,6 +36,29 @@ def _normalize_axis_for_rank(axis: int, rank: int) -> int:
     return int(a)
 
 
+def _get_main_onnx_opset(ctx: Any) -> int | None:
+    onnx_model = getattr(ctx, "onnx_model", None)
+    if onnx_model is None:
+        return None
+    for opset in getattr(onnx_model, "opset_import", []):
+        domain = str(getattr(opset, "domain", ""))
+        if domain in {"", "ai.onnx"}:
+            try:
+                return int(opset.version)
+            except Exception:
+                return None
+    return None
+
+
+def _resolve_softmax_axis(node: Any, ctx: Any, rank: int) -> int:
+    if "axis" in node.attrs:
+        raw_axis = int(node.attrs["axis"])
+    else:
+        opset = _get_main_onnx_opset(ctx)
+        raw_axis = -1 if opset is not None and int(opset) >= 13 else 1
+    return _normalize_axis_for_rank(axis=raw_axis, rank=rank)
+
+
 def _axis_to_last_permutations(axis: int, rank: int) -> tuple[list[int], list[int]]:
     perm_to_last = [int(v) for v in range(rank) if int(v) != int(axis)] + [int(axis)]
     perm_from_last = [0] * int(rank)
@@ -45,6 +68,35 @@ def _axis_to_last_permutations(axis: int, rank: int) -> tuple[list[int], list[in
 
 
 _FLOAT_TENSOR_DTYPES = {"FLOAT16", "FLOAT32"}
+
+
+def _numpy_dtype_for_tensor(tflite_dtype: str) -> np.dtype:
+    dt = str(tflite_dtype).upper()
+    if dt == "BOOL":
+        return np.dtype(np.bool_)
+    if dt == "INT8":
+        return np.dtype(np.int8)
+    if dt == "UINT8":
+        return np.dtype(np.uint8)
+    if dt == "INT16":
+        return np.dtype(np.int16)
+    if dt == "UINT16":
+        return np.dtype(np.uint16)
+    if dt == "INT32":
+        return np.dtype(np.int32)
+    if dt == "UINT32":
+        return np.dtype(np.uint32)
+    if dt == "INT64":
+        return np.dtype(np.int64)
+    if dt == "UINT64":
+        return np.dtype(np.uint64)
+    if dt == "FLOAT16":
+        return np.dtype(np.float16)
+    if dt == "FLOAT32":
+        return np.dtype(np.float32)
+    if dt == "FLOAT64":
+        return np.dtype(np.float64)
+    raise NotImplementedError(f"Unsupported dtype for clip lowering: dtype={tflite_dtype}")
 
 
 def _compute_dtype_for_output(output_dtype: str) -> str:
@@ -647,6 +699,49 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_abs_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+
+    # TFLite ABS does not support INT64. Lower to max(x, -x).
+    if input_dtype == "INT64":
+        neg_name = ctx.add_intermediate_tensor(
+            f"{output_name}_abs_neg",
+            dtype=input_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="NEG",
+                inputs=[input_name],
+                outputs=[neg_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[input_name, neg_name],
+                outputs=[output_name],
+                options={},
+            )
+        )
+        return
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ABS",
+            inputs=[input_name],
+            outputs=[output_name],
+        )
+    )
+
+
 def build_erf_op(node: Any, ctx: Any) -> None:
     (
         compute_input_name,
@@ -941,11 +1036,12 @@ def build_where_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, x_name, output_name)
 
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
     condition_dtype = str(ctx.get_tensor_dtype(condition_name)).upper()
-    cond_for_select = condition_name
+    cond_bool_name = condition_name
     if condition_dtype != "BOOL":
         cond_shape = [int(v) for v in ctx.get_tensor_shape(condition_name)]
-        cond_for_select = ctx.add_intermediate_tensor(
+        cond_bool_name = ctx.add_intermediate_tensor(
             f"{output_name}_where_condition_bool",
             dtype="BOOL",
             shape=cond_shape,
@@ -954,7 +1050,7 @@ def build_where_op(node: Any, ctx: Any) -> None:
             OperatorIR(
                 op_type="CAST",
                 inputs=[condition_name],
-                outputs=[cond_for_select],
+                outputs=[cond_bool_name],
                 options={
                     "inDataType": condition_dtype,
                     "outDataType": "BOOL",
@@ -962,10 +1058,96 @@ def build_where_op(node: Any, ctx: Any) -> None:
             )
         )
 
+    cond_shape = [int(v) for v in ctx.get_tensor_shape(cond_bool_name)]
+    x_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
+    y_shape = [int(v) for v in ctx.get_tensor_shape(y_name)]
+    select_broadcast_supported = (
+        (cond_shape == x_shape and x_shape == y_shape)
+        or (len(cond_shape) <= 1 and x_shape == y_shape)
+    )
+
+    # TFLite SELECT broadcasting is limited. For unsupported broadcast patterns,
+    # rewrite Where to arithmetic equivalent when output is float.
+    if not select_broadcast_supported and output_dtype in {"FLOAT16", "FLOAT32"}:
+        output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+        x_cast_name = _cast_tensor_if_needed(
+            ctx=ctx,
+            src_name=x_name,
+            dst_dtype=output_dtype,
+            base_name=f"{output_name}_where_x_cast",
+        )
+        y_cast_name = _cast_tensor_if_needed(
+            ctx=ctx,
+            src_name=y_name,
+            dst_dtype=output_dtype,
+            base_name=f"{output_name}_where_y_cast",
+        )
+        cond_cast_name = _cast_tensor_if_needed(
+            ctx=ctx,
+            src_name=cond_bool_name,
+            dst_dtype=output_dtype,
+            base_name=f"{output_name}_where_condition_cast",
+        )
+        one_np_dtype = np.float16 if output_dtype == "FLOAT16" else np.float32
+        one_const_name = ctx.add_const_tensor(
+            f"{output_name}_where_one",
+            np.asarray(1.0, dtype=one_np_dtype),
+        )
+
+        inv_cond_name = ctx.add_intermediate_tensor(
+            f"{output_name}_where_condition_inv",
+            dtype=output_dtype,
+            shape=cond_shape,
+        )
+        x_term_name = ctx.add_intermediate_tensor(
+            f"{output_name}_where_x_term",
+            dtype=output_dtype,
+            shape=output_shape,
+        )
+        y_term_name = ctx.add_intermediate_tensor(
+            f"{output_name}_where_y_term",
+            dtype=output_dtype,
+            shape=output_shape,
+        )
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[one_const_name, cond_cast_name],
+                outputs=[inv_cond_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[cond_cast_name, x_cast_name],
+                outputs=[x_term_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[inv_cond_name, y_cast_name],
+                outputs=[y_term_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[x_term_name, y_term_name],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
     ctx.add_operator(
         OperatorIR(
             op_type="SELECT",
-            inputs=[cond_for_select, x_name, y_name],
+            inputs=[cond_bool_name, x_name, y_name],
             outputs=[output_name],
         )
     )
@@ -2022,6 +2204,10 @@ def build_clip_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
 
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    clip_np_dtype = _numpy_dtype_for_tensor(input_dtype)
+    float_clip_input = input_dtype in {"FLOAT16", "FLOAT32", "FLOAT64"}
+
     clip_min = _get_clip_bound_value(node.attrs.get("min", None), float("-inf"))
     clip_max = _get_clip_bound_value(node.attrs.get("max", None), float("inf"))
     min_arr = None
@@ -2029,22 +2215,35 @@ def build_clip_op(node: Any, ctx: Any) -> None:
     if len(node.inputs) >= 2:
         min_const = ctx.get_constant_array(node.inputs[1].name)
         if min_const is not None:
-            min_arr = np.asarray(min_const, dtype=np.float32)
+            min_arr = np.asarray(min_const, dtype=clip_np_dtype)
             clip_min = _get_clip_bound_value(min_arr, clip_min)
     if len(node.inputs) >= 3:
         max_const = ctx.get_constant_array(node.inputs[2].name)
         if max_const is not None:
-            max_arr = np.asarray(max_const, dtype=np.float32)
+            max_arr = np.asarray(max_const, dtype=clip_np_dtype)
             clip_max = _get_clip_bound_value(max_arr, clip_max)
 
     if min_arr is None and np.isfinite(clip_min):
-        min_arr = np.asarray(clip_min, dtype=np.float32)
+        min_arr = np.asarray(clip_min, dtype=clip_np_dtype)
     if max_arr is None and np.isfinite(clip_max):
-        max_arr = np.asarray(clip_max, dtype=np.float32)
+        max_arr = np.asarray(clip_max, dtype=clip_np_dtype)
 
-    if abs(clip_min - 0.0) <= 1e-6 and abs(clip_max - 6.0) <= 1e-6 and min_arr is not None and max_arr is not None:
+    if (
+        float_clip_input
+        and abs(clip_min - 0.0) <= 1e-6
+        and abs(clip_max - 6.0) <= 1e-6
+        and min_arr is not None
+        and max_arr is not None
+    ):
         op_type = "RELU6"
-    elif abs(clip_min - 0.0) <= 1e-6 and math.isinf(clip_max) and clip_max > 0.0 and min_arr is not None and max_arr is None:
+    elif (
+        float_clip_input
+        and abs(clip_min - 0.0) <= 1e-6
+        and math.isinf(clip_max)
+        and clip_max > 0.0
+        and min_arr is not None
+        and max_arr is None
+    ):
         op_type = "RELU"
     else:
         output_dtype = ctx.get_tensor_dtype(output_name)
@@ -2053,7 +2252,7 @@ def build_clip_op(node: Any, ctx: Any) -> None:
         if min_arr is not None:
             min_name = ctx.add_const_tensor(
                 f"{node.name}_clip_min",
-                np.asarray(min_arr, dtype=np.float32),
+                np.asarray(min_arr, dtype=clip_np_dtype),
             )
             min_output_name = output_name
             if max_arr is not None:
@@ -2082,7 +2281,7 @@ def build_clip_op(node: Any, ctx: Any) -> None:
         if max_arr is not None:
             max_name = ctx.add_const_tensor(
                 f"{node.name}_clip_max",
-                np.asarray(max_arr, dtype=np.float32),
+                np.asarray(max_arr, dtype=clip_np_dtype),
             )
             ctx.add_operator(
                 OperatorIR(
@@ -2129,8 +2328,7 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
     rank = len(input_shape)
     if rank <= 0:
         raise NotImplementedError(f"Softmax requires rank >= 1. op={node.name} shape={input_shape}")
-    axis = int(node.attrs.get("axis", 1))
-    axis = _normalize_axis_for_rank(axis=axis, rank=rank)
+    axis = _resolve_softmax_axis(node=node, ctx=ctx, rank=rank)
 
     if axis == rank - 1:
         ctx.add_operator(
@@ -2189,8 +2387,7 @@ def build_logsoftmax_op(node: Any, ctx: Any) -> None:
     rank = len(input_shape)
     if rank <= 0:
         raise NotImplementedError(f"LogSoftmax requires rank >= 1. op={node.name} shape={input_shape}")
-    axis = int(node.attrs.get("axis", 1))
-    axis = _normalize_axis_for_rank(axis=axis, rank=rank)
+    axis = _resolve_softmax_axis(node=node, ctx=ctx, rank=rank)
 
     output_dtype = str(ctx.get_tensor_dtype(output_name))
     if axis != rank - 1:
