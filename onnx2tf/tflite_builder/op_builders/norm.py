@@ -136,9 +136,13 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     input_rank = len(input_shape)
-    if input_rank == 4:
-        bn_mul = bn_mul.reshape(1, -1, 1, 1)
-        bn_add = bn_add.reshape(1, -1, 1, 1)
+    if input_rank >= 3:
+        # ONNX BatchNormalization uses channel axis=1 for rank>=3.
+        # TFLite binary broadcast aligns trailing axes, so channel coefficients
+        # must be materialized as [1, C, 1, ...] to keep channel-wise semantics.
+        coeff_shape = [1, -1] + [1] * int(input_rank - 2)
+        bn_mul = bn_mul.reshape(coeff_shape)
+        bn_add = bn_add.reshape(coeff_shape)
     elif input_rank == 2:
         bn_mul = bn_mul.reshape(1, -1)
         bn_add = bn_add.reshape(1, -1)

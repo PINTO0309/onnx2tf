@@ -1,4 +1,5 @@
 from onnx2tf.tflite_builder.op_builders.elementwise import (
+    build_abs_op,
     build_acos_op,
     build_acosh_op,
     build_asin_op,
@@ -40,8 +41,10 @@ from onnx2tf.tflite_builder.op_builders.shape import (
     build_eyelike_op,
     build_expand_op,
     build_flatten_op,
+    build_grid_sample_op,
     build_identity_op,
     build_pad_op,
+    build_random_normal_like_op,
     build_range_op,
     build_resize_op,
     build_reshape_op,
@@ -76,7 +79,9 @@ from onnx2tf.tflite_builder.op_builders.recurrent import (
     build_rnn_op,
 )
 from onnx2tf.tflite_builder.op_builders.reduce import (
+    build_cumsum_op,
     build_global_average_pool_op,
+    build_global_max_pool_op,
     build_reduce_l1_op,
     build_reduce_l2_op,
     build_reduce_op,
@@ -121,6 +126,7 @@ from onnx2tf.tflite_builder.op_builders.quantized import (
 )
 
 __all__ = [
+    "build_abs_op",
     "build_binary_op",
     "build_acos_op",
     "build_acosh_op",
@@ -160,8 +166,10 @@ __all__ = [
     "build_eyelike_op",
     "build_expand_op",
     "build_flatten_op",
+    "build_grid_sample_op",
     "build_identity_op",
     "build_pad_op",
+    "build_random_normal_like_op",
     "build_range_op",
     "build_resize_op",
     "build_reshape_op",
@@ -186,9 +194,11 @@ __all__ = [
     "build_gru_op",
     "build_lstm_op",
     "build_rnn_op",
+    "build_cumsum_op",
     "build_reduce_l1_op",
     "build_reduce_l2_op",
     "build_global_average_pool_op",
+    "build_global_max_pool_op",
     "build_reduce_op",
     "build_argmin_op",
     "build_argmax_op",

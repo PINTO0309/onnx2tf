@@ -165,13 +165,24 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         attr_name="starts",
         label="starts",
     )
-    ends = _parse_slice_indices(
-        node=node,
-        ctx=ctx,
-        input_index=2,
-        attr_name="ends",
-        label="ends",
-    )
+    dynamic_end_input_name = ""
+    ends: list[int] = []
+    if (
+        len(node.inputs) > 2
+        and str(node.inputs[2].name) != ""
+        and ctx.get_constant_array(node.inputs[2].name) is None
+        and "ends" not in node.attrs
+    ):
+        dynamic_end_input_name = str(node.inputs[2].name)
+        ends = [0 for _ in range(len(starts))]
+    else:
+        ends = _parse_slice_indices(
+            node=node,
+            ctx=ctx,
+            input_index=2,
+            attr_name="ends",
+            label="ends",
+        )
     if len(starts) != len(ends):
         raise NotImplementedError(
             f"Slice starts and ends length mismatch. op={node.name} "
@@ -207,6 +218,120 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             f"Slice starts/axes/steps length mismatch. op={node.name} "
             f"starts_len={len(starts)} axes_len={len(axes)} steps_len={len(steps)}"
         )
+    normalized_axes = [
+        _normalize_axis(axis_raw, rank, op_name=node.name)
+        for axis_raw in axes
+    ]
+
+    if dynamic_end_input_name != "":
+        if not (
+            rank == 1
+            and len(starts) == 1
+            and len(ends) == 1
+            and len(normalized_axes) == 1
+            and len(steps) == 1
+            and int(starts[0]) == 0
+            and int(normalized_axes[0]) == 0
+            and int(steps[0]) == 1
+        ):
+            raise NotImplementedError(
+                "Slice with dynamic end is supported only for rank-1 axis-0 "
+                "prefix slice with start=0 and step=1 in flatbuffer_direct. "
+                f"op={node.name} rank={rank} starts={starts} axes={axes} steps={steps}"
+            )
+        dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_input_name)]
+        dynamic_end_name = dynamic_end_input_name
+        dynamic_end_dtype = str(ctx.get_tensor_dtype(dynamic_end_input_name)).upper()
+        if len(dynamic_end_shape) != 1 or int(dynamic_end_shape[0]) != 1:
+            reshape_shape_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_end_shape",
+                np.asarray([1], dtype=np.int32),
+            )
+            reshaped_end_name = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_end_flat",
+                dtype=dynamic_end_dtype,
+                shape=[1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[dynamic_end_input_name, reshape_shape_name],
+                    outputs=[reshaped_end_name],
+                    options={"newShape": [1]},
+                )
+            )
+            dynamic_end_name = reshaped_end_name
+            dynamic_end_shape = [1]
+        if dynamic_end_dtype != "INT32":
+            dynamic_end_i32 = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_end_i32",
+                dtype="INT32",
+                shape=dynamic_end_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[dynamic_end_name],
+                    outputs=[dynamic_end_i32],
+                    options={
+                        "inDataType": dynamic_end_dtype,
+                        "outDataType": "INT32",
+                    },
+                )
+            )
+            dynamic_end_name = dynamic_end_i32
+        begin_name = ctx.add_const_tensor(
+            f"{output_name}_stridedslice_begin",
+            np.asarray([0], dtype=np.int32),
+        )
+        strides_name = ctx.add_const_tensor(
+            f"{output_name}_stridedslice_strides",
+            np.asarray([1], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=[input_name, begin_name, dynamic_end_name, strides_name],
+                outputs=[output_name],
+                options={
+                    "beginMask": 0,
+                    "endMask": 0,
+                    "ellipsisMask": 0,
+                    "newAxisMask": 0,
+                    "shrinkAxisMask": 0,
+                    "offset": False,
+                },
+            )
+        )
+        return
+
+    if any(int(step) < 0 for step in steps):
+        is_supported_full_reverse = (
+            len(starts) == 1
+            and len(ends) == 1
+            and len(normalized_axes) == 1
+            and len(steps) == 1
+            and int(steps[0]) == -1
+            and int(starts[0]) == -1
+            and int(ends[0]) <= -int(np.iinfo(np.int32).max)
+        )
+        if not is_supported_full_reverse:
+            raise NotImplementedError(
+                f"Slice negative step is not supported for flatbuffer_direct. op={node.name} "
+                f"starts={starts} ends={ends} axes={axes} steps={steps}"
+            )
+        axis_name = ctx.add_const_tensor(
+            f"{output_name}_reverse_axis",
+            np.asarray([int(normalized_axes[0])], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="REVERSE_V2",
+                inputs=[input_name, axis_name],
+                outputs=[output_name],
+            )
+        )
+        return
 
     known_dim_flags = [
         (
@@ -227,16 +352,11 @@ def build_slice_op(node: Any, ctx: Any) -> None:
     large_int = int(np.iinfo(np.int64).max // 2)
     use_strided_slice = any(not flag for flag in known_dim_flags)
 
-    for idx, axis_raw in enumerate(axes):
-        axis = _normalize_axis(axis_raw, rank, op_name=node.name)
+    for idx, axis in enumerate(normalized_axes):
         step = int(steps[idx])
         if step == 0:
             raise NotImplementedError(
                 f"Slice step must not be 0 for flatbuffer_direct. op={node.name} step={step}"
-            )
-        if step < 0:
-            raise NotImplementedError(
-                f"Slice negative step is not supported for flatbuffer_direct. op={node.name} step={step}"
             )
         if step != 1:
             use_strided_slice = True
@@ -1005,6 +1125,125 @@ def build_range_op(node: Any, ctx: Any) -> None:
     )
 
 
+def build_random_normal_like_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    input_rank = len(ctx.get_tensor_shape(input_name))
+    scale = float(node.attrs.get("scale", 1.0))
+    mean = float(node.attrs.get("mean", 0.0))
+    has_scale = not np.isclose(scale, 1.0)
+    has_mean = not np.isclose(mean, 0.0)
+
+    shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_random_shape",
+        dtype="INT32",
+        shape=[int(input_rank)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[shape_name],
+            options={"outType": "INT32"},
+        )
+    )
+
+    random_raw_name = output_name
+    if has_scale or has_mean or output_dtype != compute_dtype:
+        random_raw_name = ctx.add_intermediate_tensor(
+            f"{output_name}_random_raw",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+    seed_attr = node.attrs.get("seed", None)
+    random_options: dict[str, Any] = {}
+    if seed_attr is not None:
+        seed = int(float(seed_attr))
+        random_options["seed"] = int(seed)
+        random_options["seed2"] = int(seed)
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RANDOM_STANDARD_NORMAL",
+            inputs=[shape_name],
+            outputs=[random_raw_name],
+            options=random_options,
+        )
+    )
+
+    current_name = random_raw_name
+    if has_scale:
+        scale_name = ctx.add_const_tensor(
+            f"{output_name}_random_scale",
+            np.asarray(scale, dtype=np.float16 if compute_dtype == "FLOAT16" else np.float32),
+        )
+        scaled_name = ctx.add_intermediate_tensor(
+            f"{output_name}_random_scaled",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[current_name, scale_name],
+                outputs=[scaled_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = scaled_name
+
+    if has_mean:
+        mean_name = ctx.add_const_tensor(
+            f"{output_name}_random_mean",
+            np.asarray(mean, dtype=np.float16 if compute_dtype == "FLOAT16" else np.float32),
+        )
+        shifted_name = ctx.add_intermediate_tensor(
+            f"{output_name}_random_shifted",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[current_name, mean_name],
+                outputs=[shifted_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = shifted_name
+
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[current_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+    elif current_name != output_name:
+        output_shape_const = ctx.add_const_tensor(
+            f"{output_name}_random_identity_shape",
+            np.asarray(output_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[current_name, output_shape_const],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+
+
 def _normalize_shape_slice_index(index: int, rank: int) -> int:
     normalized = int(index)
     if normalized < 0:
@@ -1348,8 +1587,12 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    mode = str(node.attrs.get("mode", "constant")).lower()
-    if mode != "constant":
+    mode_raw = node.attrs.get("mode", "constant")
+    if isinstance(mode_raw, (bytes, bytearray)):
+        mode = mode_raw.decode("utf-8").lower()
+    else:
+        mode = str(mode_raw).lower()
+    if mode not in ["constant", "reflect"]:
         raise NotImplementedError(
             f"Pad mode is not supported in flatbuffer_direct. op={node.name} mode={mode}"
         )
@@ -1440,27 +1683,36 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    # Keep support minimal/safe: constant zero-padding value only.
-    if len(node.inputs) >= 3:
-        constant_value_arr = ctx.get_constant_array(node.inputs[2].name)
-        if constant_value_arr is None:
-            raise NotImplementedError(
-                f"Pad constant value input must be constant for flatbuffer_direct. op={node.name}"
+    if mode == "constant":
+        # Keep support minimal/safe: constant zero-padding value only.
+        if len(node.inputs) >= 3 and str(node.inputs[2].name) != "":
+            constant_value_arr = ctx.get_constant_array(node.inputs[2].name)
+            if constant_value_arr is None:
+                raise NotImplementedError(
+                    f"Pad constant value input must be constant for flatbuffer_direct. op={node.name}"
+                )
+            constant_value = float(np.asarray(constant_value_arr).reshape(-1)[0])
+            if abs(constant_value) > 1e-12:
+                raise NotImplementedError(
+                    "Pad with non-zero constant value is not supported in flatbuffer_direct. "
+                    f"op={node.name} value={constant_value}"
+                )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="PAD",
+                inputs=[input_name, pads_name],
+                outputs=[output_name],
             )
-        constant_value = float(np.asarray(constant_value_arr).reshape(-1)[0])
-        if abs(constant_value) > 1e-12:
-            raise NotImplementedError(
-                "Pad with non-zero constant value is not supported in flatbuffer_direct. "
-                f"op={node.name} value={constant_value}"
-            )
-
-    ctx.add_operator(
-        OperatorIR(
-            op_type="PAD",
-            inputs=[input_name, pads_name],
-            outputs=[output_name],
         )
-    )
+    else:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MIRROR_PAD",
+                inputs=[input_name, pads_name],
+                outputs=[output_name],
+                options={"mode": "REFLECT"},
+            )
+        )
 
 
 def _resolve_axes_from_attr_or_input(node: Any, ctx: Any) -> list[int]:
@@ -1715,6 +1967,24 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
         dtype="INT32",
         shape=[input_rank],
     )
+    # Preserve dynamic dimensions in output metadata. Dynamic RESHAPE must not
+    # be pinned to placeholder-1 static dimensions.
+    output_rank = int(input_rank + len(normalized_axes))
+    axes_set = set(int(v) for v in normalized_axes)
+    inferred_signature: list[int] = []
+    src_idx = 0
+    for out_axis in range(output_rank):
+        if out_axis in axes_set:
+            inferred_signature.append(1)
+        else:
+            if src_idx < len(input_signature):
+                inferred_signature.append(int(input_signature[src_idx]))
+            else:
+                inferred_signature.append(-1)
+            src_idx += 1
+    output_tensor.shape_signature = [int(v) for v in inferred_signature]
+    output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in inferred_signature]
+
     ctx.add_operator(
         OperatorIR(
             op_type="SHAPE",
@@ -1798,7 +2068,7 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
             op_type="RESHAPE",
             inputs=[input_name, current_shape_name],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in output_shape]},
+            options={"newShape": []},
         )
     )
 
@@ -2675,6 +2945,585 @@ def _build_resize_cubic_strict_op(
                 },
             )
         )
+
+
+def build_grid_sample_op(node: Any, ctx: Any) -> None:
+    image_name = node.inputs[0].name
+    grid_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(image_name)
+    ctx.ensure_tensor(grid_name)
+    ctx.ensure_tensor(output_name)
+
+    image_shape = [int(v) for v in ctx.get_tensor_shape(image_name)]
+    grid_shape = [int(v) for v in ctx.get_tensor_shape(grid_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    n, c, h, w = [int(v) for v in image_shape]
+    out_n, out_c, out_h, out_w = [int(v) for v in output_shape]
+    align_corners = bool(int(node.attrs.get("align_corners", 0)))
+
+    image_dtype = str(ctx.get_tensor_dtype(image_name)).upper()
+    grid_dtype = str(ctx.get_tensor_dtype(grid_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = (
+        "FLOAT32"
+        if image_dtype == "FLOAT32" or grid_dtype == "FLOAT32"
+        else "FLOAT16"
+    )
+    compute_np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
+
+    def _add_float_const(base_name: str, value: float) -> str:
+        return ctx.add_const_tensor(
+            base_name,
+            np.asarray(value, dtype=compute_np_dtype),
+        )
+
+    def _add_binary_op(op_type: str, lhs: str, rhs: str, out: str) -> None:
+        options: dict[str, Any] = {}
+        if op_type in {"ADD", "SUB", "MUL", "DIV"}:
+            options = {"fusedActivationFunction": "NONE"}
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[lhs, rhs],
+                outputs=[out],
+                options=options,
+            )
+        )
+
+    def _squeeze_last_dim(name: str, tag: str, dtype: str) -> str:
+        squeezed = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_squeezed",
+            dtype=dtype,
+            shape=[int(n), int(out_h), int(out_w)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[name],
+                outputs=[squeezed],
+                options={"squeezeDims": [3]},
+            )
+        )
+        return squeezed
+
+    def _build_linear_index(y_idx: str, x_idx: str, tag: str, width_const: str) -> str:
+        mul_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_mul",
+            dtype="INT32",
+            shape=[int(n), int(out_h), int(out_w)],
+        )
+        linear_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_linear",
+            dtype="INT32",
+            shape=[int(n), int(out_h), int(out_w)],
+        )
+        _add_binary_op("MUL", y_idx, width_const, mul_name)
+        _add_binary_op("ADD", mul_name, x_idx, linear_name)
+        return linear_name
+
+    def _build_gather(linear_idx_name: str, tag: str, params_name: str) -> str:
+        gathered_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather",
+            dtype=compute_dtype,
+            shape=[int(n), int(c), int(out_h), int(out_w)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[params_name, linear_idx_name],
+                outputs=[gathered_name],
+                options={
+                    "axis": 2,
+                    "batchDims": 1,
+                },
+            )
+        )
+        return gathered_name
+
+    image_compute_name = image_name
+    if image_dtype != compute_dtype:
+        image_compute_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_image_{compute_dtype.lower()}",
+            dtype=compute_dtype,
+            shape=image_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[image_name],
+                outputs=[image_compute_name],
+                options={
+                    "inDataType": image_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    grid_compute_name = grid_name
+    if grid_dtype != compute_dtype:
+        grid_compute_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_grid_{compute_dtype.lower()}",
+            dtype=compute_dtype,
+            shape=grid_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[grid_name],
+                outputs=[grid_compute_name],
+                options={
+                    "inDataType": grid_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    # zeros-padding fast path (same idea as tf backend): pad by 1 on H/W to
+    # eliminate explicit in-bound mask ops and gather zeros from border.
+    paddings_name = ctx.add_const_tensor(
+        f"{output_name}_gridsample_paddings",
+        np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int32),
+    )
+    image_padded_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_image_padded",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(h + 2), int(w + 2)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="PAD",
+            inputs=[image_compute_name, paddings_name],
+            outputs=[image_padded_name],
+        )
+    )
+    image_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_image_flat",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int((h + 2) * (w + 2))],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=image_padded_name,
+        output_name=image_flat_name,
+        new_shape=[int(n), int(c), int((h + 2) * (w + 2))],
+    )
+
+    slice_size_const = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_slice_size",
+        np.asarray([int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1], dtype=np.int32),
+    )
+    grid_x_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_grid_x",
+        dtype=compute_dtype,
+        shape=[int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1],
+    )
+    grid_y_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_grid_y",
+        dtype=compute_dtype,
+        shape=[int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1],
+    )
+    grid_x_begin = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_x_begin",
+        np.asarray([0, 0, 0, 0], dtype=np.int32),
+    )
+    grid_y_begin = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_y_begin",
+        np.asarray([0, 0, 0, 1], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[grid_compute_name, grid_x_begin, slice_size_const],
+            outputs=[grid_x_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[grid_compute_name, grid_y_begin, slice_size_const],
+            outputs=[grid_y_name],
+        )
+    )
+
+    one_const = _add_float_const(f"{output_name}_gridsample_one", 1.0)
+    zero_const = _add_float_const(f"{output_name}_gridsample_zero", 0.0)
+    half_const = _add_float_const(f"{output_name}_gridsample_half", 0.5)
+    neg_one_const = _add_float_const(f"{output_name}_gridsample_neg_one", -1.0)
+    w_const = _add_float_const(f"{output_name}_gridsample_w", float(w))
+    h_const = _add_float_const(f"{output_name}_gridsample_h", float(h))
+    w_pad_max_const = _add_float_const(f"{output_name}_gridsample_w_pad_max", float(w + 1))
+    h_pad_max_const = _add_float_const(f"{output_name}_gridsample_h_pad_max", float(h + 1))
+    x_scale_const = _add_float_const(
+        f"{output_name}_gridsample_x_scale",
+        float((w - 1) * 0.5 if align_corners else w * 0.5),
+    )
+    y_scale_const = _add_float_const(
+        f"{output_name}_gridsample_y_scale",
+        float((h - 1) * 0.5 if align_corners else h * 0.5),
+    )
+
+    x_plus_one = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x_plus_one",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y_plus_one = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y_plus_one",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    _add_binary_op("ADD", grid_x_name, one_const, x_plus_one)
+    _add_binary_op("ADD", grid_y_name, one_const, y_plus_one)
+    x_name_pre = x_name
+    y_name_pre = y_name
+    if not align_corners:
+        x_name_pre = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_x_pre",
+            dtype=compute_dtype,
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+        y_name_pre = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_y_pre",
+            dtype=compute_dtype,
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+    _add_binary_op("MUL", x_plus_one, x_scale_const, x_name_pre)
+    _add_binary_op("MUL", y_plus_one, y_scale_const, y_name_pre)
+    if not align_corners:
+        _add_binary_op("SUB", x_name_pre, half_const, x_name)
+        _add_binary_op("SUB", y_name_pre, half_const, y_name)
+
+    x_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x_shift_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x_shift",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y_shift_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y_shift",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    _add_binary_op("MAXIMUM", x_name, neg_one_const, x_clip_low_name)
+    _add_binary_op("MINIMUM", x_clip_low_name, w_const, x_clip_name)
+    _add_binary_op("MAXIMUM", y_name, neg_one_const, y_clip_low_name)
+    _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
+    _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
+    _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
+
+    x0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x0",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y0",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x1_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x1",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y1_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y1",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    ctx.add_operator(OperatorIR(op_type="FLOOR", inputs=[x_shift_name], outputs=[x0_name]))
+    ctx.add_operator(OperatorIR(op_type="FLOOR", inputs=[y_shift_name], outputs=[y0_name]))
+    _add_binary_op("ADD", x0_name, one_const, x1_name)
+    _add_binary_op("ADD", y0_name, one_const, y1_name)
+
+    x0_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x0_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x0_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x0_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x1_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x1_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x1_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x1_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y0_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y0_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y0_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y0_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y1_clip_low_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y1_clip_low",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y1_clip_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y1_clip",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    _add_binary_op("MAXIMUM", x0_name, zero_const, x0_clip_low_name)
+    _add_binary_op("MINIMUM", x0_clip_low_name, w_pad_max_const, x0_clip_name)
+    _add_binary_op("MAXIMUM", x1_name, zero_const, x1_clip_low_name)
+    _add_binary_op("MINIMUM", x1_clip_low_name, w_pad_max_const, x1_clip_name)
+    _add_binary_op("MAXIMUM", y0_name, zero_const, y0_clip_low_name)
+    _add_binary_op("MINIMUM", y0_clip_low_name, h_pad_max_const, y0_clip_name)
+    _add_binary_op("MAXIMUM", y1_name, zero_const, y1_clip_low_name)
+    _add_binary_op("MINIMUM", y1_clip_low_name, h_pad_max_const, y1_clip_name)
+
+    dx_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_dx",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    dy_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_dy",
+        dtype=compute_dtype,
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    _add_binary_op("SUB", x_shift_name, x0_clip_name, dx_name)
+    _add_binary_op("SUB", y_shift_name, y0_clip_name, dy_name)
+
+    x0_i_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x0_i",
+        dtype="INT32",
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    x1_i_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_x1_i",
+        dtype="INT32",
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y0_i_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y0_i",
+        dtype="INT32",
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    y1_i_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_y1_i",
+        dtype="INT32",
+        shape=[int(n), int(out_h), int(out_w), 1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[x0_clip_name],
+            outputs=[x0_i_name],
+            options={"inDataType": compute_dtype, "outDataType": "INT32"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[x1_clip_name],
+            outputs=[x1_i_name],
+            options={"inDataType": compute_dtype, "outDataType": "INT32"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[y0_clip_name],
+            outputs=[y0_i_name],
+            options={"inDataType": compute_dtype, "outDataType": "INT32"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[y1_clip_name],
+            outputs=[y1_i_name],
+            options={"inDataType": compute_dtype, "outDataType": "INT32"},
+        )
+    )
+
+    x0_3d = _squeeze_last_dim(x0_i_name, "x0", "INT32")
+    x1_3d = _squeeze_last_dim(x1_i_name, "x1", "INT32")
+    y0_3d = _squeeze_last_dim(y0_i_name, "y0", "INT32")
+    y1_3d = _squeeze_last_dim(y1_i_name, "y1", "INT32")
+    linear_width_const = ctx.add_const_tensor(
+        f"{output_name}_gridsample_linear_width",
+        np.asarray(int(w + 2), dtype=np.int32),
+    )
+    idx00_name = _build_linear_index(y0_3d, x0_3d, "idx00", linear_width_const)
+    idx01_name = _build_linear_index(y1_3d, x0_3d, "idx01", linear_width_const)
+    idx10_name = _build_linear_index(y0_3d, x1_3d, "idx10", linear_width_const)
+    idx11_name = _build_linear_index(y1_3d, x1_3d, "idx11", linear_width_const)
+
+    val00_name = _build_gather(idx00_name, "val00", image_flat_name)
+    val01_name = _build_gather(idx01_name, "val01", image_flat_name)
+    val10_name = _build_gather(idx10_name, "val10", image_flat_name)
+    val11_name = _build_gather(idx11_name, "val11", image_flat_name)
+
+    dx_n1hw = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_dx_n1hw",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    dy_n1hw = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_dy_n1hw",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    dx_n1hw = make_transpose(
+        ctx=ctx,
+        input_name=dx_name,
+        output_name=dx_n1hw,
+        perm_values=[0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+    dy_n1hw = make_transpose(
+        ctx=ctx,
+        input_name=dy_name,
+        output_name=dy_n1hw,
+        perm_values=[0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+    one_minus_dx_n1hw = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_one_minus_dx",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    one_minus_dy_n1hw = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_one_minus_dy",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    _add_binary_op("SUB", one_const, dx_n1hw, one_minus_dx_n1hw)
+    _add_binary_op("SUB", one_const, dy_n1hw, one_minus_dy_n1hw)
+
+    w00_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_w00",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    w01_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_w01",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    w10_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_w10",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    w11_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_w11",
+        dtype=compute_dtype,
+        shape=[int(n), 1, int(out_h), int(out_w)],
+    )
+    _add_binary_op("MUL", one_minus_dx_n1hw, one_minus_dy_n1hw, w00_name)
+    _add_binary_op("MUL", one_minus_dx_n1hw, dy_n1hw, w01_name)
+    _add_binary_op("MUL", dx_n1hw, one_minus_dy_n1hw, w10_name)
+    _add_binary_op("MUL", dx_n1hw, dy_n1hw, w11_name)
+
+    term00_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_term00",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    term01_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_term01",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    term10_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_term10",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    term11_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_term11",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    _add_binary_op("MUL", val00_name, w00_name, term00_name)
+    _add_binary_op("MUL", val01_name, w01_name, term01_name)
+    _add_binary_op("MUL", val10_name, w10_name, term10_name)
+    _add_binary_op("MUL", val11_name, w11_name, term11_name)
+
+    sum0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_sum0",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    sum1_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_sum1",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w)],
+    )
+    output_compute_name = output_name
+    if output_dtype != compute_dtype:
+        output_compute_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_output_compute",
+            dtype=compute_dtype,
+            shape=[int(out_n), int(out_c), int(out_h), int(out_w)],
+        )
+    _add_binary_op("ADD", term00_name, term01_name, sum0_name)
+    _add_binary_op("ADD", term10_name, term11_name, sum1_name)
+    _add_binary_op("ADD", sum0_name, sum1_name, output_compute_name)
+
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[output_compute_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+    in_quant = ctx.model_ir.tensors[image_name].quantization
+    if in_quant is not None and ctx.model_ir.tensors[output_name].quantization is None:
+        ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
 
 
 def build_resize_op(node: Any, ctx: Any) -> None:
