@@ -386,6 +386,14 @@ def _build_conv1d_via_conv2d(node: Any, ctx: Any) -> None:
 
     input_sig = _tensor_signature(ctx, input_name)
     output_sig = _tensor_signature(ctx, output_name)
+    if len(input_sig) != 3:
+        input_sig = [int(v) for v in list(input_shape)]
+    if len(output_sig) != 3:
+        output_sig = [int(v) for v in list(output_shape)]
+    if len(input_sig) != 3:
+        input_sig = [int(v) for v in list(input_shape)]
+    if len(output_sig) != 3:
+        output_sig = [int(v) for v in list(output_shape)]
 
     axis_name = ctx.add_const_tensor(
         f"{node.name}_conv1d_expand_axis",
@@ -1177,7 +1185,63 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
     original_input_signature = [int(v) for v in list(input_signature)]
     original_output_signature = [int(v) for v in list(output_signature)]
 
+    def _shape_from_rank3_signature(signature: list[int]) -> list[int] | None:
+        if len(signature) != 3:
+            return None
+        return [int(v) if int(v) > 0 else 1 for v in list(signature)]
+
     weights_1d = ctx.get_constant_array(weight_name)
+    rank3_input_from_signature = _shape_from_rank3_signature(input_signature)
+    if len(input_shape) != 3 and rank3_input_from_signature is not None:
+        input_shape = [int(v) for v in list(rank3_input_from_signature)]
+        input_tensor.shape = [int(v) for v in list(input_shape)]
+    rank3_output_from_signature = _shape_from_rank3_signature(output_signature)
+    if len(output_shape) != 3 and rank3_output_from_signature is not None:
+        output_shape = [int(v) for v in list(rank3_output_from_signature)]
+        output_tensor.shape = [int(v) for v in list(output_shape)]
+    if (
+        weights_1d is not None
+        and np.asarray(weights_1d).ndim == 3
+        and (len(input_shape) != 3 or len(output_shape) != 3)
+    ):
+        inferred_input_shape, inferred_output_shape = _infer_convtranspose_io_shapes_with_onnxruntime(
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+        )
+        if inferred_input_shape is not None and len(inferred_input_shape) == 3:
+            input_shape = [int(v) for v in list(inferred_input_shape)]
+            input_tensor.shape = [int(v) for v in list(input_shape)]
+            if len(input_signature) == 3:
+                input_tensor.shape_signature = [int(v) for v in list(input_signature)]
+            else:
+                input_tensor.shape_signature = [int(v) for v in list(inferred_input_shape)]
+        if inferred_output_shape is not None and len(inferred_output_shape) == 3:
+            output_shape = [int(v) for v in list(inferred_output_shape)]
+            output_tensor.shape = [int(v) for v in list(output_shape)]
+            if len(output_signature) == 3:
+                output_tensor.shape_signature = [int(v) for v in list(output_signature)]
+            else:
+                output_tensor.shape_signature = [int(v) for v in list(inferred_output_shape)]
+    if (
+        weights_1d is not None
+        and np.asarray(weights_1d).ndim == 3
+        and (len(input_shape) != 3 or len(output_shape) != 3)
+    ):
+        weights_1d_arr = np.asarray(weights_1d)
+        group = int(node.attrs.get("group", 1))
+        in_channels = int(weights_1d_arr.shape[0])
+        out_channels = int(weights_1d_arr.shape[1]) * int(group)
+        if len(input_shape) != 3:
+            input_shape = [1, int(in_channels), 1]
+            input_tensor.shape = [int(v) for v in list(input_shape)]
+            if len(input_signature) != 3:
+                input_tensor.shape_signature = [-1, int(in_channels), -1]
+        if len(output_shape) != 3:
+            output_shape = [1, int(out_channels), 1]
+            output_tensor.shape = [int(v) for v in list(output_shape)]
+            if len(output_signature) != 3:
+                output_tensor.shape_signature = [-1, int(out_channels), -1]
     if (
         len(input_shape) == 3
         and len(output_shape) == 3
@@ -1373,10 +1437,21 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         or any(int(v) <= 0 for v in list(original_output_signature))
     )
     if use_dynamic_output_shape and needs_spatial_crop:
-        raise NotImplementedError(
-            "ConvTranspose with explicit pads requires static output shape in flatbuffer_direct. "
-            f"op={node.name} output_signature={original_output_signature} pads={raw_pads}"
+        pads_are_symmetric = (
+            int(pad_top) == int(pad_bottom)
+            and int(pad_left) == int(pad_right)
         )
+        if (not pads_are_symmetric) or any(int(v) != 0 for v in output_padding):
+            raise NotImplementedError(
+                "ConvTranspose with explicit pads requires static output shape in flatbuffer_direct "
+                "unless pads are symmetric and output_padding is zero. "
+                f"op={node.name} output_signature={original_output_signature} "
+                f"pads={raw_pads} output_padding={output_padding}"
+            )
+        # For symmetric explicit pads, dynamic output-shape math below already
+        # accounts for pads. Skip explicit crop to keep the shape dynamic.
+        needs_spatial_crop = False
+        nhwc_transpose_conv_output_shape = [int(v) for v in list(nhwc_output_shape)]
     if use_dynamic_output_shape:
         kernel_shape_attr = node.attrs.get("kernel_shape", None)
         if kernel_shape_attr is None:

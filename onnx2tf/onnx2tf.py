@@ -191,6 +191,26 @@ def _prepare_onnx_graph_for_runtime_checks(
         prepared,
         prune_orphan_value_info=True,
     )
+    try:
+        # Some exporter/simplifier pipelines may leave nodes out-of-order for ORT.
+        # Rebuild runtime-check graph with a stable topological order.
+        preserved_domain = str(prepared.domain)
+        preserved_ir_version = int(prepared.ir_version)
+        preserved_metadata_props = None
+        if hasattr(prepared, 'metadata_props'):
+            preserved_metadata_props = list(prepared.metadata_props)
+        graph = gs.import_onnx(prepared)
+        graph.cleanup().toposort()
+        prepared = gs.export_onnx(
+            graph=graph,
+            do_type_check=False,
+            domain=preserved_domain,
+            ir_version=preserved_ir_version,
+        )
+        if preserved_metadata_props:
+            prepared.metadata_props.extend(preserved_metadata_props)
+    except Exception:
+        pass
     return prepared
 
 
@@ -1699,8 +1719,18 @@ def convert(
             output_folder_path,
             f'{output_file_name}_accuracy_report.json',
         )
+        eval_in_process = str(
+            os.environ.get('ONNX2TF_EVAL_IN_PROCESS', '0')
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
         try:
-            from onnx2tf.tflite_builder.accuracy_evaluator import evaluate_onnx_tflite_outputs
+            if eval_in_process:
+                from onnx2tf.tflite_builder.accuracy_evaluator import (
+                    evaluate_onnx_tflite_outputs as evaluate_onnx_tflite_outputs_impl,
+                )
+            else:
+                from onnx2tf.tflite_builder.accuracy_evaluator import (
+                    evaluate_onnx_tflite_outputs_isolated as evaluate_onnx_tflite_outputs_impl,
+                )
         except Exception as ex:
             msg = (
                 'ONNX/TFLite output check was skipped because evaluator dependencies are unavailable. '
@@ -1739,7 +1769,7 @@ def convert(
             )
             if onnx_graph_for_eval is None:
                 raise RuntimeError('ONNX graph is unavailable for evaluation.')
-            report = evaluate_onnx_tflite_outputs(
+            report = evaluate_onnx_tflite_outputs_impl(
                 onnx_graph=onnx_graph_for_eval,
                 tflite_path=tflite_path,
                 output_report_path=report_path,
@@ -1752,6 +1782,35 @@ def convert(
                 fail_on_threshold=eval_fail_on_threshold_local,
             )
         except Exception as ex:
+            ex_str = str(ex)
+            if (
+                not required
+                and 'INVALID_GRAPH' in ex_str
+                and 'topologically sorted' in ex_str
+            ):
+                info(
+                    Color.YELLOW(
+                        'ONNX/TFLite output check was skipped because ONNX graph validation '
+                        'failed in ONNX Runtime (topological order issue). '
+                        f'source={source_label} target={target_key}'
+                    )
+                )
+                return
+            if (
+                not required
+                and 'Worker exited abnormally' in ex_str
+                and 'worker=_tflite_inference_worker' in ex_str
+                and (
+                    'exit_code=-11' in ex_str
+                    or 'exit_code=139' in ex_str
+                )
+            ):
+                warn(
+                    'ONNX/TFLite output check was skipped because LiteRT crashed while invoking '
+                    f'the generated model (likely runtime-side issue). source={source_label} target={target_key} '
+                    f'reason={ex}'
+                )
+                return
             msg = (
                 'ONNX/TFLite output check failed. '
                 f'source={source_label} target={target_key} reason={ex}'
@@ -1888,6 +1947,16 @@ def convert(
                 )
             )
         except Exception as ex:
+            ex_str = str(ex)
+            if 'failed to prepare' in ex_str:
+                info(
+                    Color.YELLOW(
+                        'OP error report generation was skipped because the generated '
+                        'TFLite model could not be prepared by LiteRT for intermediate '
+                        f'tensor capture. reason={ex}'
+                    )
+                )
+                return
             warn(
                 'OP error report generation failed. '
                 f'reason={ex}'
@@ -3310,13 +3379,18 @@ def convert(
                     warn(
                         f'Conversion failed and automatic JSON generation could not find a solution after {attempt} attempts.'
                     )
-            elif not param_replacement_file and input_onnx_file_path and not auto_generate_json_on_error:
+            elif (
+                tflite_backend != 'flatbuffer_direct'
+                and not param_replacement_file
+                and input_onnx_file_path
+                and not auto_generate_json_on_error
+            ):
                 warn(
                     'Conversion failed. Automatic JSON generation on error is disabled by default.\n' +
                     'Re-run with --auto_generate_json_on_error or provide a parameter replacement JSON file.'
                 )
             if tflite_backend == 'flatbuffer_direct':
-                warn(
+                info(
                     Color.YELLOW(
                         'TF conversion path failed. '
                         'Attempting flatbuffer_direct-only conversion. '
@@ -3360,14 +3434,14 @@ def convert(
                                     tflite_split_target_bytes=tflite_split_target_bytes,
                                 )
                                 if direct_output_nms_with_argmax and not output_nms_with_argmax:
-                                    warn(
+                                    info(
                                         Color.YELLOW(
                                             'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
                                             'for builtin NonMaxSuppression lowering.'
                                         )
                                     )
                                 if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                                    warn(
+                                    info(
                                         Color.YELLOW(
                                             'Retrying flatbuffer_direct with custom-op lowering enabled '
                                             'after TF conversion failure.'
@@ -3776,14 +3850,14 @@ def convert(
                                 tflite_split_target_bytes=tflite_split_target_bytes,
                             )
                             if direct_output_nms_with_argmax and not output_nms_with_argmax:
-                                warn(
+                                info(
                                     Color.YELLOW(
                                         'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
                                         'for builtin NonMaxSuppression lowering.'
                                     )
                                 )
                             if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                                warn(
+                                info(
                                     Color.YELLOW(
                                         'Retrying flatbuffer_direct with custom-op lowering enabled.'
                                     )

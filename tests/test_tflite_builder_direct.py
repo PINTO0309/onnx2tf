@@ -53,6 +53,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains,
     _optimize_transpose_pre_concat_ndhwc_chains,
     _optimize_transpose_pre_concat_nhwc_chains,
+    _optimize_transpose_pre_unary_mean_terminal_nhwc_chains,
     _optimize_transpose_mul_add_const_prepost_nhwc_chains,
     _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains,
     _reconcile_static_tensor_shapes,
@@ -12695,6 +12696,86 @@ def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_keeps_pre_on_
     assert list(relu_op.inputs) == ["x_nchw"]
 
 
+def test_flatbuffer_direct_transpose_pre_unary_mean_terminal_nhwc_chain() -> None:
+    model_ir = ModelIR(name="transpose_pre_unary_mean_terminal_nhwc_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes_nchw"] = TensorIR(
+        name="mean_axes_nchw",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([2, 3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 8], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["u_nchw"] = TensorIR(
+        name="u_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["m_nchw"] = TensorIR(
+        name="m_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 8],
+        shape_signature=[1, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="RELU6", inputs=["x_nchw"], outputs=["u_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["u_nchw", "mean_axes_nchw"], outputs=["m_nchw"], options={"keepDims": True}),
+        OperatorIR(op_type="RESHAPE", inputs=["m_nchw", "reshape_shape"], outputs=["y"], options={"newShape": [1, 8]}),
+    ]
+
+    stats = _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_pre_unary_mean_terminal_nhwc_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["RELU6", "MEAN", "RESHAPE"]
+    relu_op = model_ir.operators[0]
+    assert list(relu_op.inputs) == ["x_nhwc"]
+    assert list(model_ir.tensors["u_nchw"].shape) == [1, 4, 4, 8]
+    mean_op = model_ir.operators[1]
+    assert list(mean_op.inputs) == ["u_nchw", "mean_axes_nchw"]
+    assert np.array_equal(
+        np.asarray(model_ir.tensors["mean_axes_nchw"].data, dtype=np.int32),
+        np.asarray([1, 2], dtype=np.int32),
+    )
+    assert list(model_ir.tensors["m_nchw"].shape) == [1, 1, 1, 8]
+
+
 def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain() -> None:
     model_ir = ModelIR(name="transpose_se_conv_mul_prepost_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
@@ -16712,6 +16793,177 @@ def test_flatbuffer_direct_flatten_preserves_dynamic_dim_in_reshape_shape() -> N
         np.asarray(shape_tensor.data, dtype=np.int32).reshape(-1),
         np.asarray([-1, 4], dtype=np.int32),
     )
+
+
+def _make_loop_static_unroll_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("loop_x", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("loop_y", TensorProto.FLOAT, [3])
+
+    trip_count = numpy_helper.from_array(np.asarray(8, dtype=np.int64), name="loop_trip_count")
+    cond_init = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="loop_cond_init")
+
+    body_iter = helper.make_tensor_value_info("i", TensorProto.INT64, [])
+    body_cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    body_state = helper.make_tensor_value_info("state_in", TensorProto.FLOAT, [3])
+    body_cond_out = helper.make_tensor_value_info("cond_out", TensorProto.BOOL, [])
+    body_state_out = helper.make_tensor_value_info("state_out", TensorProto.FLOAT, [3])
+    body_nodes = [
+        helper.make_node("Identity", ["cond"], ["cond_out"], name="LoopBodyCondIdentity"),
+        helper.make_node("Sigmoid", ["state_in"], ["state_out"], name="LoopBodySigmoid"),
+    ]
+    body_graph = helper.make_graph(
+        body_nodes,
+        "loop_body",
+        [body_iter, body_cond, body_state],
+        [body_cond_out, body_state_out],
+    )
+
+    loop_node = helper.make_node(
+        "Loop",
+        ["loop_trip_count", "loop_cond_init", "loop_x"],
+        ["loop_y"],
+        name="LoopStaticUnroll",
+        body=body_graph,
+    )
+    graph = helper.make_graph(
+        [loop_node],
+        "loop_static_unroll_graph",
+        [x],
+        [y],
+        initializer=[trip_count, cond_init],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_loop_while_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("loop_x", TensorProto.FLOAT, [3])
+    counter = helper.make_tensor_value_info("loop_counter", TensorProto.INT64, [])
+    y = helper.make_tensor_value_info("loop_y", TensorProto.FLOAT, [3])
+
+    max_trip = numpy_helper.from_array(np.asarray(9223372036854775807, dtype=np.int64), name="loop_max_trip")
+    cond_limit = numpy_helper.from_array(np.asarray(64, dtype=np.int64), name="loop_cond_limit")
+
+    cond_node = helper.make_node("Less", ["loop_counter", "loop_cond_limit"], ["loop_cond"], name="LoopTopCond")
+
+    body_iter = helper.make_tensor_value_info("iter", TensorProto.INT64, [])
+    body_cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    body_state = helper.make_tensor_value_info("state_in", TensorProto.FLOAT, [3])
+    body_counter = helper.make_tensor_value_info("counter_in", TensorProto.INT64, [])
+    body_cond_out = helper.make_tensor_value_info("cond_out", TensorProto.BOOL, [])
+    body_state_out = helper.make_tensor_value_info("state_out", TensorProto.FLOAT, [3])
+    body_counter_out = helper.make_tensor_value_info("counter_out", TensorProto.INT64, [])
+    body_counter_one = numpy_helper.from_array(np.asarray(1, dtype=np.int64), name="body_counter_one")
+    body_counter_limit = numpy_helper.from_array(np.asarray(64, dtype=np.int64), name="body_counter_limit")
+    body_nodes = [
+        helper.make_node("Sigmoid", ["state_in"], ["state_out"], name="LoopBodySigmoid"),
+        helper.make_node("Add", ["counter_in", "body_counter_one"], ["counter_out"], name="LoopBodyCounterAdd"),
+        helper.make_node("Less", ["counter_out", "body_counter_limit"], ["cond_out"], name="LoopBodyLess"),
+    ]
+    body_graph = helper.make_graph(
+        body_nodes,
+        "loop_while_body",
+        [body_iter, body_cond, body_state, body_counter],
+        [body_cond_out, body_state_out, body_counter_out],
+        initializer=[body_counter_one, body_counter_limit],
+    )
+
+    loop_node = helper.make_node(
+        "Loop",
+        ["loop_max_trip", "loop_cond", "loop_x", "loop_counter"],
+        ["loop_y", "loop_counter_out"],
+        name="LoopWhileNode",
+        body=body_graph,
+    )
+    graph = helper.make_graph(
+        [cond_node, loop_node],
+        "loop_while_graph",
+        [x, counter],
+        [y],
+        initializer=[max_trip, cond_limit],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def test_flatbuffer_direct_loop_static_unroll_lowers_to_builtin_ops_without_custom() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_static_unroll_model(),
+        output_file_name="loop_static_unroll_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" in op_types
+    assert len(model_ir.subgraphs) == 2
+    out_tensor = model_ir.tensors["loop_y"]
+    assert list(out_tensor.shape) == [3]
+
+
+def test_flatbuffer_direct_loop_while_lowers_to_builtin_ops_without_custom() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_while_model(),
+        output_file_name="loop_while_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" in op_types
+    assert len(model_ir.subgraphs) == 2
+    assert len(model_ir.subgraphs[0].operators) > 0
+    assert len(model_ir.subgraphs[1].operators) > 0
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_loop_static_unroll_op_coverage_reports_builtin_loop() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_loop_static_unroll_model()
+        model_path = _save_model(tmpdir, "loop_static_unroll", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path=model_path,
+            output_dir=out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        assert os.path.isfile(tflite_path)
+
+        report_path = os.path.join(out_dir, "loop_static_unroll_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        loop_reports = [
+            node
+            for node in report["graph_node_reports"]
+            if str(node.get("onnx_op", "")) == "Loop"
+        ]
+        assert len(loop_reports) == 1
+        assert loop_reports[0]["dispatch_mode"] == "builtin"
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+def test_flatbuffer_direct_loop_while_op_coverage_reports_builtin_loop() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_loop_while_model()
+        model_path = _save_model(tmpdir, "loop_while", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path=model_path,
+            output_dir=out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        assert os.path.isfile(tflite_path)
+
+        report_path = os.path.join(out_dir, "loop_while_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        loop_reports = [
+            node
+            for node in report["graph_node_reports"]
+            if str(node.get("onnx_op", "")) == "Loop"
+        ]
+        assert len(loop_reports) == 1
+        assert loop_reports[0]["dispatch_mode"] == "builtin"
 
 
 def _make_if_nms_guard_direct_model() -> onnx.ModelProto:

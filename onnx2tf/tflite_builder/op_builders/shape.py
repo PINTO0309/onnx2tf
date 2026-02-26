@@ -350,6 +350,8 @@ def build_slice_op(node: Any, ctx: Any) -> None:
     strides_for_strided = [1 for _ in range(rank)]
     size = [int(input_shape[axis]) if known_dim_flags[axis] else -1 for axis in range(rank)]
     large_int = int(np.iinfo(np.int64).max // 2)
+    int32_min = int(np.iinfo(np.int32).min)
+    int32_max = int(np.iinfo(np.int32).max)
     use_strided_slice = any(not flag for flag in known_dim_flags)
 
     for idx, axis in enumerate(normalized_axes):
@@ -383,23 +385,19 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             else:
                 size[axis] = -1
         else:
-            if start < 0:
-                raise NotImplementedError(
-                    f"Slice with negative start on unknown dimension is not supported. "
-                    f"op={node.name} axis={axis} start={start}"
-                )
-            begin[axis] = int(start)
+            if start < 0 or end < 0:
+                # Keep negative indices and defer resolution to runtime via STRIDED_SLICE.
+                use_strided_slice = True
+            begin[axis] = int(max(min(start, int32_max), int32_min))
             if end >= large_int:
-                end_for_strided[axis] = int(np.iinfo(np.int32).max)
+                end_for_strided[axis] = int32_max
                 size[axis] = -1
-            elif end < 0:
-                raise NotImplementedError(
-                    f"Slice with negative end on unknown dimension is not supported. "
-                    f"op={node.name} axis={axis} end={end}"
-                )
+            elif end <= -large_int:
+                end_for_strided[axis] = int32_min
+                size[axis] = -1
             else:
-                end_for_strided[axis] = int(end)
-                if step == 1:
+                end_for_strided[axis] = int(max(min(end, int32_max), int32_min))
+                if step == 1 and start >= 0 and end >= 0:
                     size[axis] = int(max(end - start, 0))
                 else:
                     size[axis] = -1

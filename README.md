@@ -369,12 +369,13 @@ Notes:
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
 |HardSwish|HARD_SWISH|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Identity|RESHAPE|-|
-|If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`)|
+|If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`). In control-flow branch lowering, dynamic-condition `If` is additionally supported when both branches are single-output initializer-only constants (lowered via `Where`)|
 |InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
 |Log|LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |LogSoftmax|SOFTMAX + LOG (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
+|Loop|WHILE (+ subgraph-local ADD/LESS/LOGICAL_AND/RESHAPE and lowered body ops)|Built-in lowering supports either static-unroll patterns (constant `trip_count`/`cond`, loop-carried outputs only) or WHILE patterns with loop-carried outputs only (no scan outputs). `max_trip_count` input dtype must be `INT32` or `INT64`|
 |LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
 |LRN|LOCAL_RESPONSE_NORMALIZATION (+ transpose in/out)|Input rank must be 4, `size` must be a positive odd integer|
 |LSTM|UNIDIRECTIONAL_SEQUENCE_LSTM / BIDIRECTIONAL_SEQUENCE_LSTM + REVERSE_V2 + SPLIT + SQUEEZE + SLICE + RESHAPE/EXPAND_DIMS + CONCATENATION|`direction` in `{forward,reverse,bidirectional}`, `layout=0`, `input_forget=0`; `W/R` must be constant rank-3 with `num_directions` matching `direction`; optional `B` must be constant shape `[num_directions, 8*hidden_size]`; `initial_h/initial_c` are optional (when provided, shape must be `[num_directions, batch, hidden]`; runtime tensor inputs are supported); `sequence_lens` and peephole input `P` unsupported; projection (`R.shape[2] != hidden_size`) unsupported|
@@ -459,7 +460,7 @@ Notes:
 |DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |GridSample|builtin_supported on constrained 2D pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported GridSample patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |If|builtin_supported on constrained patterns (NMS-guard, axis0 Add-branch, SequenceConstruct Add-branch, and nested ReduceMin/Add); otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported If patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|Loop|builtin_supported on constrained patterns (static-unroll / WHILE loop-carried forms); otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported Loop patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |RoiAlign|builtin_supported on constrained pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported RoiAlign patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Scan|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |ScatterElements|builtin_supported on constrained pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported ScatterElements patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
@@ -480,6 +481,7 @@ Notes:
 - `NonMaxSuppression` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `If` is now treated as `builtin_supported` for constrained patterns (NMS-guard, axis0 Add-branch, SequenceConstruct Add-branch, and nested ReduceMin/Add); unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `Loop` is now treated as `builtin_supported` for constrained static-unroll/WHILE loop-carried patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
 - `ReduceMin` is now treated as `builtin_supported` under builtin constraints.
 - `Min` and `TopK` are now treated as `builtin_supported` under builtin constraints, reducing `ONNX_MIN` / `ONNX_TOPK` custom-op fallbacks.
@@ -635,7 +637,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.24
+  ghcr.io/pinto0309/onnx2tf:2.0.25
 
   or
 
@@ -644,7 +646,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.24
+  docker.io/pinto0309/onnx2tf:2.0.25
 
   or
 
@@ -654,7 +656,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.24 \
+  docker.io/pinto0309/onnx2tf:2.0.25 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -2005,7 +2007,7 @@ optional arguments:
        `SOFTMAX`, `L2_NORMALIZATION`, `LOCAL_RESPONSE_NORMALIZATION`,
        `CONV_2D`, `DEPTHWISE_CONV_2D`, `CONV_3D`, `TRANSPOSE_CONV`, `CONV_3D_TRANSPOSE`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`, `BATCH_MATMUL`,
        `RESIZE_NEAREST_NEIGHBOR`, `RESIZE_BILINEAR`,
-       `BIDIRECTIONAL_SEQUENCE_LSTM`, `SPLIT`, `EXPAND_DIMS`,
+       `BIDIRECTIONAL_SEQUENCE_LSTM`, `SPLIT`, `EXPAND_DIMS`, `WHILE`,
        `DEQUANTIZE`, `QUANTIZE`.
     6. Unsupported OPs fail explicitly with `NotImplementedError`.
     7. Custom OP policy (opt-in):

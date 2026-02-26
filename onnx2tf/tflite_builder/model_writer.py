@@ -480,6 +480,16 @@ def _build_strided_slice_options(
     return _enum(schema_tflite, "BuiltinOptions", "StridedSliceOptions"), options
 
 
+def _build_while_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["WhileOptionsT"]()
+    options.condSubgraphIndex = int(op.options.get("condSubgraphIndex", 0))
+    options.bodySubgraphIndex = int(op.options.get("bodySubgraphIndex", 0))
+    return _enum(schema_tflite, "BuiltinOptions", "WhileOptions"), options
+
+
 def _build_builtin_options(
     schema_tflite: Dict[str, Any],
     op: OperatorIR,
@@ -578,6 +588,8 @@ def _build_builtin_options(
         return _build_sequence_rnn_options(schema_tflite, op)
     if op.op_type == "STRIDED_SLICE":
         return _build_strided_slice_options(schema_tflite, op)
+    if op.op_type == "WHILE":
+        return _build_while_options(schema_tflite, op)
     if op.op_type in [
         "LOGISTIC",
         "LOGICAL_AND",
@@ -672,48 +684,91 @@ def _build_operator_table(
     return table
 
 
+def _build_subgraph_tensors_and_append_buffers(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    global_buffer_table: List[object],
+) -> Tuple[List[object], Dict[str, int]]:
+    tensors, local_buffers, tensor_index_map = build_tensors_and_buffers(
+        schema_tflite=schema_tflite,
+        tensors=model_ir.tensors,
+    )
+    if len(global_buffer_table) == 0:
+        raise ValueError("Global buffer table must contain Buffer[0].")
+    buffer_offset = int(len(global_buffer_table) - 1)
+    for tensor in tensors:
+        current_buffer = int(getattr(tensor, "buffer", 0))
+        if current_buffer > 0:
+            tensor.buffer = int(current_buffer + buffer_offset)
+    global_buffer_table.extend(local_buffers[1:])
+    return tensors, tensor_index_map
+
+
 def build_model_object(
     *,
     schema_tflite: Dict[str, Any],
     model_ir: ModelIR,
     with_signature_defs: bool = True,
 ) -> object:
-    operator_codes, op_index_map = build_operator_codes(schema_tflite, model_ir.operators)
-    tensors, buffers, tensor_index_map = build_tensors_and_buffers(schema_tflite, model_ir.tensors)
-    operators = _build_operator_table(
-        schema_tflite=schema_tflite,
-        operators=model_ir.operators,
-        op_index_map=op_index_map,
-        tensor_index_map=tensor_index_map,
-    )
+    all_subgraphs: List[ModelIR] = [model_ir] + list(model_ir.subgraphs)
+    all_operators: List[OperatorIR] = []
+    for subgraph_ir in all_subgraphs:
+        all_operators.extend(list(subgraph_ir.operators))
+    operator_codes, op_index_map = build_operator_codes(schema_tflite, all_operators)
 
-    subgraph = schema_tflite["SubGraphT"]()
-    subgraph.name = model_ir.name
-    subgraph.tensors = tensors
-    subgraph.operators = operators
-    subgraph.inputs = _require_tensor_indices(
-        tensor_index_map=tensor_index_map,
-        tensor_names=model_ir.inputs,
-        op_type="MODEL",
-        tensor_role="graph input",
-    )
-    subgraph.outputs = _require_tensor_indices(
-        tensor_index_map=tensor_index_map,
-        tensor_names=model_ir.outputs,
-        op_type="MODEL",
-        tensor_role="graph output",
-    )
+    buffers: List[object] = []
+    empty_buffer = schema_tflite["BufferT"]()
+    empty_buffer.data = bytes()
+    buffers.append(empty_buffer)
+
+    serialized_subgraphs: List[object] = []
+    main_tensor_index_map: Optional[Dict[str, int]] = None
+    for subgraph_index, subgraph_ir in enumerate(all_subgraphs):
+        tensors, tensor_index_map = _build_subgraph_tensors_and_append_buffers(
+            schema_tflite=schema_tflite,
+            model_ir=subgraph_ir,
+            global_buffer_table=buffers,
+        )
+        operators = _build_operator_table(
+            schema_tflite=schema_tflite,
+            operators=subgraph_ir.operators,
+            op_index_map=op_index_map,
+            tensor_index_map=tensor_index_map,
+        )
+        subgraph = schema_tflite["SubGraphT"]()
+        subgraph.name = subgraph_ir.name
+        subgraph.tensors = tensors
+        subgraph.operators = operators
+        subgraph.inputs = _require_tensor_indices(
+            tensor_index_map=tensor_index_map,
+            tensor_names=subgraph_ir.inputs,
+            op_type="MODEL",
+            tensor_role="graph input",
+        )
+        subgraph.outputs = _require_tensor_indices(
+            tensor_index_map=tensor_index_map,
+            tensor_names=subgraph_ir.outputs,
+            op_type="MODEL",
+            tensor_role="graph output",
+        )
+        serialized_subgraphs.append(subgraph)
+        if int(subgraph_index) == 0:
+            main_tensor_index_map = dict(tensor_index_map)
+
+    if main_tensor_index_map is None:
+        raise ValueError("Main subgraph tensor index map is missing.")
 
     model = schema_tflite["ModelT"]()
     model.version = 3
     model.description = model_ir.description
     model.operatorCodes = operator_codes
-    model.subgraphs = [subgraph]
+    model.subgraphs = serialized_subgraphs
     model.buffers = buffers
     if with_signature_defs:
         model.signatureDefs = build_signature_defs(
             schema_tflite=schema_tflite,
-            tensor_index_map=tensor_index_map,
+            tensor_index_map=main_tensor_index_map,
             input_names=model_ir.inputs,
             output_names=model_ir.outputs,
         )

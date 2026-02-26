@@ -372,7 +372,13 @@ def make_node(
             return True
 
         def _perm_shape(shape, perm):
-            return [shape[i] for i in perm] if shape is not None else None
+            if shape is None:
+                return None
+            if any(int(i) < 0 or int(i) >= len(shape) for i in perm):
+                # Rank mismatch between candidate permutation and actual tensor rank.
+                # Let caller skip this permutation safely.
+                return None
+            return [shape[i] for i in perm]
 
         def _limited_perms(rank):
             identity = list(range(rank))
