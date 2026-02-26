@@ -14,6 +14,59 @@ def _make_add_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_max_model() -> onnx.ModelProto:
+    x0 = helper.make_tensor_value_info("x0", TensorProto.FLOAT, [1, 3, 4])
+    x1 = helper.make_tensor_value_info("x1", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node("Max", ["x0", "x1"], ["y"], name="MaxNode")
+    graph = helper.make_graph([node], "max_graph", [x0, x1], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_log_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node("Log", ["x"], ["y"], name="LogNode")
+    graph = helper.make_graph([node], "log_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_scatter_elements_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 3, 4])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3, 4])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    node = helper.make_node(
+        "ScatterElements",
+        ["data", "indices", "updates"],
+        ["y"],
+        name="ScatterElementsNode",
+        axis=1,
+    )
+    graph = helper.make_graph([node], "scatter_elements_graph", [data, indices, updates], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_roi_align_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 8, 8])
+    rois = helper.make_tensor_value_info("rois", TensorProto.FLOAT, [3, 4])
+    batch_indices = helper.make_tensor_value_info("batch_indices", TensorProto.INT64, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2, 2, 2])
+    node = helper.make_node(
+        "RoiAlign",
+        ["x", "rois", "batch_indices"],
+        ["y"],
+        name="RoiAlignNode",
+        mode="avg",
+        output_height=2,
+        output_width=2,
+        sampling_ratio=2,
+        spatial_scale=1.0,
+    )
+    graph = helper.make_graph([node], "roi_align_graph", [x, rois, batch_indices], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_softmax_axis_non_last_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
@@ -197,6 +250,51 @@ def _make_reduce_axes_nonconst_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_reduce_min_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 8])
+    axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="reduce_min_axes")
+    node = helper.make_node(
+        "ReduceMin",
+        ["x", "reduce_min_axes"],
+        ["y"],
+        name="ReduceMinNode",
+        keepdims=1,
+    )
+    graph = helper.make_graph(
+        [node],
+        "reduce_min_graph",
+        [x],
+        [y],
+        initializer=[axes],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_layer_normalization_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8, 16])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 16])
+    scale = numpy_helper.from_array(np.ones((16,), dtype=np.float32), name="ln_scale")
+    bias = numpy_helper.from_array(np.zeros((16,), dtype=np.float32), name="ln_bias")
+    node = helper.make_node(
+        "LayerNormalization",
+        ["x", "ln_scale", "ln_bias"],
+        ["y"],
+        name="LayerNormalizationNode",
+        axis=-1,
+        epsilon=1e-5,
+        stash_type=1,
+    )
+    graph = helper.make_graph(
+        [node],
+        "layer_normalization_graph",
+        [x],
+        [y],
+        initializer=[scale, bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)])
+
+
 def _make_global_average_pool_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 8, 5, 7])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 1, 1])
@@ -286,6 +384,124 @@ def _make_erf_model() -> onnx.ModelProto:
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
     node = helper.make_node("Erf", ["x"], ["y"], name="ErfNode")
     graph = helper.make_graph([node], "erf_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_if_nms_guard_model() -> onnx.ModelProto:
+    boxes = helper.make_tensor_value_info("boxes", TensorProto.FLOAT, ["N", 4])
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, ["N"])
+    idxs = helper.make_tensor_value_info("idxs", TensorProto.INT64, ["N"])
+    cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    keep = helper.make_tensor_value_info("keep", TensorProto.INT64, ["K"])
+
+    top_then_empty = numpy_helper.from_array(np.asarray([], dtype=np.int64), name="top_then_empty")
+    top_then_output = helper.make_tensor_value_info("top_then_empty", TensorProto.INT64, [0])
+    top_then_graph = helper.make_graph(
+        [],
+        "if_top_then",
+        [],
+        [top_then_output],
+        initializer=[top_then_empty],
+    )
+
+    nested_then_axis = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="nested_then_axis")
+    nested_then_node = helper.make_node(
+        "Squeeze",
+        ["nms_gathered", "nested_then_axis"],
+        ["nested_then_out"],
+        name="NestedThenSqueeze",
+    )
+    nested_then_output = helper.make_tensor_value_info("nested_then_out", TensorProto.INT64, ["K"])
+    nested_then_graph = helper.make_graph(
+        [nested_then_node],
+        "if_nested_then",
+        [],
+        [nested_then_output],
+        initializer=[nested_then_axis],
+    )
+    nested_else_node = helper.make_node(
+        "Identity",
+        ["nms_gathered"],
+        ["nested_else_out"],
+        name="NestedElseIdentity",
+    )
+    nested_else_output = helper.make_tensor_value_info("nested_else_out", TensorProto.INT64, ["K", 1])
+    nested_else_graph = helper.make_graph(
+        [nested_else_node],
+        "if_nested_else",
+        [],
+        [nested_else_output],
+    )
+
+    eq_lhs = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="eq_lhs")
+    eq_rhs = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="eq_rhs")
+    unsqueeze_scores_axes = numpy_helper.from_array(np.asarray([0, 1], dtype=np.int64), name="unsqueeze_scores_axes")
+    add_one = numpy_helper.from_array(np.asarray(1.0, dtype=np.float32), name="add_one")
+    unsqueeze_offsets_axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="unsqueeze_offsets_axes")
+    unsqueeze_boxes_axes = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="unsqueeze_boxes_axes")
+    nms_max_output = numpy_helper.from_array(np.asarray([9223372036854775807], dtype=np.int64), name="nms_max_output")
+    nms_iou = numpy_helper.from_array(np.asarray([0.5], dtype=np.float32), name="nms_iou")
+    nms_gather_index = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="nms_gather_index")
+
+    else_nodes = [
+        helper.make_node("ReduceMax", ["boxes"], ["max_coordinate"], name="IfElseReduceMax", keepdims=0),
+        helper.make_node("Cast", ["idxs"], ["idxs_f"], name="IfElseCast", to=TensorProto.FLOAT),
+        helper.make_node("Equal", ["eq_lhs", "eq_rhs"], ["nested_cond"], name="IfElseEqual"),
+        helper.make_node("Unsqueeze", ["scores", "unsqueeze_scores_axes"], ["scores_nms"], name="IfElseUnsqueezeScores"),
+        helper.make_node("Add", ["max_coordinate", "add_one"], ["max_plus_one"], name="IfElseAdd"),
+        helper.make_node("Mul", ["idxs_f", "max_plus_one"], ["offsets"], name="IfElseMul"),
+        helper.make_node("Unsqueeze", ["offsets", "unsqueeze_offsets_axes"], ["offsets_2d"], name="IfElseUnsqueezeOffsets"),
+        helper.make_node("Add", ["boxes", "offsets_2d"], ["boxes_for_nms"], name="IfElseAddBoxes"),
+        helper.make_node("Unsqueeze", ["boxes_for_nms", "unsqueeze_boxes_axes"], ["boxes_nms"], name="IfElseUnsqueezeBoxes"),
+        helper.make_node(
+            "NonMaxSuppression",
+            ["boxes_nms", "scores_nms", "nms_max_output", "nms_iou"],
+            ["nms_selected"],
+            name="IfElseNMS",
+        ),
+        helper.make_node("Gather", ["nms_selected", "nms_gather_index"], ["nms_gathered"], name="IfElseGather", axis=1),
+        helper.make_node(
+            "If",
+            ["nested_cond"],
+            ["keep"],
+            name="IfElseNestedIf",
+            then_branch=nested_then_graph,
+            else_branch=nested_else_graph,
+        ),
+    ]
+    else_output = helper.make_tensor_value_info("keep", TensorProto.INT64, ["K"])
+    top_else_graph = helper.make_graph(
+        else_nodes,
+        "if_top_else",
+        [],
+        [else_output],
+        initializer=[
+            eq_lhs,
+            eq_rhs,
+            unsqueeze_scores_axes,
+            add_one,
+            unsqueeze_offsets_axes,
+            unsqueeze_boxes_axes,
+            nms_max_output,
+            nms_iou,
+            nms_gather_index,
+        ],
+    )
+
+    if_node = helper.make_node(
+        "If",
+        ["cond"],
+        ["keep"],
+        name="IfNmsGuardNode",
+        then_branch=top_then_graph,
+        else_branch=top_else_graph,
+    )
+    graph = helper.make_graph(
+        [if_node],
+        "if_nms_guard_graph",
+        [boxes, scores, idxs, cond],
+        [keep],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -398,6 +614,34 @@ def test_op_coverage_reason_code_snapshot_validation_failures() -> None:
     assert reduce_report["unsupported_reason_counts"] == {"requires_constant_input": 1}
     assert reduce_report["unsupported_nodes"][0]["reason_code"] == "requires_constant_input"
     assert reduce_report["unsupported_nodes"][0]["onnx_op"] == "ReduceSum"
+
+
+def test_op_coverage_reduce_min_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_reduce_min_model(),
+        output_file_name="reduce_min_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert report["graph_custom_ops"] == []
+    assert report["graph_node_reports"][0]["onnx_op"] == "ReduceMin"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_if_nms_guard_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_if_nms_guard_model(),
+        output_file_name="if_nms_guard_builtin_snapshot",
+        allow_custom_ops=True,
+        custom_op_allowlist=["If"],
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert report["graph_custom_ops"] == []
+    assert report["graph_node_reports"][0]["onnx_op"] == "If"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
 
 
 def test_op_coverage_dynamic_quantize_linear_builtin_dispatch() -> None:
@@ -549,11 +793,48 @@ def test_op_coverage_global_average_pool_and_grouped_conv_builtin_dispatch() -> 
     assert grouped_conv_report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
 
 
+def test_op_coverage_layer_normalization_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_layer_normalization_model(),
+        output_file_name="layer_normalization_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert report["graph_custom_ops"] == []
+    assert any(
+        node["onnx_op"] == "LayerNormalization" and node.get("dispatch_mode") == "builtin"
+        for node in report["graph_node_reports"]
+    )
+
+
 def test_op_coverage_erf_tile_scatternd_builtin_dispatch() -> None:
     cases = [
         (_make_erf_model(), "Erf"),
         (_make_tile_model(), "Tile"),
         (_make_scatter_nd_model(), "ScatterND"),
+    ]
+    for model, op_name in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name=f"{op_name.lower()}_builtin_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_op_coverage_max_log_builtin_dispatch() -> None:
+    cases = [
+        (_make_max_model(), "Max"),
+        (_make_log_model(), "Log"),
+        (_make_scatter_elements_model(), "ScatterElements"),
+        (_make_roi_align_model(), "RoiAlign"),
     ]
     for model, op_name in cases:
         report = build_op_coverage_report(

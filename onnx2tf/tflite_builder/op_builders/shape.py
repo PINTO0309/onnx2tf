@@ -2360,17 +2360,25 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_shape_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_tensor.shape)]
+    )
+    output_shape = [int(v) if int(v) >= 0 else 1 for v in output_shape_signature]
+    output_tensor.shape_signature = [int(v) for v in output_shape_signature]
+    output_tensor.shape = [int(v) for v in output_shape]
     shape_const = ctx.add_const_tensor(
         f"{output_name}_flatten_shape",
-        np.asarray(output_shape, dtype=np.int32),
+        np.asarray(output_shape_signature, dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, shape_const],
             outputs=[output_name],
-            options={"newShape": output_shape},
+            options={"newShape": [int(v) for v in output_shape_signature]},
         )
     )
 

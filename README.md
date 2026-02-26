@@ -369,22 +369,25 @@ Notes:
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
 |HardSwish|HARD_SWISH|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Identity|RESHAPE|-|
+|If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`)|
 |InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
+|Log|LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |LogSoftmax|SOFTMAX + LOG (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
 |LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
 |LRN|LOCAL_RESPONSE_NORMALIZATION (+ transpose in/out)|Input rank must be 4, `size` must be a positive odd integer|
 |LSTM|UNIDIRECTIONAL_SEQUENCE_LSTM / BIDIRECTIONAL_SEQUENCE_LSTM + REVERSE_V2 + SPLIT + SQUEEZE + SLICE + RESHAPE/EXPAND_DIMS + CONCATENATION|`direction` in `{forward,reverse,bidirectional}`, `layout=0`, `input_forget=0`; `W/R` must be constant rank-3 with `num_directions` matching `direction`; optional `B` must be constant shape `[num_directions, 8*hidden_size]`; `initial_h/initial_c` are optional (when provided, shape must be `[num_directions, batch, hidden]`; runtime tensor inputs are supported); `sequence_lens` and peephole input `P` unsupported; projection (`R.shape[2] != hidden_size`) unsupported|
 |MatMul|BATCH_MATMUL|Input rank >= 2. Dynamic rhs input is supported (no constant-weight requirement)|
 |MatMulInteger|CAST + SUB + BATCH_MATMUL|A/B input rank must be >=2 (rank=1 placeholder allowed), A/B dtypes must be integer tensor types (`INT8/UINT8/INT16/UINT16/INT32`), output dtype must be `INT32/INT64`; optional zero-point inputs must be scalar/1D and shape-compatible|
+|Max|MAXIMUM (chained for >2 inputs)|At least 2 inputs|
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode=0`, zero pads or `auto_pad=SAME_*`|
 |Min|MINIMUM (chained for >2 inputs)|At least 2 inputs|
 |Mish|EXP + ADD + LOG + TANH + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Mod|FLOOR_MOD|`fmod=0` only|
 |Mul|MUL|-|
 |Neg|NEG|-|
-|NonMaxSuppression|NON_MAX_SUPPRESSION_V4 + SLICE + GATHER + SUB + CAST + RESHAPE + CONCATENATION (+ optional ARG_MAX + REDUCE_MAX)|Rank-3 boxes/scores only; `center_point_box=0`; currently `batch=1`; boxes last dim must be `4`; static positive `num_boxes`; `scores_shape[2] == boxes_shape[1]`; optional thresholds/max_output must be scalar constants; output dtype must be `INT32` or `INT64`; when `--output_nms_with_argmax` is disabled, class dim must be static positive (class dim `>1` is supported via class-wise NMS)|
+|NonMaxSuppression|NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SUB + CAST + RESHAPE + CONCATENATION (+ optional ARG_MAX + REDUCE_MAX)|Rank-3 boxes/scores only; `center_point_box=0`; currently `batch=1`; boxes last dim must be `4`; static positive `num_boxes`; `scores_shape[2] == boxes_shape[1]`; optional thresholds/max_output must be scalar constants; output dtype must be `INT32` or `INT64`; when `--output_nms_with_argmax` is disabled, class dim must be static positive (class dim `>1` is supported via class-wise NMS). `--switch_nms_version` (`-snms`) selects V4 or V5.|
 |NonZero|NOT_EQUAL + WHERE + TRANSPOSE + CAST|Input rank must be `>=1`; output rank must be `2`|
 |Not|LOGICAL_NOT|-|
 |OneHot|CAST + ADD + FLOOR_MOD + ONE_HOT|`depth` input must be constant scalar and `>0`; `values` input must be constant 2-element tensor `[off_value,on_value]`; normalized `axis` must be in range|
@@ -411,14 +414,17 @@ Notes:
 |ReduceL2|MUL + SUM + SQRT + CAST|Reduce axes must be constant when provided via input tensor|
 |ReduceMax|REDUCE_MAX|Reduce axes must be constant when provided via input tensor|
 |ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
+|ReduceMin|REDUCE_MIN|Reduce axes must be constant when provided via input tensor|
 |ReduceProd|REDUCE_PROD|Reduce axes must be constant when provided via input tensor|
 |ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
 |Relu|RELU|-|
 |Reshape|RESHAPE|Shape input must be constant|
 |Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR / (cubic) RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL|Rank-4 only. `nearest`/`linear`: builtin resize path (limited attr combinations), parameters must be constant `scales/sizes` or dynamic rank-1 integer `sizes` (INT32/INT64). `cubic`: strict ONNX cubic decomposition (no FlexResizeBicubic), supports `coordinate_transformation_mode` in `{align_corners, asymmetric, half_pixel, pytorch_half_pixel}` and honors `cubic_coeff_a`/`exclude_outside`; requires static input C/H/W and static output H/W. Batch dimension is preserved through the cubic decomposition path|
+|RoiAlign|CAST + GATHER + PAD + RESHAPE + ADD/SUB/MUL/DIV + MAXIMUM/MINIMUM + FLOOR + TILE + AVERAGE_POOL_2D / MAX_POOL_2D + TRANSPOSE|Input/output rank=4 only; `rois` rank=2 (`[...,4]`), `batch_indices` rank=1 integer; input `C/H/W` must be static positive; `mode` in `{avg,max}`; `coordinate_transformation_mode` in `{half_pixel,output_half_pixel}`; `output_height/output_width` must be positive|
 |RNN|UNIDIRECTIONAL_SEQUENCE_RNN + REVERSE_V2 + CONCATENATION + TRANSPOSE + EXPAND_DIMS + SLICE + SQUEEZE + RESHAPE|`direction` in `{forward,reverse,bidirectional}`, `layout=0`; `sequence_lens` unsupported; `W/R` must be constant rank-3 with `num_directions` matching `direction`; optional `B` must be constant shape `[num_directions, 2*hidden_size]`; optional `initial_h` shape must be `[num_directions, batch, hidden]` (runtime tensor inputs are supported); activations in `{tanh,relu,sigmoid}`; `clip=0`|
 |Round|ROUND|-|
 |ScatterND|CAST + SHAPE + FILL + MUL + SCATTER_ND + SUB + ADD|`reduction=none` only; data/updates/output dtypes must match (numeric), indices dtype must be integer, indices last dim must be static positive and `<= data rank`|
+|ScatterElements|CAST + LESS + SELECT + SHAPE + GATHER + RANGE + RESHAPE + TILE + CONCATENATION + MUL + ADD + SUB + FILL + SCATTER_ND|`reduction=none` only; `data/indices/updates` must have same rank; `axis` must be in range; `indices` dtype must be integer; `updates/output` dtype must match `data` dtype; output shape must match `data` shape|
 |Selu|MAXIMUM + MINIMUM + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Shape|SHAPE (+ SLICE for `start/end`)|Output dtype must be `INT32` or `INT64`; `start/end` slicing follows ONNX normalization|
 |Sigmoid|LOGISTIC|-|
@@ -452,11 +458,11 @@ Notes:
 |:-|:-|:-|
 |DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |GridSample|builtin_supported on constrained 2D pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported GridSample patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|If|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|If|builtin_supported on constrained patterns (NMS-guard, axis0 Add-branch, SequenceConstruct Add-branch, and nested ReduceMin/Add); otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported If patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Loop|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|RoiAlign|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|RoiAlign|builtin_supported on constrained pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported RoiAlign patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Scan|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
-|ScatterElements|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|ScatterElements|builtin_supported on constrained pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported ScatterElements patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |SequenceAt|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |SequenceConstruct|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |SequenceErase|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
@@ -473,7 +479,9 @@ Notes:
 - `LSTM` is now treated as `builtin_supported` for constrained forward/reverse/bidirectional patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `NonMaxSuppression` is now treated as `builtin_supported` when builtin constraints pass; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `If` is now treated as `builtin_supported` for constrained patterns (NMS-guard, axis0 Add-branch, SequenceConstruct Add-branch, and nested ReduceMin/Add); unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
+- `ReduceMin` is now treated as `builtin_supported` under builtin constraints.
 - `Min` and `TopK` are now treated as `builtin_supported` under builtin constraints, reducing `ONNX_MIN` / `ONNX_TOPK` custom-op fallbacks.
 - `DepthToSpace` and `HardSwish` are now treated as `builtin_supported` under builtin constraints (`HardSwish` is lowered directly as TFLite `HARD_SWISH`).
 - `Pad` builtin path now supports dynamic `pads` input (rank-1 length `2*rank`) via `CAST + RESHAPE + TRANSPOSE` bridge before `PAD`.
@@ -481,7 +489,7 @@ Notes:
 - `ConvTranspose` builtin path has been expanded: constrained 1D lowering (`EXPAND_DIMS -> TRANSPOSE_CONV -> SQUEEZE`), relaxed `output_padding` handling (`0 <= output_padding < stride`), and explicit non-zero pad handling via post-crop when output shape is static.
 - `Conv` now includes rank-5 `CONV_3D` builtin lowering (`group=1`, constant weights), reducing `ONNX_CONV` custom-op fallbacks on 3D conv subgraphs.
 - `ConvTranspose` now includes rank-5 `CONV_3D_TRANSPOSE` builtin lowering (`group=1`, `dilations=[1,1,1]`, constrained `output_padding`), reducing `ONNX_CONVTRANSPOSE` custom-op fallbacks on 3D deconv subgraphs.
-- `NonMaxSuppression` builtin path now supports class dim `>1` without forcing `--output_nms_with_argmax` by using per-class `NON_MAX_SUPPRESSION_V4` and concatenating `[batch, class, index]` triplets (matching default `onnx2tf/ops/NonMaxSuppression.py` behavior when `-onwa` is not set).
+- `NonMaxSuppression` builtin path now supports class dim `>1` without forcing `--output_nms_with_argmax` by using per-class `NON_MAX_SUPPRESSION_V4/V5` (selected by `--switch_nms_version`) and concatenating `[batch, class, index]` triplets (matching default `onnx2tf/ops/NonMaxSuppression.py` behavior when `-onwa` is not set).
 - `AveragePool` builtin path now supports explicit pads and `count_include_pad` in `{0,1}`; when `count_include_pad=0` with non-zero effective pads, divisor correction is applied to keep ONNX semantics.
 - Leading input transpose passthrough optimization now treats `CAST` as passthrough, reducing redundant `Transpose -> Cast -> (Sub/Mul/...) -> Transpose` chains.
 - Newly added builtin-covered ops in this update include:
@@ -494,6 +502,8 @@ Notes:
 - Additional builtin-covered ops added in subsequent commits include:
   `Erf`, `GlobalAveragePool`, `GlobalMaxPool`, `QLinearLeakyRelu`, `QLinearSoftmax`, `ScatterND`, `Slice`,
   `Split`, and `Tile`.
+- Newly builtin-covered ops added in this update include:
+  `Log`, `Max`, `RoiAlign`, and `ScatterElements`.
 - `Resize` builtin path now accepts dynamic rank-1 integer `sizes` input in addition to constant `scales/sizes`.
 - `Resize(cubic)` now uses strict ONNX cubic semantics (including `cubic_coeff_a` and `exclude_outside`) in both `tf_converter` and `flatbuffer_direct`.
 - `GreaterOrEqual`, `RandomNormalLike`, and constrained `GridSample` (`2D`, `bilinear`, `zeros`, `align_corners` in `{0,1}`) are now treated as `builtin_supported` under builtin constraints.
@@ -625,7 +635,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.23
+  ghcr.io/pinto0309/onnx2tf:2.0.24
 
   or
 
@@ -634,7 +644,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.23
+  docker.io/pinto0309/onnx2tf:2.0.24
 
   or
 
@@ -644,7 +654,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.23 \
+  docker.io/pinto0309/onnx2tf:2.0.24 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

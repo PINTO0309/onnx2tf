@@ -23,11 +23,26 @@ _NP_DTYPE_TO_TFLITE_DTYPE = {
 }
 
 
+_INT32_MAX = np.iinfo(np.int32).max
+
+
 def tflite_dtype_from_numpy(np_dtype: np.dtype) -> str:
     np_dtype = np.dtype(np_dtype)
     if np_dtype not in _NP_DTYPE_TO_TFLITE_DTYPE:
         raise NotImplementedError(f"Unsupported numpy dtype for flatbuffer_direct: {np_dtype}")
     return _NP_DTYPE_TO_TFLITE_DTYPE[np_dtype]
+
+
+def _sanitize_runtime_shape(shape: List[int]) -> List[int]:
+    # TFLite Tensor.shape must be concrete non-negative int32 dims.
+    sanitized: List[int] = []
+    for dim in shape:
+        value = int(dim)
+        if value < 0 or value > _INT32_MAX:
+            sanitized.append(1)
+        else:
+            sanitized.append(value)
+    return sanitized
 
 
 def build_tensors_and_buffers(
@@ -46,11 +61,12 @@ def build_tensors_and_buffers(
     for tensor_name, tensor in tensors.items():
         tensor_obj = schema_tflite["TensorT"]()
         tensor_obj.name = tensor.name
-        tensor_obj.shape = list(tensor.shape)
+        original_shape = [int(v) for v in list(tensor.shape)]
+        tensor_obj.shape = _sanitize_runtime_shape(original_shape)
         tensor_obj.shapeSignature = (
-            list(tensor.shape_signature)
+            [int(v) for v in list(tensor.shape_signature)]
             if tensor.shape_signature is not None
-            else list(tensor.shape)
+            else list(original_shape)
         )
         tensor_obj.type = getattr(schema_tflite["TensorType"], tensor.dtype)
         tensor_obj.isVariable = bool(tensor.is_variable)

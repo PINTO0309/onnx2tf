@@ -498,7 +498,7 @@ def _build_builtin_options(
         return _build_softmax_options(schema_tflite, op)
     if op.op_type == "TRANSPOSE":
         return _build_transpose_options(schema_tflite, op)
-    if op.op_type in ["MEAN", "SUM", "REDUCE_MAX", "REDUCE_PROD"]:
+    if op.op_type in ["MEAN", "SUM", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD"]:
         return _build_reducer_options(schema_tflite, op)
     if op.op_type == "SQUEEZE":
         return _build_squeeze_options(schema_tflite, op)

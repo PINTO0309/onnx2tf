@@ -127,6 +127,39 @@ def _add_scalar_const(ctx: Any, base_name: str, value: float, dtype: str) -> str
     )
 
 
+def _sanitize_where_arithmetic_operand_if_constant_nonfinite(
+    *,
+    ctx: Any,
+    operand_name: str,
+    output_dtype: str,
+    base_name: str,
+) -> str:
+    """
+    Arithmetic Where fallback uses MUL-based masking and can produce NaN for
+    0 * (+/-inf). If operand is a constant float tensor with non-finite values,
+    replace them with finite sentinels before MUL.
+    """
+    tensor = ctx.model_ir.tensors.get(str(operand_name), None)
+    if tensor is None or tensor.data is None:
+        return str(operand_name)
+
+    data = np.asarray(tensor.data)
+    if not np.issubdtype(data.dtype, np.floating):
+        return str(operand_name)
+    if not bool(np.any(~np.isfinite(data))):
+        return str(operand_name)
+
+    np_dtype = np.float16 if str(output_dtype).upper() == "FLOAT16" else np.float32
+    finfo = np.finfo(np_dtype)
+    sanitized = np.nan_to_num(
+        data.astype(np_dtype, copy=False),
+        nan=0.0,
+        posinf=finfo.max,
+        neginf=finfo.min,
+    )
+    return ctx.add_const_tensor(base_name, np.asarray(sanitized, dtype=np_dtype))
+
+
 def _add_ones_like_tensor(
     ctx: Any,
     *,
@@ -301,6 +334,51 @@ def build_min_op(node: Any, ctx: Any) -> None:
             )
         )
         current_name = min_output_name
+
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in output_signature]
+
+
+def build_max_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    if len(input_names) < 2:
+        raise NotImplementedError(
+            f"Max requires at least 2 inputs in flatbuffer_direct. op={node.name}"
+        )
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_names[0], output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+
+    current_name = input_names[0]
+    for idx, rhs_name in enumerate(input_names[1:], start=1):
+        is_last = idx == int(len(input_names) - 1)
+        max_output_name = output_name
+        if not is_last:
+            max_output_name = ctx.add_intermediate_tensor(
+                f"{output_name}_max_{idx}",
+                dtype=output_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[current_name, rhs_name],
+                outputs=[max_output_name],
+                options={},
+            )
+        )
+        current_name = max_output_name
 
     if output_tensor is not None:
         output_tensor.shape_signature = [int(v) for v in output_signature]
@@ -1081,6 +1159,18 @@ def build_where_op(node: Any, ctx: Any) -> None:
             src_name=y_name,
             dst_dtype=output_dtype,
             base_name=f"{output_name}_where_y_cast",
+        )
+        x_cast_name = _sanitize_where_arithmetic_operand_if_constant_nonfinite(
+            ctx=ctx,
+            operand_name=x_cast_name,
+            output_dtype=output_dtype,
+            base_name=f"{output_name}_where_x_sanitized",
+        )
+        y_cast_name = _sanitize_where_arithmetic_operand_if_constant_nonfinite(
+            ctx=ctx,
+            operand_name=y_cast_name,
+            output_dtype=output_dtype,
+            base_name=f"{output_name}_where_y_sanitized",
         )
         cond_cast_name = _cast_tensor_if_needed(
             ctx=ctx,
