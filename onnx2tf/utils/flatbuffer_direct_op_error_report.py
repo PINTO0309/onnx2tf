@@ -467,11 +467,21 @@ def _get_onnx_eval_outputs(
     onnx_graph: onnx.ModelProto,
     target_output_names: List[str],
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    # Keep integer/bool inputs deterministic and in-range friendly for index ops
+    # (e.g. Gather/GatherND) during dummy inference.
+    safe_value_hints: List[str] = []
+    for input_name, input_dtype, _ in _collect_onnx_input_specs(onnx_graph):
+        if np.issubdtype(np.dtype(input_dtype), np.integer) or np.issubdtype(
+            np.dtype(input_dtype), np.bool_
+        ):
+            safe_value_hints.append(f"{input_name}:0")
+
     onnx_input_datas_for_validation: Dict[str, np.ndarray] = {}
     outputs = dummy_onnx_inference(
         onnx_graph=onnx_graph,
         output_names=target_output_names,
         input_datas_for_validation=onnx_input_datas_for_validation,
+        value_hints=safe_value_hints if len(safe_value_hints) > 0 else None,
     )
     if len(outputs) != len(target_output_names):
         raise RuntimeError(

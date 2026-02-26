@@ -90,6 +90,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     )
     report_op_coverage = bool(kwargs.get("report_op_coverage", False))
     output_nms_with_argmax = bool(kwargs.get("output_nms_with_argmax", False))
+    switch_nms_version = str(kwargs.get("switch_nms_version", "v4")).strip().lower()
+    if switch_nms_version not in {"v4", "v5"}:
+        raise ValueError(
+            "switch_nms_version must be 'v4' or 'v5'. "
+            f"got: {switch_nms_version}"
+        )
     keep_ncw_or_nchw_or_ncdhw_input_names = kwargs.get(
         "keep_ncw_or_nchw_or_ncdhw_input_names",
         None,
@@ -185,6 +191,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             disable_group_convolution=disable_group_convolution,
             preprocess_report=preprocess_report,
             output_nms_with_argmax=output_nms_with_argmax,
+            switch_nms_version=switch_nms_version,
         )
         write_op_coverage_report(
             report=report,
@@ -214,6 +221,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
             disable_group_convolution=disable_group_convolution,
             output_nms_with_argmax=output_nms_with_argmax,
+            switch_nms_version=switch_nms_version,
         )
     except Exception as ex:
         try:

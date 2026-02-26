@@ -415,3 +415,322 @@ def build_instance_normalization_op(node: Any, ctx: Any) -> None:
                 options={"inDataType": compute_dtype, "outDataType": output_dtype},
             )
         )
+
+
+def build_layer_normalization_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    scale_name = node.inputs[1].name
+    bias_name = node.inputs[2].name if len(node.inputs) >= 3 and str(node.inputs[2].name) != "" else ""
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(scale_name)
+    if bias_name != "":
+        ctx.ensure_tensor(bias_name)
+    ctx.ensure_tensor(output_name)
+    if ctx.model_ir.tensors[output_name].shape == [1] and ctx.model_ir.tensors[input_name].shape != [1]:
+        ctx.model_ir.tensors[output_name].shape = list(ctx.model_ir.tensors[input_name].shape)
+        ctx.model_ir.tensors[output_name].shape_signature = (
+            list(ctx.model_ir.tensors[input_name].shape_signature)
+            if ctx.model_ir.tensors[input_name].shape_signature is not None
+            else list(ctx.model_ir.tensors[input_name].shape)
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    rank = len(input_shape)
+    axis_raw = int(node.attrs.get("axis", -1))
+    axis = axis_raw + rank if axis_raw < 0 else axis_raw
+    normalized_axes = [int(v) for v in range(axis, rank)]
+    reduced_shape = list(input_shape)
+    for axis_idx in normalized_axes:
+        reduced_shape[axis_idx] = 1
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+
+    stash_type = int(node.attrs.get("stash_type", 1))
+    if stash_type == 1:
+        compute_dtype = "FLOAT32"
+    else:
+        compute_dtype = input_dtype
+    np_compute_dtype = _float_numpy_dtype(compute_dtype)
+    epsilon = float(node.attrs.get("epsilon", 1e-5))
+
+    x_name = input_name
+    if input_dtype != compute_dtype:
+        cast_in_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[cast_in_name],
+                options={"inDataType": input_dtype, "outDataType": compute_dtype},
+            )
+        )
+        x_name = cast_in_name
+
+    axes_name = ctx.add_const_tensor(
+        f"{node.name}_layernorm_axes",
+        np.asarray(normalized_axes, dtype=np.int32),
+    )
+    mean_output_name = node.outputs[1].name if len(node.outputs) >= 2 else ""
+    inv_std_output_name = node.outputs[2].name if len(node.outputs) >= 3 else ""
+    mean_output_dtype = compute_dtype
+    inv_std_output_dtype = compute_dtype
+    if mean_output_name != "":
+        ctx.ensure_tensor(mean_output_name, dtype=compute_dtype, shape=reduced_shape)
+        mean_output_dtype = str(ctx.get_tensor_dtype(mean_output_name)).upper()
+    if inv_std_output_name != "":
+        ctx.ensure_tensor(inv_std_output_name, dtype=compute_dtype, shape=reduced_shape)
+        inv_std_output_dtype = str(ctx.get_tensor_dtype(inv_std_output_name)).upper()
+
+    if mean_output_name != "" and mean_output_dtype == compute_dtype:
+        mean_name = mean_output_name
+    else:
+        mean_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_mean",
+            dtype=compute_dtype,
+            shape=reduced_shape,
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[x_name, axes_name],
+            outputs=[mean_name],
+            options={"keepDims": True},
+        )
+    )
+
+    centered_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_centered",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[x_name, mean_name],
+            outputs=[centered_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    squared_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_squared",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[centered_name, centered_name],
+            outputs=[squared_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    var_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_var",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[squared_name, axes_name],
+            outputs=[var_name],
+            options={"keepDims": True},
+        )
+    )
+
+    eps_name = ctx.add_const_tensor(
+        f"{node.name}_layernorm_eps",
+        np.asarray(epsilon, dtype=np_compute_dtype),
+    )
+    var_eps_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_var_eps",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[var_name, eps_name],
+            outputs=[var_eps_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    std_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_std",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[var_eps_name],
+            outputs=[std_name],
+        )
+    )
+
+    one_name = ctx.add_const_tensor(
+        f"{node.name}_layernorm_one",
+        np.asarray(1.0, dtype=np_compute_dtype),
+    )
+    if inv_std_output_name != "" and inv_std_output_dtype == compute_dtype:
+        inv_std_name = inv_std_output_name
+    else:
+        inv_std_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_inv_std",
+            dtype=compute_dtype,
+            shape=reduced_shape,
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[one_name, std_name],
+            outputs=[inv_std_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    normalized_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_normalized",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[centered_name, inv_std_name],
+            outputs=[normalized_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if mean_output_name != "":
+        if mean_output_dtype != compute_dtype:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[mean_name],
+                    outputs=[mean_output_name],
+                    options={"inDataType": compute_dtype, "outDataType": mean_output_dtype},
+                )
+            )
+
+    if inv_std_output_name != "":
+        if inv_std_output_dtype != compute_dtype:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[inv_std_name],
+                    outputs=[inv_std_output_name],
+                    options={"inDataType": compute_dtype, "outDataType": inv_std_output_dtype},
+                )
+            )
+
+    affine_dtype = input_dtype
+    affine_input_name = normalized_name
+    if compute_dtype != affine_dtype:
+        affine_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_affine_input_cast",
+            dtype=affine_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[normalized_name],
+                outputs=[affine_input_name],
+                options={"inDataType": compute_dtype, "outDataType": affine_dtype},
+            )
+        )
+
+    scale_dtype = str(ctx.get_tensor_dtype(scale_name)).upper()
+    scale_input_name = scale_name
+    if scale_dtype != affine_dtype:
+        scale_shape = [int(v) for v in ctx.get_tensor_shape(scale_name)]
+        scale_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_scale_cast",
+            dtype=affine_dtype,
+            shape=scale_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[scale_name],
+                outputs=[scale_input_name],
+                options={"inDataType": scale_dtype, "outDataType": affine_dtype},
+            )
+        )
+
+    scaled_name = ctx.add_intermediate_tensor(
+        f"{node.name}_layernorm_scaled",
+        dtype=affine_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[affine_input_name, scale_input_name],
+            outputs=[scaled_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if bias_name == "":
+        bias_input_name = ctx.add_const_tensor(
+            f"{node.name}_layernorm_bias_default",
+            np.asarray(0.0, dtype=_float_numpy_dtype(affine_dtype)),
+        )
+    else:
+        bias_dtype = str(ctx.get_tensor_dtype(bias_name)).upper()
+        bias_input_name = bias_name
+        if bias_dtype != affine_dtype:
+            bias_shape = [int(v) for v in ctx.get_tensor_shape(bias_name)]
+            bias_input_name = ctx.add_intermediate_tensor(
+                f"{node.name}_layernorm_bias_cast",
+                dtype=affine_dtype,
+                shape=bias_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[bias_name],
+                    outputs=[bias_input_name],
+                    options={"inDataType": bias_dtype, "outDataType": affine_dtype},
+                )
+            )
+
+    pre_output_name = output_name
+    if output_dtype != affine_dtype:
+        pre_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_layernorm_pre_output",
+            dtype=affine_dtype,
+            shape=input_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[scaled_name, bias_input_name],
+            outputs=[pre_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if pre_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[pre_output_name],
+                outputs=[output_name],
+                options={"inDataType": affine_dtype, "outDataType": output_dtype},
+            )
+        )

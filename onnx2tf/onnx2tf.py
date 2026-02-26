@@ -3355,6 +3355,7 @@ def convert(
                                     keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                                     disable_group_convolution=disable_group_convolution,
                                     output_nms_with_argmax=direct_output_nms_with_argmax,
+                                    switch_nms_version=switch_nms_version,
                                     tflite_split_max_bytes=tflite_split_max_bytes,
                                     tflite_split_target_bytes=tflite_split_target_bytes,
                                 )
@@ -3770,6 +3771,7 @@ def convert(
                                 keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                                 disable_group_convolution=disable_group_convolution,
                                 output_nms_with_argmax=direct_output_nms_with_argmax,
+                                switch_nms_version=switch_nms_version,
                                 tflite_split_max_bytes=tflite_split_max_bytes,
                                 tflite_split_target_bytes=tflite_split_target_bytes,
                             )

@@ -4340,10 +4340,21 @@ def dummy_onnx_inference(
                     dtype=input_dtype,
                 )
             elif test_data_nhwc is None:
-                input_datas[input_name] = np.ones(
-                    input_size,
-                    dtype=input_dtype,
-                )
+                np_input_dtype = np.dtype(input_dtype)
+                # Keep index-like integer inputs in-range friendly for ops such
+                # as Gather/GatherND during dummy inference.
+                if np.issubdtype(np_input_dtype, np.integer) or np.issubdtype(
+                    np_input_dtype, np.bool_
+                ):
+                    input_datas[input_name] = np.zeros(
+                        input_size,
+                        dtype=input_dtype,
+                    )
+                else:
+                    input_datas[input_name] = np.ones(
+                        input_size,
+                        dtype=input_dtype,
+                    )
             else:
                 input_datas[input_name] = \
                     tf.transpose(

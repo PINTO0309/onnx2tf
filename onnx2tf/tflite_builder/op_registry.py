@@ -49,13 +49,17 @@ from onnx2tf.tflite_builder.op_builders import (
     build_gather_nd_op,
     build_gather_elements_op,
     build_hardmax_op,
+    build_roi_align_op,
+    build_scatter_elements_op,
     build_scatter_nd_op,
     build_non_max_suppression_op,
     build_hardsigmoid_op,
     build_global_average_pool_op,
     build_global_max_pool_op,
     build_logsoftmax_op,
+    build_max_op,
     build_min_op,
+    build_if_op,
     build_mish_op,
     build_nonzero_op,
     build_qgemm_op,
@@ -66,6 +70,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_one_hot_op,
     build_topk_op,
     build_l2_normalization_op,
+    build_layer_normalization_op,
     build_lrn_op,
     build_logistic_op,
     build_matmul_integer_op,
@@ -110,6 +115,10 @@ from onnx2tf.tflite_builder.op_builders import (
     build_unary_op,
     build_unsqueeze_op,
     build_where_op,
+    is_supported_if_axis0_add_branch_pattern,
+    is_supported_if_nested_reducemin_add_branch_pattern,
+    is_supported_if_nms_guard_pattern,
+    is_supported_if_sequenceconstruct_add_branch_pattern,
 )
 
 
@@ -2971,6 +2980,123 @@ def _validate_scatter_nd(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_scatter_elements(node: Any, ctx: Any) -> None:
+    reduction = str(node.attrs.get("reduction", "none")).lower()
+    if reduction != "none":
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "ScatterElements reduction attribute supports 'none' only in flatbuffer_direct. "
+                f"reduction={reduction}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    data_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    indices_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+    updates_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[2].name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+    if len(data_shape) < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"ScatterElements data rank must be >= 1. data_shape={data_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(indices_shape) != len(data_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "ScatterElements requires indices rank equal to data rank in flatbuffer_direct. "
+                f"data_shape={data_shape} indices_shape={indices_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(updates_shape) != len(indices_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "ScatterElements requires updates rank equal to indices rank in flatbuffer_direct. "
+                f"indices_shape={indices_shape} updates_shape={updates_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(output_shape) == len(data_shape) and output_shape != [1] and data_shape != [1]:
+        for out_dim, data_dim in zip(output_shape, data_shape):
+            if int(out_dim) > 0 and int(data_dim) > 0 and int(out_dim) != int(data_dim):
+                raise NodeValidationError(
+                    reason_code="invalid_output_shape",
+                    message=(
+                        "ScatterElements output shape must match data shape. "
+                        f"data_shape={data_shape} output_shape={output_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+
+    axis = int(node.attrs.get("axis", 0))
+    if axis < 0:
+        axis += len(data_shape)
+    if axis < 0 or axis >= len(data_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "ScatterElements axis is out of range in flatbuffer_direct. "
+                f"axis={axis} rank={len(data_shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    data_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    updates_dtype = str(ctx.get_tensor_dtype(node.inputs[2].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    indices_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    if not _is_numeric_dtype(data_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "ScatterElements data dtype must be numeric (int/float) in flatbuffer_direct. "
+                f"data_dtype={data_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if updates_dtype != data_dtype:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "ScatterElements updates dtype must match data dtype in flatbuffer_direct. "
+                f"data_dtype={data_dtype} updates_dtype={updates_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype != data_dtype:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "ScatterElements output dtype must match data dtype in flatbuffer_direct. "
+                f"data_dtype={data_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not _is_integer_dtype(indices_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "ScatterElements indices dtype must be integer in flatbuffer_direct. "
+                f"indices_dtype={indices_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_mod(node: Any, _ctx: Any) -> None:
     fmod = int(node.attrs.get("fmod", 0))
     if fmod != 0:
@@ -3440,6 +3566,183 @@ def _validate_instance_norm(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
+
+
+def _validate_layer_norm(node: Any, ctx: Any) -> None:
+    if len(node.inputs) < 2:
+        raise NodeValidationError(
+            reason_code="invalid_input_count",
+            message="LayerNormalization expects at least 2 inputs (X, Scale).",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_name = node.inputs[0].name
+    scale_name = node.inputs[1].name
+    bias_name = node.inputs[2].name if len(node.inputs) >= 3 and str(node.inputs[2].name) != "" else ""
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_rank = len(input_shape)
+    if input_rank < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"LayerNormalization input rank must be >= 1. rank={input_rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    axis_raw = int(node.attrs.get("axis", -1))
+    axis = _normalize_axis_for_rank(axis=axis_raw, rank=input_rank, node=node)
+    expected_reduced_shape = [int(v) for v in input_shape]
+    for axis_idx in range(axis, input_rank):
+        expected_reduced_shape[axis_idx] = 1
+
+    epsilon = float(node.attrs.get("epsilon", 1e-5))
+    if not np.isfinite(epsilon) or epsilon < 0.0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LayerNormalization epsilon must be finite and >= 0. got={epsilon}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    stash_type = int(node.attrs.get("stash_type", 1))
+    if stash_type not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LayerNormalization stash_type must be 0 or 1. got={stash_type}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    allowed_float_dtypes = {"FLOAT16", "FLOAT32"}
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    scale_dtype = str(ctx.get_tensor_dtype(scale_name)).upper()
+    if input_dtype not in allowed_float_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "LayerNormalization input dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in allowed_float_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "LayerNormalization output dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if scale_dtype not in allowed_float_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "LayerNormalization scale dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"scale_dtype={scale_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if bias_name != "":
+        bias_dtype = str(ctx.get_tensor_dtype(bias_name)).upper()
+        if bias_dtype not in allowed_float_dtypes:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=(
+                    "LayerNormalization bias dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                    f"bias_dtype={bias_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    for output_idx in [1, 2]:
+        if len(node.outputs) <= output_idx:
+            continue
+        aux_dtype = str(ctx.get_tensor_dtype(node.outputs[output_idx].name)).upper()
+        if aux_dtype not in allowed_float_dtypes:
+            aux_name = "Mean" if output_idx == 1 else "InvStdDev"
+            raise NodeValidationError(
+                reason_code="unsupported_output_dtype",
+                message=(
+                    f"LayerNormalization {aux_name} output dtype must be FLOAT16/FLOAT32 "
+                    f"for builtin lowering. output_dtype={aux_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    def _validate_unidirectional_broadcast(param_name: str, label: str) -> None:
+        param_shape = [int(v) for v in ctx.get_tensor_shape(param_name)]
+        if param_shape == [1]:
+            return
+        if len(param_shape) > input_rank:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    f"LayerNormalization {label} rank must be <= input rank for unidirectional broadcast. "
+                    f"input_shape={input_shape} {label}_shape={param_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        for rev_idx in range(1, len(param_shape) + 1):
+            p_dim = int(param_shape[-rev_idx])
+            x_dim = int(input_shape[-rev_idx])
+            if p_dim <= 0 or x_dim <= 0:
+                continue
+            if p_dim != 1 and p_dim != x_dim:
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        f"LayerNormalization {label} is not unidirectional-broadcastable to X. "
+                        f"input_shape={input_shape} {label}_shape={param_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+
+    _validate_unidirectional_broadcast(scale_name, "Scale")
+    if bias_name != "":
+        _validate_unidirectional_broadcast(bias_name, "Bias")
+
+    for output_idx in [1, 2]:
+        if len(node.outputs) <= output_idx:
+            continue
+        output_name = node.outputs[output_idx].name
+        output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+        if output_shape == [1]:
+            continue
+        if len(output_shape) != input_rank:
+            raise NodeValidationError(
+                reason_code="unsupported_output_rank",
+                message=(
+                    "LayerNormalization auxiliary output rank must match input rank. "
+                    f"output_name={output_name} input_rank={input_rank} output_shape={output_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        for expected_dim, actual_dim in zip(expected_reduced_shape, output_shape):
+            if int(expected_dim) <= 0 or int(actual_dim) <= 0:
+                continue
+            if int(expected_dim) != int(actual_dim):
+                raise NodeValidationError(
+                    reason_code="unsupported_output_shape",
+                    message=(
+                        "LayerNormalization auxiliary output shape mismatch. "
+                        f"expected={expected_reduced_shape} actual={output_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
 
 
 def _validate_flatten(node: Any, ctx: Any) -> None:
@@ -4117,6 +4420,192 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_roi_align(node: Any, ctx: Any) -> None:
+    coordinate_transformation_mode = str(
+        node.attrs.get("coordinate_transformation_mode", "half_pixel")
+    ).lower()
+    if coordinate_transformation_mode not in {"half_pixel", "output_half_pixel"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "RoiAlign supports coordinate_transformation_mode in "
+                "{half_pixel,output_half_pixel} only in flatbuffer_direct. "
+                f"coordinate_transformation_mode={coordinate_transformation_mode}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    mode = str(node.attrs.get("mode", "avg")).lower()
+    if mode not in {"avg", "max"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "RoiAlign supports mode in {avg,max} only in flatbuffer_direct. "
+                f"mode={mode}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    output_height = int(node.attrs.get("output_height", 1))
+    output_width = int(node.attrs.get("output_width", 1))
+    if int(output_height) <= 0 or int(output_width) <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "RoiAlign requires positive output_height/output_width in flatbuffer_direct. "
+                f"output_height={output_height} output_width={output_width}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    sampling_ratio = int(node.attrs.get("sampling_ratio", 0))
+    if int(sampling_ratio) < 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "RoiAlign sampling_ratio must be >= 0 in flatbuffer_direct. "
+                f"sampling_ratio={sampling_ratio}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    x_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    rois_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+    batch_indices_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[2].name)]
+    y_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+    if len(x_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"RoiAlign input x must be rank-4. x_shape={x_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(rois_shape) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"RoiAlign input rois must be rank-2. rois_shape={rois_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(batch_indices_shape) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "RoiAlign input batch_indices must be rank-1. "
+                f"batch_indices_shape={batch_indices_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(y_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_output_rank",
+            message=f"RoiAlign output must be rank-4. y_shape={y_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if int(rois_shape[1]) > 0 and int(rois_shape[1]) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "RoiAlign rois second dimension must be 4 when statically known. "
+                f"rois_shape={rois_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if any(int(v) <= 0 for v in [x_shape[1], x_shape[2], x_shape[3]]):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "RoiAlign requires static positive input C/H/W in flatbuffer_direct. "
+                f"x_shape={x_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if int(y_shape[1]) > 0 and int(x_shape[1]) > 0 and int(y_shape[1]) != int(x_shape[1]):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "RoiAlign output channel dimension must match input channel dimension. "
+                f"x_shape={x_shape} y_shape={y_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(y_shape[2]) > 0 and int(y_shape[2]) != int(output_height):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "RoiAlign output height must match output_height attribute when statically known. "
+                f"y_shape={y_shape} output_height={output_height}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(y_shape[3]) > 0 and int(y_shape[3]) != int(output_width):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "RoiAlign output width must match output_width attribute when statically known. "
+                f"y_shape={y_shape} output_width={output_width}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    x_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    rois_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    batch_indices_dtype = str(ctx.get_tensor_dtype(node.inputs[2].name)).upper()
+    y_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if x_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "RoiAlign input x dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. "
+                f"x_dtype={x_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if rois_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "RoiAlign input rois dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. "
+                f"rois_dtype={rois_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not _is_integer_dtype(batch_indices_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "RoiAlign input batch_indices dtype must be integer in flatbuffer_direct. "
+                f"batch_indices_dtype={batch_indices_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if y_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "RoiAlign output dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. "
+                f"y_dtype={y_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_prelu(node: Any, ctx: Any) -> None:
     slope = _require_const_input(node, ctx, 1, "PRelu slope")
     input_shape = ctx.get_tensor_shape(node.inputs[0].name)
@@ -4140,6 +4629,29 @@ def _validate_prelu(node: Any, ctx: Any) -> None:
         node_name=node.name,
         node_op=node.op,
     )
+
+
+def _validate_if(node: Any, ctx: Any) -> None:
+    _ = ctx
+    if not (
+        is_supported_if_nms_guard_pattern(node)
+        or is_supported_if_axis0_add_branch_pattern(node)
+        or is_supported_if_sequenceconstruct_add_branch_pattern(node)
+        or is_supported_if_nested_reducemin_add_branch_pattern(node)
+    ):
+        raise NodeValidationError(
+            reason_code="unsupported_control_flow_pattern",
+            message=(
+                "If built-in lowering supports only constrained patterns: "
+                "NMS-guard pattern (empty-then + NMS-else), "
+                "axis0 Add-branch pattern (single Add in each branch), "
+                "or SequenceConstruct Add-branch pattern "
+                "(branch-local Constant/Add + terminal SequenceConstruct), "
+                "or nested ReduceMin/Add pattern (else-branch ReduceMin/Greater + nested Add/Add If)."
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _normalize_axis_for_rank(*, axis: int, rank: int, node: Any) -> int:
@@ -4328,6 +4840,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         onnx_op="Min",
         tflite_ops=["MINIMUM"],
         builder=build_min_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=None, min_outputs=1, max_outputs=1),
+    ),
+    "Max": DispatchEntry(
+        onnx_op="Max",
+        tflite_ops=["MAXIMUM"],
+        builder=build_max_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=None, min_outputs=1, max_outputs=1),
     ),
     "Abs": DispatchEntry(
@@ -4580,6 +5098,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_instance_norm,
     ),
+    "LayerNormalization": DispatchEntry(
+        onnx_op="LayerNormalization",
+        tflite_ops=["MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST"],
+        builder=build_layer_normalization_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=3),
+        extra_validator=_validate_layer_norm,
+    ),
     "ReduceMean": DispatchEntry(
         onnx_op="ReduceMean",
         tflite_ops=["MEAN"],
@@ -4605,6 +5130,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         onnx_op="ReduceMax",
         tflite_ops=["REDUCE_MAX"],
         builder=lambda node, ctx: build_reduce_op(node, ctx, "REDUCE_MAX"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reduce,
+    ),
+    "ReduceMin": DispatchEntry(
+        onnx_op="ReduceMin",
+        tflite_ops=["REDUCE_MIN"],
+        builder=lambda node, ctx: build_reduce_op(node, ctx, "REDUCE_MIN"),
         validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reduce,
     ),
@@ -4745,6 +5277,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["EXP"],
         builder=_make_unary_builder("EXP"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "Log": DispatchEntry(
+        onnx_op="Log",
+        tflite_ops=["LOG"],
+        builder=_make_unary_builder("LOG"),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_unary,
     ),
     "Erf": DispatchEntry(
         onnx_op="Erf",
@@ -4960,6 +5499,26 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_dropout_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=2),
     ),
+    "If": DispatchEntry(
+        onnx_op="If",
+        tflite_ops=[
+            "CONCATENATION",
+            "REDUCE_MAX",
+            "CAST",
+            "ADD",
+            "MUL",
+            "RESHAPE",
+            "NON_MAX_SUPPRESSION_V4",
+            "NON_MAX_SUPPRESSION_V5",
+            "SLICE",
+            "GATHER",
+            "SHAPE",
+            "SUB",
+        ],
+        builder=build_if_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_if,
+    ),
     "Transpose": DispatchEntry(
         onnx_op="Transpose",
         tflite_ops=["TRANSPOSE"],
@@ -5015,6 +5574,28 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_scatter_nd,
     ),
+    "ScatterElements": DispatchEntry(
+        onnx_op="ScatterElements",
+        tflite_ops=[
+            "CAST",
+            "LESS",
+            "SELECT",
+            "SHAPE",
+            "GATHER",
+            "RANGE",
+            "RESHAPE",
+            "TILE",
+            "CONCATENATION",
+            "MUL",
+            "ADD",
+            "SUB",
+            "FILL",
+            "SCATTER_ND",
+        ],
+        builder=build_scatter_elements_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_scatter_elements,
+    ),
     "GatherElements": DispatchEntry(
         onnx_op="GatherElements",
         tflite_ops=["CAST", "RESHAPE", "CONCATENATION", "GATHER_ND"],
@@ -5029,6 +5610,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "REDUCE_MAX",
             "SQUEEZE",
             "NON_MAX_SUPPRESSION_V4",
+            "NON_MAX_SUPPRESSION_V5",
             "SLICE",
             "GATHER",
             "SUB",
@@ -5129,6 +5711,29 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_grid_sample_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_grid_sample,
+    ),
+    "RoiAlign": DispatchEntry(
+        onnx_op="RoiAlign",
+        tflite_ops=[
+            "CAST",
+            "GATHER",
+            "PAD",
+            "RESHAPE",
+            "ADD",
+            "SUB",
+            "MUL",
+            "DIV",
+            "MAXIMUM",
+            "MINIMUM",
+            "FLOOR",
+            "TILE",
+            "AVERAGE_POOL_2D",
+            "MAX_POOL_2D",
+            "TRANSPOSE",
+        ],
+        builder=build_roi_align_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_roi_align,
     ),
     "SpaceToDepth": DispatchEntry(
         onnx_op="SpaceToDepth",
