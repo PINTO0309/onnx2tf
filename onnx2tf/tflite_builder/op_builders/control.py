@@ -6,7 +6,7 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
-from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
 def is_supported_if_nms_guard_pattern(node: Any) -> bool:
@@ -545,12 +545,89 @@ def _lower_graph_nodes(
                 )
             cond_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
             cond_value = ctx.get_constant_array(cond_name)
+            attrs = {a.name: a for a in graph_node.attribute}
             if cond_value is None:
+                then_attr = attrs.get("then_branch", None)
+                else_attr = attrs.get("else_branch", None)
+                then_graph = then_attr.g if then_attr is not None else None
+                else_graph = else_attr.g if else_attr is not None else None
+                if (
+                    then_graph is not None
+                    and else_graph is not None
+                    and len(then_graph.input) == 0
+                    and len(else_graph.input) == 0
+                    and len(then_graph.output) == 1
+                    and len(else_graph.output) == 1
+                    and len(then_graph.node) == 0
+                    and len(else_graph.node) == 0
+                ):
+                    _ensure_graph_initializers(then_graph, ctx)
+                    _ensure_graph_initializers(else_graph, ctx)
+
+                    then_output_name = remap_in.get(
+                        str(then_graph.output[0].name),
+                        str(then_graph.output[0].name),
+                    )
+                    else_output_name = remap_in.get(
+                        str(else_graph.output[0].name),
+                        str(else_graph.output[0].name),
+                    )
+                    nested_out_name = remap_out.get(
+                        str(graph_node.output[0]),
+                        str(graph_node.output[0]),
+                    )
+                    ctx.ensure_tensor(then_output_name)
+                    ctx.ensure_tensor(else_output_name)
+
+                    then_shape = [int(v) for v in ctx.get_tensor_shape(then_output_name)]
+                    else_shape = [int(v) for v in ctx.get_tensor_shape(else_output_name)]
+                    if then_shape != else_shape:
+                        raise NotImplementedError(
+                            "If in branch with dynamic condition requires same-shape then/else "
+                            f"constant outputs. node={graph_node.name} "
+                            f"then_shape={then_shape} else_shape={else_shape}"
+                        )
+
+                    expected_output_dtype = str(ctx.get_tensor_dtype(then_output_name)).upper()
+                    if nested_out_name in ctx.model_ir.tensors:
+                        expected_output_dtype = str(ctx.get_tensor_dtype(nested_out_name)).upper()
+                        expected_output_shape = [int(v) for v in ctx.get_tensor_shape(nested_out_name)]
+                    else:
+                        expected_output_shape = [int(v) for v in then_shape]
+                        ctx.ensure_tensor(
+                            nested_out_name,
+                            dtype=expected_output_dtype,
+                            shape=expected_output_shape,
+                        )
+                    then_output_name = _cast_to_dtype_for_if(
+                        tensor_name=then_output_name,
+                        target_dtype=expected_output_dtype,
+                        output_name=nested_out_name,
+                        suffix="then",
+                        ctx=ctx,
+                    )
+                    else_output_name = _cast_to_dtype_for_if(
+                        tensor_name=else_output_name,
+                        target_dtype=expected_output_dtype,
+                        output_name=nested_out_name,
+                        suffix="else",
+                        ctx=ctx,
+                    )
+                    _emit_where_mux(
+                        cond_name=cond_name,
+                        then_name=then_output_name,
+                        else_name=else_output_name,
+                        output_name=nested_out_name,
+                        output_shape=expected_output_shape,
+                        output_dtype=expected_output_dtype,
+                        node_name=f"{graph_node.name}_where",
+                        ctx=ctx,
+                    )
+                    continue
                 raise NotImplementedError(
                     f"If in branch requires constant condition in flatbuffer_direct. node={graph_node.name}"
                 )
             cond_bool = bool(np.asarray(cond_value).reshape(-1)[0])
-            attrs = {a.name: a for a in graph_node.attribute}
             selected_attr = "then_branch" if cond_bool else "else_branch"
             if selected_attr not in attrs:
                 raise NotImplementedError(
@@ -1345,4 +1422,575 @@ def build_if_op(node: Any, ctx: Any) -> None:
         candidate_name=candidate_output_name,
         output_name=output_name,
         ctx=ctx,
+    )
+
+
+def _loop_const_trip_count(node: Any, ctx: Any) -> Optional[int]:
+    if len(node.inputs) < 1:
+        return None
+    trip_count_name = node.inputs[0].name
+    if str(trip_count_name) == "":
+        return None
+    trip_count_arr = ctx.get_constant_array(trip_count_name)
+    if trip_count_arr is None:
+        return None
+    flat = np.asarray(trip_count_arr).reshape(-1)
+    if int(flat.size) == 0:
+        return None
+    return int(flat[0])
+
+
+def _loop_const_cond(node: Any, ctx: Any) -> Optional[bool]:
+    if len(node.inputs) < 2:
+        return None
+    cond_name = node.inputs[1].name
+    if str(cond_name) == "":
+        return None
+    cond_arr = ctx.get_constant_array(cond_name)
+    if cond_arr is None:
+        return None
+    flat = np.asarray(cond_arr).reshape(-1)
+    if int(flat.size) == 0:
+        return None
+    return bool(flat[0])
+
+
+def is_supported_loop_static_unroll_pattern(node: Any, ctx: Any) -> bool:
+    body = node.attrs.get("body", None)
+    if body is None or not hasattr(body, "input") or not hasattr(body, "output"):
+        return False
+    if len(node.inputs) < 3:
+        return False
+    trip_count = _loop_const_trip_count(node, ctx)
+    if trip_count is None or int(trip_count) < 0:
+        return False
+    if int(trip_count) > 1024:
+        return False
+    if _loop_const_cond(node, ctx) is None:
+        return False
+
+    state_count = int(len(node.inputs) - 2)
+    if state_count <= 0:
+        return False
+    # Static unroll path supports loop-carried outputs only (no scan outputs).
+    if len(node.outputs) != state_count:
+        return False
+    if len(body.input) != int(2 + state_count):
+        return False
+    if len(body.output) != int(1 + state_count):
+        return False
+    return True
+
+
+def is_supported_loop_while_pattern(node: Any, ctx: Any) -> bool:
+    body = node.attrs.get("body", None)
+    if body is None or not hasattr(body, "input") or not hasattr(body, "output"):
+        return False
+    if len(node.inputs) < 3:
+        return False
+    state_count = int(len(node.inputs) - 2)
+    if state_count <= 0:
+        return False
+    # WHILE lowering currently supports loop-carried outputs only (no scan outputs).
+    if len(node.outputs) != state_count:
+        return False
+    if len(body.input) != int(2 + state_count):
+        return False
+    if len(body.output) != int(1 + state_count):
+        return False
+    return True
+
+
+def _make_unique_tensor_name(*, base_name: str, ctx: Any) -> str:
+    name = str(base_name) if str(base_name) != "" else "loop_tensor"
+    if name not in ctx.model_ir.tensors and name not in ctx.shape_map:
+        return name
+    suffix = 1
+    while True:
+        candidate = f"{name}_{suffix}"
+        if candidate not in ctx.model_ir.tensors and candidate not in ctx.shape_map:
+            return candidate
+        suffix += 1
+
+
+def _register_tensor_remap_metadata(*, old_name: str, new_name: str, ctx: Any) -> None:
+    if str(old_name) in ctx.shape_map and str(new_name) not in ctx.shape_map:
+        ctx.shape_map[str(new_name)] = [int(v) for v in list(ctx.shape_map[str(old_name)])]
+    if str(old_name) in ctx.dtype_map and str(new_name) not in ctx.dtype_map:
+        ctx.dtype_map[str(new_name)] = str(ctx.dtype_map[str(old_name)])
+
+
+def _copy_tensor_metadata_for_alias(*, src_name: str, dst_name: str, ctx: Any) -> None:
+    src_tensor = ctx.model_ir.tensors.get(str(src_name), None)
+    dst_tensor = ctx.model_ir.tensors.get(str(dst_name), None)
+    if src_tensor is None or dst_tensor is None:
+        return
+    dst_tensor.dtype = str(src_tensor.dtype)
+    dst_tensor.shape = [int(v) for v in list(src_tensor.shape)]
+    if src_tensor.shape_signature is not None:
+        dst_tensor.shape_signature = [int(v) for v in list(src_tensor.shape_signature)]
+    else:
+        dst_tensor.shape_signature = [int(v) for v in list(src_tensor.shape)]
+    dst_tensor.quantization = src_tensor.quantization
+
+
+def _emit_tensor_alias_via_reshape(
+    *,
+    src_name: str,
+    dst_name: str,
+    alias_base_name: str,
+    ctx: Any,
+) -> None:
+    if str(src_name) == str(dst_name):
+        return
+    ctx.ensure_tensor(str(src_name))
+    src_shape = [int(v) for v in ctx.get_tensor_shape(str(src_name))]
+    src_dtype = str(ctx.get_tensor_dtype(str(src_name))).upper()
+    ctx.ensure_tensor(str(dst_name), dtype=src_dtype, shape=src_shape)
+    _copy_tensor_metadata_for_alias(
+        src_name=str(src_name),
+        dst_name=str(dst_name),
+        ctx=ctx,
+    )
+    alias_shape_name = ctx.add_const_tensor(
+        _make_unique_tensor_name(base_name=f"{alias_base_name}_shape", ctx=ctx),
+        np.asarray(src_shape, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[str(src_name), str(alias_shape_name)],
+            outputs=[str(dst_name)],
+            options={"newShape": [int(v) for v in src_shape]},
+        )
+        )
+
+
+def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
+    body_graph = node.attrs["body"]
+    _ensure_graph_initializers(body_graph, ctx)
+
+    trip_count = int(_loop_const_trip_count(node, ctx))
+    cond_initial = bool(_loop_const_cond(node, ctx))
+    state_input_names = [str(v.name) for v in node.inputs[2:]]
+    state_output_names = [str(v.name) for v in node.outputs]
+    state_count = int(len(state_input_names))
+
+    for state_input_name in state_input_names:
+        ctx.ensure_tensor(state_input_name)
+
+    current_states = [str(v) for v in state_input_names]
+    if cond_initial and trip_count > 0:
+        body_input_iter_name = str(body_graph.input[0].name)
+        body_input_cond_name = str(body_graph.input[1].name)
+        body_state_input_names = [str(v.name) for v in body_graph.input[2:2 + state_count]]
+        body_cond_output_name = str(body_graph.output[0].name)
+        body_state_output_names = [str(v.name) for v in body_graph.output[1:1 + state_count]]
+
+        for iter_idx in range(int(trip_count)):
+            iter_const_name = ctx.add_const_tensor(
+                _make_unique_tensor_name(base_name=f"{node.name}_loop_iter_{iter_idx}", ctx=ctx),
+                np.asarray(iter_idx, dtype=np.int64),
+            )
+            cond_const_name = ctx.add_const_tensor(
+                _make_unique_tensor_name(base_name=f"{node.name}_loop_cond_{iter_idx}", ctx=ctx),
+                np.asarray(True, dtype=np.bool_),
+            )
+
+            iteration_internal_remap: Dict[str, str] = {}
+            for body_node in body_graph.node:
+                for output_name in body_node.output:
+                    out_name = str(output_name)
+                    if out_name == "":
+                        continue
+                    if out_name in iteration_internal_remap:
+                        continue
+                    scoped_name = _make_unique_tensor_name(
+                        base_name=f"{out_name}_loop_{iter_idx}",
+                        ctx=ctx,
+                    )
+                    iteration_internal_remap[out_name] = scoped_name
+                    _register_tensor_remap_metadata(
+                        old_name=out_name,
+                        new_name=scoped_name,
+                        ctx=ctx,
+                    )
+
+            input_remap = dict(iteration_internal_remap)
+            input_remap[body_input_iter_name] = str(iter_const_name)
+            input_remap[body_input_cond_name] = str(cond_const_name)
+            for state_idx, body_state_input_name in enumerate(body_state_input_names):
+                input_remap[str(body_state_input_name)] = str(current_states[state_idx])
+
+            output_remap = dict(iteration_internal_remap)
+            cond_output_scoped = _make_unique_tensor_name(
+                base_name=f"{node.name}_loop_cond_out_{iter_idx}",
+                ctx=ctx,
+            )
+            output_remap[str(body_cond_output_name)] = str(cond_output_scoped)
+            _register_tensor_remap_metadata(
+                old_name=str(body_cond_output_name),
+                new_name=str(cond_output_scoped),
+                ctx=ctx,
+            )
+
+            next_states: List[str] = []
+            for state_idx, body_state_output_name in enumerate(body_state_output_names):
+                next_state_name = _make_unique_tensor_name(
+                    base_name=f"{node.name}_loop_state_{state_idx}_iter_{iter_idx}",
+                    ctx=ctx,
+                )
+                output_remap[str(body_state_output_name)] = str(next_state_name)
+                _register_tensor_remap_metadata(
+                    old_name=str(body_state_output_name),
+                    new_name=str(next_state_name),
+                    ctx=ctx,
+                )
+                next_states.append(str(next_state_name))
+
+            _lower_graph_nodes(
+                graph=body_graph,
+                ctx=ctx,
+                input_name_remap=input_remap,
+                output_name_remap=output_remap,
+            )
+
+            for state_idx, next_state_name in enumerate(next_states):
+                if next_state_name in ctx.model_ir.tensors:
+                    continue
+                body_state_output_name = str(body_state_output_names[state_idx])
+                source_name = input_remap.get(body_state_output_name, None)
+                if source_name is None:
+                    source_name = str(current_states[state_idx])
+                if str(source_name) not in ctx.model_ir.tensors:
+                    raise NotImplementedError(
+                        (
+                            "Loop static unroll could not resolve loop-carried state output. "
+                            f"node={node.name} iter={iter_idx} output={body_state_output_name}"
+                        )
+                    )
+                _emit_tensor_alias_via_reshape(
+                    src_name=str(source_name),
+                    dst_name=str(next_state_name),
+                    alias_base_name=f"{node.name}_loop_state_alias_{state_idx}_iter_{iter_idx}",
+                    ctx=ctx,
+                )
+
+            current_states = [str(v) for v in next_states]
+
+    for state_idx, output_name in enumerate(state_output_names):
+        src_name = str(current_states[state_idx])
+        _emit_tensor_alias_via_reshape(
+            src_name=src_name,
+            dst_name=str(output_name),
+            alias_base_name=f"{node.name}_loop_final_state_{state_idx}",
+            ctx=ctx,
+        )
+
+
+def _build_loop_while(node: Any, ctx: Any) -> None:
+    body_graph = node.attrs["body"]
+    _ensure_graph_initializers(body_graph, ctx)
+
+    state_input_names = [str(v.name) for v in node.inputs[2:]]
+    state_output_names = [str(v.name) for v in node.outputs]
+    state_count = int(len(state_input_names))
+
+    max_trip_input_name = str(node.inputs[0].name)
+    cond_input_name = str(node.inputs[1].name)
+    if max_trip_input_name == "" or cond_input_name == "":
+        raise NotImplementedError(
+            (
+                "Loop WHILE lowering currently requires explicit max_trip_count and condition inputs. "
+                f"node={node.name}"
+            )
+        )
+
+    ctx.ensure_tensor(max_trip_input_name)
+    ctx.ensure_tensor(cond_input_name)
+    for state_input_name in state_input_names:
+        ctx.ensure_tensor(state_input_name)
+
+    iter_dtype = str(ctx.get_tensor_dtype(max_trip_input_name)).upper()
+    if iter_dtype not in {"INT32", "INT64"}:
+        raise NotImplementedError(
+            f"Loop WHILE lowering requires INT32/INT64 max_trip_count. node={node.name} dtype={iter_dtype}"
+        )
+
+    cond_dtype = str(ctx.get_tensor_dtype(cond_input_name)).upper()
+    while_cond_input_name = cond_input_name
+    if cond_dtype != "BOOL":
+        cast_cond_name = ctx.add_intermediate_tensor(
+            _make_unique_tensor_name(base_name=f"{node.name}_loop_cond_cast", ctx=ctx),
+            dtype="BOOL",
+            shape=[],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[cond_input_name],
+                outputs=[cast_cond_name],
+                options={"inDataType": cond_dtype, "outDataType": "BOOL"},
+            )
+        )
+        while_cond_input_name = cast_cond_name
+
+    iter_init_name = ctx.add_const_tensor(
+        _make_unique_tensor_name(base_name=f"{node.name}_loop_iter_init", ctx=ctx),
+        np.asarray(0, dtype=np.int64 if iter_dtype == "INT64" else np.int32),
+    )
+
+    while_input_names = [iter_init_name, max_trip_input_name, while_cond_input_name] + state_input_names
+    while_output_names: List[str] = [
+        _make_unique_tensor_name(base_name=f"{node.name}_loop_iter_out", ctx=ctx),
+        _make_unique_tensor_name(base_name=f"{node.name}_loop_trip_out", ctx=ctx),
+        _make_unique_tensor_name(base_name=f"{node.name}_loop_cond_out", ctx=ctx),
+    ] + state_output_names
+
+    ctx.ensure_tensor(while_output_names[0], dtype=iter_dtype, shape=[])
+    ctx.ensure_tensor(while_output_names[1], dtype=iter_dtype, shape=[])
+    ctx.ensure_tensor(while_output_names[2], dtype="BOOL", shape=[])
+    for idx, state_output_name in enumerate(state_output_names):
+        state_shape = [int(v) for v in ctx.get_tensor_shape(state_input_names[idx])]
+        state_dtype = str(ctx.get_tensor_dtype(state_input_names[idx])).upper()
+        ctx.ensure_tensor(state_output_name, dtype=state_dtype, shape=state_shape)
+
+    cond_subgraph = ModelIR(name=f"{node.name}_while_cond")
+    body_subgraph = ModelIR(name=f"{node.name}_while_body")
+
+    # Build subgraph-local contexts with copied shape/dtype knowledge.
+    from onnx2tf.tflite_builder.lower_from_onnx2tf import LoweringContext
+
+    cond_ctx = LoweringContext(
+        model_ir=cond_subgraph,
+        shape_map=dict(ctx.shape_map),
+        dtype_map=dict(ctx.dtype_map),
+        constants={},
+        onnx_model=getattr(ctx, "onnx_model", None),
+        allow_custom_ops=bool(getattr(ctx, "allow_custom_ops", False)),
+        custom_op_allowlist=list(getattr(ctx, "custom_op_allowlist", []) or []),
+        disable_group_convolution=bool(getattr(ctx, "disable_group_convolution", False)),
+        tensor_consumer_count={},
+        graph_output_names=None,
+        output_nms_with_argmax=bool(getattr(ctx, "output_nms_with_argmax", False)),
+        switch_nms_version=str(getattr(ctx, "switch_nms_version", "v4")),
+    )
+    body_ctx = LoweringContext(
+        model_ir=body_subgraph,
+        shape_map=dict(ctx.shape_map),
+        dtype_map=dict(ctx.dtype_map),
+        constants={},
+        onnx_model=getattr(ctx, "onnx_model", None),
+        allow_custom_ops=bool(getattr(ctx, "allow_custom_ops", False)),
+        custom_op_allowlist=list(getattr(ctx, "custom_op_allowlist", []) or []),
+        disable_group_convolution=bool(getattr(ctx, "disable_group_convolution", False)),
+        tensor_consumer_count={},
+        graph_output_names=None,
+        output_nms_with_argmax=bool(getattr(ctx, "output_nms_with_argmax", False)),
+        switch_nms_version=str(getattr(ctx, "switch_nms_version", "v4")),
+    )
+    _ensure_graph_initializers(body_graph, body_ctx)
+
+    cond_iter_in = f"{node.name}_while_iter_in"
+    cond_trip_in = f"{node.name}_while_trip_in"
+    cond_cond_in = f"{node.name}_while_cond_in"
+    cond_state_in_names = [f"{node.name}_while_state_{idx}_in" for idx in range(state_count)]
+    cond_out_name = f"{node.name}_while_cond_out"
+
+    for tensor_name, dtype_name, shape in [
+        (cond_iter_in, iter_dtype, []),
+        (cond_trip_in, iter_dtype, []),
+        (cond_cond_in, "BOOL", []),
+    ]:
+        cond_ctx.ensure_tensor(tensor_name, dtype=dtype_name, shape=shape)
+    for idx, state_name in enumerate(cond_state_in_names):
+        cond_ctx.ensure_tensor(
+            state_name,
+            dtype=str(ctx.get_tensor_dtype(state_input_names[idx])).upper(),
+            shape=[int(v) for v in ctx.get_tensor_shape(state_input_names[idx])],
+        )
+    cond_ctx.ensure_tensor(cond_out_name, dtype="BOOL", shape=[])
+
+    cond_iter_lt_name = cond_ctx.add_intermediate_tensor(
+        f"{node.name}_while_iter_lt_trip",
+        dtype="BOOL",
+        shape=[],
+    )
+    cond_ctx.add_operator(
+        OperatorIR(
+            op_type="LESS",
+            inputs=[cond_iter_in, cond_trip_in],
+            outputs=[cond_iter_lt_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    cond_ctx.add_operator(
+        OperatorIR(
+            op_type="LOGICAL_AND",
+            inputs=[cond_cond_in, cond_iter_lt_name],
+            outputs=[cond_out_name],
+            options={},
+        )
+    )
+    cond_subgraph.inputs = [cond_iter_in, cond_trip_in, cond_cond_in] + cond_state_in_names
+    cond_subgraph.outputs = [cond_out_name]
+
+    body_iter_in = f"{node.name}_while_iter_in"
+    body_trip_in = f"{node.name}_while_trip_in"
+    body_cond_in = f"{node.name}_while_cond_in"
+    body_state_in_names = [f"{node.name}_while_state_{idx}_in" for idx in range(state_count)]
+    body_iter_out = f"{node.name}_while_iter_out"
+    body_trip_out = f"{node.name}_while_trip_out"
+    body_cond_out = f"{node.name}_while_cond_out"
+    body_state_out_names = [f"{node.name}_while_state_{idx}_out" for idx in range(state_count)]
+
+    for tensor_name, dtype_name, shape in [
+        (body_iter_in, iter_dtype, []),
+        (body_trip_in, iter_dtype, []),
+        (body_cond_in, "BOOL", []),
+    ]:
+        body_ctx.ensure_tensor(tensor_name, dtype=dtype_name, shape=shape)
+    for idx, state_name in enumerate(body_state_in_names):
+        body_ctx.ensure_tensor(
+            state_name,
+            dtype=str(ctx.get_tensor_dtype(state_input_names[idx])).upper(),
+            shape=[int(v) for v in ctx.get_tensor_shape(state_input_names[idx])],
+        )
+
+    iter_plus_one_const_name = body_ctx.add_const_tensor(
+        f"{node.name}_while_iter_plus_one_const",
+        np.asarray(1, dtype=np.int64 if iter_dtype == "INT64" else np.int32),
+    )
+    body_ctx.ensure_tensor(body_iter_out, dtype=iter_dtype, shape=[])
+    body_ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[body_iter_in, iter_plus_one_const_name],
+            outputs=[body_iter_out],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _emit_tensor_alias_via_reshape(
+        src_name=body_trip_in,
+        dst_name=body_trip_out,
+        alias_base_name=f"{node.name}_while_trip_passthrough",
+        ctx=body_ctx,
+    )
+
+    onnx_body_input_iter_name = str(body_graph.input[0].name)
+    onnx_body_input_cond_name = str(body_graph.input[1].name)
+    onnx_body_state_input_names = [str(v.name) for v in body_graph.input[2:2 + state_count]]
+    onnx_body_cond_output_name = str(body_graph.output[0].name)
+    onnx_body_state_output_names = [str(v.name) for v in body_graph.output[1:1 + state_count]]
+
+    body_input_remap: Dict[str, str] = {
+        onnx_body_input_iter_name: body_iter_in,
+        onnx_body_input_cond_name: body_cond_in,
+    }
+    for idx, state_input_name in enumerate(onnx_body_state_input_names):
+        body_input_remap[state_input_name] = body_state_in_names[idx]
+
+    body_output_remap: Dict[str, str] = {}
+    for graph_node in body_graph.node:
+        for output_name in graph_node.output:
+            out_name = str(output_name)
+            if out_name == "":
+                continue
+            if out_name == onnx_body_cond_output_name:
+                mapped_name = str(body_cond_out)
+            elif out_name in onnx_body_state_output_names:
+                mapped_name = str(body_state_out_names[onnx_body_state_output_names.index(out_name)])
+            else:
+                mapped_name = _make_unique_tensor_name(
+                    base_name=f"{node.name}_while_body_{out_name}",
+                    ctx=body_ctx,
+                )
+                _register_tensor_remap_metadata(
+                    old_name=out_name,
+                    new_name=mapped_name,
+                    ctx=body_ctx,
+                )
+            body_output_remap[out_name] = mapped_name
+            body_input_remap[out_name] = mapped_name
+
+    for idx, state_output_name in enumerate(onnx_body_state_output_names):
+        body_output_remap[state_output_name] = body_state_out_names[idx]
+
+    body_ctx.ensure_tensor(body_cond_out, dtype="BOOL", shape=[])
+    for idx, state_out_name in enumerate(body_state_out_names):
+        body_ctx.ensure_tensor(
+            state_out_name,
+            dtype=str(ctx.get_tensor_dtype(state_input_names[idx])).upper(),
+            shape=[int(v) for v in ctx.get_tensor_shape(state_input_names[idx])],
+        )
+
+    _lower_graph_nodes(
+        graph=body_graph,
+        ctx=body_ctx,
+        input_name_remap=body_input_remap,
+        output_name_remap=body_output_remap,
+    )
+
+    produced_tensor_names = {
+        str(out_name)
+        for op in body_ctx.model_ir.operators
+        for out_name in op.outputs
+    }
+    produced_tensor_names.update(str(name) for name in body_ctx.constants.keys())
+
+    if body_cond_out not in produced_tensor_names:
+        fallback_cond_src = body_input_remap.get(onnx_body_cond_output_name, body_cond_in)
+        _emit_tensor_alias_via_reshape(
+            src_name=str(fallback_cond_src),
+            dst_name=body_cond_out,
+            alias_base_name=f"{node.name}_while_cond_passthrough",
+            ctx=body_ctx,
+        )
+        produced_tensor_names.add(str(body_cond_out))
+    for idx, state_out_name in enumerate(body_state_out_names):
+        if str(state_out_name) in produced_tensor_names:
+            continue
+        fallback_state_src = body_input_remap.get(onnx_body_state_output_names[idx], body_state_in_names[idx])
+        _emit_tensor_alias_via_reshape(
+            src_name=str(fallback_state_src),
+            dst_name=state_out_name,
+            alias_base_name=f"{node.name}_while_state_passthrough_{idx}",
+            ctx=body_ctx,
+        )
+        produced_tensor_names.add(str(state_out_name))
+
+    body_subgraph.inputs = [body_iter_in, body_trip_in, body_cond_in] + body_state_in_names
+    body_subgraph.outputs = [body_iter_out, body_trip_out, body_cond_out] + body_state_out_names
+
+    cond_subgraph_index = int(len(ctx.model_ir.subgraphs) + 1)
+    ctx.model_ir.subgraphs.append(cond_subgraph)
+    body_subgraph_index = int(len(ctx.model_ir.subgraphs) + 1)
+    ctx.model_ir.subgraphs.append(body_subgraph)
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="WHILE",
+            inputs=while_input_names,
+            outputs=while_output_names,
+            options={
+                "condSubgraphIndex": int(cond_subgraph_index),
+                "bodySubgraphIndex": int(body_subgraph_index),
+            },
+        )
+    )
+
+
+def build_loop_op(node: Any, ctx: Any) -> None:
+    if is_supported_loop_while_pattern(node, ctx):
+        _build_loop_while(node, ctx)
+        return
+    if is_supported_loop_static_unroll_pattern(node, ctx):
+        _build_loop_static_unroll(node, ctx)
+        return
+    raise NotImplementedError(
+        (
+            "Loop built-in lowering supports either static-unroll patterns with constant trip_count/cond "
+            "or WHILE patterns with loop-carried outputs only (no scan outputs). "
+            f"node={node.name}"
+        )
     )

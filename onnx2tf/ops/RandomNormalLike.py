@@ -53,9 +53,22 @@ def make_node(
     rseed = graph_node.attrs.get('seed', 0)
     rshape = graph_node_input.shape \
         if input_tensor is None else input_tensor.shape
-    rshape = [
-        s if not isinstance(s, str) else None for s in rshape
-    ]
+    if isinstance(rshape, tf.TensorShape):
+        try:
+            rshape = rshape.as_list()
+        except ValueError:
+            rshape = None
+    if isinstance(rshape, tuple):
+        rshape = list(rshape)
+    if rshape is None:
+        rshape = tf.shape(input_tensor) if input_tensor is not None else graph_node_output.shape
+    if isinstance(rshape, list):
+        rshape = [
+            s if not isinstance(s, str) else None for s in rshape
+        ]
+        if input_tensor is not None and any(s is None for s in rshape):
+            # Stateful random ops do not accept None in shape lists.
+            rshape = tf.shape(input_tensor)
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -65,13 +78,13 @@ def make_node(
     }
 
     # Generation of TF OP
-    generator = tf.random.Generator.from_seed(rseed)
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        generator.normal(
+        tf.random.normal(
             shape=rshape,
             mean=rmean,
             stddev=rscale,
             dtype=ONNX_DTYPES_TO_TF_DTYPES[rdtype],
+            seed=rseed,
             name=graph_node.name,
         )
 

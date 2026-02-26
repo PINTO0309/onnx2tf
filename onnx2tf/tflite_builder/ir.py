@@ -43,6 +43,7 @@ class ModelIR:
     operators: List[OperatorIR] = field(default_factory=list)
     inputs: List[str] = field(default_factory=list)
     outputs: List[str] = field(default_factory=list)
+    subgraphs: List["ModelIR"] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -76,6 +77,7 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
     )
     clone.inputs = list(model_ir.inputs)
     clone.outputs = list(model_ir.outputs)
+    clone.subgraphs = [clone_model_ir_with_float16(subgraph) for subgraph in model_ir.subgraphs]
     clone.operators = [
         OperatorIR(
             op_type=op.op_type,

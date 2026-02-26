@@ -269,6 +269,14 @@ def _adapt_input_layout_for_tflite_input(data: np.ndarray, detail: Dict[str, Any
     if target_shape is None:
         return value
     target_shape = [int(v) for v in np.asarray(target_shape).reshape(-1).tolist()]
+
+    # ONNX scalar ([] rank) is commonly represented as [1] in TFLite runtime tensors.
+    if value.ndim == 0 and len(target_shape) == 1 and _dim_matches(target_shape[0], 1):
+        return value.reshape((1,))
+    # Conversely, some runtime tensors can stay scalar while ONNX sample is [1].
+    if value.ndim == 1 and int(value.size) == 1 and len(target_shape) == 0:
+        return np.asarray(value).reshape(())
+
     if len(target_shape) != value.ndim:
         return value
 

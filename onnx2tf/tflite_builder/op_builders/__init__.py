@@ -114,10 +114,13 @@ from onnx2tf.tflite_builder.op_builders.custom import (
 )
 from onnx2tf.tflite_builder.op_builders.control import (
     build_if_op,
+    build_loop_op,
     is_supported_if_axis0_add_branch_pattern,
     is_supported_if_nms_guard_pattern,
     is_supported_if_nested_reducemin_add_branch_pattern,
     is_supported_if_sequenceconstruct_add_branch_pattern,
+    is_supported_loop_static_unroll_pattern,
+    is_supported_loop_while_pattern,
 )
 from onnx2tf.tflite_builder.op_builders.quantized import (
     build_dequantize_linear_op,
@@ -232,10 +235,13 @@ __all__ = [
     "build_lrn_op",
     "build_custom_passthrough_op",
     "build_if_op",
+    "build_loop_op",
     "is_supported_if_axis0_add_branch_pattern",
     "is_supported_if_nms_guard_pattern",
     "is_supported_if_nested_reducemin_add_branch_pattern",
     "is_supported_if_sequenceconstruct_add_branch_pattern",
+    "is_supported_loop_static_unroll_pattern",
+    "is_supported_loop_while_pattern",
     "build_dequantize_linear_op",
     "build_dynamic_quantize_linear_op",
     "build_qgemm_op",
