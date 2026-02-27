@@ -64,14 +64,15 @@ def make_node(
 
     # Generation of TF OP
     if isinstance(input_tensor, tf.experimental.Optional):
-        optional = input_tensor
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor.has_value()
+    elif isinstance(input_tensor, dict) and "__onnx_optional_has_value__" in input_tensor:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.convert_to_tensor(
+            bool(input_tensor["__onnx_optional_has_value__"]),
+            dtype=tf.bool,
+        )
     else:
-        optional = \
-            tf.experimental.Optional.from_value(
-                value=tf.convert_to_tensor(input_tensor),
-                name=graph_node.name,
-            )
-    tf_layers_dict[graph_node_output.name]['tf_node'] = optional.has_value()
+        # OptionalHasElement(tensor) is always true in ONNX.
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.constant(True, dtype=tf.bool)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

@@ -63,6 +63,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_loop_op,
     build_mish_op,
     build_nonzero_op,
+    build_optional_has_element_op,
     build_qgemm_op,
     build_identity_op,
     build_lstm_op,
@@ -105,6 +106,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_slice_op,
     build_split_op,
     build_space_to_depth_op,
+    build_string_normalizer_op,
     build_squeeze_op,
     build_tile_op,
     build_softmax_op,
@@ -1103,22 +1105,31 @@ def _validate_slice(node: Any, ctx: Any) -> None:
 
     if dynamic_end_name != "":
         dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_name)]
+        dynamic_end_len = int(dynamic_end_shape[0]) if len(dynamic_end_shape) == 1 else -1
+        dynamic_end_len_ok = (
+            len(dynamic_end_shape) == 1
+            and (dynamic_end_len <= 0 or dynamic_end_len == len(starts_values))
+        )
+        axes_are_prefix = normalized_axes == [int(v) for v in range(len(normalized_axes))]
+        starts_non_negative = all(int(v) >= 0 for v in starts_values)
+        steps_positive = all(int(v) > 0 for v in steps)
         is_supported_dynamic_end = (
-            rank == 1
-            and len(dynamic_end_shape) >= 1
-            and len(starts_values) == 1
-            and len(normalized_axes) == 1
-            and len(steps) == 1
-            and int(starts_values[0]) == 0
-            and int(normalized_axes[0]) == 0
-            and int(steps[0]) == 1
+            rank >= 1
+            and len(starts_values) >= 1
+            and len(starts_values) == len(normalized_axes)
+            and len(starts_values) == len(steps)
+            and len(starts_values) <= rank
+            and dynamic_end_len_ok
+            and axes_are_prefix
+            and starts_non_negative
+            and steps_positive
         )
         if not is_supported_dynamic_end:
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",
                 message=(
-                    "Slice dynamic-end lowering supports rank-1 axis-0 prefix slice "
-                    "with start=0 and step=1 only. "
+                    "Slice dynamic-end lowering supports prefix-axis slicing only "
+                    "(axes=[0..k-1], start>=0, step>0). "
                     f"rank={rank} dynamic_end_shape={dynamic_end_shape} "
                     f"starts={starts_values} axes={normalized_axes} steps={steps}"
                 ),
@@ -2320,17 +2331,30 @@ def _validate_unsqueeze(node: Any, ctx: Any) -> None:
         output_rank = len(ctx.get_tensor_shape(node.outputs[0].name))
         if output_rank > 0:
             input_rank = int(max(output_rank - len(axes), 0))
+    output_rank = int(input_rank + len(axes))
+    normalized_axes: List[int] = []
     for axis in axes:
         a = int(axis)
         if a < 0:
-            a += input_rank + 1
-        if a < 0 or a > input_rank:
+            a += output_rank
+        if a < 0 or a >= output_rank:
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",
-                message=f"unsqueeze axis out of range. axis={axis} normalized={a} rank={input_rank}",
+                message=(
+                    f"unsqueeze axis out of range. axis={axis} normalized={a} "
+                    f"input_rank={input_rank} output_rank={output_rank}"
+                ),
                 node_name=node.name,
                 node_op=node.op,
             )
+        if a in normalized_axes:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"unsqueeze axes must be unique. axes={axes}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        normalized_axes.append(int(a))
 
 
 def _validate_gather(node: Any, ctx: Any) -> None:
@@ -2808,7 +2832,8 @@ def _validate_cast(node: Any, _ctx: Any) -> None:
 
 
 def _validate_expand(node: Any, _ctx: Any) -> None:
-    # Expand is lowered via static-shape MUL-broadcast path in op_builders.shape.
+    # Expand is lowered via multiply-by-ones.
+    # Dynamic shape-input cases build ones via FILL at runtime.
     return
 
 
@@ -4673,6 +4698,105 @@ def _validate_loop(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_string_normalizer(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype != "STRING":
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "StringNormalizer input dtype must be STRING for builtin lowering. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype != "STRING":
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "StringNormalizer output dtype must be STRING for builtin lowering. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    locale = str(node.attrs.get("locale", "en_US")).strip()
+    if locale not in {"", "en_US"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "StringNormalizer builtin lowering supports locale '' or 'en_US' only. "
+                f"locale={locale}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    # Constant input path is evaluated exactly during lowering.
+    if ctx.get_constant_array(node.inputs[0].name) is not None:
+        return
+
+    case_change_action = str(node.attrs.get("case_change_action", "NONE")).strip().upper()
+    stopwords = node.attrs.get("stopwords", [])
+    if stopwords is None:
+        stopwords = []
+    if isinstance(stopwords, str):
+        stopwords = [stopwords]
+    stopword_count = len(list(stopwords))
+    is_case_sensitive = bool(node.attrs.get("is_case_sensitive", 1))
+
+    if case_change_action not in {"", "NONE"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "StringNormalizer builtin lowering does not support runtime LOWER/UPPER conversion. "
+                f"case_change_action={case_change_action}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if stopword_count > 0 and not is_case_sensitive:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "StringNormalizer builtin lowering does not support case-insensitive runtime stopword matching. "
+                f"is_case_sensitive={is_case_sensitive}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    input_rank = len(input_shape)
+    if input_rank not in {1, 2}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "StringNormalizer builtin lowering supports rank1/rank2 input only. "
+                f"input_rank={input_rank}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if stopword_count > 0:
+        output_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+        output_rank = len(output_shape)
+        expected_output_rank = 1 if input_rank == 1 else 2
+        if output_rank != expected_output_rank:
+            raise NodeValidationError(
+                reason_code="unsupported_output_rank",
+                message=(
+                    "StringNormalizer stopword filtering builtin lowering requires output rank to match "
+                    "the filtered tensor rank. "
+                    f"input_rank={input_rank} output_rank={output_rank}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _normalize_axis_for_rank(*, axis: int, rank: int, node: Any) -> int:
     a = int(axis)
     if a < 0:
@@ -5410,7 +5534,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Pad": DispatchEntry(
         onnx_op="Pad",
-        tflite_ops=["PAD", "MIRROR_PAD"],
+        tflite_ops=["PAD", "PADV2", "MIRROR_PAD"],
         builder=build_pad_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
     ),
@@ -5423,7 +5547,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Clip": DispatchEntry(
         onnx_op="Clip",
-        tflite_ops=["RELU", "RELU6", "MAXIMUM", "MINIMUM"],
+        tflite_ops=["RELU", "RELU6", "RELU_N1_TO_1", "MAXIMUM", "MINIMUM"],
         builder=build_clip_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_clip,
@@ -5517,6 +5641,27 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["RESHAPE", "SHAPE", "FILL"],
         builder=build_dropout_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=2),
+    ),
+    "OptionalHasElement": DispatchEntry(
+        onnx_op="OptionalHasElement",
+        tflite_ops=["CONST"],
+        builder=build_optional_has_element_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
+    "StringNormalizer": DispatchEntry(
+        onnx_op="StringNormalizer",
+        tflite_ops=[
+            "RESHAPE",
+            "EQUAL",
+            "LOGICAL_OR",
+            "LOGICAL_NOT",
+            "WHERE",
+            "GATHER",
+            "EXPAND_DIMS",
+        ],
+        builder=build_string_normalizer_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_string_normalizer,
     ),
     "If": DispatchEntry(
         onnx_op="If",
@@ -5810,6 +5955,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "DEPTHWISE_CONV_2D",
             "RELU",
             "RELU6",
+            "RELU_N1_TO_1",
             "TANH",
             "LOGISTIC",
             "LEAKY_RELU",

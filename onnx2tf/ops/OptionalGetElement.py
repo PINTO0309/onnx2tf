@@ -64,14 +64,18 @@ def make_node(
 
     # Generation of TF OP
     if isinstance(input_tensor, tf.experimental.Optional):
-        optional = input_tensor
-    else:
-        optional = \
-            tf.experimental.Optional.from_value(
-                value=tf.convert_to_tensor(input_tensor),
-                name=graph_node.name,
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor.get_value()
+    elif isinstance(input_tensor, dict) and "__onnx_optional_has_value__" in input_tensor:
+        if not bool(input_tensor["__onnx_optional_has_value__"]):
+            raise ValueError(
+                f"OptionalGetElement received an empty Optional. op_name={graph_node.name}"
             )
-    tf_layers_dict[graph_node_output.name]['tf_node'] = optional.get_value()
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor.get(
+            "__onnx_optional_value__", None
+        )
+    else:
+        # OptionalGetElement(tensor) behaves as identity when tensor is already materialized.
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

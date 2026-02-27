@@ -14,6 +14,9 @@ from onnx2tf.utils.common_functions import (
 )
 from onnx2tf.utils.enums import ONNX_DTYPES_TO_TF_DTYPES
 
+_OPTIONAL_PROXY_HAS_VALUE_KEY = "__onnx_optional_has_value__"
+_OPTIONAL_PROXY_VALUE_KEY = "__onnx_optional_value__"
+
 
 def _type_proto_to_spec(type_proto):
     if type_proto is None:
@@ -89,28 +92,27 @@ def make_node(
     }
 
     # Generation of TF OP
+    # NOTE:
+    # tf.experimental.Optional.from_value does not accept KerasTensor on recent TF/Keras,
+    # so Optional values are represented with a lightweight proxy dict unless the
+    # upstream node already produced tf.experimental.Optional.
     if input_tensor is None:
-        type_proto = graph_node.attrs.get('type', None)
-        if type_proto is None and hasattr(dtype, 'HasField'):
-            type_proto = dtype
-        spec = _type_proto_to_spec(type_proto)
-        if spec is None:
-            spec = tf.TensorSpec(shape=None, dtype=tf.float32)
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.experimental.Optional.empty(
-                element_spec=spec,
-            )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = {
+            _OPTIONAL_PROXY_HAS_VALUE_KEY: False,
+            _OPTIONAL_PROXY_VALUE_KEY: None,
+        }
     elif isinstance(input_tensor, tf.experimental.Optional):
+        tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor
+    elif isinstance(input_tensor, dict) and _OPTIONAL_PROXY_HAS_VALUE_KEY in input_tensor:
         tf_layers_dict[graph_node_output.name]['tf_node'] = input_tensor
     else:
         value = input_tensor
         if isinstance(input_tensor, np.ndarray):
             value = tf.convert_to_tensor(input_tensor)
-        tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            tf.experimental.Optional.from_value(
-                value=value,
-                name=graph_node.name,
-            )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = {
+            _OPTIONAL_PROXY_HAS_VALUE_KEY: True,
+            _OPTIONAL_PROXY_VALUE_KEY: value,
+        }
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

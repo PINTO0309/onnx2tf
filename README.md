@@ -392,8 +392,9 @@ Notes:
 |NonZero|NOT_EQUAL + WHERE + TRANSPOSE + CAST|Input rank must be `>=1`; output rank must be `2`|
 |Not|LOGICAL_NOT|-|
 |OneHot|CAST + ADD + FLOOR_MOD + ONE_HOT|`depth` input must be constant scalar and `>0`; `values` input must be constant 2-element tensor `[off_value,on_value]`; normalized `axis` must be in range|
+|OptionalHasElement|const-fold (`BOOL` scalar)|Built-in lowering supports determinable-presence cases only: non-optional tensor inputs are folded to `true`; inputs produced by `Optional` (empty/value) are folded to `false/true`; runtime-optional graph inputs are not supported in builtin path|
 |Or|LOGICAL_OR|-|
-|Pad|PAD / MIRROR_PAD (+ dynamic pads bridge: CAST + RESHAPE + TRANSPOSE)|`mode` in `{constant,reflect}`; `reflect` is lowered to `MIRROR_PAD(REFLECT)`. `pads` may be constant or dynamic rank-1 tensor of length `2*rank` (integer type, internally cast to `INT32`); for `mode=constant`, pad value (if provided) must be constant zero|
+|Pad|PAD / PADV2 / MIRROR_PAD (+ dynamic pads bridge: CAST + RESHAPE + TRANSPOSE)|`mode` in `{constant,reflect}`; `reflect` is lowered to `MIRROR_PAD(REFLECT)`. `pads` may be constant or dynamic rank-1 tensor of length `2*rank` (integer type, internally cast to `INT32`). For `mode=constant`, constant zero is lowered as `PAD`; constant non-zero is lowered as `PADV2` (non-quantized tensors only)|
 |Pow|POW|Output dtype must be `FLOAT16` or `FLOAT32`|
 |PRelu|PRELU|`slope` must be constant (scalar or per-channel)|
 |QGemm|FULLY_CONNECTED|Input rank=1 or 2, weight must be constant rank=2, bias must be constant, quantization params must be constant, `transA=0`, `transB` in `{0,1}`|
@@ -432,6 +433,7 @@ Notes:
 |Sign|SIGN|-|
 |Sin|SIN|-|
 |Sinh|SUB + EXP + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|StringNormalizer|RESHAPE (no-op) / EQUAL + LOGICAL_OR + LOGICAL_NOT + WHERE + GATHER (+ EXPAND_DIMS for rank-2) / const-fold|Input/output dtype must be `STRING`, `locale` must be `''` or `en_US`. Runtime path supports only `case_change_action=NONE` (or empty). For non-constant input, stopword filtering is supported only when `is_case_sensitive=1` and input rank is 1 or 2 (`rank=2` follows current onnx2tf behavior and processes the first row). Constant-input path is folded at conversion time and supports `LOWER/UPPER`, case-insensitive matching, and empty-result fallback (`""`) semantics.|
 |Slice|SLICE / STRIDED_SLICE / REVERSE_V2|`starts` must be constant input/attr. `ends` is usually constant input/attr; dynamic `ends` is supported only for rank-1 axis-0 prefix slice (`start=0`, `step=1`). `steps=0` unsupported. Negative `steps` are supported only for full-axis reverse pattern (`start=-1`, very negative `end`, `step=-1`) via `REVERSE_V2`|
 |Softmax|SOFTMAX (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
 |Softplus|EXP + ADD + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
@@ -447,7 +449,7 @@ Notes:
 |TopK|TOPK_V2 (+ optional TRANSPOSE + NEG + CAST + SQUEEZE)|Input rank must be `>=1`; input dtype must be `FLOAT16/FLOAT32`; `axis` must be in range; `largest` must be `0` or `1`; `sorted` must be `1`; `k` must be scalar-like (`[]` or `[1]`) and integer dtype; indices output dtype must be `INT32` or `INT64`|
 |Transpose|TRANSPOSE|Permutation input must be constant|
 |Trilu|MUL / LOGICAL_AND|Input rank must be `>=2`; matrix dims must be static positive; optional `k` input must be constant|
-|Unsqueeze|RESHAPE|Axes must be constant and in range|
+|Unsqueeze|RESHAPE|Axes must be constant and unique. Axis normalization follows output-rank semantics (`output_rank = input_rank + len(axes)`), so opset8-style patterns such as `input_rank=2, axes=[2,3]` are supported|
 |Where|CAST + SELECT|Condition input dtype must be BOOL or numeric|
 |Xor|NOT_EQUAL|-|
 
@@ -482,12 +484,17 @@ Notes:
 - `DynamicQuantizeLinear` is now treated as `builtin_supported` for constrained float-input/uint8-output patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `If` is now treated as `builtin_supported` for constrained patterns (NMS-guard, axis0 Add-branch, SequenceConstruct Add-branch, and nested ReduceMin/Add); unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `Loop` is now treated as `builtin_supported` for constrained static-unroll/WHILE loop-carried patterns; unsupported patterns may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `StringNormalizer` is now treated as `builtin_supported` under constrained runtime patterns (`case_change_action=NONE`, locale `''/en_US`, rank1/2). Unsupported runtime patterns (e.g. `LOWER/UPPER` or case-insensitive stopword filtering) may still fallback to `CUSTOM` if custom-op mode is enabled.
+- `StringNormalizer` constant-input graphs are now folded at conversion time with string-constant buffer serialization support in flatbuffer_direct (including stopword filtering and `LOWER/UPPER` case conversion).
+- `OptionalHasElement` is now treated as `builtin_supported` for determinable-presence cases (non-optional inputs and `Optional` producer lineage), reducing `ONNX_OPTIONALHASELEMENT` custom-op fallbacks.
 - `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
 - `ReduceMin` is now treated as `builtin_supported` under builtin constraints.
 - `Min` and `TopK` are now treated as `builtin_supported` under builtin constraints, reducing `ONNX_MIN` / `ONNX_TOPK` custom-op fallbacks.
 - `DepthToSpace` and `HardSwish` are now treated as `builtin_supported` under builtin constraints (`HardSwish` is lowered directly as TFLite `HARD_SWISH`).
 - `Pad` builtin path now supports dynamic `pads` input (rank-1 length `2*rank`) via `CAST + RESHAPE + TRANSPOSE` bridge before `PAD`.
 - `Pad` builtin path now supports `mode=reflect` by lowering to TFLite `MIRROR_PAD` (`REFLECT` mode).
+- `Pad` builtin path now supports constant non-zero padding values by lowering to TFLite `PADV2` (non-quantized tensors).
+- `Unsqueeze` builtin path now normalizes axes using output-rank semantics (`output_rank = input_rank + len(axes)`), supporting opset8-style cases such as `axes=[2,3]` for rank-2 input and reducing `ONNX_UNSQUEEZE` custom-op fallback.
 - `ConvTranspose` builtin path has been expanded: constrained 1D lowering (`EXPAND_DIMS -> TRANSPOSE_CONV -> SQUEEZE`), relaxed `output_padding` handling (`0 <= output_padding < stride`), and explicit non-zero pad handling via post-crop when output shape is static.
 - `Conv` now includes rank-5 `CONV_3D` builtin lowering (`group=1`, constant weights), reducing `ONNX_CONV` custom-op fallbacks on 3D conv subgraphs.
 - `ConvTranspose` now includes rank-5 `CONV_3D_TRANSPOSE` builtin lowering (`group=1`, `dilations=[1,1,1]`, constrained `output_padding`), reducing `ONNX_CONVTRANSPOSE` custom-op fallbacks on 3D deconv subgraphs.
@@ -637,7 +644,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.25
+  ghcr.io/pinto0309/onnx2tf:2.0.26
 
   or
 
@@ -646,7 +653,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.25
+  docker.io/pinto0309/onnx2tf:2.0.26
 
   or
 
@@ -656,7 +663,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.25 \
+  docker.io/pinto0309/onnx2tf:2.0.26 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

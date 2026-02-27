@@ -2328,6 +2328,14 @@ def build_clip_op(node: Any, ctx: Any) -> None:
         op_type = "RELU6"
     elif (
         float_clip_input
+        and abs(clip_min + 1.0) <= 1e-6
+        and abs(clip_max - 1.0) <= 1e-6
+        and min_arr is not None
+        and max_arr is not None
+    ):
+        op_type = "RELU_N1_TO_1"
+    elif (
+        float_clip_input
         and abs(clip_min - 0.0) <= 1e-6
         and math.isinf(clip_max)
         and clip_max > 0.0

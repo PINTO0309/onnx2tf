@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import copy
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR, normalize_onnx_shape
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 _BICUBIC_MATRIX_CACHE: Dict[Tuple[int, int, str, float, bool], np.ndarray] = {}
@@ -224,44 +224,56 @@ def build_slice_op(node: Any, ctx: Any) -> None:
     ]
 
     if dynamic_end_input_name != "":
+        dynamic_prefix_len = len(starts)
+        dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_input_name)]
+        dynamic_end_len = int(dynamic_end_shape[0]) if len(dynamic_end_shape) == 1 else -1
+        dynamic_end_len_ok = (
+            len(dynamic_end_shape) == 1
+            and (dynamic_end_len <= 0 or dynamic_end_len == dynamic_prefix_len)
+        )
+        axes_are_prefix = normalized_axes == [int(v) for v in range(len(normalized_axes))]
+        starts_non_negative = all(int(v) >= 0 for v in starts)
+        steps_positive = all(int(v) > 0 for v in steps)
         if not (
-            rank == 1
-            and len(starts) == 1
-            and len(ends) == 1
-            and len(normalized_axes) == 1
-            and len(steps) == 1
-            and int(starts[0]) == 0
-            and int(normalized_axes[0]) == 0
-            and int(steps[0]) == 1
+            rank >= 1
+            and dynamic_prefix_len >= 1
+            and len(normalized_axes) == dynamic_prefix_len
+            and len(steps) == dynamic_prefix_len
+            and dynamic_prefix_len <= rank
+            and dynamic_end_len_ok
+            and axes_are_prefix
+            and starts_non_negative
+            and steps_positive
         ):
             raise NotImplementedError(
-                "Slice with dynamic end is supported only for rank-1 axis-0 "
-                "prefix slice with start=0 and step=1 in flatbuffer_direct. "
+                "Slice with dynamic end is supported only for prefix-axis "
+                "slicing (axes=[0..k-1], start>=0, step>0) in flatbuffer_direct. "
                 f"op={node.name} rank={rank} starts={starts} axes={axes} steps={steps}"
             )
-        dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_input_name)]
         dynamic_end_name = dynamic_end_input_name
         dynamic_end_dtype = str(ctx.get_tensor_dtype(dynamic_end_input_name)).upper()
-        if len(dynamic_end_shape) != 1 or int(dynamic_end_shape[0]) != 1:
+        if len(dynamic_end_shape) != 1 or (
+            dynamic_end_len > 0 and dynamic_end_len != dynamic_prefix_len
+        ):
             reshape_shape_name = ctx.add_const_tensor(
                 f"{output_name}_stridedslice_end_shape",
-                np.asarray([1], dtype=np.int32),
+                np.asarray([int(dynamic_prefix_len)], dtype=np.int32),
             )
             reshaped_end_name = ctx.add_intermediate_tensor(
                 f"{output_name}_stridedslice_end_flat",
                 dtype=dynamic_end_dtype,
-                shape=[1],
+                shape=[int(dynamic_prefix_len)],
             )
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
                     inputs=[dynamic_end_input_name, reshape_shape_name],
                     outputs=[reshaped_end_name],
-                    options={"newShape": [1]},
+                    options={"newShape": [int(dynamic_prefix_len)]},
                 )
             )
             dynamic_end_name = reshaped_end_name
-            dynamic_end_shape = [1]
+            dynamic_end_shape = [int(dynamic_prefix_len)]
         if dynamic_end_dtype != "INT32":
             dynamic_end_i32 = ctx.add_intermediate_tensor(
                 f"{output_name}_stridedslice_end_i32",
@@ -280,13 +292,45 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                 )
             )
             dynamic_end_name = dynamic_end_i32
+
+        if dynamic_prefix_len < rank:
+            tail_dims = [int(np.iinfo(np.int32).max) for _ in range(rank - dynamic_prefix_len)]
+            tail_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_end_tail",
+                np.asarray(tail_dims, dtype=np.int32),
+            )
+            end_full_name = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_end_full",
+                dtype="INT32",
+                shape=[int(rank)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=[dynamic_end_name, tail_name],
+                    outputs=[end_full_name],
+                    options={"axis": 0, "fusedActivationFunction": "NONE"},
+                )
+            )
+            dynamic_end_name = end_full_name
+
+        begin = [0 for _ in range(rank)]
+        strides = [1 for _ in range(rank)]
+        for idx, axis in enumerate(normalized_axes):
+            begin[axis] = int(starts[idx])
+            strides[axis] = int(steps[idx])
+        end_mask = 0
+        normalized_axis_set = set(int(v) for v in normalized_axes)
+        for axis in range(rank):
+            if axis not in normalized_axis_set:
+                end_mask |= (1 << axis)
         begin_name = ctx.add_const_tensor(
             f"{output_name}_stridedslice_begin",
-            np.asarray([0], dtype=np.int32),
+            np.asarray(begin, dtype=np.int32),
         )
         strides_name = ctx.add_const_tensor(
             f"{output_name}_stridedslice_strides",
-            np.asarray([1], dtype=np.int32),
+            np.asarray(strides, dtype=np.int32),
         )
         ctx.add_operator(
             OperatorIR(
@@ -295,7 +339,7 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                 outputs=[output_name],
                 options={
                     "beginMask": 0,
-                    "endMask": 0,
+                    "endMask": int(end_mask),
                     "ellipsisMask": 0,
                     "newAxisMask": 0,
                     "shrinkAxisMask": 0,
@@ -499,6 +543,45 @@ def _find_producer_op(ctx: Any, tensor_name: str) -> Any:
     for op in reversed(ctx.model_ir.operators):
         if str(tensor_name) in set(str(v) for v in op.outputs):
             return op
+    return None
+
+
+def _find_onnx_producer_node(ctx: Any, tensor_name: str) -> Any:
+    onnx_model = getattr(ctx, "onnx_model", None)
+    if onnx_model is None or getattr(onnx_model, "graph", None) is None:
+        return None
+    for graph_node in onnx_model.graph.node:
+        for output_name in graph_node.output:
+            if str(output_name) == str(tensor_name):
+                return graph_node
+    return None
+
+
+def _is_optional_onnx_tensor(ctx: Any, tensor_name: str) -> bool:
+    onnx_model = getattr(ctx, "onnx_model", None)
+    if onnx_model is None or getattr(onnx_model, "graph", None) is None:
+        return False
+    graph = onnx_model.graph
+    value_infos = list(graph.input) + list(graph.value_info) + list(graph.output)
+    for value_info in value_infos:
+        if str(getattr(value_info, "name", "")) != str(tensor_name):
+            continue
+        type_proto = getattr(value_info, "type", None)
+        if type_proto is not None and hasattr(type_proto, "HasField"):
+            return bool(type_proto.HasField("optional_type"))
+    return False
+
+
+def _infer_optional_has_element_result(ctx: Any, input_name: str) -> bool | None:
+    producer_node = _find_onnx_producer_node(ctx, input_name)
+    if producer_node is None:
+        return None
+    producer_op = str(getattr(producer_node, "op_type", ""))
+    if producer_op == "Optional":
+        producer_inputs = [str(v) for v in list(getattr(producer_node, "input", []))]
+        return bool(any(v != "" for v in producer_inputs))
+    if producer_op == "OptionalGetElement":
+        return True
     return None
 
 
@@ -840,6 +923,360 @@ def build_concat_op(node: Any, ctx: Any) -> None:
             },
         )
     )
+
+
+def _string_normalizer_stopwords(raw_stopwords: Any) -> List[str]:
+    if raw_stopwords is None:
+        return []
+    if isinstance(raw_stopwords, str):
+        return [str(raw_stopwords)]
+    values: List[str] = []
+    for item in list(raw_stopwords):
+        values.append(str(item))
+    return values
+
+
+def _string_normalizer_apply_case(tokens: np.ndarray, case_change_action: str) -> np.ndarray:
+    action = str(case_change_action).strip().upper()
+    if action not in {"LOWER", "UPPER"}:
+        return np.asarray(tokens, dtype=object)
+    transformed = []
+    for item in np.asarray(tokens, dtype=object).reshape(-1).tolist():
+        text = item.decode("utf-8") if isinstance(item, bytes) else str(item)
+        transformed.append(text.lower() if action == "LOWER" else text.upper())
+    return np.asarray(transformed, dtype=object)
+
+
+def _string_normalizer_stopword_mask(
+    *,
+    tokens: np.ndarray,
+    stopwords: List[str],
+    is_case_sensitive: bool,
+) -> np.ndarray:
+    if len(stopwords) == 0:
+        return np.ones(np.asarray(tokens).shape, dtype=np.bool_)
+
+    token_texts = []
+    for item in np.asarray(tokens, dtype=object).reshape(-1).tolist():
+        token_texts.append(item.decode("utf-8") if isinstance(item, bytes) else str(item))
+    stopword_texts = [str(v) for v in stopwords]
+
+    if not bool(is_case_sensitive):
+        token_texts = [t.lower() for t in token_texts]
+        stopword_texts = [s.lower() for s in stopword_texts]
+
+    stopword_set = set(stopword_texts)
+    mask_list = [text not in stopword_set for text in token_texts]
+    return np.asarray(mask_list, dtype=np.bool_)
+
+
+def _evaluate_string_normalizer_constant(
+    *,
+    input_values: np.ndarray,
+    case_change_action: str,
+    is_case_sensitive: bool,
+    stopwords: List[str],
+) -> np.ndarray:
+    values = np.asarray(input_values, dtype=object)
+    if values.ndim <= 1:
+        flat_tokens = values.reshape(-1)
+        mask = _string_normalizer_stopword_mask(
+            tokens=flat_tokens,
+            stopwords=stopwords,
+            is_case_sensitive=is_case_sensitive,
+        )
+        filtered = flat_tokens[mask]
+        filtered = _string_normalizer_apply_case(filtered, case_change_action)
+        if filtered.size == 0:
+            return np.asarray([""], dtype=object)
+        return np.asarray(filtered, dtype=object)
+
+    row = np.asarray(values[0], dtype=object).reshape(-1)
+    mask = _string_normalizer_stopword_mask(
+        tokens=row,
+        stopwords=stopwords,
+        is_case_sensitive=is_case_sensitive,
+    )
+    filtered = row[mask]
+    filtered = _string_normalizer_apply_case(filtered, case_change_action)
+    filtered = np.expand_dims(np.asarray(filtered, dtype=object), axis=0)
+    if filtered.size == 0:
+        return np.asarray([[""]], dtype=object)
+    return np.asarray(filtered, dtype=object)
+
+
+def _build_string_normalizer_keep_mask(
+    *,
+    ctx: Any,
+    input_name: str,
+    stopwords: List[str],
+    base_name: str,
+) -> str:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    matched_name: Optional[str] = None
+    for idx, stopword in enumerate(stopwords):
+        stopword_name = ctx.add_const_tensor(
+            f"{base_name}_stopword_{idx}",
+            np.asarray(stopword, dtype=object),
+        )
+        eq_name = ctx.add_intermediate_tensor(
+            f"{base_name}_stopword_eq_{idx}",
+            dtype="BOOL",
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EQUAL",
+                inputs=[input_name, stopword_name],
+                outputs=[eq_name],
+            )
+        )
+        if matched_name is None:
+            matched_name = eq_name
+            continue
+        merged_name = ctx.add_intermediate_tensor(
+            f"{base_name}_stopword_or_{idx}",
+            dtype="BOOL",
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOGICAL_OR",
+                inputs=[matched_name, eq_name],
+                outputs=[merged_name],
+            )
+        )
+        matched_name = merged_name
+
+    if matched_name is None:
+        raise NotImplementedError("StringNormalizer stopwords mask generation requires non-empty stopwords.")
+
+    keep_name = ctx.add_intermediate_tensor(
+        f"{base_name}_keep_mask",
+        dtype="BOOL",
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOGICAL_NOT",
+            inputs=[matched_name],
+            outputs=[keep_name],
+        )
+    )
+    return keep_name
+
+
+def _build_string_normalizer_rank1_runtime(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    stopwords: List[str],
+    base_name: str,
+) -> None:
+    keep_name = _build_string_normalizer_keep_mask(
+        ctx=ctx,
+        input_name=input_name,
+        stopwords=stopwords,
+        base_name=base_name,
+    )
+    where_name = ctx.add_intermediate_tensor(
+        f"{base_name}_where_indices",
+        dtype="INT64",
+        shape=[-1, 1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="WHERE",
+            inputs=[keep_name],
+            outputs=[where_name],
+        )
+    )
+    flat_indices_name = ctx.add_intermediate_tensor(
+        f"{base_name}_flat_indices",
+        dtype="INT64",
+        shape=[-1],
+    )
+    flat_shape_name = ctx.add_const_tensor(
+        f"{base_name}_flat_indices_shape",
+        np.asarray([-1], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[where_name, flat_shape_name],
+            outputs=[flat_indices_name],
+            options={"newShape": [-1]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GATHER",
+            inputs=[input_name, flat_indices_name],
+            outputs=[output_name],
+            options={
+                "axis": 0,
+                "batchDims": 0,
+            },
+        )
+    )
+
+
+def build_string_normalizer_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_dtype_and_quantization(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    case_change_action = str(node.attrs.get("case_change_action", "NONE")).strip().upper()
+    is_case_sensitive = bool(node.attrs.get("is_case_sensitive", 1))
+    locale = str(node.attrs.get("locale", "en_US")).strip()
+    stopwords = _string_normalizer_stopwords(node.attrs.get("stopwords", []))
+
+    constant_input = ctx.get_constant_array(input_name)
+    if constant_input is not None:
+        normalized = _evaluate_string_normalizer_constant(
+            input_values=constant_input,
+            case_change_action=case_change_action,
+            is_case_sensitive=is_case_sensitive,
+            stopwords=stopwords,
+        )
+        out_tensor = ctx.model_ir.tensors[output_name]
+        out_tensor.dtype = "STRING"
+        out_tensor.data = np.asarray(normalized, dtype=object)
+        out_tensor.shape, out_tensor.shape_signature = normalize_onnx_shape(
+            [int(v) for v in list(out_tensor.data.shape)]
+        )
+        ctx.constants[output_name] = np.asarray(out_tensor.data, dtype=object)
+        return
+
+    if locale not in {"", "en_US"}:
+        raise NotImplementedError(
+            f"StringNormalizer locale is not supported in builtin lowering. op={node.name} locale={locale}"
+        )
+    if case_change_action not in {"", "NONE"}:
+        raise NotImplementedError(
+            "StringNormalizer case_change_action LOWER/UPPER requires string transform support "
+            f"that is unavailable in flatbuffer_direct builtin lowering. op={node.name}"
+        )
+    if len(stopwords) == 0:
+        build_identity_op(node, ctx)
+        return
+    if not is_case_sensitive:
+        raise NotImplementedError(
+            "StringNormalizer case-insensitive stopword matching requires string transform support "
+            f"that is unavailable in flatbuffer_direct builtin lowering. op={node.name}"
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_rank = len(input_shape)
+    if input_rank == 1:
+        _build_string_normalizer_rank1_runtime(
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            stopwords=stopwords,
+            base_name=output_name,
+        )
+        return
+
+    if input_rank == 2:
+        gather_index_name = ctx.add_const_tensor(
+            f"{output_name}_row0_index",
+            np.asarray([0], dtype=np.int32),
+        )
+        row2d_name = ctx.add_intermediate_tensor(
+            f"{output_name}_row0_2d",
+            dtype="STRING",
+            shape=[1, int(input_shape[1]) if len(input_shape) >= 2 else 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[input_name, gather_index_name],
+                outputs=[row2d_name],
+                options={
+                    "axis": 0,
+                    "batchDims": 0,
+                },
+            )
+        )
+        row1d_name = ctx.add_intermediate_tensor(
+            f"{output_name}_row0_1d",
+            dtype="STRING",
+            shape=[int(input_shape[1]) if len(input_shape) >= 2 else 1],
+        )
+        row_shape_name = ctx.add_const_tensor(
+            f"{output_name}_row0_1d_shape",
+            np.asarray([-1], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[row2d_name, row_shape_name],
+                outputs=[row1d_name],
+                options={"newShape": [-1]},
+            )
+        )
+        filtered_row_name = ctx.add_intermediate_tensor(
+            f"{output_name}_row0_filtered",
+            dtype="STRING",
+            shape=[1],
+        )
+        _build_string_normalizer_rank1_runtime(
+            ctx=ctx,
+            input_name=row1d_name,
+            output_name=filtered_row_name,
+            stopwords=stopwords,
+            base_name=f"{output_name}_row0",
+        )
+        axis_name = ctx.add_const_tensor(
+            f"{output_name}_expand_axis",
+            np.asarray([0], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EXPAND_DIMS",
+                inputs=[filtered_row_name, axis_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    raise NotImplementedError(
+        f"StringNormalizer builtin lowering supports only rank1/rank2 input. op={node.name} rank={input_rank}"
+    )
+
+
+def build_optional_has_element_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    has_element = _infer_optional_has_element_result(ctx, input_name)
+    if has_element is None:
+        if _is_optional_onnx_tensor(ctx, input_name):
+            raise NotImplementedError(
+                "OptionalHasElement with runtime-optional input is not supported in "
+                f"flatbuffer_direct builtin lowering. op={node.name}"
+            )
+        has_element = True
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_tensor.dtype = "BOOL"
+    output_tensor.quantization = None
+    output_data = np.asarray(bool(has_element), dtype=np.bool_)
+    output_tensor.data = output_data
+    shape, signature = normalize_onnx_shape(list(output_data.shape))
+    output_tensor.shape = [int(v) for v in shape]
+    output_tensor.shape_signature = [int(v) for v in signature]
+    ctx.constants[output_name] = output_data
 
 
 def build_identity_op(node: Any, ctx: Any) -> None:
@@ -1402,6 +1839,7 @@ def build_expand_op(node: Any, ctx: Any) -> None:
     shape_name = node.inputs[1].name
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(shape_name)
     ctx.ensure_tensor(output_name)
     _propagate_passthrough_dtype_and_quantization(
         ctx=ctx,
@@ -1409,15 +1847,49 @@ def build_expand_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    _ = shape_name
     input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    shape_shape = [int(v) for v in ctx.get_tensor_shape(shape_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+    shape_const = ctx.get_constant_array(shape_name)
+    dynamic_expand_shape = bool(shape_const is None or any(int(v) < 0 for v in output_signature))
+    dynamic_output_signature = (
+        [int(v) for v in output_signature]
+        if any(int(v) < 0 for v in output_signature)
+        else [-1 for _ in output_shape]
+    )
+    shape_for_fill = shape_name
+    shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
+    if dynamic_expand_shape and shape_dtype != "INT32":
+        shape_for_fill = ctx.add_intermediate_tensor(
+            f"{output_name}_expand_shape_i32",
+            dtype="INT32",
+            shape=shape_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[shape_name],
+                outputs=[shape_for_fill],
+                options={
+                    "inDataType": shape_dtype,
+                    "outDataType": "INT32",
+                },
+            )
+        )
+        shape_dtype = "INT32"
+
     if len(output_shape) < len(input_shape):
         raise NotImplementedError(
             f"Expand output rank must be >= input rank in flatbuffer_direct. "
             f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
         )
-    if any(int(v) <= 0 for v in output_shape):
+    if not dynamic_expand_shape and any(int(v) <= 0 for v in output_shape):
         raise NotImplementedError(
             f"Expand requires static positive output shape for MUL-broadcast lowering in flatbuffer_direct. "
             f"op={node.name} output_shape={output_shape}"
@@ -1431,15 +1903,16 @@ def build_expand_op(node: Any, ctx: Any) -> None:
             f"op={node.name} input_shape={input_shape}"
         )
 
-    for in_dim, out_dim in zip(aligned_input_shape, output_shape):
-        if int(in_dim) == int(out_dim):
-            continue
-        if int(in_dim) == 1 and int(out_dim) > 0:
-            continue
-        raise NotImplementedError(
-            f"Expand shape is not broadcast-compatible for MUL-broadcast lowering in flatbuffer_direct. "
-            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
-        )
+    if not dynamic_expand_shape:
+        for in_dim, out_dim in zip(aligned_input_shape, output_shape):
+            if int(in_dim) == int(out_dim):
+                continue
+            if int(in_dim) == 1 and int(out_dim) > 0:
+                continue
+            raise NotImplementedError(
+                f"Expand shape is not broadcast-compatible for MUL-broadcast lowering in flatbuffer_direct. "
+                f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+            )
 
     mul_input_name = input_name
     if aligned_input_shape != input_shape:
@@ -1496,10 +1969,46 @@ def build_expand_op(node: Any, ctx: Any) -> None:
             )
 
     ones_dtype = _numpy_dtype_from_tflite_dtype(mul_lhs_dtype)
-    ones_name = ctx.add_const_tensor(
-        f"{output_name}_expand_ones",
-        np.ones(output_shape, dtype=ones_dtype),
-    )
+    if dynamic_expand_shape:
+        ones_name = ctx.add_intermediate_tensor(
+            f"{output_name}_expand_ones",
+            dtype=mul_lhs_dtype,
+            shape=[int(v) for v in output_shape],
+        )
+        ones_tensor = ctx.model_ir.tensors.get(ones_name)
+        if ones_tensor is not None:
+            ones_tensor.shape_signature = [int(v) for v in dynamic_output_signature]
+        one_const_name = ctx.add_const_tensor(
+            f"{output_name}_expand_one",
+            np.asarray(1, dtype=ones_dtype),
+        )
+        one_scalar_for_fill = ctx.add_intermediate_tensor(
+            f"{output_name}_expand_one_scalar",
+            dtype=mul_lhs_dtype,
+            shape=[1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[one_const_name],
+                outputs=[one_scalar_for_fill],
+                options={"squeezeDims": [0]},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FILL",
+                inputs=[shape_for_fill, one_scalar_for_fill],
+                outputs=[ones_name],
+            )
+        )
+        if output_tensor is not None:
+            output_tensor.shape_signature = [int(v) for v in dynamic_output_signature]
+    else:
+        ones_name = ctx.add_const_tensor(
+            f"{output_name}_expand_ones",
+            np.ones(output_shape, dtype=ones_dtype),
+        )
 
     mul_output_name = output_name
     if output_dtype == "BOOL":
@@ -1682,26 +2191,57 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         )
 
     if mode == "constant":
-        # Keep support minimal/safe: constant zero-padding value only.
+        pad_constant_tensor_name: str = ""
+        use_padv2 = False
         if len(node.inputs) >= 3 and str(node.inputs[2].name) != "":
             constant_value_arr = ctx.get_constant_array(node.inputs[2].name)
             if constant_value_arr is None:
                 raise NotImplementedError(
                     f"Pad constant value input must be constant for flatbuffer_direct. op={node.name}"
                 )
-            constant_value = float(np.asarray(constant_value_arr).reshape(-1)[0])
-            if abs(constant_value) > 1e-12:
+            constant_value_vec = np.asarray(constant_value_arr).reshape(-1)
+            if constant_value_vec.size == 0:
                 raise NotImplementedError(
-                    "Pad with non-zero constant value is not supported in flatbuffer_direct. "
-                    f"op={node.name} value={constant_value}"
+                    f"Pad constant value input must contain at least one element for flatbuffer_direct. op={node.name}"
                 )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="PAD",
-                inputs=[input_name, pads_name],
-                outputs=[output_name],
+            constant_value = constant_value_vec[0]
+            if np.issubdtype(np.asarray(constant_value).dtype, np.floating):
+                is_zero_padding = bool(np.isfinite(constant_value)) and abs(float(constant_value)) <= 1e-12
+            else:
+                is_zero_padding = bool(constant_value == 0)
+            use_padv2 = not is_zero_padding
+            if use_padv2:
+                input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+                input_tensor = ctx.model_ir.tensors[input_name]
+                if input_tensor.quantization is not None:
+                    raise NotImplementedError(
+                        "Pad with non-zero constant value is not supported for quantized tensors in "
+                        f"flatbuffer_direct. op={node.name}"
+                    )
+                pad_value = np.asarray(
+                    [constant_value],
+                    dtype=_numpy_dtype_from_tflite_dtype(input_dtype),
+                )
+                pad_constant_tensor_name = ctx.add_const_tensor(
+                    f"{output_name}_pad_value",
+                    pad_value,
+                )
+        if use_padv2:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="PADV2",
+                    inputs=[input_name, pads_name, pad_constant_tensor_name],
+                    outputs=[output_name],
+                )
             )
-        )
+        else:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="PAD",
+                    inputs=[input_name, pads_name],
+                    outputs=[output_name],
+                )
+            )
     else:
         ctx.add_operator(
             OperatorIR(
@@ -1836,7 +2376,12 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
     )
 
     axes = _resolve_axes_from_attr_or_input(node, ctx)
-    input_rank = len(ctx.get_tensor_shape(input_name))
+    input_raw_shape = ctx.shape_map.get(input_name, None)
+    logical_scalar_input = (
+        isinstance(input_raw_shape, (list, tuple))
+        and len(list(input_raw_shape)) == 0
+    )
+    input_rank = 0 if logical_scalar_input else len(ctx.get_tensor_shape(input_name))
     output_tensor = ctx.model_ir.tensors[output_name]
     output_shape = ctx.get_tensor_shape(output_name)
     output_signature = (
@@ -1846,17 +2391,22 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
     )
     if input_rank == 0 and len(output_signature) > 0:
         input_rank = int(max(len(output_signature) - len(axes), 0))
+    output_rank = int(input_rank + len(axes))
     normalized_axes: list[int] = []
     for axis in axes:
         a = int(axis)
         if a < 0:
-            a += input_rank + 1
-        if a < 0 or a > input_rank:
+            a += output_rank
+        if a < 0 or a >= output_rank:
             raise NotImplementedError(
-                f"Unsqueeze axis out of range in flatbuffer_direct. op={node.name} axis={axis} rank={input_rank}"
+                "Unsqueeze axis out of range in flatbuffer_direct. "
+                f"op={node.name} axis={axis} input_rank={input_rank} output_rank={output_rank}"
             )
-        if a not in normalized_axes:
-            normalized_axes.append(a)
+        if a in normalized_axes:
+            raise NotImplementedError(
+                f"Unsqueeze axes must be unique in flatbuffer_direct. op={node.name} axes={axes}"
+            )
+        normalized_axes.append(int(a))
     normalized_axes = sorted([int(v) for v in normalized_axes])
     input_tensor = ctx.model_ir.tensors[input_name]
     input_signature = (
@@ -1864,6 +2414,8 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
         if input_tensor.shape_signature is not None
         else [int(v) for v in list(ctx.get_tensor_shape(input_name))]
     )
+    if logical_scalar_input:
+        input_signature = []
     if input_rank == 0 and len(output_signature) > 0:
         reshape_shape = [int(v) for v in output_signature]
         output_tensor.shape_signature = [int(v) for v in reshape_shape]

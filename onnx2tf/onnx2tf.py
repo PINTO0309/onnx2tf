@@ -908,7 +908,7 @@ def convert(
     output_integer_quantized_tflite: Optional[bool] = False,
     eval_with_onnx: Optional[bool] = False,
     eval_num_samples: Optional[int] = 10,
-    eval_rtol: Optional[float] = 0.0,
+    eval_rtol: Optional[float] = 1e-4,
     eval_atol: Optional[float] = 1e-4,
     eval_fail_on_threshold: Optional[bool] = False,
     eval_target_tflite: Optional[str] = 'float32',
@@ -1046,7 +1046,7 @@ def convert(
     eval_rtol: Optional[float]
         Relative tolerance for ONNX/TFLite `np.allclose` check.\n
         Only used when `eval_with_onnx=True`.\n
-        Default: 0.0
+        Default: 1e-4
 
     eval_atol: Optional[float]
         Absolute tolerance for ONNX/TFLite `np.allclose` check.\n
@@ -5141,10 +5141,10 @@ def main():
     parser.add_argument(
         '--eval_rtol',
         type=float,
-        default=0.0,
+        default=1e-4,
         help=\
             'Relative tolerance for ONNX/TFLite allclose judgement. \n' +
-            'Default: 0.0'
+            'Default: 1e-4'
     )
     parser.add_argument(
         '--eval_atol',
