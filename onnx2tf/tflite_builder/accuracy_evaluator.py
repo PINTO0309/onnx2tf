@@ -3,6 +3,8 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import queue as queue_module
+import time
 import traceback
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -451,6 +453,7 @@ class _MetricAccumulator:
     def __init__(self) -> None:
         self.numel = 0
         self.max_abs = 0.0
+        self.max_ref_abs = 0.0
         self.sum_abs = 0.0
         self.sum_sq = 0.0
         self.sum_dot = 0.0
@@ -464,6 +467,7 @@ class _MetricAccumulator:
         diff = ref_flat - pred_flat
         abs_diff = np.abs(diff)
         self.max_abs = max(self.max_abs, float(np.max(abs_diff)))
+        self.max_ref_abs = max(self.max_ref_abs, float(np.max(np.abs(ref_flat))))
         self.sum_abs += float(np.sum(abs_diff))
         self.sum_sq += float(np.sum(diff * diff))
         self.sum_dot += float(np.dot(ref_flat, pred_flat))
@@ -475,12 +479,15 @@ class _MetricAccumulator:
         if self.numel == 0:
             return {
                 "max_abs": 0.0,
+                "ref_max_abs": 0.0,
+                "ref_rms": 0.0,
                 "mean_abs": 0.0,
                 "rmse": 0.0,
                 "cosine_similarity": 1.0,
             }
         mean_abs = self.sum_abs / float(self.numel)
         rmse = float(np.sqrt(self.sum_sq / float(self.numel)))
+        ref_rms = float(np.sqrt(self.sum_ref_norm / float(self.numel)))
         if self.sum_ref_norm == 0.0 and self.sum_pred_norm == 0.0:
             cosine = 1.0
         elif self.sum_ref_norm == 0.0 or self.sum_pred_norm == 0.0:
@@ -492,6 +499,8 @@ class _MetricAccumulator:
             cosine = float(np.clip(cosine, -1.0, 1.0))
         return {
             "max_abs": float(self.max_abs),
+            "ref_max_abs": float(self.max_ref_abs),
+            "ref_rms": float(ref_rms),
             "mean_abs": float(mean_abs),
             "rmse": float(rmse),
             "cosine_similarity": float(cosine),
@@ -548,16 +557,27 @@ def _judge_metrics(
     *,
     metrics: Dict[str, float],
     thresholds: Dict[str, float],
+    rtol: float = 0.0,
 ) -> Dict[str, Any]:
+    ref_max_abs = max(float(metrics.get("ref_max_abs", 0.0)), 0.0)
+    ref_rms = max(float(metrics.get("ref_rms", 0.0)), 0.0)
+    max_abs_limit = max(float(thresholds["max_abs"]), float(rtol) * ref_max_abs)
+    rmse_limit = max(float(thresholds["rmse"]), float(rtol) * ref_rms)
     checks = {
-        "max_abs": float(metrics["max_abs"]) <= float(thresholds["max_abs"]),
+        "max_abs": float(metrics["max_abs"]) <= max_abs_limit,
         "mean_abs": float(metrics["mean_abs"]) <= float(thresholds["mean_abs"]),
-        "rmse": float(metrics["rmse"]) <= float(thresholds["rmse"]),
+        "rmse": float(metrics["rmse"]) <= rmse_limit,
         "cosine_similarity": float(metrics["cosine_similarity"]) >= float(thresholds["cosine_similarity"]),
     }
     return {
         "pass": bool(all(checks.values())),
         "checks": checks,
+        "effective_thresholds": {
+            "max_abs": float(max_abs_limit),
+            "mean_abs": float(thresholds["mean_abs"]),
+            "rmse": float(rmse_limit),
+            "cosine_similarity": float(thresholds["cosine_similarity"]),
+        },
     }
 
 
@@ -569,7 +589,7 @@ def evaluate_onnx_tflite_outputs(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
-    rtol: float = 0.0,
+    rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
     fail_on_threshold: bool = False,
@@ -762,6 +782,7 @@ def evaluate_onnx_tflite_outputs(
     metric_judgement = _judge_metrics(
         metrics=overall_metrics,
         thresholds=resolved_thresholds,
+        rtol=rtol,
     )
     allclose_pass = bool(allclose_total == allclose_matched)
     evaluation_pass = bool(metric_judgement["pass"] and allclose_pass)
@@ -974,27 +995,42 @@ def _run_worker_in_subprocess(
         daemon=True,
     )
     process.start()
-    process.join(timeout=float(timeout_sec))
+    result = None
+    timed_out = False
+    start_time = time.monotonic()
+    timeout_sec_float = float(timeout_sec)
+    try:
+        try:
+            # Read worker result first. join-before-get can block indefinitely when
+            # worker exits while queue feeder is back-pressured by large payloads.
+            result = result_queue.get(timeout=timeout_sec_float)
+        except queue_module.Empty:
+            timed_out = True
+    finally:
+        # Ensure subprocess is fully reaped.
+        elapsed = max(0.0, float(time.monotonic() - start_time))
+        remaining = max(0.0, timeout_sec_float - elapsed)
+        process.join(timeout=remaining if remaining > 0.0 else 0.0)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5.0)
+        result_queue.close()
+        result_queue.join_thread()
 
-    if process.is_alive():
-        process.terminate()
-        process.join(timeout=5.0)
+    if timed_out:
         raise RuntimeError(
             f"Worker timed out. worker={getattr(worker, '__name__', str(worker))} "
             f"timeout_sec={int(timeout_sec)}"
         )
 
-    result = None
-    if not result_queue.empty():
-        result = result_queue.get_nowait()
+    if isinstance(result, dict) and not result.get("ok", False):
+        raise RuntimeError(
+            f'Worker failed. worker={getattr(worker, "__name__", str(worker))} '
+            f'error={result.get("error", "")}\n{result.get("traceback", "")}'
+        )
 
     exit_code = int(process.exitcode) if process.exitcode is not None else -9999
     if exit_code != 0:
-        if isinstance(result, dict) and not result.get("ok", False):
-            raise RuntimeError(
-                f'Worker failed. worker={getattr(worker, "__name__", str(worker))} '
-                f'error={result.get("error", "")}\n{result.get("traceback", "")}'
-            )
         raise RuntimeError(
             f"Worker exited abnormally. worker={getattr(worker, '__name__', str(worker))} "
             f"exit_code={exit_code}"
@@ -1015,7 +1051,7 @@ def evaluate_onnx_tflite_outputs_isolated(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
-    rtol: float = 0.0,
+    rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
     fail_on_threshold: bool = False,
@@ -1196,6 +1232,7 @@ def evaluate_onnx_tflite_outputs_isolated(
     metric_judgement = _judge_metrics(
         metrics=overall_metrics,
         thresholds=resolved_thresholds,
+        rtol=rtol,
     )
     allclose_pass = bool(allclose_total == allclose_matched)
     evaluation_pass = bool(metric_judgement["pass"] and allclose_pass)

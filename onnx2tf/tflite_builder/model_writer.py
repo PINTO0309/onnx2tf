@@ -603,6 +603,7 @@ def _build_builtin_options(
         "LESS_EQUAL",
         "RELU",
         "RELU6",
+        "RELU_N1_TO_1",
         "RELU_0_TO_1",
         "TANH",
         "ATAN2",

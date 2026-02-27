@@ -175,7 +175,12 @@ def _add_fusedconv_activation_op(
             raise NotImplementedError(
                 f"FusedConv Clip requires min <= max. op={node.name} min={min_value} max={max_value}"
             )
-        if min_value is not None and float(min_value) == 0.0 and max_value is not None and float(max_value) == 6.0:
+        if (
+            min_value is not None
+            and abs(float(min_value) - 0.0) <= 1e-6
+            and max_value is not None
+            and abs(float(max_value) - 6.0) <= 1e-6
+        ):
             ctx.add_operator(
                 OperatorIR(
                     op_type="RELU6",
@@ -184,7 +189,21 @@ def _add_fusedconv_activation_op(
                 )
             )
             return
-        if min_value is not None and float(min_value) == 0.0 and max_value is None:
+        if (
+            min_value is not None
+            and abs(float(min_value) + 1.0) <= 1e-6
+            and max_value is not None
+            and abs(float(max_value) - 1.0) <= 1e-6
+        ):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RELU_N1_TO_1",
+                    inputs=[input_name],
+                    outputs=[output_name],
+                )
+            )
+            return
+        if min_value is not None and abs(float(min_value) - 0.0) <= 1e-6 and max_value is None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="RELU",

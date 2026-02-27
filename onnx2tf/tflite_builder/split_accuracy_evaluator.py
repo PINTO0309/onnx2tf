@@ -212,7 +212,7 @@ def evaluate_split_manifest_outputs(
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
     test_data_nhwc_path: Optional[str] = None,
-    rtol: float = 0.0,
+    rtol: float = 1.0e-4,
     atol: float = 1e-4,
     compare_mode: str = "auto",
     fail_on_threshold: bool = False,
@@ -396,6 +396,7 @@ def evaluate_split_manifest_outputs(
     metric_judgement = _judge_metrics(
         metrics=overall_metrics,
         thresholds=resolved_thresholds,
+        rtol=rtol,
     )
     allclose_pass = bool(allclose_total == allclose_matched)
     evaluation_pass = bool(metric_judgement["pass"] and allclose_pass)

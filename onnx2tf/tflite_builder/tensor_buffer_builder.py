@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -20,6 +21,7 @@ _NP_DTYPE_TO_TFLITE_DTYPE = {
     np.dtype(np.uint32): "UINT32",
     np.dtype(np.uint64): "UINT64",
     np.dtype(np.bool_): "BOOL",
+    np.dtype(np.object_): "STRING",
 }
 
 
@@ -29,8 +31,36 @@ _INT32_MAX = np.iinfo(np.int32).max
 def tflite_dtype_from_numpy(np_dtype: np.dtype) -> str:
     np_dtype = np.dtype(np_dtype)
     if np_dtype not in _NP_DTYPE_TO_TFLITE_DTYPE:
+        if np_dtype.kind in {"U", "S", "O"}:
+            return "STRING"
         raise NotImplementedError(f"Unsupported numpy dtype for flatbuffer_direct: {np_dtype}")
     return _NP_DTYPE_TO_TFLITE_DTYPE[np_dtype]
+
+
+def _serialize_tflite_string_buffer(values: np.ndarray) -> bytes:
+    flat_values = np.asarray(values, dtype=object).reshape(-1).tolist()
+    encoded: List[bytes] = []
+    for value in flat_values:
+        if isinstance(value, bytes):
+            encoded.append(bytes(value))
+        else:
+            encoded.append(str(value).encode("utf-8"))
+
+    num_strings = int(len(encoded))
+    header_size = int(4 * (num_strings + 2))
+    offsets: List[int] = [header_size]
+    cursor = int(header_size)
+    for item in encoded:
+        cursor += int(len(item))
+        offsets.append(cursor)
+
+    buffer = bytearray()
+    buffer.extend(struct.pack("<i", num_strings))
+    for off in offsets:
+        buffer.extend(struct.pack("<i", int(off)))
+    for item in encoded:
+        buffer.extend(item)
+    return bytes(buffer)
 
 
 def _sanitize_runtime_shape(shape: List[int]) -> List[int]:
@@ -96,7 +126,10 @@ def build_tensors_and_buffers(
         if tensor.data is not None:
             b = schema_tflite["BufferT"]()
             if isinstance(tensor.data, np.ndarray):
-                b.data = bytes(tensor.data.tobytes())
+                if str(tensor.dtype).upper() == "STRING":
+                    b.data = _serialize_tflite_string_buffer(tensor.data)
+                else:
+                    b.data = bytes(tensor.data.tobytes())
             else:
                 b.data = bytes(tensor.data)
             buffer_index = len(buffer_table)

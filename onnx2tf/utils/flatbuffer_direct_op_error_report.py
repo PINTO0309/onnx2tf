@@ -426,15 +426,16 @@ def _default_tensor_correspondence_report_path(onnx_path: str, output_dir: str) 
 
 def _load_correspondence_map(
     report_path: str,
-) -> Dict[str, str]:
+) -> Tuple[Dict[str, str], Dict[str, bool]]:
     if not report_path or not os.path.exists(report_path):
-        return {}
+        return {}, {}
     with open(report_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
     records = payload.get("records", [])
     if not isinstance(records, list):
-        return {}
+        return {}, {}
     mapped: Dict[str, str] = {}
+    assume_channel_last_layout_map: Dict[str, bool] = {}
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -448,7 +449,10 @@ def _load_correspondence_map(
         if onnx_output_name == "" or resolved_name == "":
             continue
         mapped[onnx_output_name] = resolved_name
-    return mapped
+        assume_channel_last_layout_map[onnx_output_name] = bool(
+            record.get("assume_channel_last_layout", False)
+        )
+    return mapped, assume_channel_last_layout_map
 
 
 def _is_channel_last_layout_name(tensor_name: str) -> bool:
@@ -538,14 +542,14 @@ def _compare_tensor_pair(
     atol: float,
     assume_channel_last_layout: bool = False,
 ) -> Dict[str, Any]:
-    def _channel_last_perm(rank: int) -> Optional[List[int]]:
+    def _channel_last_perms(rank: int) -> List[List[int]]:
         if rank == 3:
-            return [0, 2, 1]
+            return [[0, 2, 1], [1, 2, 0]]
         if rank == 4:
-            return [0, 2, 3, 1]
+            return [[0, 2, 3, 1]]
         if rank == 5:
-            return [0, 2, 3, 4, 1]
-        return None
+            return [[0, 2, 3, 4, 1]]
+        return []
 
     tflite_for_compare = np.asarray(tflite_tensor_raw)
     if _is_integer_or_bool_dtype(np.dtype(tflite_for_compare.dtype)):
@@ -559,20 +563,51 @@ def _compare_tensor_pair(
     )
 
     layout_hint_applied = False
+    prealigned: Optional[Tuple[np.ndarray, str, Optional[List[int]]]] = None
     if bool(assume_channel_last_layout):
-        perm = _channel_last_perm(int(onnx_for_compare.ndim))
-        if perm is not None:
+        best_score: Optional[Tuple[int, float]] = None
+        for perm in _channel_last_perms(int(onnx_for_compare.ndim)):
             candidate = np.transpose(onnx_for_compare, axes=perm)
-            if tuple(candidate.shape) == tuple(tflite_for_compare.shape):
+            if tuple(candidate.shape) != tuple(tflite_for_compare.shape):
+                continue
+            aligned, align_mode, align_perm = _align_output_layout_for_compare(
+                onnx_output=np.asarray(candidate),
+                tflite_output=tflite_for_compare,
+                rtol=rtol,
+                atol=atol,
+            )
+            allclose_candidate = bool(
+                np.allclose(
+                    np.asarray(candidate),
+                    aligned,
+                    rtol=rtol,
+                    atol=atol,
+                    equal_nan=True,
+                )
+            )
+            max_abs_candidate = float(
+                np.max(np.abs(np.asarray(candidate) - aligned))
+            ) if np.asarray(candidate).size > 0 else 0.0
+            score = (0 if allclose_candidate else 1, max_abs_candidate)
+            if best_score is None or score < best_score:
+                best_score = score
                 onnx_for_compare = np.asarray(candidate)
+                prealigned = (
+                    np.asarray(aligned),
+                    str(align_mode),
+                    None if align_perm is None else [int(v) for v in align_perm],
+                )
                 layout_hint_applied = True
 
-    aligned_tflite, align_mode, align_perm = _align_output_layout_for_compare(
-        onnx_output=onnx_for_compare,
-        tflite_output=tflite_for_compare,
-        rtol=rtol,
-        atol=atol,
-    )
+    if prealigned is not None:
+        aligned_tflite, align_mode, align_perm = prealigned
+    else:
+        aligned_tflite, align_mode, align_perm = _align_output_layout_for_compare(
+            onnx_output=onnx_for_compare,
+            tflite_output=tflite_for_compare,
+            rtol=rtol,
+            atol=atol,
+        )
     metrics = _MetricAccumulator()
     metrics.update(onnx_for_compare, aligned_tflite)
     metric_values = metrics.to_dict()
@@ -691,7 +726,9 @@ def generate_op_error_report(
         if tensor_correspondence_report is not None
         else default_correspondence_path
     )
-    correspondence_map = _load_correspondence_map(correspondence_path)
+    correspondence_map, correspondence_channel_last_hint_map = _load_correspondence_map(
+        correspondence_path
+    )
 
     onnx_graph = onnx.load(onnx_path)
     onnx_quant_param_map = _build_onnx_quant_param_map(onnx_graph)
@@ -822,8 +859,9 @@ def generate_op_error_report(
                 tflite_detail=detail,
                 rtol=float(rtol),
                 atol=float(atol),
-                assume_channel_last_layout=_is_channel_last_layout_name(
-                    resolved_name_for_layout
+                assume_channel_last_layout=bool(
+                    correspondence_channel_last_hint_map.get(tensor_name, False)
+                    or _is_channel_last_layout_name(resolved_name_for_layout)
                 ),
             )
         except Exception as ex:
