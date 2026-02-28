@@ -270,6 +270,40 @@ def _extract_tensor_info(
     return shape_map, dtype_map
 
 
+def _collect_dynamic_boundary_tensor_names(onnx_graph: onnx.ModelProto) -> Dict[str, List[str]]:
+    initializer_names = {str(ini.name) for ini in onnx_graph.graph.initializer}
+
+    def _has_dynamic_dim(value_info: Any) -> bool:
+        if not value_info.type.HasField("tensor_type"):
+            return True
+        tensor_type = value_info.type.tensor_type
+        if not tensor_type.HasField("shape"):
+            return True
+        for d in tensor_type.shape.dim:
+            if not (d.HasField("dim_value") and int(d.dim_value) >= 0):
+                return True
+        return False
+
+    dynamic_inputs: List[str] = []
+    for vi in onnx_graph.graph.input:
+        name = str(vi.name)
+        if name in initializer_names:
+            continue
+        if _has_dynamic_dim(vi):
+            dynamic_inputs.append(name)
+
+    dynamic_outputs: List[str] = []
+    for vi in onnx_graph.graph.output:
+        name = str(vi.name)
+        if _has_dynamic_dim(vi):
+            dynamic_outputs.append(name)
+
+    return {
+        "inputs": dynamic_inputs,
+        "outputs": dynamic_outputs,
+    }
+
+
 def _graph_has_missing_rank_info(onnx_graph: onnx.ModelProto) -> bool:
     value_infos = (
         list(onnx_graph.graph.input)
@@ -720,6 +754,86 @@ def _find_unbound_nonconstant_operator_inputs(model_ir: ModelIR) -> List[Dict[st
                 }
             )
     return issues
+
+
+def _count_ops_by_type(model_ir: ModelIR, op_type: str) -> int:
+    target = str(op_type)
+    return int(sum(1 for op in model_ir.operators if str(op.op_type) == target))
+
+
+def _apply_safe_transpose_reduction_lite(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Run a conservative transpose-reduction bundle for fallback/non-aggressive paths.
+
+    Safety contract:
+    - Apply only a curated set of historically safe transpose/layout passes.
+    - Roll back all changes if unbound runtime inputs are introduced.
+    """
+    before_transpose = _count_ops_by_type(model_ir, "TRANSPOSE")
+    if int(before_transpose) <= 0:
+        return {
+            "safe_transpose_reduction_lite_applied": 0,
+            "safe_transpose_reduction_lite_reduced": 0,
+            "safe_transpose_reduction_lite_unbound_after": 0,
+        }
+
+    snapshot = copy.deepcopy(model_ir)
+    pass_sequence = [
+        _optimize_transpose_quant_dequant_bridges,
+        _optimize_duplicate_transpose_fanout,
+        _optimize_singleton_channel_layout_transpose_to_reshape,
+        _optimize_transpose_unary_fanout_inverse_post_bridges,
+        _optimize_transpose_unary_passthrough_chains,
+        _optimize_transpose_elementwise_concat_conv_nhwc_groups,
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter,
+        _optimize_transpose_pre_add_nhwc_chains,
+        _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
+        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains,
+        _optimize_transposeconv_output_nhwc_passthrough_chains,
+    ]
+
+    applied = 0
+    for optimize_pass in pass_sequence:
+        optimize_pass(model_ir)
+        applied += 1
+
+    _prune_dead_operators(model_ir)
+    _reconcile_static_tensor_shapes(model_ir)
+
+    unbound_after = _find_unbound_nonconstant_operator_inputs(model_ir)
+    if len(unbound_after) > 0:
+        model_ir.tensors = snapshot.tensors
+        model_ir.operators = snapshot.operators
+        model_ir.inputs = snapshot.inputs
+        model_ir.outputs = snapshot.outputs
+        model_ir.subgraphs = snapshot.subgraphs
+        model_ir.metadata = snapshot.metadata
+        return {
+            "safe_transpose_reduction_lite_applied": 0,
+            "safe_transpose_reduction_lite_reduced": 0,
+            "safe_transpose_reduction_lite_unbound_after": int(len(unbound_after)),
+        }
+
+    after_transpose = _count_ops_by_type(model_ir, "TRANSPOSE")
+    reduced = int(before_transpose - after_transpose)
+    if reduced <= 0:
+        model_ir.tensors = snapshot.tensors
+        model_ir.operators = snapshot.operators
+        model_ir.inputs = snapshot.inputs
+        model_ir.outputs = snapshot.outputs
+        model_ir.subgraphs = snapshot.subgraphs
+        model_ir.metadata = snapshot.metadata
+        return {
+            "safe_transpose_reduction_lite_applied": 0,
+            "safe_transpose_reduction_lite_reduced": 0,
+            "safe_transpose_reduction_lite_unbound_after": 0,
+        }
+
+    return {
+        "safe_transpose_reduction_lite_applied": int(applied),
+        "safe_transpose_reduction_lite_reduced": int(reduced),
+        "safe_transpose_reduction_lite_unbound_after": 0,
+    }
 
 
 def _build_tensor_producer_map(model_ir: ModelIR) -> Dict[str, int]:
@@ -1246,10 +1360,28 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
     For fully static tensors, keep shape_signature consistent with runtime shape.
 
     Notes:
-    - Do not touch dynamic signatures that contain negative dimensions.
-    - This is metadata-only sanitation for tooling consistency (e.g. Netron).
+    - Keep dynamic `-1` only for ONNX graph-boundary tensors that were dynamic
+      in the source model (input/output contract).
+    - Internal tensors are auto-completed: if runtime `shape` is fully static,
+      `shape_signature` is overwritten to the same static shape.
     """
     fixed = 0
+    preserved_dynamic_boundary = 0
+    preserved_dynamic_leading_axis = 0
+    dynamic_boundary_names = set()
+    for key in (
+        "onnx_dynamic_input_tensor_names",
+        "onnx_dynamic_output_tensor_names",
+    ):
+        names = model_ir.metadata.get(key, [])
+        if isinstance(names, list):
+            dynamic_boundary_names.update(str(v) for v in names if str(v) != "")
+    dynamic_boundary_signature_map = model_ir.metadata.get(
+        "dynamic_boundary_shape_signature_map", {}
+    )
+    if not isinstance(dynamic_boundary_signature_map, dict):
+        dynamic_boundary_signature_map = {}
+
     for tensor in model_ir.tensors.values():
         if tensor.shape is None:
             continue
@@ -1261,6 +1393,19 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
             continue
         if not _is_fully_known_positive_shape(shape):
             continue
+
+        boundary_signature = dynamic_boundary_signature_map.get(str(tensor.name), None)
+        if isinstance(boundary_signature, list) and len(boundary_signature) == len(shape):
+            normalized_boundary_signature = [
+                int(-1 if int(v) < 0 else shape[idx])
+                for idx, v in enumerate(boundary_signature)
+            ]
+            if any(int(v) < 0 for v in normalized_boundary_signature):
+                if tensor.shape_signature != normalized_boundary_signature:
+                    tensor.shape_signature = list(normalized_boundary_signature)
+                    fixed += 1
+                preserved_dynamic_boundary += 1
+                continue
 
         signature = (
             [int(v) for v in list(tensor.shape_signature)]
@@ -1276,12 +1421,34 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
             fixed += 1
             continue
         if any(int(v) < 0 for v in signature):
+            # Preserve a single leading dynamic axis (e.g. batch/cardinality)
+            # when all trailing axes are already static. This retains runtime
+            # semantics for ops like QLinearConv/QLinearGlobalAveragePool/NMS
+            # while still collapsing ambiguous all-unknown placeholders.
+            negative_axes = [int(i) for i, v in enumerate(signature) if int(v) < 0]
+            trailing_axes_static = all(
+                int(signature[idx]) > 0 for idx in range(1, len(signature))
+            )
+            if negative_axes == [0] and trailing_axes_static:
+                preserved_dynamic_leading_axis += 1
+                continue
+            if str(tensor.name) in dynamic_boundary_names:
+                preserved_dynamic_boundary += 1
+                continue
+            tensor.shape_signature = [int(v) for v in list(shape)]
+            fixed += 1
             continue
         if signature != shape:
             tensor.shape_signature = [int(v) for v in list(shape)]
             fixed += 1
 
-    return {"sanitized_static_shape_signature_consistency": int(fixed)}
+    return {
+        "sanitized_static_shape_signature_consistency": int(fixed),
+        "preserved_dynamic_boundary_shape_signature": int(preserved_dynamic_boundary),
+        "preserved_dynamic_leading_axis_shape_signature": int(
+            preserved_dynamic_leading_axis
+        ),
+    }
 
 
 def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:
@@ -24686,6 +24853,54 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    gate_head_passthrough_unary = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "LOGISTIC",
+        "TANH",
+        "HARD_SWISH",
+    }
+
+    def _clone_const_tensor_for_operator_input(
+        *,
+        op: OperatorIR,
+        input_index: int,
+        tag: str,
+    ) -> str:
+        input_name = str(op.inputs[int(input_index)])
+        tensor = model_ir.tensors.get(input_name, None)
+        if tensor is None or tensor.data is None:
+            return input_name
+        cloned_name = f"{input_name}{tag}"
+        suffix = 1
+        while cloned_name in model_ir.tensors:
+            cloned_name = f"{input_name}{tag}_{suffix}"
+            suffix += 1
+        model_ir.tensors[cloned_name] = TensorIR(
+            name=cloned_name,
+            dtype=str(tensor.dtype),
+            shape=[int(v) for v in list(tensor.shape)] if tensor.shape is not None else [],
+            shape_signature=(
+                [int(v) for v in list(tensor.shape_signature)]
+                if tensor.shape_signature is not None
+                else (
+                    [int(v) for v in list(tensor.shape)]
+                    if tensor.shape is not None
+                    else []
+                )
+            ),
+            data=np.array(tensor.data, copy=True),
+            is_variable=bool(tensor.is_variable),
+            quantization=_clone_quantization(tensor.quantization),
+        )
+        _replace_operator_input_at(
+            model_ir=model_ir,
+            op=op,
+            input_index=int(input_index),
+            new_input_name=cloned_name,
+        )
+        return str(cloned_name)
 
     while True:
         changed = False
@@ -24724,15 +24939,38 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                 else:
                     continue
 
-                gate_reshape_idx = producers.get(gate_name, None)
-                if gate_reshape_idx is None:
+                gate_post_name = str(gate_name)
+                gate_post_idx = producers.get(gate_post_name, None)
+                if gate_post_idx is None:
                     continue
-                gate_reshape_op = model_ir.operators[int(gate_reshape_idx)]
-                if str(gate_reshape_op.op_type) != "RESHAPE" or len(gate_reshape_op.inputs) < 1 or len(gate_reshape_op.outputs) != 1:
-                    continue
-                if str(gate_reshape_op.outputs[0]) != gate_name:
-                    continue
-                if gate_name in model_outputs:
+                gate_post_op = model_ir.operators[int(gate_post_idx)]
+                gate_reshape_idx = int(gate_post_idx)
+                gate_reshape_op = gate_post_op
+                gate_requires_post_unary = False
+                if str(gate_reshape_op.op_type) != "RESHAPE":
+                    if (
+                        str(gate_post_op.op_type) in gate_head_passthrough_unary
+                        and len(gate_post_op.inputs) == 1
+                        and len(gate_post_op.outputs) == 1
+                        and str(gate_post_op.outputs[0]) == gate_post_name
+                    ):
+                        gate_reshape_input_name = str(gate_post_op.inputs[0])
+                        gate_reshape_idx_candidate = producers.get(gate_reshape_input_name, None)
+                        if gate_reshape_idx_candidate is None:
+                            continue
+                        gate_reshape_op = model_ir.operators[int(gate_reshape_idx_candidate)]
+                        if (
+                            str(gate_reshape_op.op_type) != "RESHAPE"
+                            or len(gate_reshape_op.inputs) < 1
+                            or len(gate_reshape_op.outputs) != 1
+                            or str(gate_reshape_op.outputs[0]) != gate_reshape_input_name
+                        ):
+                            continue
+                        gate_reshape_idx = int(gate_reshape_idx_candidate)
+                        gate_requires_post_unary = True
+                    else:
+                        continue
+                if gate_post_name in model_outputs:
                     continue
 
                 # Allow stacked MLP gate heads:
@@ -24768,6 +25006,15 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                         hop += 1
                         continue
                     if (
+                        producer_type in gate_head_passthrough_unary
+                        and len(producer_op.inputs) == 1
+                        and len(producer_op.outputs) == 1
+                        and str(producer_op.outputs[0]) == gate_mlp_input_name
+                    ):
+                        gate_mlp_input_name = str(producer_op.inputs[0])
+                        hop += 1
+                        continue
+                    if (
                         producer_type == "FULLY_CONNECTED"
                         and len(producer_op.inputs) >= 2
                         and len(producer_op.outputs) == 1
@@ -24790,8 +25037,10 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                 pool_out_name: Optional[str] = None
                 pool_idx: Optional[int] = None
                 removable_pre_gate_idx: Optional[int] = None
+                rewrite_pool_mean_to_nhwc = False
+                mapped_mean_axes: Optional[List[int]] = None
 
-                # Legacy path: AVG_POOL_2D output is wrapped by NHWC->NCHW transpose.
+                # Legacy path: pooled output is wrapped by NHWC->NCHW transpose.
                 if (
                     str(pre_gate_op.op_type) == "TRANSPOSE"
                     and len(pre_gate_op.inputs) >= 2
@@ -24803,10 +25052,10 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                     pool_out_name = str(pre_gate_op.inputs[0])
                     pool_idx = producers.get(pool_out_name, None)
                     removable_pre_gate_idx = int(pre_gate_idx)
-                # Already optimized path: flatten consumes AVG_POOL_2D NHWC output directly.
+                # Already optimized path: flatten consumes pooled NHWC output directly.
                 elif (
-                    str(pre_gate_op.op_type) == "AVERAGE_POOL_2D"
-                    and len(pre_gate_op.inputs) == 1
+                    str(pre_gate_op.op_type) in {"AVERAGE_POOL_2D", "MEAN"}
+                    and len(pre_gate_op.inputs) >= 1
                     and len(pre_gate_op.outputs) == 1
                     and str(pre_gate_op.outputs[0]) == pre_gate_name
                 ):
@@ -24819,11 +25068,52 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                 if pool_out_name is None or pool_idx is None:
                     continue
                 pool_op = model_ir.operators[int(pool_idx)]
-                if str(pool_op.op_type) != "AVERAGE_POOL_2D" or len(pool_op.inputs) != 1 or len(pool_op.outputs) != 1:
-                    continue
-                if str(pool_op.outputs[0]) != str(pool_out_name):
-                    continue
-                if str(pool_op.inputs[0]) != x_nhwc_name:
+                pool_op_type = str(pool_op.op_type)
+                if pool_op_type == "AVERAGE_POOL_2D":
+                    if len(pool_op.inputs) != 1 or len(pool_op.outputs) != 1:
+                        continue
+                    if str(pool_op.outputs[0]) != str(pool_out_name):
+                        continue
+                    if str(pool_op.inputs[0]) != x_nhwc_name:
+                        continue
+                elif pool_op_type == "MEAN":
+                    if len(pool_op.inputs) < 2 or len(pool_op.outputs) != 1:
+                        continue
+                    if str(pool_op.outputs[0]) != str(pool_out_name):
+                        continue
+                    if not bool(pool_op.options.get("keepDims", False)):
+                        continue
+                    pool_mean_input_name = str(pool_op.inputs[0])
+                    mean_axes_name = str(pool_op.inputs[1])
+                    mean_axes_tensor = model_ir.tensors.get(mean_axes_name, None)
+                    mean_axes_vals = _read_const_ints_from_tensor(mean_axes_tensor)
+                    if mean_axes_vals is None or len(mean_axes_vals) == 0:
+                        continue
+                    normalized_axes: List[int] = []
+                    axes_valid = True
+                    for axis in mean_axes_vals:
+                        a = int(axis)
+                        if a < 0:
+                            a += 4
+                        if a < 0 or a >= 4:
+                            axes_valid = False
+                            break
+                        normalized_axes.append(int(a))
+                    if not axes_valid:
+                        continue
+                    if pool_mean_input_name == x_nhwc_name:
+                        if sorted(normalized_axes) != [1, 2]:
+                            continue
+                    elif pool_mean_input_name == x_nchw_name:
+                        if sorted(normalized_axes) != [2, 3]:
+                            continue
+                        mapped_mean_axes = [int(perm_nhwc_to_nchw[int(v)]) for v in normalized_axes]
+                        if sorted(mapped_mean_axes) != [1, 2]:
+                            continue
+                        rewrite_pool_mean_to_nhwc = True
+                    else:
+                        continue
+                else:
                     continue
 
                 mul_out_name = str(mul_op.outputs[0])
@@ -24900,6 +25190,30 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                         input_index=0,
                         new_input_name=pool_out_name,
                     )
+                if rewrite_pool_mean_to_nhwc:
+                    pool_inputs = [str(v) for v in list(pool_op.inputs)]
+                    pool_inputs[0] = str(x_nhwc_name)
+                    _set_operator_inputs(
+                        model_ir=model_ir,
+                        op=pool_op,
+                        new_inputs=pool_inputs,
+                    )
+                    if mapped_mean_axes is not None:
+                        mean_axes_name = _clone_const_tensor_for_operator_input(
+                            op=pool_op,
+                            input_index=1,
+                            tag="__se_fc_nhwc_axes",
+                        )
+                        mean_axes_tensor = model_ir.tensors.get(str(mean_axes_name), None)
+                        if not _write_const_ints_to_tensor(mean_axes_tensor, [int(v) for v in mapped_mean_axes]):
+                            continue
+                        if isinstance(pool_op.options, dict):
+                            mean_opts = dict(pool_op.options)
+                            for key in ["axis", "axes", "onnxRawAxes"]:
+                                value = mean_opts.get(key, None)
+                                if isinstance(value, list) and len(value) == len(mapped_mean_axes):
+                                    mean_opts[key] = [int(v) for v in mapped_mean_axes]
+                            pool_op.options = mean_opts
 
                 # Bypass pre-mul transpose into MUL.
                 mul_inputs = [str(v) for v in list(mul_op.inputs)]
@@ -24912,9 +25226,19 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
 
                 # Gate/MUL metadata: convert from NCHW to NHWC.
                 _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(gate_name, None),
+                    model_ir.tensors.get(gate_post_name, None),
                     perm_nchw_to_nhwc,
                 )
+                if gate_requires_post_unary:
+                    _permute_tensor_metadata_if_rank_matches(
+                        model_ir.tensors.get(str(gate_reshape_op.outputs[0]), None),
+                        perm_nchw_to_nhwc,
+                    )
+                if rewrite_pool_mean_to_nhwc:
+                    _permute_tensor_metadata_if_rank_matches(
+                        model_ir.tensors.get(str(pool_out_name), None),
+                        perm_nchw_to_nhwc,
+                    )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(mul_out_name, None),
                     perm_nchw_to_nhwc,
@@ -24947,7 +25271,14 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                     )
 
                 remove_indices = set(int(v) for v in post_indices)
-                pre_mul_remaining_users = [int(v) for v in x_nchw_users if int(v) != int(mul_idx)]
+                pre_mul_exempt_users = {int(mul_idx)}
+                if rewrite_pool_mean_to_nhwc and str(pool_op.op_type) == "MEAN":
+                    pre_mul_exempt_users.add(int(pool_idx))
+                pre_mul_remaining_users = [
+                    int(v)
+                    for v in x_nchw_users
+                    if int(v) not in pre_mul_exempt_users
+                ]
                 if len(pre_mul_remaining_users) == 0:
                     remove_indices.add(int(pre_mul_idx))
 
@@ -44159,10 +44490,12 @@ def lower_onnx_to_ir(
     output_nms_with_argmax: bool = False,
     switch_nms_version: str = "v4",
     show_progress: bool = False,
+    apply_safe_transpose_reduction_lite_on_no_layout_opt: bool = False,
 ) -> ModelIR:
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
     shape_map, dtype_map = _extract_tensor_info(onnx_graph)
+    dynamic_boundary_tensors = _collect_dynamic_boundary_tensor_names(onnx_graph)
     constants: Dict[str, np.ndarray] = {}
     for ini in onnx_graph.graph.initializer:
         constants[ini.name] = np.asarray(numpy_helper.to_array(ini))
@@ -44178,6 +44511,12 @@ def lower_onnx_to_ir(
 
     model_ir = ModelIR(name=output_file_name)
     model_ir.metadata["tensor_lineage_events"] = []
+    model_ir.metadata["onnx_dynamic_input_tensor_names"] = list(
+        dynamic_boundary_tensors["inputs"]
+    )
+    model_ir.metadata["onnx_dynamic_output_tensor_names"] = list(
+        dynamic_boundary_tensors["outputs"]
+    )
     ctx = LoweringContext(
         model_ir=model_ir,
         shape_map=shape_map,
@@ -44373,6 +44712,23 @@ def lower_onnx_to_ir(
     for graph_output in onnx_graph.graph.output:
         ctx.ensure_tensor(graph_output.name)
         model_ir.outputs.append(graph_output.name)
+    dynamic_boundary_signature_map: Dict[str, List[int]] = {}
+    dynamic_boundary_name_set = set(
+        list(model_ir.metadata.get("onnx_dynamic_input_tensor_names", []))
+        + list(model_ir.metadata.get("onnx_dynamic_output_tensor_names", []))
+    )
+    for boundary_name in list(model_ir.inputs) + list(model_ir.outputs):
+        if str(boundary_name) not in dynamic_boundary_name_set:
+            continue
+        boundary_tensor = model_ir.tensors.get(str(boundary_name), None)
+        if boundary_tensor is None or boundary_tensor.shape_signature is None:
+            continue
+        snapshot_signature = [int(v) for v in list(boundary_tensor.shape_signature)]
+        if any(int(v) < 0 for v in snapshot_signature):
+            dynamic_boundary_signature_map[str(boundary_name)] = snapshot_signature
+    model_ir.metadata["dynamic_boundary_shape_signature_map"] = (
+        dynamic_boundary_signature_map
+    )
     _advance_post_progress()
 
     if optimize_layout_transpose_chains:
@@ -44926,6 +45282,8 @@ def lower_onnx_to_ir(
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
+    elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
+        _apply_safe_transpose_reduction_lite(model_ir)
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     # Keep final serialized metadata consistent for tools that render
@@ -44960,6 +45318,7 @@ def lower_onnx_to_ir(
             output_nms_with_argmax=output_nms_with_argmax,
             switch_nms_version=switch_nms_version,
             show_progress=show_progress,
+            apply_safe_transpose_reduction_lite_on_no_layout_opt=True,
         )
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",

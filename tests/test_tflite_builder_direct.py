@@ -13,6 +13,7 @@ import pytest
 from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _apply_safe_transpose_reduction_lite,
     _dtype_from_onnx_elem_type,
     _optimize_asin_transpose_passthrough_chains,
     _optimize_erf_transpose_passthrough_chains,
@@ -15058,6 +15059,220 @@ def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_without_pool_p
     mul_op = model_ir.operators[5]
     assert "x_nhwc" in list(mul_op.inputs)
     assert "gate_nchw" in list(mul_op.inputs)
+
+
+def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_with_mean_and_post_relu0to1() -> None:
+    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_mean_relu0to1_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+            data=data,
+            is_variable=False if data is not None else True,
+        )
+
+    _add_tensor("x_nhwc", [1, 8, 128, 8])
+    _add_tensor("x_nchw", [1, 8, 8, 128])
+    _add_tensor("mean_nchw", [1, 8, 1, 1])
+    _add_tensor("fc_in", [1, 8])
+    _add_tensor("fc0_out", [1, 8])
+    _add_tensor("fc0_act", [1, 8])
+    _add_tensor("fc1_out", [1, 8])
+    _add_tensor("gate_nchw", [1, 8, 1, 1])
+    _add_tensor("gate", [1, 8, 1, 1])
+    _add_tensor("mul_out_nchw", [1, 8, 8, 128])
+    _add_tensor("mul_out_nhwc", [1, 8, 128, 8])
+    _add_tensor("y", [1, 8, 128, 8])
+
+    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
+    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
+    _add_tensor("mean_axes", [2], "INT32", np.asarray([2, 3], dtype=np.int32))
+    _add_tensor("shape_fc_in", [2], "INT32", np.asarray([1, 8], dtype=np.int32))
+    _add_tensor("shape_gate", [4], "INT32", np.asarray([1, 8, 1, 1], dtype=np.int32))
+    _add_tensor("fc0_w", [8, 8], data=np.ones((8, 8), dtype=np.float32))
+    _add_tensor("fc0_b", [8], data=np.zeros((8,), dtype=np.float32))
+    _add_tensor("fc1_w", [8, 8], data=np.ones((8, 8), dtype=np.float32))
+    _add_tensor("fc1_b", [8], data=np.zeros((8,), dtype=np.float32))
+    _add_tensor("conv_w", [1, 1, 8, 8], data=np.ones((1, 1, 8, 8), dtype=np.float32))
+    _add_tensor("conv_b", [8], data=np.zeros((8,), dtype=np.float32))
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "perm_nhwc_to_nchw"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["x_nchw", "mean_axes"], outputs=["mean_nchw"], options={"keepDims": True, "axes": [2, 3]}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["mean_nchw", "shape_fc_in"],
+            outputs=["fc_in"],
+            options={"newShape": [1, 8], "onnxRawNewShape": [1, 8]},
+        ),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc_in", "fc0_w", "fc0_b"], outputs=["fc0_out"], options={}),
+        OperatorIR(op_type="RELU", inputs=["fc0_out"], outputs=["fc0_act"]),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc0_act", "fc1_w", "fc1_b"], outputs=["fc1_out"], options={}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["fc1_out", "shape_gate"],
+            outputs=["gate_nchw"],
+            options={"newShape": [1, 8, 1, 1], "onnxRawNewShape": [1, 8, 1, 1]},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["gate_nchw"], outputs=["gate"]),
+        OperatorIR(op_type="MUL", inputs=["x_nchw", "gate"], outputs=["mul_out_nchw"], options={}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_out_nchw", "perm_nchw_to_nhwc"], outputs=["mul_out_nhwc"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["mul_out_nhwc", "conv_w", "conv_b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+    ]
+
+    stats = _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_se_fc_mul_prepost_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == [
+        "MEAN",
+        "RESHAPE",
+        "FULLY_CONNECTED",
+        "RELU",
+        "FULLY_CONNECTED",
+        "RESHAPE",
+        "RELU_0_TO_1",
+        "MUL",
+        "CONV_2D",
+    ]
+    assert "TRANSPOSE" not in op_types
+
+    mean_op = model_ir.operators[0]
+    assert list(mean_op.inputs)[0] == "x_nhwc"
+    mean_axes_vals = np.asarray(model_ir.tensors["mean_axes__se_fc_nhwc_axes"].data, dtype=np.int32).reshape(-1).tolist()
+    assert mean_axes_vals == [1, 2]
+    assert list(mean_op.options.get("axes", [])) == [1, 2]
+
+    gate_shape_vals = np.asarray(model_ir.tensors["shape_gate"].data, dtype=np.int32).reshape(-1).tolist()
+    assert gate_shape_vals == [1, 1, 1, 8]
+    gate_reshape_op = model_ir.operators[5]
+    assert list(gate_reshape_op.options.get("newShape", [])) == [1, 1, 1, 8]
+    assert list(gate_reshape_op.options.get("onnxRawNewShape", [])) == [1, 1, 1, 8]
+
+    mul_op = model_ir.operators[7]
+    assert "x_nhwc" in list(mul_op.inputs)
+    assert "gate" in list(mul_op.inputs)
+    assert list(mul_op.outputs) == ["mul_out_nhwc"]
+
+    conv_op = model_ir.operators[8]
+    assert list(conv_op.inputs)[0] == "mul_out_nhwc"
+
+
+def test_flatbuffer_direct_safe_transpose_reduction_lite_removes_transpose_quantize_transpose_chain() -> None:
+    model_ir = ModelIR(name="safe_transpose_reduction_lite_tqt_chain_test")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["output"]
+
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["input_nchw"] = TensorIR(
+        name="input_nchw",
+        dtype="FLOAT32",
+        shape=[1, 3, 32, 100],
+        shape_signature=[1, 3, 32, 100],
+    )
+    model_ir.tensors["input_quantized"] = TensorIR(
+        name="input_quantized",
+        dtype="INT8",
+        shape=[1, 3, 32, 100],
+        shape_signature=[1, 3, 32, 100],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+    model_ir.tensors["input_quantized_nhwc"] = TensorIR(
+        name="input_quantized_nhwc",
+        dtype="INT8",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="INT8",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["input", "perm_nhwc_to_nchw"],
+            outputs=["input_nchw"],
+        ),
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=["input_nchw"],
+            outputs=["input_quantized"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["input_quantized", "perm_nchw_to_nhwc"],
+            outputs=["input_quantized_nhwc"],
+        ),
+        OperatorIR(
+            op_type="RELU",
+            inputs=["input_quantized_nhwc"],
+            outputs=["output"],
+        ),
+    ]
+
+    stats = _apply_safe_transpose_reduction_lite(model_ir)
+    assert stats["safe_transpose_reduction_lite_reduced"] >= 2
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["QUANTIZE", "RELU"]
+    assert model_ir.operators[0].inputs[0] == "input"
+    assert model_ir.operators[0].outputs[0] == "input_quantized_nhwc"
+    assert model_ir.operators[1].inputs[0] == "input_quantized_nhwc"
 
 
 def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_reshape() -> None:
