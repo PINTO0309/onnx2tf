@@ -63,6 +63,27 @@ def _make_fused_conv_model(*, domain: str = "") -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=opsets)
 
 
+def _make_group_norm_model(*, domain: str = "") -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1, 320, 4, 4])
+    y = helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1, 320, 4, 4])
+    gamma = numpy_helper.from_array(np.ones((320,), dtype=np.float32), name="gamma")
+    beta = numpy_helper.from_array(np.zeros((320,), dtype=np.float32), name="beta")
+    group_norm = helper.make_node(
+        "GroupNorm",
+        ["x", "gamma", "beta"],
+        ["y"],
+        name="GroupNormNode",
+        domain=domain,
+        epsilon=1e-5,
+        groups=32,
+    )
+    graph = helper.make_graph([group_norm], "group_norm_graph", [x], [y], initializer=[gamma, beta])
+    opsets = [helper.make_operatorsetid("", 14)]
+    if domain == "com.microsoft":
+        opsets.append(helper.make_operatorsetid("com.microsoft", 1))
+    return helper.make_model(graph, opset_imports=opsets)
+
+
 def test_supplement_microsoft_domain_for_fused_matmul_default_domain() -> None:
     model = _make_fused_matmul_model(domain="")
 
@@ -99,6 +120,19 @@ def test_supplement_microsoft_domain_for_fused_conv_default_domain() -> None:
     )
 
 
+def test_supplement_microsoft_domain_for_group_norm_default_domain() -> None:
+    model = _make_group_norm_model(domain="")
+
+    rewritten = _supplement_microsoft_domain_for_selected_ops(onnx_model=model)
+
+    assert rewritten == {"GroupNorm": 1}
+    assert model.graph.node[0].domain == "com.microsoft"
+    assert any(
+        opset.domain == "com.microsoft" and int(opset.version) == 1
+        for opset in model.opset_import
+    )
+
+
 def test_prepare_runtime_checks_applies_domain_supplement_on_copy() -> None:
     source = _make_fused_matmul_model(domain="")
 
@@ -111,6 +145,16 @@ def test_prepare_runtime_checks_applies_domain_supplement_on_copy() -> None:
 
 def test_prepare_runtime_checks_applies_domain_supplement_for_fused_conv() -> None:
     source = _make_fused_conv_model(domain="")
+
+    prepared = _prepare_onnx_graph_for_runtime_checks(source_onnx_graph=source)
+
+    assert prepared is not None
+    assert source.graph.node[0].domain == ""
+    assert prepared.graph.node[0].domain == "com.microsoft"
+
+
+def test_prepare_runtime_checks_applies_domain_supplement_for_group_norm() -> None:
+    source = _make_group_norm_model(domain="")
 
     prepared = _prepare_onnx_graph_for_runtime_checks(source_onnx_graph=source)
 

@@ -4195,7 +4195,7 @@ def dummy_onnx_inference(
         new_onnx_graph.metadata_props.extend(metadata_props)
     # gs.py export may drop non-default node domains.
     # Re-supplement selected contrib ops for ORT compatibility.
-    ms_domain_rewrite_targets = {'FusedConv', 'FusedMatMul', 'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearLeakyRelu', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
+    ms_domain_rewrite_targets = {'FusedConv', 'FusedMatMul', 'GroupNorm', 'Inverse', 'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearLeakyRelu', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
     rewritten_ms_domains = False
     for node in new_onnx_graph.graph.node:
         if node.op_type in ms_domain_rewrite_targets and node.domain in ['', 'ai.onnx']:
@@ -4729,9 +4729,6 @@ def dummy_tf_inference(
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
 
-    if input_datas_for_validation is not None:
-        input_datas_for_validation.update(input_datas)
-
     if prefilled_input_datas:
         for input_name, input_data in prefilled_input_datas.items():
             expected = None
@@ -4759,12 +4756,86 @@ def dummy_tf_inference(
             except Exception:
                 continue
 
-    outputs = model(
-        inputs={
-            input.name: input_datas[input.name] for input in inputs
-        },
-        training=False,
+    def _run_model_with_input_datas(input_datas_dict: Dict[str, np.ndarray]):
+        return model(
+            inputs={
+                input.name: input_datas_dict[input.name] for input in inputs
+            },
+            training=False,
+        )
+
+    def _is_retryable_matrix_inverse_error(ex: Exception) -> bool:
+        msg = str(ex)
+        return 'MatrixInverse' in msg and 'Input is not invertible' in msg
+
+    def _make_jittered_float_inputs(
+        *,
+        base_inputs: Dict[str, np.ndarray],
+        retry_index: int,
+    ) -> Dict[str, np.ndarray]:
+        rng = np.random.default_rng(0x5A17 + int(retry_index))
+        jittered: Dict[str, np.ndarray] = {}
+        for input_name, input_data in base_inputs.items():
+            arr = np.asarray(input_data)
+            if np.issubdtype(arr.dtype, np.floating):
+                flat = arr.reshape(-1)
+                # Avoid singular matrices caused by all-equal dummy inputs.
+                # For nearly constant tensors, make values non-uniform but keep
+                # the range bounded to avoid unstable downstream indexing.
+                if flat.size > 1 and np.allclose(flat, flat[0]):
+                    randomized = rng.uniform(
+                        low=0.25,
+                        high=0.75,
+                        size=arr.shape,
+                    ).astype(arr.dtype, copy=False)
+                    jittered[input_name] = randomized
+                else:
+                    noise = rng.uniform(
+                        low=-1.0e-4,
+                        high=1.0e-4,
+                        size=arr.shape,
+                    ).astype(arr.dtype, copy=False)
+                    jittered[input_name] = (arr + noise).astype(arr.dtype, copy=False)
+            else:
+                jittered[input_name] = arr
+        return jittered
+
+    # Default dummy inference uses all-ones tensors and can trigger
+    # MatrixInverse singularity for coordinate-transform models.
+    allow_inverse_retry = (
+        verification_datas is None
+        and custom_input_op_name_np_data_path is None
     )
+    max_retry = 3 if allow_inverse_retry else 0
+    used_input_datas = input_datas
+    outputs = None
+    for retry_idx in range(max_retry + 1):
+        trial_input_datas = (
+            input_datas
+            if retry_idx == 0
+            else _make_jittered_float_inputs(
+                base_inputs=input_datas,
+                retry_index=retry_idx,
+            )
+        )
+        try:
+            outputs = _run_model_with_input_datas(trial_input_datas)
+            used_input_datas = trial_input_datas
+            break
+        except tf.errors.InvalidArgumentError as ex:
+            if retry_idx >= max_retry or not _is_retryable_matrix_inverse_error(ex):
+                raise
+            warn(
+                'TF dummy inference retry due to non-invertible MatrixInverse input. '
+                f'retry={retry_idx + 1}/{max_retry}'
+            )
+            continue
+
+    if outputs is None:
+        raise RuntimeError('dummy_tf_inference failed to produce outputs.')
+
+    if input_datas_for_validation is not None:
+        input_datas_for_validation.update(used_input_datas)
 
     if not isinstance(outputs, list):
         outputs = [outputs]

@@ -371,6 +371,7 @@ Notes:
 |Identity|RESHAPE|-|
 |If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`). In control-flow branch lowering, dynamic-condition `If` is additionally supported when both branches are single-output initializer-only constants (lowered via `Where`)|
 |InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
+|Inverse|SLICE + MUL + SUB + ADD + NEG + CONCATENATION + DIV (+ optional CAST in/out)|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=2`; matrix last dimensions must resolve to square `2x2` or `3x3`|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
 |Log|LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
@@ -487,7 +488,7 @@ Notes:
 - `StringNormalizer` is now treated as `builtin_supported` under constrained runtime patterns (`case_change_action=NONE`, locale `''/en_US`, rank1/2). Unsupported runtime patterns (e.g. `LOWER/UPPER` or case-insensitive stopword filtering) may still fallback to `CUSTOM` if custom-op mode is enabled.
 - `StringNormalizer` constant-input graphs are now folded at conversion time with string-constant buffer serialization support in flatbuffer_direct (including stopword filtering and `LOWER/UPPER` case conversion).
 - `OptionalHasElement` is now treated as `builtin_supported` for determinable-presence cases (non-optional inputs and `Optional` producer lineage), reducing `ONNX_OPTIONALHASELEMENT` custom-op fallbacks.
-- `OneHot`, `MatMulInteger`, `Pow`, and `Reciprocal` are now treated as `builtin_supported` when builtin constraints pass.
+- `OneHot`, `MatMulInteger`, `Pow`, `Reciprocal`, and `Inverse` are now treated as `builtin_supported` when builtin constraints pass.
 - `ReduceMin` is now treated as `builtin_supported` under builtin constraints.
 - `Min` and `TopK` are now treated as `builtin_supported` under builtin constraints, reducing `ONNX_MIN` / `ONNX_TOPK` custom-op fallbacks.
 - `DepthToSpace` and `HardSwish` are now treated as `builtin_supported` under builtin constraints (`HardSwish` is lowered directly as TFLite `HARD_SWISH`).
@@ -644,7 +645,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.26
+  ghcr.io/pinto0309/onnx2tf:2.0.27
 
   or
 
@@ -653,7 +654,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.26
+  docker.io/pinto0309/onnx2tf:2.0.27
 
   or
 
@@ -663,7 +664,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.26 \
+  docker.io/pinto0309/onnx2tf:2.0.27 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -2340,7 +2341,8 @@ optional arguments:
     Replace list of operators to pseudo operators.
     Full name of the target operators should be given.
     Currently supported operators :
-    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger
+    Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger, Inverse
+    Note: Inverse is pseudo-lowered by default. Specifying Inverse keeps MatrixInverse/FlexMatrixInverse.
 
   -me, --mvn_epsilon
     For MeanVarianceNormalization.
@@ -2937,7 +2939,8 @@ convert(
       Replace list of operators to pseudo operators.
       Full name of the target operators should be given.
       Currently supported operators :
-      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger
+      Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger, Inverse
+      Note: Inverse is pseudo-lowered by default. Specifying Inverse keeps MatrixInverse/FlexMatrixInverse.
 
     mvn_epsilon: Optional[float]
       For MeanVarianceNormalization.

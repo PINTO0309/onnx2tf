@@ -1,7 +1,7 @@
 import onnx
 import pytest
 import numpy as np
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.tflite_builder.preprocess import (
     CONSTANT_FOLD_RULE_ID,
@@ -226,6 +226,42 @@ def _make_dq_bn_prelu_q_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_constant_qdq_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 2])
+    x = numpy_helper.from_array(
+        np.asarray([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32),
+        name="x_const",
+    )
+    scale = numpy_helper.from_array(
+        np.asarray([0.5], dtype=np.float32),
+        name="x_scale",
+    )
+    zero_point = numpy_helper.from_array(
+        np.asarray([128], dtype=np.uint8),
+        name="x_zero_point",
+    )
+    n0 = helper.make_node(
+        "QuantizeLinear",
+        ["x_const", "x_scale", "x_zero_point"],
+        ["x_q"],
+        name="QConstNode",
+    )
+    n1 = helper.make_node(
+        "DequantizeLinear",
+        ["x_q", "x_scale", "x_zero_point"],
+        ["y"],
+        name="DQConstNode",
+    )
+    graph = helper.make_graph(
+        [n0, n1],
+        "constant_qdq_graph",
+        [],
+        [y],
+        initializer=[x, scale, zero_point],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def test_preprocess_wave1_keeps_hardswish_builtin() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
@@ -391,6 +427,35 @@ def test_constant_fold_rewrites_concat_axes_to_constant() -> None:
     ops = [str(node.op_type) for node in preprocessed.graph.node]
     assert ops[0] == "Constant"
     assert "ReduceSum" in ops
+
+
+def test_constant_fold_rewrites_constant_qdq_chain() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_constant_qdq_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[CONSTANT_FOLD_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["Constant", "Constant"]
+
+    y_const = next(
+        (
+            node for node in preprocessed.graph.node
+            if len(node.output) == 1 and str(node.output[0]) == "y"
+        ),
+        None,
+    )
+    assert y_const is not None
+    value_attr = next((a for a in y_const.attribute if str(a.name) == "value"), None)
+    assert value_attr is not None
+    y_value = np.asarray(numpy_helper.to_array(value_attr.t))
+    assert np.array_equal(
+        y_value,
+        np.asarray([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32),
+    )
 
 
 def test_quant_chain_fusion_wave3_rewrites_dq_bn_prelu_q_chain() -> None:

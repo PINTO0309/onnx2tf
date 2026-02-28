@@ -13,7 +13,12 @@ import onnx
 
 
 def _normalize_tensor_name(name: str) -> str:
-    return str(name).split(":")[0]
+    normalized = str(name).split(":")[0]
+    # SignatureDef-based TF/TFLite exports often prefix external I/O names
+    # with `serving_default_` (e.g. serving_default_input:0).
+    if normalized.startswith("serving_default_"):
+        normalized = normalized[len("serving_default_") :]
+    return normalized
 
 
 def _create_tflite_interpreter(model_path: str) -> Any:
@@ -182,11 +187,38 @@ def _build_tflite_detail_map(
     tflite_details: Sequence[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     detail_by_exact = {str(detail["name"]): detail for detail in tflite_details}
+    onnx_base_names = [
+        _normalize_tensor_name(onnx_name)
+        for onnx_name in onnx_names
+    ]
+    unique_onnx_bases = [
+        name for name in dict.fromkeys(onnx_base_names) if name != ""
+    ]
     detail_by_base: Dict[str, Dict[str, Any]] = {}
     for detail in tflite_details:
         base_name = _normalize_tensor_name(str(detail["name"]))
         if base_name not in detail_by_base:
             detail_by_base[base_name] = detail
+        # Generic SignatureDef name absorption:
+        # e.g. "custom_signature_input_name" -> "input_name"
+        # Match ONNX tensor-name suffixes and pick the longest unique match.
+        suffix_matches: List[str] = [
+            onnx_base
+            for onnx_base in unique_onnx_bases
+            if base_name.endswith(f"_{onnx_base}")
+        ]
+        if len(suffix_matches) == 0:
+            continue
+        max_match_len = max(len(match) for match in suffix_matches)
+        longest_matches = [
+            match for match in suffix_matches
+            if len(match) == max_match_len
+        ]
+        if len(longest_matches) != 1:
+            continue
+        alias_name = longest_matches[0]
+        if alias_name not in detail_by_base:
+            detail_by_base[alias_name] = detail
 
     mapped: Dict[str, Dict[str, Any]] = {}
     for idx, onnx_name in enumerate(onnx_names):

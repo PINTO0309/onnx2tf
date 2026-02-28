@@ -59,6 +59,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_logsoftmax_op,
     build_max_op,
     build_min_op,
+    build_inverse_op,
     build_if_op,
     build_loop_op,
     build_mish_op,
@@ -1773,6 +1774,78 @@ def _validate_pool(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+        # 2-output MaxPool (values + argmax indices) is supported only for a
+        # restricted shape-safe form in flatbuffer_direct lowering.
+        if len(node.outputs) == 2:
+            storage_order = int(node.attrs.get("storage_order", 0))
+            kernel = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+            strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+            dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+            auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+            pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+            if len(pads) < 4:
+                pads = [0, 0, 0, 0]
+            if storage_order != 0:
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices requires storage_order=0 in "
+                        f"flatbuffer_direct. got={storage_order}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if kernel != [2, 2] or strides != [2, 2]:
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices currently supports only "
+                        "kernel_shape=[2,2], strides=[2,2]. "
+                        f"got kernel_shape={kernel} strides={strides}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if dilations != [1, 1]:
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices currently supports only "
+                        f"dilations=[1,1]. got dilations={dilations}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if ceil_mode != 0:
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices currently supports only "
+                        f"ceil_mode=0. got={ceil_mode}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if auto_pad not in {"NOTSET", "VALID"}:
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices currently supports auto_pad "
+                        f"NOTSET/VALID only. got={auto_pad}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if any(int(v) != 0 for v in pads):
+                raise NodeValidationError(
+                    reason_code="unsupported_attribute_value",
+                    message=(
+                        "MaxPool with indices currently supports zero pads only. "
+                        f"got pads={pads}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
     else:
         if ceil_mode != 0:
             raise NodeValidationError(
@@ -2091,6 +2164,89 @@ def _validate_reciprocal(node: Any, ctx: Any) -> None:
             message=(
                 "Reciprocal currently supports FLOAT16/FLOAT32 input and output in flatbuffer_direct. "
                 f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_inverse(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    supported = {"FLOAT16", "FLOAT32"}
+    if input_dtype not in supported or output_dtype not in supported:
+        raise NodeValidationError(
+            reason_code="unsupported_dtype",
+            message=(
+                "Inverse currently supports FLOAT16/FLOAT32 input and output in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_name = node.inputs[0].name
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "Inverse requires input rank >= 2 in flatbuffer_direct. "
+                f"input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    raw_shape = None
+    if hasattr(ctx, "shape_map") and isinstance(ctx.shape_map, dict):
+        raw_shape = ctx.shape_map.get(input_name, None)
+    if raw_shape is not None:
+        try:
+            raw_shape = [int(v) for v in list(raw_shape)]
+        except Exception:
+            raw_shape = None
+    if raw_shape is None or len(raw_shape) < 2:
+        raw_shape = [int(v) for v in input_shape]
+
+    row_dim = int(raw_shape[-2])
+    col_dim = int(raw_shape[-1])
+    row_known = row_dim > 0
+    col_known = col_dim > 0
+
+    if row_known and not col_known:
+        col_dim = int(row_dim)
+        col_known = True
+    elif col_known and not row_known:
+        row_dim = int(col_dim)
+        row_known = True
+
+    if not row_known or not col_known:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Inverse requires resolvable matrix last dimensions in flatbuffer_direct. "
+                f"input_shape={input_shape} raw_input_shape={raw_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if row_dim != col_dim:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Inverse requires square matrix last dimensions in flatbuffer_direct. "
+                f"input_shape={input_shape} raw_input_shape={raw_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if row_dim not in {2, 3}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Inverse builtin lowering currently supports only last dims [2,2] or [3,3] "
+                f"in flatbuffer_direct. input_shape={input_shape} raw_input_shape={raw_shape}"
             ),
             node_name=node.name,
             node_op=node.op,
@@ -5046,6 +5202,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reciprocal,
     ),
+    "Inverse": DispatchEntry(
+        onnx_op="Inverse",
+        tflite_ops=["SLICE", "MUL", "SUB", "ADD", "NEG", "DIV", "CONCATENATION"],
+        builder=build_inverse_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_inverse,
+    ),
     "Mod": DispatchEntry(
         onnx_op="Mod",
         tflite_ops=["FLOOR_MOD"],
@@ -6034,10 +6197,10 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             min_inputs=1,
             max_inputs=1,
             min_outputs=1,
-            max_outputs=1,
+            max_outputs=2,
             required_attrs=["kernel_shape"],
             input_rank={0: [4]},
-            output_rank={0: [1, 4]},
+            output_rank={0: [1, 4], 1: [1, 4]},
         ),
         extra_validator=_validate_pool,
     ),

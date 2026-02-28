@@ -2007,8 +2007,60 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     output_shape = ctx.get_tensor_shape(output_name)
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT32"
+    compute_input_name = str(input_name)
+
+    if input_dtype != compute_dtype:
+        compute_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_conv_input_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in list(input_shape)],
+        )
+        _clone_shape_signature(ctx, input_name, compute_input_name)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[compute_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
     if len(input_shape) == 3 and len(output_shape) == 3:
-        _build_conv1d_via_conv2d(node, ctx)
+        conv1d_output_name = str(output_name)
+        if output_dtype != compute_dtype:
+            conv1d_output_name = ctx.add_intermediate_tensor(
+                f"{node.name}_conv1d_f32_output",
+                dtype=compute_dtype,
+                shape=[int(v) for v in list(output_shape)],
+            )
+            _clone_shape_signature(ctx, output_name, conv1d_output_name)
+        pseudo_node = _make_pseudo_node(
+            base_node=node,
+            input_names=[compute_input_name, str(weight_name)] + (
+                [str(node.inputs[2].name)] if len(node.inputs) >= 3 else []
+            ),
+            output_name=conv1d_output_name,
+            attrs=dict(node.attrs),
+        )
+        _build_conv1d_via_conv2d(pseudo_node, ctx)
+        if conv1d_output_name != str(output_name):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[conv1d_output_name],
+                    outputs=[str(output_name)],
+                    options={
+                        "inDataType": compute_dtype,
+                        "outDataType": output_dtype,
+                    },
+                )
+            )
         return
     if len(input_shape) == 5 and len(output_shape) == 5:
         weights_3d = ctx.get_constant_array(weight_name)
@@ -2070,12 +2122,12 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
 
     x_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_input_nhwc",
-        dtype=ctx.get_tensor_dtype(input_name),
+        dtype=compute_dtype,
         shape=nhwc_input_shape,
     )
     x_nhwc = make_transpose(
         ctx,
-        input_name,
+        compute_input_name,
         x_nhwc,
         [0, 2, 3, 1],
         allow_elide_inverse_chain=True,
@@ -2159,7 +2211,7 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
 
         y_nhwc = ctx.add_intermediate_tensor(
             f"{node.name}_output_nhwc",
-            dtype=ctx.get_tensor_dtype(output_name),
+            dtype=compute_dtype,
             shape=nhwc_output_shape,
         )
         ctx.add_operator(
@@ -2224,7 +2276,7 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
                 )
                 y_nhwc = ctx.add_intermediate_tensor(
                     f"{node.name}_output_nhwc",
-                    dtype=ctx.get_tensor_dtype(output_name),
+                    dtype=compute_dtype,
                     shape=nhwc_output_shape,
                 )
                 ctx.add_operator(
@@ -2301,7 +2353,7 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
                     )
                     y_group_name = ctx.add_intermediate_tensor(
                         f"{node.name}_group{group_idx}_output_nhwc",
-                        dtype=ctx.get_tensor_dtype(output_name),
+                        dtype=compute_dtype,
                         shape=[
                             int(nhwc_output_shape[0]),
                             int(nhwc_output_shape[1]),
@@ -2335,7 +2387,7 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
 
                 y_nhwc = ctx.add_intermediate_tensor(
                     f"{node.name}_output_nhwc",
-                    dtype=ctx.get_tensor_dtype(output_name),
+                    dtype=compute_dtype,
                     shape=nhwc_output_shape,
                 )
                 ctx.add_operator(
@@ -2363,7 +2415,7 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
 
             y_nhwc = ctx.add_intermediate_tensor(
                 f"{node.name}_output_nhwc",
-                dtype=ctx.get_tensor_dtype(output_name),
+                dtype=compute_dtype,
                 shape=nhwc_output_shape,
             )
             ctx.add_operator(
@@ -2383,12 +2435,33 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
             )
     ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in nhwc_output_signature]
 
+    nchw_compute_output_name = str(output_name)
+    if output_dtype != compute_dtype:
+        nchw_compute_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nchw_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in list(output_shape)],
+        )
+        _clone_shape_signature(ctx, output_name, nchw_compute_output_name)
+
     make_transpose(
         ctx,
         y_nhwc,
-        output_name,
+        nchw_compute_output_name,
         [0, 3, 1, 2],
     )
+    if nchw_compute_output_name != str(output_name):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[nchw_compute_output_name],
+                outputs=[str(output_name)],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def build_fused_conv_op(node: Any, ctx: Any) -> None:

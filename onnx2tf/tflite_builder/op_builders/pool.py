@@ -316,8 +316,11 @@ def _clone_quantization(quantization: Any) -> Any:
 def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
+    indices_output_name = node.outputs[1].name if len(node.outputs) >= 2 else None
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
+    if indices_output_name is not None:
+        ctx.ensure_tensor(indices_output_name)
 
     input_shape = ctx.get_tensor_shape(input_name)
     output_shape = ctx.get_tensor_shape(output_name)
@@ -651,3 +654,305 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
         output_name,
         [0, 3, 1, 2],
     )
+
+    if op_type == "MAX_POOL_2D" and indices_output_name is not None:
+        if (
+            list(kernel) != [2, 2]
+            or list(strides) != [2, 2]
+            or list(dilations) != [1, 1]
+            or int(ceil_mode) != 0
+            or padding != "VALID"
+            or explicit_pads is not None
+        ):
+            raise NotImplementedError(
+                "MaxPool with indices currently supports only "
+                "kernel_shape=[2,2], strides=[2,2], dilations=[1,1], "
+                "ceil_mode=0, VALID/no-explicit-padding in flatbuffer_direct. "
+                f"op={node.name} kernel={kernel} strides={strides} "
+                f"dilations={dilations} ceil_mode={ceil_mode} "
+                f"padding={padding} explicit_pads={explicit_pads}"
+            )
+
+        n_dim, c_dim, h_dim, w_dim = [int(v) for v in list(input_shape)]
+        _, _, out_h, out_w = [int(v) for v in list(output_shape)]
+        if any(int(v) <= 0 for v in [n_dim, c_dim, h_dim, w_dim, out_h, out_w]):
+            raise NotImplementedError(
+                "MaxPool with indices requires fully-known static positive "
+                f"NCHW shapes in flatbuffer_direct. op={node.name} "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            )
+        if int(h_dim) != int(out_h) * 2 or int(w_dim) != int(out_w) * 2:
+            raise NotImplementedError(
+                "MaxPool with indices requires output spatial size exactly "
+                "half of input for kernel=2/stride=2. "
+                f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+            )
+
+        s2d_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_space_to_depth",
+            dtype=ctx.get_tensor_dtype(x_nhwc),
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim) * 4],
+        )
+        x_nhwc_tensor = ctx.model_ir.tensors[x_nhwc]
+        s2d_tensor = ctx.model_ir.tensors[s2d_name]
+        s2d_tensor.quantization = _clone_quantization(x_nhwc_tensor.quantization)
+        x_nhwc_signature = (
+            list(x_nhwc_tensor.shape_signature)
+            if x_nhwc_tensor.shape_signature is not None
+            else list(x_nhwc_tensor.shape)
+        )
+        if len(x_nhwc_signature) == 4:
+            s2d_signature = [
+                int(x_nhwc_signature[0]),
+                int(x_nhwc_signature[1]) // 2 if int(x_nhwc_signature[1]) > 0 else int(x_nhwc_signature[1]),
+                int(x_nhwc_signature[2]) // 2 if int(x_nhwc_signature[2]) > 0 else int(x_nhwc_signature[2]),
+                int(x_nhwc_signature[3]) * 4 if int(x_nhwc_signature[3]) > 0 else int(x_nhwc_signature[3]),
+            ]
+            s2d_tensor.shape_signature = [int(v) for v in s2d_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SPACE_TO_DEPTH",
+                inputs=[x_nhwc],
+                outputs=[s2d_name],
+                options={"blockSize": 2},
+            )
+        )
+
+        s2d_reshaped_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_space_to_depth_reshaped",
+            dtype=ctx.get_tensor_dtype(x_nhwc),
+            shape=[int(n_dim), int(out_h), int(out_w), 4, int(c_dim)],
+        )
+        s2d_reshaped_tensor = ctx.model_ir.tensors[s2d_reshaped_name]
+        s2d_reshaped_tensor.quantization = _clone_quantization(x_nhwc_tensor.quantization)
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_s2d_reshape_shape",
+            np.asarray([int(n_dim), int(out_h), int(out_w), 4, int(c_dim)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[s2d_name, reshape_shape_name],
+                outputs=[s2d_reshaped_name],
+                options={"newShape": [int(n_dim), int(out_h), int(out_w), 4, int(c_dim)]},
+            )
+        )
+
+        block_argmax_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_block_index",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        axis_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_block_axis",
+            np.asarray([3], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ARG_MAX",
+                inputs=[s2d_reshaped_name, axis_name],
+                outputs=[block_argmax_name],
+                options={"outputType": "INT32"},
+            )
+        )
+
+        two_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_two",
+            np.asarray([2], dtype=np.int32),
+        )
+        block_h_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_block_h",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        block_w_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_block_w",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[block_argmax_name, two_name],
+                outputs=[block_h_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FLOOR_MOD",
+                inputs=[block_argmax_name, two_name],
+                outputs=[block_w_name],
+            )
+        )
+
+        oh_grid_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_oh_grid",
+            np.arange(int(out_h), dtype=np.int32).reshape(1, int(out_h), 1, 1),
+        )
+        ow_grid_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_ow_grid",
+            np.arange(int(out_w), dtype=np.int32).reshape(1, 1, int(out_w), 1),
+        )
+        c_grid_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_c_grid",
+            np.arange(int(c_dim), dtype=np.int32).reshape(1, 1, 1, int(c_dim)),
+        )
+
+        oh2_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_oh2",
+            dtype="INT32",
+            shape=[1, int(out_h), 1, 1],
+        )
+        ow2_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_ow2",
+            dtype="INT32",
+            shape=[1, 1, int(out_w), 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[oh_grid_name, two_name],
+                outputs=[oh2_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[ow_grid_name, two_name],
+                outputs=[ow2_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        h_index_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_h_index",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        w_index_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_w_index",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[oh2_name, block_h_name],
+                outputs=[h_index_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[ow2_name, block_w_name],
+                outputs=[w_index_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        hw_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_hw",
+            np.asarray([int(h_dim) * int(w_dim)], dtype=np.int32),
+        )
+        w_name = ctx.add_const_tensor(
+            f"{node.name}_argmax_w",
+            np.asarray([int(w_dim)], dtype=np.int32),
+        )
+        c_hw_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_c_hw",
+            dtype="INT32",
+            shape=[1, 1, 1, int(c_dim)],
+        )
+        h_w_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_h_w",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        linear_tmp_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_linear_tmp",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        linear_nhwc_name = ctx.add_intermediate_tensor(
+            f"{node.name}_argmax_linear_nhwc",
+            dtype="INT32",
+            shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[c_grid_name, hw_name],
+                outputs=[c_hw_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[h_index_name, w_name],
+                outputs=[h_w_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[c_hw_name, h_w_name],
+                outputs=[linear_tmp_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[linear_tmp_name, w_index_name],
+                outputs=[linear_nhwc_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        target_indices_dtype = str(ctx.get_tensor_dtype(indices_output_name)).upper()
+        linear_output_name = linear_nhwc_name
+        if target_indices_dtype == "INT64":
+            linear_i64_name = ctx.add_intermediate_tensor(
+                f"{node.name}_argmax_linear_nhwc_i64",
+                dtype="INT64",
+                shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[linear_nhwc_name],
+                    outputs=[linear_i64_name],
+                    options={"inDataType": "INT32", "outDataType": "INT64"},
+                )
+            )
+            linear_output_name = linear_i64_name
+        elif target_indices_dtype != "INT32":
+            # Keep ONNX MaxPool indices contract (int64/int32). Unknown dtypes
+            # are normalized to int64 to preserve downstream index arithmetic.
+            ctx.model_ir.tensors[indices_output_name].dtype = "INT64"
+            linear_i64_name = ctx.add_intermediate_tensor(
+                f"{node.name}_argmax_linear_nhwc_i64",
+                dtype="INT64",
+                shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[linear_nhwc_name],
+                    outputs=[linear_i64_name],
+                    options={"inDataType": "INT32", "outDataType": "INT64"},
+                )
+            )
+            linear_output_name = linear_i64_name
+
+        make_transpose(
+            ctx,
+            linear_output_name,
+            indices_output_name,
+            [0, 3, 1, 2],
+        )

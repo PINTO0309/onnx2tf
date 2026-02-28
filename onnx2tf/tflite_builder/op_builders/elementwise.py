@@ -777,6 +777,207 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
+def build_inverse_op(node: Any, ctx: Any) -> None:
+    (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        output_shape,
+    ) = _prepare_float_compute(node, ctx, tag="inverse")
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(compute_input_name)]
+    rank = len(input_shape)
+    if rank < 2:
+        raise NotImplementedError(
+            f"Inverse requires input/output rank >= 2 in flatbuffer_direct. op={node.name}"
+        )
+
+    input_tensor = ctx.model_ir.tensors.get(compute_input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in input_shape]
+    )
+    row_sig = int(input_signature[-2])
+    col_sig = int(input_signature[-1])
+    row_known = row_sig > 0
+    col_known = col_sig > 0
+    rows = int(row_sig if row_known else input_shape[-2])
+    cols = int(col_sig if col_known else input_shape[-1])
+    if row_known and not col_known:
+        cols = int(rows)
+    elif col_known and not row_known:
+        rows = int(cols)
+    if rows != cols or rows not in {2, 3}:
+        raise NotImplementedError(
+            "Inverse currently supports only square matrix last dims [2,2] or [3,3] in "
+            f"flatbuffer_direct. op={node.name} input_shape={input_shape} input_signature={input_signature}"
+        )
+
+    matrix_signature = [int(v) for v in input_signature[:-2]] + [rows, cols]
+    matrix_shape = [int(v) for v in input_shape[:-2]] + [rows, cols]
+    for target_name in [compute_output_name, output_name]:
+        target_tensor = ctx.model_ir.tensors.get(target_name, None)
+        if target_tensor is None:
+            continue
+        target_tensor.shape = [int(v) for v in matrix_shape]
+        target_tensor.shape_signature = [int(v) for v in matrix_signature]
+
+    prefix_shape = [int(v) for v in matrix_shape[:-2]]
+    scalar_shape = prefix_shape + [1, 1]
+    row_shape = prefix_shape + [1, cols]
+
+    def _slice_matrix_entry(row: int, col: int) -> str:
+        begin = [0 for _ in range(rank)]
+        size = [-1 for _ in range(rank)]
+        begin[-2] = int(row)
+        begin[-1] = int(col)
+        size[-2] = 1
+        size[-1] = 1
+        begin_name = ctx.add_const_tensor(
+            f"{compute_output_name}_inverse_begin_r{row}_c{col}",
+            np.asarray(begin, dtype=np.int32),
+        )
+        size_name = ctx.add_const_tensor(
+            f"{compute_output_name}_inverse_size_r{row}_c{col}",
+            np.asarray(size, dtype=np.int32),
+        )
+        out_name = ctx.add_intermediate_tensor(
+            f"{compute_output_name}_inverse_r{row}_c{col}",
+            dtype=compute_dtype,
+            shape=scalar_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[compute_input_name, begin_name, size_name],
+                outputs=[out_name],
+            )
+        )
+        return out_name
+
+    def _binary(op_type: str, lhs: str, rhs: str, suffix: str) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            f"{compute_output_name}_inverse_{suffix}",
+            dtype=compute_dtype,
+            shape=scalar_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[lhs, rhs],
+                outputs=[out_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return out_name
+
+    def _mul_sub(a_name: str, b_name: str, c_name: str, d_name: str, suffix: str) -> str:
+        lhs = _binary("MUL", a_name, b_name, f"{suffix}_mul_l")
+        rhs = _binary("MUL", c_name, d_name, f"{suffix}_mul_r")
+        return _binary("SUB", lhs, rhs, f"{suffix}_sub")
+
+    def _concat(input_names: list[str], axis: int, shape: list[int], suffix: str) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            f"{compute_output_name}_inverse_{suffix}",
+            dtype=compute_dtype,
+            shape=shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=list(input_names),
+                outputs=[out_name],
+                options={"axis": int(axis), "fusedActivationFunction": "NONE"},
+            )
+        )
+        return out_name
+
+    def _neg(src_name: str, suffix: str) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            f"{compute_output_name}_inverse_{suffix}",
+            dtype=compute_dtype,
+            shape=scalar_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="NEG",
+                inputs=[src_name],
+                outputs=[out_name],
+            )
+        )
+        return out_name
+
+    if cols == 2:
+        a00 = _slice_matrix_entry(0, 0)
+        a01 = _slice_matrix_entry(0, 1)
+        a10 = _slice_matrix_entry(1, 0)
+        a11 = _slice_matrix_entry(1, 1)
+
+        det = _mul_sub(a00, a11, a01, a10, "det")
+        adj00 = a11
+        adj01 = _neg(a01, "adj01_neg")
+        adj10 = _neg(a10, "adj10_neg")
+        adj11 = a00
+
+        row0 = _concat([adj00, adj01], rank - 1, row_shape, "adj_row0")
+        row1 = _concat([adj10, adj11], rank - 1, row_shape, "adj_row1")
+        adj = _concat([row0, row1], rank - 2, matrix_shape, "adj")
+    else:
+        a00 = _slice_matrix_entry(0, 0)
+        a01 = _slice_matrix_entry(0, 1)
+        a02 = _slice_matrix_entry(0, 2)
+        a10 = _slice_matrix_entry(1, 0)
+        a11 = _slice_matrix_entry(1, 1)
+        a12 = _slice_matrix_entry(1, 2)
+        a20 = _slice_matrix_entry(2, 0)
+        a21 = _slice_matrix_entry(2, 1)
+        a22 = _slice_matrix_entry(2, 2)
+
+        c00 = _mul_sub(a11, a22, a12, a21, "c00")
+        c01 = _mul_sub(a12, a20, a10, a22, "c01")
+        c02 = _mul_sub(a10, a21, a11, a20, "c02")
+
+        d0 = _binary("MUL", a00, c00, "det0")
+        d1 = _binary("MUL", a01, c01, "det1")
+        d2 = _binary("MUL", a02, c02, "det2")
+        d01 = _binary("ADD", d0, d1, "det01")
+        det = _binary("ADD", d01, d2, "det")
+
+        adj00 = c00
+        adj01 = _mul_sub(a02, a21, a01, a22, "adj01")
+        adj02 = _mul_sub(a01, a12, a02, a11, "adj02")
+        adj10 = c01
+        adj11 = _mul_sub(a00, a22, a02, a20, "adj11")
+        adj12 = _mul_sub(a02, a10, a00, a12, "adj12")
+        adj20 = c02
+        adj21 = _mul_sub(a01, a20, a00, a21, "adj21")
+        adj22 = _mul_sub(a00, a11, a01, a10, "adj22")
+
+        row0 = _concat([adj00, adj01, adj02], rank - 1, row_shape, "adj_row0")
+        row1 = _concat([adj10, adj11, adj12], rank - 1, row_shape, "adj_row1")
+        row2 = _concat([adj20, adj21, adj22], rank - 1, row_shape, "adj_row2")
+        adj = _concat([row0, row1, row2], rank - 2, matrix_shape, "adj")
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[adj, det],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
 def build_abs_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name

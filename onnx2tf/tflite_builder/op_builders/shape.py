@@ -3516,6 +3516,39 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     image_shape = [int(v) for v in ctx.get_tensor_shape(image_name)]
     grid_shape = [int(v) for v in ctx.get_tensor_shape(grid_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+
+    grid_tensor = ctx.model_ir.tensors.get(grid_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    grid_signature = (
+        [int(v) for v in list(grid_tensor.shape_signature)]
+        if grid_tensor is not None and grid_tensor.shape_signature is not None
+        else list(grid_shape)
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else list(output_shape)
+    )
+
+    def _shape_dim_from_signature(
+        signature: List[int],
+        index: int,
+        fallback: int,
+    ) -> int:
+        if int(index) < len(signature):
+            value = int(signature[int(index)])
+            return int(value) if int(value) > 0 else -1
+        return int(fallback)
+
+    grid_shape = [
+        _shape_dim_from_signature(grid_signature, idx, dim)
+        for idx, dim in enumerate(grid_shape)
+    ]
+    output_shape = [
+        _shape_dim_from_signature(output_signature, idx, dim)
+        for idx, dim in enumerate(output_shape)
+    ]
+
     n, c, h, w = [int(v) for v in image_shape]
     out_n, out_c, out_h, out_w = [int(v) for v in output_shape]
     align_corners = bool(int(node.attrs.get("align_corners", 0)))
