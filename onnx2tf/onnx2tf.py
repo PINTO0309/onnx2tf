@@ -6,10 +6,13 @@ import shutil
 import tempfile
 import io
 import contextlib
-__path__ = (os.path.dirname(__file__), )
+__path__ = [os.path.dirname(__file__)]
 with open(os.path.join(__path__[0], '__init__.py')) as f:
     init_text = f.read()
-    __version__ = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text).group(1)
+    version_match = re.search(r'__version__\s*=\s*[\'\"](.+?)[\'\"]', init_text)
+    if version_match is None:
+        raise RuntimeError('Failed to parse __version__ from __init__.py')
+    __version__ = version_match.group(1)
 import sys
 sys.setrecursionlimit(2147483647) # C int maximum
 import ast
@@ -127,6 +130,8 @@ _SIZE_WITH_UNIT_PATTERN = re.compile(
 _TEMP_MICROSOFT_DOMAIN_OPS = {
     'FusedConv',
     'FusedMatMul',
+    'GroupNorm',
+    'Inverse',
     'QGemm',
     'QLinearAdd',
     'QLinearAveragePool',
@@ -206,6 +211,9 @@ def _prepare_onnx_graph_for_runtime_checks(
             do_type_check=False,
             domain=preserved_domain,
             ir_version=preserved_ir_version,
+        )
+        _supplement_microsoft_domain_for_selected_ops(
+            onnx_model=prepared,
         )
         if preserved_metadata_props:
             prepared.metadata_props.extend(preserved_metadata_props)
@@ -467,7 +475,10 @@ def _complete_custom_inputs_for_graph(
 ) -> List[List[Any]]:
     gs_graph = gs.import_onnx(onnx_graph)
     input_names: List[str] = [inp.name for inp in gs_graph.inputs]
-    input_sizes: List[List[Any]] = [inp.shape for inp in gs_graph.inputs]
+    input_sizes: List[List[Any]] = [
+        list(inp.shape) if inp.shape is not None else [None]
+        for inp in gs_graph.inputs
+    ]
     input_dtypes: List[Any] = [inp.dtype for inp in gs_graph.inputs]
 
     if shape_hints is None:
@@ -810,7 +821,7 @@ def apply_nonzero_passthrough(
             passthrough_tensor = onnx_tensor_infos[input_name]
         elif onnx_input_datas_for_validation and input_name in onnx_input_datas_for_validation:
             passthrough_tensor = onnx_input_datas_for_validation[input_name]
-        elif hasattr(nonzero_input, 'values'):
+        elif isinstance(nonzero_input, gs.Constant):
             passthrough_tensor = nonzero_input.values
 
         if passthrough_tensor is not None:
@@ -844,8 +855,9 @@ def apply_gelu_shape_passthrough(
             continue
 
         # Fix only when output shape metadata is missing or all dims are unknown.
-        output_shape_is_unknown = output_shape is None
-        if not output_shape_is_unknown:
+        if output_shape is None:
+            output_shape_is_unknown = True
+        else:
             normalized_output_shape = list(output_shape)
             output_shape_is_unknown = len(normalized_output_shape) == 0 or \
                 all([(dim is None) or isinstance(dim, str) for dim in normalized_output_shape])
@@ -894,6 +906,7 @@ def apply_nonzero_passthrough_tf(
         if passthrough_tensor is not None:
             tf_tensor_infos[output_tf_name] = passthrough_tensor
 
+# pyright: reportGeneralTypeIssues=false
 def convert(
     input_onnx_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
@@ -963,7 +976,7 @@ def convert(
     replace_argmax_to_fused_argmax_and_indices_is_int64: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indices_is_float32: Optional[bool] = False,
     fused_argmax_scale_ratio: Optional[float] = 0.5,
-    replace_to_pseudo_operators: List[str] = None,
+    replace_to_pseudo_operators: Optional[List[str]] = None,
     param_replacement_file: Optional[str] = '',
     auto_generate_json: Optional[bool] = False,
     auto_generate_json_on_error: Optional[bool] = False,
@@ -1403,11 +1416,12 @@ def convert(
         0.0 < fused_argmax_scale_ratio <= 1.0\n
         Default: 0.5
 
-    replace_to_pseudo_operators: List[str]
+    replace_to_pseudo_operators: Optional[List[str]]
         Replace list of operators to pseudo operators. \n
         Full name of the target operators should be given. \n
         Currently supported operators : \n
-        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger
+        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger, Inverse
+        Note: Inverse is pseudo-lowered by default. Specifying Inverse in this option keeps tf.linalg.inv (FlexMatrixInverse may remain).
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -1844,36 +1858,7 @@ def convert(
             )
             return
 
-        generate_fn = None
-        try:
-            from onnx2tf.utils.flatbuffer_direct_op_error_report import generate_op_error_report
-            generate_fn = generate_op_error_report
-        except Exception:
-            # Fallback for environments where package import resolution is unavailable.
-            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            script_path = os.path.join(
-                repo_root,
-                'onnx2tf',
-                'utils',
-                'flatbuffer_direct_op_error_report.py',
-            )
-            if os.path.exists(script_path):
-                try:
-                    spec = importlib.util.spec_from_file_location(
-                        'onnx2tf_op_error_report_script',
-                        script_path,
-                    )
-                    if spec is not None and spec.loader is not None:
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-                        generate_fn = getattr(module, 'generate_op_error_report', None)
-                except Exception:
-                    generate_fn = None
-        if generate_fn is None:
-            warn(
-                'OP error report generation was skipped because report generator could not be loaded.'
-            )
-            return
+        op_error_report_module = 'onnx2tf.utils.flatbuffer_direct_op_error_report'
 
         temp_onnx_path = None
         report_onnx_path = None
@@ -1916,23 +1901,90 @@ def convert(
             f'{output_file_name}_op_error_report.csv',
         )
         try:
-            op_error_result = generate_fn(
-                onnx_path=str(report_onnx_path),
-                tflite_path=str(tflite_path),
-                output_dir=str(output_folder_path),
-                output_json=str(output_json_path),
-                output_csv=str(output_csv_path),
-                tensor_correspondence_report=tensor_correspondence_report_path,
-                top=30,
-                rtol=0.0,
-                atol=1.0e-4,
-                verbose=False,
+            command = [
+                sys.executable,
+                '-m',
+                op_error_report_module,
+                '--onnx',
+                str(report_onnx_path),
+                '--tflite',
+                str(tflite_path),
+                '--output_dir',
+                str(output_folder_path),
+                '--output_json',
+                str(output_json_path),
+                '--output_csv',
+                str(output_csv_path),
+                '--top',
+                '30',
+                '--rtol',
+                '0.0',
+                '--atol',
+                '1e-4',
+            ]
+            if (
+                tensor_correspondence_report_path is not None
+                and str(tensor_correspondence_report_path).strip() != ''
+            ):
+                command.extend(
+                    [
+                        '--tensor_correspondence_report',
+                        str(tensor_correspondence_report_path),
+                    ]
+                )
+
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=600,
             )
-            summary = op_error_result.get('summary', {})
+            return_code = int(completed.returncode)
+            helper_stdout = str(completed.stdout or '').strip()
+            helper_stderr = str(completed.stderr or '').strip()
+            helper_message = helper_stderr if helper_stderr != '' else helper_stdout
+
+            if return_code != 0:
+                if return_code in {-11, -6, 134, 139}:
+                    warn(
+                        'OP error report generation was skipped because helper process crashed. '
+                        f'exit_code={return_code}'
+                    )
+                    return
+                if 'failed to prepare' in helper_message:
+                    info(
+                        Color.YELLOW(
+                            'OP error report generation was skipped because the generated '
+                            'TFLite model could not be prepared by LiteRT for intermediate '
+                            f'tensor capture. reason={helper_message}'
+                        )
+                    )
+                    return
+                if helper_message != '':
+                    warn(
+                        'OP error report generation failed. '
+                        f'exit_code={return_code} reason={helper_message}'
+                    )
+                else:
+                    warn(
+                        'OP error report generation failed. '
+                        f'exit_code={return_code}'
+                    )
+                return
+
+            report_payload = {}
+            try:
+                with open(output_json_path, 'r', encoding='utf-8') as f:
+                    report_payload = json.load(f)
+            except Exception:
+                report_payload = {}
+            summary = report_payload.get('summary', {})
             info(
                 Color.GREEN(
                     'OP error report output complete! '
-                    f'({op_error_result.get("output_json_path", output_json_path)}) '
+                    f'({output_json_path}) '
                     f'compared={summary.get("compared_count", 0)}/'
                     f'{summary.get("total_targets", 0)} '
                     f'skipped={summary.get("skipped_count", 0)} '
@@ -1943,8 +1995,12 @@ def convert(
             info(
                 Color.GREEN(
                     'OP error CSV output complete! '
-                    f'({op_error_result.get("output_csv_path", output_csv_path)})'
+                    f'({output_csv_path})'
                 )
+            )
+        except subprocess.TimeoutExpired:
+            warn(
+                'OP error report generation was skipped because helper process timed out.'
             )
         except Exception as ex:
             ex_str = str(ex)
@@ -2794,7 +2850,7 @@ def convert(
             input_op_name \
                 for input_op_name in input_names_to_interrupt_model_conversion
         ]
-        onnx_graph: onnx.ModelProto = \
+        onnx_graph = \
             extraction(
                 input_op_names=input_names,
                 output_op_names=[graph_output.name for graph_output in graph.outputs],
@@ -2865,7 +2921,7 @@ def convert(
             output_op_name \
                 for output_op_name in output_names_to_interrupt_model_conversion
         ]
-        onnx_graph: onnx.ModelProto = \
+        extracted_onnx_graph: onnx.ModelProto = \
             extraction(
                 input_op_names=[graph_input.name for graph_input in graph.inputs],
                 output_op_names=output_names,
@@ -2873,7 +2929,7 @@ def convert(
             )
         # Re-import of onnx_graph
         del graph
-        graph = gs.import_onnx(onnx_graph)
+        graph = gs.import_onnx(extracted_onnx_graph)
 
     def sanitizing(node):
         if hasattr(node, 'name'):
@@ -4280,7 +4336,7 @@ def convert(
             # Used only when there is only one input OP, a 4D tensor image,
             # and --quant_calib_input_op_name_np_data_path is not specified.
             # Otherwise, calibrate using the data specified in --quant_calib_input_op_name_np_data_path.
-            calib_data_dict: Dict[str, List[np.ndarray, np.ndarray, np.ndarray]] = {}
+            calib_data_dict: Dict[str, List[Any]] = {}
             model_input_name_list = [
                 model_input.name for model_input in model.inputs
             ]
@@ -4608,14 +4664,14 @@ def convert(
                     if ops_output_name not in exclude_output_names
             ]
 
-            dummy_onnx_outputs = None
+            dummy_onnx_outputs: Optional[List[np.ndarray]] = None
             try:
                 # ONNX dummy inference
                 onnx_input_datas_for_validation = {}
                 _supplement_microsoft_domain_for_selected_ops(
                     onnx_model=onnx_graph,
                 )
-                dummy_onnx_outputs: List[np.ndarray] = \
+                dummy_onnx_outputs = \
                     dummy_onnx_inference(
                         onnx_graph=onnx_graph,
                         output_names=ops_output_names,
@@ -4635,9 +4691,11 @@ def convert(
                 )
                 warn(f'{ex}')
             else:
+                if dummy_onnx_outputs is None:
+                    raise RuntimeError('ONNX dummy inference returned no outputs.')
                 # TF dummy inference
                 tf_input_datas_for_validation = {}
-                tf_tensor_infos: Dict[Any] = \
+                tf_tensor_infos: Dict[str, np.ndarray] = \
                     dummy_tf_inference(
                         model=model,
                         inputs=inputs,
@@ -4898,7 +4956,7 @@ def convert(
                     _supplement_microsoft_domain_for_selected_ops(
                         onnx_model=onnx_graph,
                     )
-                    dummy_onnx_outputs: List[np.ndarray] = \
+                    dummy_onnx_outputs_final: List[np.ndarray] = \
                         dummy_onnx_inference(
                             onnx_graph=onnx_graph,
                             output_names=ops_output_names,
@@ -4914,7 +4972,7 @@ def convert(
 
                     # TF dummy inference
                     tf_input_datas_for_validation = {}
-                    tf_tensor_infos: Dict[Any] = \
+                    tf_tensor_infos: Dict[str, np.ndarray] = \
                         dummy_tf_inference(
                             model=validation_model,
                             inputs=inputs,
@@ -4930,7 +4988,7 @@ def convert(
                     # Validation
                     onnx_tensor_infos = {
                         output_name: dummy_onnx_output \
-                            for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+                            for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs_final)
                     }
                     apply_nonzero_passthrough(
                         graph=graph,
@@ -5020,7 +5078,6 @@ def convert(
                     warn(traceback.format_exc(), prefix=False)
 
         return model
-
 
 def main():
     parser = ArgumentParser()
@@ -5758,7 +5815,8 @@ def main():
             'Replace list of operators to pseudo operators. \n ' +
             'Full name of the target operators should be given. \n ' +
             'Currently supported operators : \n' +
-            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger'
+            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf, GeLU, MatMulInteger, Inverse\n' +
+            'Note: Inverse is pseudo-lowered by default. Specifying Inverse keeps tf.linalg.inv (FlexMatrixInverse may remain).'
     )
     parser.add_argument(
         '-me',

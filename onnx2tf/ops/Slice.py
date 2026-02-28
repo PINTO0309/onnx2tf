@@ -353,18 +353,33 @@ def make_node(
                 else:
                     strides_ = [dim for dim in steps]
 
+            axes_list_for_reorder = None
+            if axes is not None:
+                if isinstance(axes, (list, tuple)):
+                    axes_list_for_reorder = [int(axis) for axis in list(axes)]
+                elif isinstance(axes, np.ndarray):
+                    axes_list_for_reorder = [int(axis) for axis in list(np.asarray(axes).reshape(-1))]
+                elif tf.is_tensor(axes):
+                    if hasattr(axes, "numpy"):
+                        axes_list_for_reorder = [int(axis) for axis in list(np.asarray(axes.numpy()).reshape(-1))]
+                    elif hasattr(axes, "_inferred_value") and axes._inferred_value not in (None, [None]):
+                        axes_list_for_reorder = [int(axis) for axis in list(axes._inferred_value)]
+            if axes_list_for_reorder is not None:
+                axes_list_for_reorder = [
+                    int(axis) if int(axis) >= 0 else int(axis) + int(input_tensor_rank)
+                    for axis in axes_list_for_reorder
+                ]
+
             # Adjust the number of dimensions of the input data according to the number of axes [List]
             ##### Replace max values
             if isinstance(begin_, list):
-                if axes is not None:
-                    unsqueeze_mask = [1] * input_tensor_rank
-                    for axis in axes:
-                        unsqueeze_mask[axis] = 0
-                else:
-                    unsqueeze_mask = [0] * input_tensor_rank
-                for axis, maskbit in enumerate(unsqueeze_mask):
-                    if maskbit == 1:
-                        begin_.insert(axis, 0)
+                if axes_list_for_reorder is not None:
+                    expanded_begin = [0] * int(input_tensor_rank)
+                    for src_idx, axis_idx in enumerate(axes_list_for_reorder):
+                        if src_idx >= len(begin_) or axis_idx < 0 or axis_idx >= int(input_tensor_rank):
+                            continue
+                        expanded_begin[int(axis_idx)] = begin_[int(src_idx)]
+                    begin_ = expanded_begin
                 begin_ = replace_max_values_negative_values(
                     input_tensor_shape=input_tensor_shape,
                     index_list=begin_,
@@ -372,15 +387,13 @@ def make_node(
                 )
             ##### Replace negative values
             if isinstance(end_, list):
-                if axes is not None:
-                    unsqueeze_mask = [1] * input_tensor_rank
-                    for axis in axes:
-                        unsqueeze_mask[axis] = 0
-                else:
-                    unsqueeze_mask = [0] * input_tensor_rank
-                for axis, maskbit in enumerate(unsqueeze_mask):
-                    if maskbit == 1:
-                        end_.insert(axis, 0)
+                if axes_list_for_reorder is not None:
+                    expanded_end = [0] * int(input_tensor_rank)
+                    for src_idx, axis_idx in enumerate(axes_list_for_reorder):
+                        if src_idx >= len(end_) or axis_idx < 0 or axis_idx >= int(input_tensor_rank):
+                            continue
+                        expanded_end[int(axis_idx)] = end_[int(src_idx)]
+                    end_ = expanded_end
                 end_ = replace_max_values_negative_values(
                     input_tensor_shape=input_tensor_shape,
                     index_list=end_,
@@ -388,15 +401,13 @@ def make_node(
                 )
             if strides_ is not None:
                 if isinstance(strides_, list):
-                    if axes is not None:
-                        unsqueeze_mask = [1] * input_tensor_rank
-                        for axis in axes:
-                            unsqueeze_mask[axis] = 0
-                    else:
-                        unsqueeze_mask = [0] * input_tensor_rank
-                    for axis, maskbit in enumerate(unsqueeze_mask):
-                        if maskbit == 1:
-                            strides_.insert(axis, 1)
+                    if axes_list_for_reorder is not None:
+                        expanded_strides = [1] * int(input_tensor_rank)
+                        for src_idx, axis_idx in enumerate(axes_list_for_reorder):
+                            if src_idx >= len(strides_) or axis_idx < 0 or axis_idx >= int(input_tensor_rank):
+                                continue
+                            expanded_strides[int(axis_idx)] = strides_[int(src_idx)]
+                        strides_ = expanded_strides
 
             # Adjust the number of dimensions of the input data according to the number of axes [Tensor]
             if not isinstance(begin_, list) and input_tensor_rank > begin_.shape[0]:
