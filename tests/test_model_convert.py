@@ -61,6 +61,7 @@ class Results:
         self._report(f'onnx | {onnx.__version__}')
         self._report(f'onnx2tf | {_CFG["onnx2tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
+        self._report(f'tflite_backend | {_CFG["tflite_backend"]}')
 
         self._report('\n## Summary')
         self._report(f'Value | Count')
@@ -115,9 +116,11 @@ def _report_convert_model(file_path):
             output_nms_with_dynamic_tensor=True,
             disable_strict_mode=True,
             disable_model_save=True,
+            tflite_backend=_CFG['tflite_backend'],
             verbosity="error",
         )
-        os.remove(file_path)
+        if not _CFG['preserve_model_files'] and os.path.exists(file_path):
+            os.remove(file_path)
         for tflitepath in glob.glob(f"{_CFG['output_directory']}/*.tflite"):
             os.remove(tflitepath)
         return ''
@@ -190,6 +193,9 @@ def _configure(
     output_dir=tempfile.gettempdir(),
     verbose=False,
     dry_run=False,
+    tflite_backend='tf_converter',
+    report_filename='model_status.md',
+    preserve_model_files=False,
 ):
     """Validate the configuration."""
     if not os.path.isdir(models_dir):
@@ -200,6 +206,9 @@ def _configure(
     _CFG['models_dir'] = os.path.normpath(models_dir)
     _CFG['verbose'] = verbose
     _CFG['dry_run'] = dry_run
+    _CFG['tflite_backend'] = str(tflite_backend)
+    _CFG['report_filename'] = str(report_filename)
+    _CFG['preserve_model_files'] = bool(preserve_model_files)
 
     _configure_env()
 
@@ -215,8 +224,6 @@ def _configure_env():
     repo = os.getenv('GITHUB_REPOSITORY')
     sha = os.getenv('GITHUB_SHA')
     run_id = os.getenv('GITHUB_RUN_ID')
-
-    _CFG['report_filename'] = 'model_status.md'
 
     if repo:
         # actions ([run_id](url))
@@ -240,6 +247,9 @@ def model_convert_report(
     output_dir=tempfile.gettempdir(),
     verbose=False,
     dry_run=False,
+    tflite_backend='tf_converter',
+    report_filename='model_status.md',
+    preserve_model_files=False,
 ):
     """model_convert_report.
 
@@ -253,6 +263,12 @@ def model_convert_report(
         verbose output
     dry_run: bool
         process directory without doing conversion
+    tflite_backend: str
+        backend to use for conversion ("tf_converter" or "flatbuffer_direct")
+    report_filename: str
+        output markdown filename
+    preserve_model_files: bool
+        do not remove source .onnx files after conversion
 
     Returns
     ----------
@@ -260,7 +276,15 @@ def model_convert_report(
         Results object containing detailed status and counts for the report.
     """
 
-    _configure(models_dir, output_dir, verbose, dry_run)
+    _configure(
+        models_dir=models_dir,
+        output_dir=output_dir,
+        verbose=verbose,
+        dry_run=dry_run,
+        tflite_backend=tflite_backend,
+        report_filename=report_filename,
+        preserve_model_files=preserve_model_files,
+    )
     _del_location(_CFG['report_filename'])
     _del_location(_CFG['output_directory'])
     _del_location(_CFG['untar_directory'])
@@ -316,12 +340,31 @@ if __name__ == '__main__':
         action='store_true',
         help='process directory without doing conversion'
     )
+    parser.add_argument(
+        '--tflite-backend',
+        default='tf_converter',
+        choices=['tf_converter', 'flatbuffer_direct'],
+        help='tflite backend for conversion (default: tf_converter)'
+    )
+    parser.add_argument(
+        '--report-filename',
+        default='model_status.md',
+        help='report markdown filename (default: model_status.md)'
+    )
+    parser.add_argument(
+        '--preserve-model-files',
+        action='store_true',
+        help='do not remove source .onnx files after conversion'
+    )
     args = parser.parse_args()
     report = model_convert_report(
-        args.models,
-        args.output,
-        args.verbose,
-        args.dry_run,
+        models_dir=args.models,
+        output_dir=args.output,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        tflite_backend=args.tflite_backend,
+        report_filename=args.report_filename,
+        preserve_model_files=args.preserve_model_files,
     )
     report.generate_report()
     print(report.summary())
