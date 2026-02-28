@@ -125,7 +125,8 @@ jobs:
           -v \
           --tflite-backend flatbuffer_direct \
           --report-filename model_status_flatbuffer_direct.md \
-          --preserve-model-files
+          --preserve-model-files \
+          --not-use-onnxsim
     - name: Merge wiki reports
       run: |
         python - <<'PY'

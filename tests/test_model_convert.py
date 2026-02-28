@@ -10,7 +10,6 @@ warnings.simplefilter(action='ignore', category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
-import glob
 import platform
 import shutil
 import sys
@@ -110,19 +109,27 @@ def _report_check_model(model):
 def _report_convert_model(file_path):
     """Test conversion and returns a report string."""
     try:
+        disable_model_save = True
+        # Keep tf_converter behavior as lightweight conversion-check only, but
+        # allow flatbuffer_direct fast path by avoiding this blocker.
+        if _CFG['tflite_backend'] == 'flatbuffer_direct':
+            disable_model_save = False
         onnx2tf.convert(
             input_onnx_file_path=file_path,
             output_folder_path=_CFG['output_directory'],
             output_nms_with_dynamic_tensor=True,
             disable_strict_mode=True,
-            disable_model_save=True,
+            disable_model_save=disable_model_save,
             tflite_backend=_CFG['tflite_backend'],
+            not_use_onnxsim=_CFG['not_use_onnxsim'],
             verbosity="error",
         )
         if not _CFG['preserve_model_files'] and os.path.exists(file_path):
             os.remove(file_path)
-        for tflitepath in glob.glob(f"{_CFG['output_directory']}/*.tflite"):
-            os.remove(tflitepath)
+        # Clean all conversion artifacts (tflite/json/tmp dirs) to keep each
+        # model run isolated and avoid disk bloat in CI.
+        _del_location(_CFG['output_directory'])
+        os.makedirs(_CFG['output_directory'], exist_ok=True)
         return ''
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
@@ -196,6 +203,7 @@ def _configure(
     tflite_backend='tf_converter',
     report_filename='model_status.md',
     preserve_model_files=False,
+    not_use_onnxsim=False,
 ):
     """Validate the configuration."""
     if not os.path.isdir(models_dir):
@@ -209,6 +217,7 @@ def _configure(
     _CFG['tflite_backend'] = str(tflite_backend)
     _CFG['report_filename'] = str(report_filename)
     _CFG['preserve_model_files'] = bool(preserve_model_files)
+    _CFG['not_use_onnxsim'] = bool(not_use_onnxsim)
 
     _configure_env()
 
@@ -250,6 +259,7 @@ def model_convert_report(
     tflite_backend='tf_converter',
     report_filename='model_status.md',
     preserve_model_files=False,
+    not_use_onnxsim=False,
 ):
     """model_convert_report.
 
@@ -269,6 +279,8 @@ def model_convert_report(
         output markdown filename
     preserve_model_files: bool
         do not remove source .onnx files after conversion
+    not_use_onnxsim: bool
+        skip onnx-simplifier optimization before conversion
 
     Returns
     ----------
@@ -284,6 +296,7 @@ def model_convert_report(
         tflite_backend=tflite_backend,
         report_filename=report_filename,
         preserve_model_files=preserve_model_files,
+        not_use_onnxsim=not_use_onnxsim,
     )
     _del_location(_CFG['report_filename'])
     _del_location(_CFG['output_directory'])
@@ -356,6 +369,11 @@ if __name__ == '__main__':
         action='store_true',
         help='do not remove source .onnx files after conversion'
     )
+    parser.add_argument(
+        '--not-use-onnxsim',
+        action='store_true',
+        help='skip onnxsim optimization before conversion'
+    )
     args = parser.parse_args()
     report = model_convert_report(
         models_dir=args.models,
@@ -365,6 +383,7 @@ if __name__ == '__main__':
         tflite_backend=args.tflite_backend,
         report_filename=args.report_filename,
         preserve_model_files=args.preserve_model_files,
+        not_use_onnxsim=args.not_use_onnxsim,
     )
     report.generate_report()
     print(report.summary())
