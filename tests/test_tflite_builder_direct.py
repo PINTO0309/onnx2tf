@@ -40,6 +40,8 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains,
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains,
     _optimize_transpose_elementwise_concat_conv_nhwc_groups,
+    _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains,
+    _optimize_convpool_output_transpose_nhwc_passthrough_chains,
     _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains,
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains,
     _optimize_shufflenet_transpose_shuffle_chains,
@@ -6896,6 +6898,248 @@ def test_flatbuffer_direct_transpose_mul_add_const_rewrite_does_not_mutate_on_pa
     stats = _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
     assert stats["optimized_transpose_mul_add_const_prepost_nhwc_chains"] == 0
     assert list(model_ir.tensors["mul_const"].shape) == [1, 40, 1, 1]
+
+
+def test_flatbuffer_direct_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_optimized() -> None:
+    model_ir = ModelIR(name="transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z0", "z1"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["mul_scale"] = TensorIR(
+        name="mul_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.ones((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch0_mul"] = TensorIR(
+        name="branch0_mul",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch0_erf"] = TensorIR(
+        name="branch0_erf",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["add_bias"] = TensorIR(
+        name="add_bias",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.zeros((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch0_out_nchw"] = TensorIR(
+        name="branch0_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch1_sign"] = TensorIR(
+        name="branch1_sign",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch1_scale"] = TensorIR(
+        name="branch1_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.full((1, 8, 1, 1), 0.5, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch1_out_nchw"] = TensorIR(
+        name="branch1_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["y0"] = TensorIR(
+        name="y0",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["y1"] = TensorIR(
+        name="y1",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["z0"] = TensorIR(
+        name="z0",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["z1"] = TensorIR(
+        name="z1",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MUL", inputs=["x_nchw", "mul_scale"], outputs=["branch0_mul"]),
+        OperatorIR(op_type="ERF", inputs=["branch0_mul"], outputs=["branch0_erf"]),
+        OperatorIR(op_type="ADD", inputs=["branch0_erf", "add_bias"], outputs=["branch0_out_nchw"]),
+        OperatorIR(op_type="SIGN", inputs=["x_nchw"], outputs=["branch1_sign"]),
+        OperatorIR(op_type="MUL", inputs=["branch1_sign", "branch1_scale"], outputs=["branch1_out_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["branch0_out_nchw", "post_perm"], outputs=["y0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["branch1_out_nchw", "post_perm"], outputs=["y1"]),
+        OperatorIR(op_type="RELU", inputs=["y0"], outputs=["z0"]),
+        OperatorIR(op_type="RELU", inputs=["y1"], outputs=["z1"]),
+    ]
+
+    stats = _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
+    assert stats["optimized_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"] == 1
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert list(model_ir.tensors["mul_scale"].shape) == [1, 1, 1, 8]
+    assert list(model_ir.tensors["add_bias"].shape) == [1, 1, 1, 8]
+    assert list(model_ir.tensors["branch1_scale"].shape) == [1, 1, 1, 8]
+
+    mul0_op = next(op for op in model_ir.operators if list(op.outputs) == ["branch0_mul"])
+    sign_op = next(op for op in model_ir.operators if list(op.outputs) == ["branch1_sign"])
+    assert [str(v) for v in list(mul0_op.inputs)][0] == "x_nhwc"
+    assert [str(v) for v in list(sign_op.inputs)] == ["x_nhwc"]
+
+    add_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD")
+    mul1_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL" and list(op.outputs) == ["y1"])
+    assert list(add_op.outputs) == ["y0"]
+    assert list(mul1_op.outputs) == ["y1"]
+
+
+def test_flatbuffer_direct_conv_output_transpose_nhwc_passthrough_chain_optimized() -> None:
+    model_ir = ModelIR(name="conv_output_transpose_nhwc_passthrough_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["conv_filter"] = TensorIR(
+        name="conv_filter",
+        dtype="FLOAT32",
+        shape=[1, 1, 8, 8],
+        shape_signature=[1, 1, 8, 8],
+        data=np.ones((1, 1, 8, 8), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_bias"] = TensorIR(
+        name="conv_bias",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_out_nhwc"] = TensorIR(
+        name="conv_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_out_nchw"] = TensorIR(
+        name="conv_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["mul_scale"] = TensorIR(
+        name="mul_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.ones((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_out_nchw"] = TensorIR(
+        name="mul_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["add_bias"] = TensorIR(
+        name="add_bias",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.zeros((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add_out_nchw"] = TensorIR(
+        name="add_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="CONV_2D", inputs=["x_nhwc", "conv_filter", "conv_bias"], outputs=["conv_out_nhwc"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["conv_out_nhwc", "pre_perm"], outputs=["conv_out_nchw"]),
+        OperatorIR(op_type="MUL", inputs=["conv_out_nchw", "mul_scale"], outputs=["mul_out_nchw"]),
+        OperatorIR(op_type="ADD", inputs=["mul_out_nchw", "add_bias"], outputs=["add_out_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["add_out_nchw"], outputs=["z"]),
+    ]
+
+    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
+    assert stats["optimized_convpool_output_transpose_nhwc_passthrough_chains"] == 1
+
+    # Leading post-conv transpose is removed.
+    assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["conv_out_nchw"] for op in model_ir.operators)
+
+    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
+    assert [str(v) for v in list(mul_op.inputs)][0] == "conv_out_nhwc"
 
 
 def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized() -> None:

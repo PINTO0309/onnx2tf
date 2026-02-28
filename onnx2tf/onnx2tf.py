@@ -1719,6 +1719,9 @@ def convert(
     run_onnx_tflite_output_check = bool(
         eval_with_onnx or auto_eval_with_onnx_from_cotof
     )
+    run_flatbuffer_direct_op_error_report = bool(
+        check_onnx_tf_outputs_elementwise_close_full
+    )
 
     def _run_onnx_tflite_output_check(
         *,
@@ -1852,6 +1855,8 @@ def convert(
         tflite_path: Optional[str],
         tensor_correspondence_report_path: Optional[str] = None,
     ) -> None:
+        if not run_flatbuffer_direct_op_error_report:
+            return
         if tflite_path is None or not os.path.exists(str(tflite_path)):
             warn(
                 'OP error report generation was skipped because float32 TFLite output is unavailable.'
@@ -3019,6 +3024,312 @@ def convert(
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
+    flatbuffer_direct_fast_path_failed_after_fallback = False
+    flatbuffer_direct_fast_path_blockers = []
+    if auto_split_model:
+        flatbuffer_direct_fast_path_blockers.append('auto_split_model')
+    if output_h5:
+        flatbuffer_direct_fast_path_blockers.append('output_h5')
+    if output_keras_v3:
+        flatbuffer_direct_fast_path_blockers.append('output_keras_v3')
+    if output_tfv1_pb:
+        flatbuffer_direct_fast_path_blockers.append('output_tfv1_pb')
+    if disable_model_save:
+        flatbuffer_direct_fast_path_blockers.append('disable_model_save')
+
+    if tflite_backend == 'flatbuffer_direct' and not flatbuffer_direct_fast_path_blockers:
+        info('')
+        info(Color.REVERSE(f'flatbuffer_direct fast path started'), '=' * 47)
+        direct_outputs = None
+        try:
+            from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
+            direct_error = None
+            for direct_allow_custom_ops in (
+                [flatbuffer_direct_allow_custom_ops]
+                if flatbuffer_direct_allow_custom_ops
+                else [False, True]
+            ):
+                direct_output_nms_with_argmax = bool(output_nms_with_argmax)
+                retried_nms_with_argmax = False
+                while True:
+                    try:
+                        direct_outputs = export_tflite_model_flatbuffer_direct(
+                            onnx_graph=onnx_graph,
+                            output_folder_path=output_folder_path,
+                            output_file_name=output_file_name,
+                            output_weights=output_weights,
+                            quant_type=quant_type,
+                            input_quant_dtype=input_quant_dtype,
+                            output_quant_dtype=output_quant_dtype,
+                            output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+                            output_integer_quantized_tflite=output_integer_quantized_tflite,
+                            auto_split_tflite_by_size=auto_split_tflite_by_size,
+                            report_op_coverage=report_op_coverage,
+                            flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
+                            flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+                            keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
+                            keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
+                            keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
+                            disable_group_convolution=disable_group_convolution,
+                            output_nms_with_argmax=direct_output_nms_with_argmax,
+                            switch_nms_version=switch_nms_version,
+                            tflite_split_max_bytes=tflite_split_max_bytes,
+                            tflite_split_target_bytes=tflite_split_target_bytes,
+                        )
+                        if direct_output_nms_with_argmax and not output_nms_with_argmax:
+                            info(
+                                Color.YELLOW(
+                                    'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
+                                    'for builtin NonMaxSuppression lowering.'
+                                )
+                            )
+                        if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
+                            info(
+                                Color.YELLOW(
+                                    'Retrying flatbuffer_direct with custom-op lowering enabled.'
+                                )
+                            )
+                        direct_error = None
+                        break
+                    except Exception as retry_ex:
+                        retry_ex_str = str(retry_ex)
+                        retry_nms_argmax = (
+                            'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
+                            in retry_ex_str
+                            or (
+                                'reason_code=custom_op_candidate_disabled' in retry_ex_str
+                                and 'op=NonMaxSuppression' in retry_ex_str
+                            )
+                        )
+                        if (
+                            not retried_nms_with_argmax
+                            and not output_nms_with_argmax
+                            and not direct_output_nms_with_argmax
+                            and retry_nms_argmax
+                        ):
+                            retried_nms_with_argmax = True
+                            direct_output_nms_with_argmax = True
+                            continue
+                        if (
+                            not flatbuffer_direct_allow_custom_ops
+                            and not disable_group_convolution
+                            and not direct_allow_custom_ops
+                            and 'reason_code=unsupported_grouped_convolution' in retry_ex_str
+                        ):
+                            direct_error = retry_ex
+                            direct_outputs = None
+                            break
+                        direct_error = retry_ex
+                        direct_outputs = None
+                        break
+                if direct_error is None:
+                    break
+            if direct_error is not None:
+                raise direct_error
+        except Exception as ex:
+            if not flatbuffer_direct_fallback_to_tf_converter:
+                raise
+            warn(
+                Color.YELLOW(
+                    'flatbuffer_direct fast path failed. '
+                    'Falling back to tf_converter path. '
+                    f'reason={ex}'
+                )
+            )
+            skipped_direct_features = []
+            if report_op_coverage:
+                skipped_direct_features.append('report_op_coverage')
+            if auto_split_tflite_by_size:
+                skipped_direct_features.append('auto_split_tflite_by_size')
+            if eval_with_onnx:
+                skipped_direct_features.append('eval_with_onnx')
+            if eval_split_models:
+                skipped_direct_features.append('eval_split_models')
+            if flatbuffer_direct_allow_custom_ops:
+                skipped_direct_features.append('flatbuffer_direct_allow_custom_ops')
+            if len(skipped_direct_features) > 0:
+                warn(
+                    Color.YELLOW(
+                        'Direct-only features are skipped in fallback mode: '
+                        f'{", ".join(skipped_direct_features)}'
+                    )
+                )
+            flatbuffer_direct_fast_path_failed_after_fallback = True
+            direct_outputs = None
+
+        if direct_outputs is not None:
+            info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
+            info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+            if auto_split_tflite_by_size:
+                if 'split_plan_report_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct split plan was requested but no report was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'Split plan report output complete! '
+                        f'({direct_outputs["split_plan_report_path"]})'
+                    )
+                )
+                if bool(direct_outputs.get('split_required_by_estimate', False)):
+                    if 'split_manifest_path' not in direct_outputs:
+                        raise RuntimeError(
+                            'flatbuffer_direct split was required by estimate, '
+                            'but split manifest was not generated.'
+                        )
+                    info(
+                        Color.GREEN(
+                            f'Split manifest output complete! '
+                            f'({direct_outputs["split_manifest_path"]}) '
+                            f'partitions={direct_outputs.get("split_partition_count", "0")}'
+                        )
+                    )
+                else:
+                    info(
+                        Color.GREEN(
+                            'Split manifest output skipped (model fits target size estimate).'
+                        )
+                    )
+            if report_op_coverage:
+                if 'op_coverage_report_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct OP coverage report was requested but no report was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'OP coverage report output complete! '
+                        f'({direct_outputs["op_coverage_report_path"]})'
+                    )
+                )
+            if output_dynamic_range_quantized_tflite:
+                if 'dynamic_range_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'Dynamic Range Quantization tflite output complete! '
+                        f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                    )
+                )
+            if output_integer_quantized_tflite:
+                if 'integer_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct integer quantization was requested but no output was generated.'
+                    )
+                if 'full_integer_quant_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct full integer quantization was requested but no output was generated.'
+                    )
+                if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
+                    )
+                if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
+                    )
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization tflite output complete! '
+                        f'({direct_outputs["integer_quant_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+            if copy_onnx_input_output_names_to_tflite:
+                info(
+                    'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
+                )
+            _run_flatbuffer_direct_op_error_report(
+                tflite_path=direct_outputs.get('float32_tflite_path', None),
+                tensor_correspondence_report_path=direct_outputs.get(
+                    'tensor_correspondence_report_path',
+                    None,
+                ),
+            )
+            direct_eval_paths = {}
+            if 'float32_tflite_path' in direct_outputs:
+                direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
+            if 'float16_tflite_path' in direct_outputs:
+                direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
+            if 'dynamic_range_quant_tflite_path' in direct_outputs:
+                direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
+            if 'integer_quant_tflite_path' in direct_outputs:
+                direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
+            if 'full_integer_quant_tflite_path' in direct_outputs:
+                direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
+            if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
+            if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
+                direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+            _run_onnx_tflite_output_check(
+                tflite_paths=direct_eval_paths,
+                source_label='flatbuffer_direct',
+            )
+            if eval_split_models:
+                if 'split_manifest_path' not in direct_outputs:
+                    raise RuntimeError(
+                        'eval_split_models=True but split manifest is not available. '
+                        'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
+                    )
+                from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
+                split_accuracy_report_path = os.path.join(
+                    output_folder_path,
+                    f'{output_file_name}_split_accuracy_report.json',
+                )
+                reference_tflite_path = None
+                if eval_split_reference == 'unsplit_tflite':
+                    reference_tflite_path = direct_outputs['float32_tflite_path']
+                split_report = evaluate_split_manifest_outputs(
+                    onnx_graph=onnx_graph,
+                    split_manifest_path=direct_outputs['split_manifest_path'],
+                    reference_mode=eval_split_reference,
+                    reference_tflite_path=reference_tflite_path,
+                    output_report_path=split_accuracy_report_path,
+                    num_samples=eval_num_samples,
+                    seed=0,
+                    test_data_nhwc_path=test_data_nhwc_path,
+                    rtol=eval_rtol,
+                    atol=eval_atol,
+                    compare_mode=eval_compare_mode,
+                    fail_on_threshold=eval_split_fail_on_threshold,
+                )
+                info(
+                    Color.GREEN(
+                        'Split-model accuracy report output complete! '
+                        f'({split_accuracy_report_path}) '
+                        f'max_abs={split_report["overall_metrics"]["max_abs"]:.6g} '
+                        f'rmse={split_report["overall_metrics"]["rmse"]:.6g} '
+                        f'cosine={split_report["overall_metrics"]["cosine_similarity"]:.6g} '
+                        f'pass={split_report["evaluation_pass"]}'
+                    )
+                )
+            return None
+    elif tflite_backend == 'flatbuffer_direct' and flatbuffer_direct_fast_path_blockers:
+        info(
+            Color.YELLOW(
+                'Skipping flatbuffer_direct fast path because TF-model dependent options are enabled. '
+                f'options={", ".join(flatbuffer_direct_fast_path_blockers)}'
+            )
+        )
+
     if replace_to_pseudo_operators is None:
         replace_to_pseudo_operators = []
 
@@ -3868,7 +4179,7 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
-        if tflite_backend == 'flatbuffer_direct':
+        if tflite_backend == 'flatbuffer_direct' and not flatbuffer_direct_fast_path_failed_after_fallback:
             direct_outputs = None
             try:
                 from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct

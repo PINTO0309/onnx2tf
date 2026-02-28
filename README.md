@@ -275,9 +275,39 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
 
-### [WIP・experimental] `flatbuffer_direct` support status for ONNX ops in this list
+### [WIP・experimental] `flatbuffer_direct` execution path
 
-The `flatbuffer_direct` conversion option exists to convert a QAT quantized ONNX model to an optimized quantized tflite (LiteRT) model. The goal is to completely remove the dependency on the TensorFlow runtime in the future. By the way, if you want to generate a highly optimized quantized tflite for your ONNX model, I recommend using this package. https://github.com/NXP/eiq-onnx2tflite
+When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
+
+1. ONNX graph preprocessing (`tflite_builder.preprocess`) and direct lowering (`lower_onnx_to_ir`)
+2. Direct FlatBuffer export (`*_float32.tflite`, `*_float16.tflite`, and optional quantized variants)
+3. Optional direct reports/evaluation (`*_op_coverage_report.json`, tensor correspondence, ONNX/TFLite check)
+
+In this fast path, the per-node TensorFlow conversion (`op.make_node()` over all ONNX nodes) is skipped.
+This removes the long debug traces such as:
+
+- `INFO: <index> / <total>`
+- `INFO: onnx_op_type: ...`
+- `INFO: tf_op_type: ...`
+
+Measured example (same model, float32 TFLite write stage):
+
+- `tf_converter`: `~24.947s`
+- `flatbuffer_direct`: `~0.239s`
+- `flatbuffer_direct` was approximately **107x faster** than `tf_converter` in this case.
+
+Actual speedup depends on model structure, enabled options, and runtime environment.
+
+Fast path is intentionally disabled (falls back to the legacy TF-graph path) when TF-model dependent options are enabled:
+
+- `--enable_auto_split_model`
+- `--output_h5`
+- `--output_keras_v3`
+- `--output_tfv1_pb`
+- `--disable_model_save`
+
+If direct export fails and `--flatbuffer_direct_fallback_to_tf_converter` is set, conversion continues via the TF converter path.
+In that fallback mode, direct-only features (`--report_op_coverage`, `--auto_split_tflite_by_size`, etc.) are skipped by design.
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
@@ -541,11 +571,12 @@ Notes:
 |Item|`tf_converter` (default)|`flatbuffer_direct`|
 |:-|:-|:-|
 |Final backend|TensorFlow Lite Converter|Direct FlatBuffer builder (`schema.fbs`)|
+|Primary conversion path|Build TF graph (`op.make_node`) then convert|Direct lowering from ONNX IR without TF graph build (fast path)|
 |Model optimization source|Large set of existing TF-path graph rewrites/heuristics|Dedicated direct preprocess pipeline + direct dispatch constraints|
 |Failure behavior|Often absorbed by TF-side graph lowering|Explicit `reason_code`-based failure on unsupported patterns|
 |Custom op handling|Typically avoided by TF-side replacement when possible|Opt-in only (`--flatbuffer_direct_allow_custom_ops`) with allowlist|
 |Diagnostics|Standard conversion logs|`*_op_coverage_report.json` (`dispatch_mode`, `unsupported_reason_counts`, `custom_op_policy`, `preprocess_report`)|
-|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter` available|
+|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter` available (falls back to TF converter path when direct export fails)|
 
 ### flatbuffer_direct preprocess absorption scope
 
@@ -645,7 +676,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.0.27
+  ghcr.io/pinto0309/onnx2tf:2.1.0
 
   or
 
@@ -654,7 +685,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.0.27
+  docker.io/pinto0309/onnx2tf:2.1.0
 
   or
 
@@ -664,7 +695,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.0.27 \
+  docker.io/pinto0309/onnx2tf:2.1.0 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1997,15 +2028,19 @@ optional arguments:
 
     flatbuffer_direct notes:
     1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
-    2. Direct export supports FP32/FP16 `.tflite` generation.
-    3. Dynamic range quantization (`-odrqt`) is supported in a limited form:
+    2. onnx2tf first tries a direct fast path that skips TensorFlow per-node conversion (`op.make_node`) and directly exports from ONNX to TFLite FlatBuffer.
+    3. Fast path is bypassed when TF-model dependent options are enabled:
+       `--enable_auto_split_model`, `--output_h5`, `--output_keras_v3`, `--output_tfv1_pb`, `--disable_model_save`.
+       In that case, conversion uses the legacy TF-graph path.
+    4. Direct export supports FP32/FP16 `.tflite` generation.
+    5. Dynamic range quantization (`-odrqt`) is supported in a limited form:
        weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
        and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
        For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-    4. Integer quantization (`-oiqt`) is supported in a limited form:
+    6. Integer quantization (`-oiqt`) is supported in a limited form:
        `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
        `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-    5. Supported builtin OP set includes:
+    7. Supported builtin OP set includes:
        `ADD`, `SUB`, `MUL`, `DIV`, `FLOOR_MOD`, `MAXIMUM`, `MINIMUM`, `POW`,
        `MEAN`, `SUM`, `REDUCE_MAX`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`, `SLICE`, `STRIDED_SLICE`,
        `CONCATENATION`, `GATHER`, `GATHER_ND`, `ONE_HOT`,
@@ -2017,23 +2052,24 @@ optional arguments:
        `RESIZE_NEAREST_NEIGHBOR`, `RESIZE_BILINEAR`,
        `BIDIRECTIONAL_SEQUENCE_LSTM`, `SPLIT`, `EXPAND_DIMS`, `WHILE`,
        `DEQUANTIZE`, `QUANTIZE`.
-    6. Unsupported OPs fail explicitly with `NotImplementedError`.
-    7. Custom OP policy (opt-in):
+    8. Unsupported OPs fail explicitly with `NotImplementedError`.
+    9. Custom OP policy (opt-in):
        `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
        `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
        If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
        If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-    8. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
+    10. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
        `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
-    9. flatbuffer_direct quantization precision controls are configurable via environment variables:
+    11. flatbuffer_direct quantization precision controls are configurable via environment variables:
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-    10. Optional fallback:
+    12. Optional fallback:
        `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
-    11. Migration guide:
+       In fallback mode, direct-only features are skipped (`--report_op_coverage`, `--auto_split_tflite_by_size`, `--eval_with_onnx`, `--eval_split_models`, custom-op direct lowering settings).
+    13. Migration guide:
        See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
@@ -2627,6 +2663,8 @@ convert(
       Note: "flatbuffer_direct" supports a limited builtin OP set,
       FP32/FP16 export, limited dynamic-range quantization,
       limited integer quantization, and limited int16-activation variants.
+      When the direct fast path is active, TensorFlow per-node conversion is skipped.
+      In that case, `convert()` may return `None` (TFLite artifacts are still generated).
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.

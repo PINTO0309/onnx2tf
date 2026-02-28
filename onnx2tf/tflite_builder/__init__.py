@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from onnx2tf.tflite_builder.ir import clone_model_ir_with_float16
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -33,6 +33,117 @@ from onnx2tf.tflite_builder.split_planner import (
     write_split_plan_report,
 )
 from onnx2tf.utils.common_functions import weights_export
+
+
+def _progress_write(*, message: str, enabled: bool) -> None:
+    if not enabled:
+        return
+    try:
+        from tqdm.auto import tqdm
+        tqdm.write(str(message))
+    except Exception:
+        print(str(message), flush=True)
+
+
+def _format_write_timing_line(
+    *,
+    stage: str,
+    timing: Dict[str, Any],
+) -> str:
+    model_bytes = int(timing.get("model_bytes", 0))
+    mb = float(model_bytes) / (1024.0 * 1024.0) if model_bytes > 0 else 0.0
+    serializer_mode = str(timing.get("serializer_mode", "unknown"))
+    build_sec = float(
+        timing.get(
+            "build_model_object_sec",
+            timing.get("build_serialization_tables_sec", 0.0),
+        )
+    )
+    return (
+        "flatbuffer_direct write timing: "
+        f"stage={stage} "
+        f"mode={serializer_mode} "
+        f"total={float(timing.get('write_model_file_total_sec', 0.0)):.3f}s "
+        f"serialize={float(timing.get('serialize_total_sec', 0.0)):.3f}s "
+        f"(sanitize={float(timing.get('sanitize_model_ir_sec', 0.0)):.3f}s "
+        f"build={build_sec:.3f}s "
+        f"pack={float(timing.get('pack_builder_sec', 0.0)):.3f}s "
+        f"output={float(timing.get('output_buffer_sec', 0.0)):.3f}s) "
+        f"write={float(timing.get('file_write_sec', 0.0)):.3f}s "
+        f"size={mb:.2f}MB"
+    )
+
+
+def _create_progress_bar(
+    *,
+    total: int,
+    desc: str,
+    enabled: bool,
+):
+    if not enabled or int(total) <= 0:
+        return None
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return None
+    return tqdm(
+        total=int(total),
+        desc=str(desc),
+        dynamic_ncols=True,
+    )
+
+
+def _build_export_progress_labels(
+    *,
+    report_op_coverage: bool,
+    auto_split_tflite_by_size: bool,
+    output_dynamic_range_quantized_tflite: bool,
+    output_integer_quantized_tflite: bool,
+    output_weights: bool,
+) -> List[str]:
+    labels: List[str] = [
+        "tensor correspondence report",
+    ]
+    if report_op_coverage:
+        labels.append("op coverage report")
+    if auto_split_tflite_by_size:
+        labels.append("split planning")
+    labels.extend(
+        [
+            "write float32 tflite",
+            "write float16 tflite",
+        ]
+    )
+    if output_dynamic_range_quantized_tflite:
+        labels.append("write dynamic range quant tflite")
+    if output_integer_quantized_tflite:
+        labels.extend(
+            [
+                "write integer quant tflite",
+                "write full integer quant tflite",
+                "write integer quant int16-act tflite",
+                "write full integer quant int16-act tflite",
+            ]
+        )
+    if output_weights:
+        labels.extend(
+            [
+                "export float32 weights",
+                "export float16 weights",
+            ]
+        )
+        if output_dynamic_range_quantized_tflite:
+            labels.append("export dynamic range quant weights")
+        if output_integer_quantized_tflite:
+            labels.extend(
+                [
+                    "export integer quant weights",
+                    "export full integer quant weights",
+                    "export integer quant int16-act weights",
+                    "export full integer quant int16-act weights",
+                ]
+            )
+    return labels
 
 
 def _reject_unsupported_quantization(**kwargs: Any) -> None:
@@ -146,6 +257,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         )
     )
     quant_controls = _resolve_quantization_controls(kwargs)
+    flatbuffer_direct_show_progress = bool(
+        kwargs.get("flatbuffer_direct_show_progress", True)
+    )
 
     if onnx_graph is None:
         raise ValueError(
@@ -222,6 +336,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             disable_group_convolution=disable_group_convolution,
             output_nms_with_argmax=output_nms_with_argmax,
             switch_nms_version=switch_nms_version,
+            show_progress=flatbuffer_direct_show_progress,
         )
     except Exception as ex:
         try:
@@ -230,253 +345,403 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             pass
         raise
 
+    export_progress_labels = _build_export_progress_labels(
+        report_op_coverage=report_op_coverage,
+        auto_split_tflite_by_size=auto_split_tflite_by_size,
+        output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
+        output_integer_quantized_tflite=output_integer_quantized_tflite,
+        output_weights=output_weights,
+    )
+    export_progress_total = int(len(export_progress_labels))
+    export_progress_step = 0
+    export_progress_bar = _create_progress_bar(
+        total=export_progress_total,
+        desc="flatbuffer_direct export",
+        enabled=bool(flatbuffer_direct_show_progress),
+    )
+
+    def _set_export_progress_desc(stage_label: str) -> None:
+        if export_progress_bar is None:
+            return
+        export_progress_bar.set_description_str(
+            f"flatbuffer_direct export [{export_progress_step + 1}/{export_progress_total}] {stage_label}"
+        )
+
+    def _advance_export_progress() -> None:
+        nonlocal export_progress_step
+        if export_progress_bar is None:
+            return
+        export_progress_bar.update(1)
+        export_progress_step = int(export_progress_step + 1)
+
     tensor_correspondence_report_path = os.path.join(
         output_folder_path,
         f"{output_file_name}_tensor_correspondence_report.json",
     )
-    tensor_correspondence_report = build_tensor_correspondence_report(
-        onnx_graph=preprocessed_onnx_graph,
-        model_ir=model_ir,
-    )
-    write_tensor_correspondence_report(
-        report=tensor_correspondence_report,
-        output_report_path=tensor_correspondence_report_path,
-    )
-
-    _write_coverage_report(None)
-    custom_ops_used = sorted(
-        list(
-            {
-                str(op.options.get("customCode", "CUSTOM"))
-                for op in model_ir.operators
-                if str(op.op_type) == "CUSTOM"
-            }
-        )
-    )
-
-    split_plan_report_path = None
-    split_required_by_estimate = False
-    split_plan_total_estimated_bytes = None
-    split_manifest_path = None
-    split_partition_paths = None
-    split_partition_count = 0
-    if auto_split_tflite_by_size:
-        split_plan_report = plan_contiguous_partitions_by_size(
+    try:
+        _set_export_progress_desc("tensor correspondence report")
+        tensor_correspondence_report = build_tensor_correspondence_report(
+            onnx_graph=preprocessed_onnx_graph,
             model_ir=model_ir,
-            target_max_bytes=tflite_split_target_bytes,
-            hard_max_bytes=tflite_split_max_bytes,
-            schema_tflite=schema_tflite,
         )
-        split_required_by_estimate = bool(should_split_by_estimate(split_plan_report))
-        split_plan_total_estimated_bytes = int(
-            split_plan_report.get("total_estimated_bytes", 0)
+        write_tensor_correspondence_report(
+            report=tensor_correspondence_report,
+            output_report_path=tensor_correspondence_report_path,
         )
-        split_plan_report_path = write_split_plan_report(
-            report=split_plan_report,
-            output_report_path=os.path.join(
-                output_folder_path,
-                f"{output_file_name}_split_plan.json",
-            ),
-        )
-        if split_required_by_estimate:
-            from ai_edge_litert.interpreter import Interpreter
+        _advance_export_progress()
 
-            def _validate_split_tflite_loadable(tflite_path: str) -> None:
-                interpreter = Interpreter(model_path=tflite_path)
-                interpreter.allocate_tensors()
+        if report_op_coverage:
+            _set_export_progress_desc("op coverage report")
+            _write_coverage_report(None)
+            _advance_export_progress()
+        else:
+            _write_coverage_report(None)
 
-            split_outputs = write_split_model_files_and_manifest(
-                schema_tflite=schema_tflite,
+        custom_ops_used = sorted(
+            list(
+                {
+                    str(op.options.get("customCode", "CUSTOM"))
+                    for op in model_ir.operators
+                    if str(op.op_type) == "CUSTOM"
+                }
+            )
+        )
+
+        split_plan_report_path = None
+        split_required_by_estimate = False
+        split_plan_total_estimated_bytes = None
+        split_manifest_path = None
+        split_partition_paths = None
+        split_partition_count = 0
+        write_timing_report: Dict[str, Dict[str, Any]] = {}
+        if auto_split_tflite_by_size:
+            _set_export_progress_desc("split planning")
+            split_plan_report = plan_contiguous_partitions_by_size(
                 model_ir=model_ir,
-                plan_report=split_plan_report,
-                output_folder_path=output_folder_path,
-                output_file_name=output_file_name,
-                tflite_loader_validator=_validate_split_tflite_loadable,
+                target_max_bytes=tflite_split_target_bytes,
+                hard_max_bytes=tflite_split_max_bytes,
+                schema_tflite=schema_tflite,
             )
-            split_manifest_path = split_outputs["split_manifest_path"]
-            split_partition_paths = split_outputs["split_partition_paths"]
-            split_partition_count = int(split_outputs["split_partition_count"])
+            split_required_by_estimate = bool(should_split_by_estimate(split_plan_report))
+            split_plan_total_estimated_bytes = int(
+                split_plan_report.get("total_estimated_bytes", 0)
+            )
+            split_plan_report_path = write_split_plan_report(
+                report=split_plan_report,
+                output_report_path=os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_split_plan.json",
+                ),
+            )
+            if split_required_by_estimate:
+                from ai_edge_litert.interpreter import Interpreter
 
-    float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
-    write_model_file(
-        schema_tflite=schema_tflite,
-        model_ir=model_ir,
-        output_tflite_path=float32_path,
-    )
+                def _validate_split_tflite_loadable(tflite_path: str) -> None:
+                    interpreter = Interpreter(model_path=tflite_path)
+                    interpreter.allocate_tensors()
 
-    model_ir_fp16 = clone_model_ir_with_float16(model_ir)
-    float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
-    write_model_file(
-        schema_tflite=schema_tflite,
-        model_ir=model_ir_fp16,
-        output_tflite_path=float16_path,
-    )
+                split_outputs = write_split_model_files_and_manifest(
+                    schema_tflite=schema_tflite,
+                    model_ir=model_ir,
+                    plan_report=split_plan_report,
+                    output_folder_path=output_folder_path,
+                    output_file_name=output_file_name,
+                    tflite_loader_validator=_validate_split_tflite_loadable,
+                )
+                split_manifest_path = split_outputs["split_manifest_path"]
+                split_partition_paths = split_outputs["split_partition_paths"]
+                split_partition_count = int(split_outputs["split_partition_count"])
+            _advance_export_progress()
 
-    dynamic_range_path = None
-    if output_dynamic_range_quantized_tflite:
-        dynamic_model_ir = build_dynamic_range_quantized_model_ir(
-            model_ir,
-            quant_type=str(quant_type),
-            calibration_method=quant_controls["calibration_method"],
-            calibration_percentile=quant_controls["calibration_percentile"],
-            min_numel=quant_controls["min_numel"],
-            min_abs_max=quant_controls["min_abs_max"],
-            scale_floor=quant_controls["scale_floor"],
-        )
-        dynamic_range_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_dynamic_range_quant.tflite",
-        )
+        _set_export_progress_desc("write float32 tflite")
+        float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
+        float32_write_timing: Dict[str, Any] = {}
         write_model_file(
             schema_tflite=schema_tflite,
-            model_ir=dynamic_model_ir,
-            output_tflite_path=dynamic_range_path,
+            model_ir=model_ir,
+            output_tflite_path=float32_path,
+            timing=float32_write_timing,
         )
-
-    integer_quant_path = None
-    full_integer_quant_path = None
-    if output_integer_quantized_tflite:
-        integer_model_ir = build_integer_quantized_model_ir(
-            model_ir,
-            quant_type=str(quant_type),
-            calibration_method=quant_controls["calibration_method"],
-            calibration_percentile=quant_controls["calibration_percentile"],
-            min_numel=quant_controls["min_numel"],
-            min_abs_max=quant_controls["min_abs_max"],
-            scale_floor=quant_controls["scale_floor"],
-        )
-        integer_quant_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_integer_quant.tflite",
-        )
-        write_model_file(
-            schema_tflite=schema_tflite,
-            model_ir=integer_model_ir,
-            output_tflite_path=integer_quant_path,
-        )
-
-        full_integer_model_ir = build_full_integer_quantized_model_ir(
-            model_ir,
-            quant_type=str(quant_type),
-            input_quant_dtype=str(input_quant_dtype),
-            output_quant_dtype=str(output_quant_dtype),
-            calibration_method=quant_controls["calibration_method"],
-            calibration_percentile=quant_controls["calibration_percentile"],
-            min_numel=quant_controls["min_numel"],
-            min_abs_max=quant_controls["min_abs_max"],
-            scale_floor=quant_controls["scale_floor"],
-        )
-        full_integer_quant_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_full_integer_quant.tflite",
-        )
-        write_model_file(
-            schema_tflite=schema_tflite,
-            model_ir=full_integer_model_ir,
-            output_tflite_path=full_integer_quant_path,
-        )
-
-        integer_quant_with_int16_act_model_ir = build_integer_quantized_with_int16_act_model_ir(
-            model_ir,
-            quant_type=str(quant_type),
-            calibration_method=quant_controls["calibration_method"],
-            calibration_percentile=quant_controls["calibration_percentile"],
-            min_numel=quant_controls["min_numel"],
-            min_abs_max=quant_controls["min_abs_max"],
-            scale_floor=quant_controls["scale_floor"],
-        )
-        integer_quant_with_int16_act_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_integer_quant_with_int16_act.tflite",
-        )
-        write_model_file(
-            schema_tflite=schema_tflite,
-            model_ir=integer_quant_with_int16_act_model_ir,
-            output_tflite_path=integer_quant_with_int16_act_path,
-        )
-
-        full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
-            model_ir,
-            quant_type=str(quant_type),
-            calibration_method=quant_controls["calibration_method"],
-            calibration_percentile=quant_controls["calibration_percentile"],
-            min_numel=quant_controls["min_numel"],
-            min_abs_max=quant_controls["min_abs_max"],
-            scale_floor=quant_controls["scale_floor"],
-        )
-        full_integer_quant_with_int16_act_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
-        )
-        write_model_file(
-            schema_tflite=schema_tflite,
-            model_ir=full_integer_quant_with_int16_act_model_ir,
-            output_tflite_path=full_integer_quant_with_int16_act_path,
-        )
-    else:
-        integer_quant_with_int16_act_path = None
-        full_integer_quant_with_int16_act_path = None
-
-    if output_weights:
-        weights_export(
-            extract_target_tflite_file_path=float32_path,
-            output_weights_file_path=os.path.join(
-                output_folder_path,
-                f"{output_file_name}_float32_weights.h5",
+        write_timing_report["float32"] = float32_write_timing
+        _progress_write(
+            message=_format_write_timing_line(
+                stage="float32",
+                timing=float32_write_timing,
             ),
+            enabled=bool(flatbuffer_direct_show_progress),
         )
-        weights_export(
-            extract_target_tflite_file_path=float16_path,
-            output_weights_file_path=os.path.join(
-                output_folder_path,
-                f"{output_file_name}_float16_weights.h5",
+        _advance_export_progress()
+
+        _set_export_progress_desc("write float16 tflite")
+        model_ir_fp16 = clone_model_ir_with_float16(model_ir)
+        float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
+        float16_write_timing: Dict[str, Any] = {}
+        write_model_file(
+            schema_tflite=schema_tflite,
+            model_ir=model_ir_fp16,
+            output_tflite_path=float16_path,
+            timing=float16_write_timing,
+        )
+        write_timing_report["float16"] = float16_write_timing
+        _progress_write(
+            message=_format_write_timing_line(
+                stage="float16",
+                timing=float16_write_timing,
             ),
+            enabled=bool(flatbuffer_direct_show_progress),
         )
-        if dynamic_range_path is not None:
+        _advance_export_progress()
+
+        dynamic_range_path = None
+        if output_dynamic_range_quantized_tflite:
+            _set_export_progress_desc("write dynamic range quant tflite")
+            dynamic_model_ir = build_dynamic_range_quantized_model_ir(
+                model_ir,
+                quant_type=str(quant_type),
+                calibration_method=quant_controls["calibration_method"],
+                calibration_percentile=quant_controls["calibration_percentile"],
+                min_numel=quant_controls["min_numel"],
+                min_abs_max=quant_controls["min_abs_max"],
+                scale_floor=quant_controls["scale_floor"],
+            )
+            dynamic_range_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_dynamic_range_quant.tflite",
+            )
+            dynamic_range_write_timing: Dict[str, Any] = {}
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=dynamic_model_ir,
+                output_tflite_path=dynamic_range_path,
+                timing=dynamic_range_write_timing,
+            )
+            write_timing_report["dynamic_range_quant"] = dynamic_range_write_timing
+            _progress_write(
+                message=_format_write_timing_line(
+                    stage="dynamic_range_quant",
+                    timing=dynamic_range_write_timing,
+                ),
+                enabled=bool(flatbuffer_direct_show_progress),
+            )
+            _advance_export_progress()
+
+        integer_quant_path = None
+        full_integer_quant_path = None
+        if output_integer_quantized_tflite:
+            _set_export_progress_desc("write integer quant tflite")
+            integer_model_ir = build_integer_quantized_model_ir(
+                model_ir,
+                quant_type=str(quant_type),
+                calibration_method=quant_controls["calibration_method"],
+                calibration_percentile=quant_controls["calibration_percentile"],
+                min_numel=quant_controls["min_numel"],
+                min_abs_max=quant_controls["min_abs_max"],
+                scale_floor=quant_controls["scale_floor"],
+            )
+            integer_quant_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_integer_quant.tflite",
+            )
+            integer_quant_write_timing: Dict[str, Any] = {}
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=integer_model_ir,
+                output_tflite_path=integer_quant_path,
+                timing=integer_quant_write_timing,
+            )
+            write_timing_report["integer_quant"] = integer_quant_write_timing
+            _progress_write(
+                message=_format_write_timing_line(
+                    stage="integer_quant",
+                    timing=integer_quant_write_timing,
+                ),
+                enabled=bool(flatbuffer_direct_show_progress),
+            )
+            _advance_export_progress()
+
+            _set_export_progress_desc("write full integer quant tflite")
+            full_integer_model_ir = build_full_integer_quantized_model_ir(
+                model_ir,
+                quant_type=str(quant_type),
+                input_quant_dtype=str(input_quant_dtype),
+                output_quant_dtype=str(output_quant_dtype),
+                calibration_method=quant_controls["calibration_method"],
+                calibration_percentile=quant_controls["calibration_percentile"],
+                min_numel=quant_controls["min_numel"],
+                min_abs_max=quant_controls["min_abs_max"],
+                scale_floor=quant_controls["scale_floor"],
+            )
+            full_integer_quant_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_full_integer_quant.tflite",
+            )
+            full_integer_quant_write_timing: Dict[str, Any] = {}
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=full_integer_model_ir,
+                output_tflite_path=full_integer_quant_path,
+                timing=full_integer_quant_write_timing,
+            )
+            write_timing_report["full_integer_quant"] = full_integer_quant_write_timing
+            _progress_write(
+                message=_format_write_timing_line(
+                    stage="full_integer_quant",
+                    timing=full_integer_quant_write_timing,
+                ),
+                enabled=bool(flatbuffer_direct_show_progress),
+            )
+            _advance_export_progress()
+
+            _set_export_progress_desc("write integer quant int16-act tflite")
+            integer_quant_with_int16_act_model_ir = build_integer_quantized_with_int16_act_model_ir(
+                model_ir,
+                quant_type=str(quant_type),
+                calibration_method=quant_controls["calibration_method"],
+                calibration_percentile=quant_controls["calibration_percentile"],
+                min_numel=quant_controls["min_numel"],
+                min_abs_max=quant_controls["min_abs_max"],
+                scale_floor=quant_controls["scale_floor"],
+            )
+            integer_quant_with_int16_act_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_integer_quant_with_int16_act.tflite",
+            )
+            integer_quant_int16_write_timing: Dict[str, Any] = {}
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=integer_quant_with_int16_act_model_ir,
+                output_tflite_path=integer_quant_with_int16_act_path,
+                timing=integer_quant_int16_write_timing,
+            )
+            write_timing_report["integer_quant_with_int16_act"] = integer_quant_int16_write_timing
+            _progress_write(
+                message=_format_write_timing_line(
+                    stage="integer_quant_with_int16_act",
+                    timing=integer_quant_int16_write_timing,
+                ),
+                enabled=bool(flatbuffer_direct_show_progress),
+            )
+            _advance_export_progress()
+
+            _set_export_progress_desc("write full integer quant int16-act tflite")
+            full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
+                model_ir,
+                quant_type=str(quant_type),
+                calibration_method=quant_controls["calibration_method"],
+                calibration_percentile=quant_controls["calibration_percentile"],
+                min_numel=quant_controls["min_numel"],
+                min_abs_max=quant_controls["min_abs_max"],
+                scale_floor=quant_controls["scale_floor"],
+            )
+            full_integer_quant_with_int16_act_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
+            )
+            full_integer_quant_int16_write_timing: Dict[str, Any] = {}
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=full_integer_quant_with_int16_act_model_ir,
+                output_tflite_path=full_integer_quant_with_int16_act_path,
+                timing=full_integer_quant_int16_write_timing,
+            )
+            write_timing_report["full_integer_quant_with_int16_act"] = full_integer_quant_int16_write_timing
+            _progress_write(
+                message=_format_write_timing_line(
+                    stage="full_integer_quant_with_int16_act",
+                    timing=full_integer_quant_int16_write_timing,
+                ),
+                enabled=bool(flatbuffer_direct_show_progress),
+            )
+            _advance_export_progress()
+        else:
+            integer_quant_with_int16_act_path = None
+            full_integer_quant_with_int16_act_path = None
+
+        if output_weights:
+            _set_export_progress_desc("export float32 weights")
             weights_export(
-                extract_target_tflite_file_path=dynamic_range_path,
+                extract_target_tflite_file_path=float32_path,
                 output_weights_file_path=os.path.join(
                     output_folder_path,
-                    f"{output_file_name}_dynamic_range_quant_weights.h5",
+                    f"{output_file_name}_float32_weights.h5",
                 ),
             )
-        if integer_quant_path is not None:
+            _advance_export_progress()
+
+            _set_export_progress_desc("export float16 weights")
             weights_export(
-                extract_target_tflite_file_path=integer_quant_path,
+                extract_target_tflite_file_path=float16_path,
                 output_weights_file_path=os.path.join(
                     output_folder_path,
-                    f"{output_file_name}_integer_quant_weights.h5",
+                    f"{output_file_name}_float16_weights.h5",
                 ),
             )
-        if full_integer_quant_path is not None:
-            weights_export(
-                extract_target_tflite_file_path=full_integer_quant_path,
-                output_weights_file_path=os.path.join(
-                    output_folder_path,
-                    f"{output_file_name}_full_integer_quant_weights.h5",
-                ),
-            )
-        if integer_quant_with_int16_act_path is not None:
-            weights_export(
-                extract_target_tflite_file_path=integer_quant_with_int16_act_path,
-                output_weights_file_path=os.path.join(
-                    output_folder_path,
-                    f"{output_file_name}_integer_quant_with_int16_act_weights.h5",
-                ),
-            )
-        if full_integer_quant_with_int16_act_path is not None:
-            weights_export(
-                extract_target_tflite_file_path=full_integer_quant_with_int16_act_path,
-                output_weights_file_path=os.path.join(
-                    output_folder_path,
-                    f"{output_file_name}_full_integer_quant_with_int16_act_weights.h5",
-                ),
-            )
+            _advance_export_progress()
+
+            if dynamic_range_path is not None:
+                _set_export_progress_desc("export dynamic range quant weights")
+                weights_export(
+                    extract_target_tflite_file_path=dynamic_range_path,
+                    output_weights_file_path=os.path.join(
+                        output_folder_path,
+                        f"{output_file_name}_dynamic_range_quant_weights.h5",
+                    ),
+                )
+                _advance_export_progress()
+
+            if integer_quant_path is not None:
+                _set_export_progress_desc("export integer quant weights")
+                weights_export(
+                    extract_target_tflite_file_path=integer_quant_path,
+                    output_weights_file_path=os.path.join(
+                        output_folder_path,
+                        f"{output_file_name}_integer_quant_weights.h5",
+                    ),
+                )
+                _advance_export_progress()
+
+            if full_integer_quant_path is not None:
+                _set_export_progress_desc("export full integer quant weights")
+                weights_export(
+                    extract_target_tflite_file_path=full_integer_quant_path,
+                    output_weights_file_path=os.path.join(
+                        output_folder_path,
+                        f"{output_file_name}_full_integer_quant_weights.h5",
+                    ),
+                )
+                _advance_export_progress()
+
+            if integer_quant_with_int16_act_path is not None:
+                _set_export_progress_desc("export integer quant int16-act weights")
+                weights_export(
+                    extract_target_tflite_file_path=integer_quant_with_int16_act_path,
+                    output_weights_file_path=os.path.join(
+                        output_folder_path,
+                        f"{output_file_name}_integer_quant_with_int16_act_weights.h5",
+                    ),
+                )
+                _advance_export_progress()
+
+            if full_integer_quant_with_int16_act_path is not None:
+                _set_export_progress_desc("export full integer quant int16-act weights")
+                weights_export(
+                    extract_target_tflite_file_path=full_integer_quant_with_int16_act_path,
+                    output_weights_file_path=os.path.join(
+                        output_folder_path,
+                        f"{output_file_name}_full_integer_quant_with_int16_act_weights.h5",
+                    ),
+                )
+                _advance_export_progress()
+    finally:
+        if export_progress_bar is not None:
+            export_progress_bar.close()
 
     outputs: Dict[str, Any] = {
         "float32_tflite_path": float32_path,
         "float16_tflite_path": float16_path,
     }
+    if len(write_timing_report) > 0:
+        outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:
         outputs["dynamic_range_quant_tflite_path"] = dynamic_range_path
     if integer_quant_path is not None:

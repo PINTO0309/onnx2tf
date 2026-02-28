@@ -397,6 +397,7 @@ def build_pow_op(node: Any, ctx: Any) -> None:
     compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
 
     lhs_name = input_names[0]
+    rhs_const = ctx.get_constant_array(input_names[1])
     lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
     if lhs_dtype != compute_dtype:
         lhs_shape = [int(v) for v in ctx.get_tensor_shape(lhs_name)]
@@ -417,6 +418,42 @@ def build_pow_op(node: Any, ctx: Any) -> None:
             )
         )
         lhs_name = lhs_cast_name
+
+    # Prefer exact square to avoid POW numerical drift for x^2.
+    if rhs_const is not None:
+        rhs_arr = np.asarray(rhs_const)
+        if rhs_arr.size > 0 and np.all(np.isfinite(rhs_arr)):
+            rhs_f32 = rhs_arr.astype(np.float32, copy=False)
+            if bool(np.all(np.isclose(rhs_f32, 2.0, rtol=0.0, atol=1e-6))):
+                mul_output_name = output_name
+                if output_dtype != compute_dtype:
+                    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+                    mul_output_name = ctx.add_intermediate_tensor(
+                        f"{output_name}_pow_mul_out",
+                        dtype=compute_dtype,
+                        shape=output_shape,
+                    )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="MUL",
+                        inputs=[lhs_name, lhs_name],
+                        outputs=[mul_output_name],
+                        options={"fusedActivationFunction": "NONE"},
+                    )
+                )
+                if mul_output_name != output_name:
+                    ctx.add_operator(
+                        OperatorIR(
+                            op_type="CAST",
+                            inputs=[mul_output_name],
+                            outputs=[output_name],
+                            options={
+                                "inDataType": compute_dtype,
+                                "outDataType": output_dtype,
+                            },
+                        )
+                    )
+                return
 
     rhs_name = input_names[1]
     rhs_dtype = str(ctx.get_tensor_dtype(rhs_name)).upper()

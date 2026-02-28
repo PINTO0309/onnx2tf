@@ -63,6 +63,7 @@ from onnx2tf.tflite_builder.op_builders.shape import (
     build_unsqueeze_op,
 )
 from onnx2tf.tflite_builder.op_builders.conv import (
+    build_col2im_op,
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
     build_fused_conv_op,
@@ -203,6 +204,7 @@ __all__ = [
     "build_transpose_op",
     "build_trilu_op",
     "build_unsqueeze_op",
+    "build_col2im_op",
     "build_conv2d_or_depthwise_op",
     "build_conv_transpose_op",
     "build_fused_conv_op",

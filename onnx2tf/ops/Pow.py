@@ -17,6 +17,23 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
+def _extract_scalar_constant(value):
+    if isinstance(value, (float, int, np.floating, np.integer)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        if value.size == 1:
+            return float(np.asarray(value).reshape(-1)[0])
+        return None
+    if tf.is_tensor(value):
+        static_value = tf.get_static_value(value)
+        if static_value is None:
+            return None
+        static_arr = np.asarray(static_value)
+        if static_arr.size == 1:
+            return float(static_arr.reshape(-1)[0])
+    return None
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -95,22 +112,17 @@ def make_node(
 
     replace_power_to_pseudo_power = "power" in kwargs['replace_to_pseudo_operators'] \
                                     or "pow" in kwargs['replace_to_pseudo_operators']
+    input_tensor_2_scalar = _extract_scalar_constant(input_tensor_2)
 
     if not replace_power_to_pseudo_power:
-        if isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 0 and input_tensor_2 == 2 \
-            or isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 1 and np.squeeze(input_tensor_2) == 2 \
-            or isinstance(input_tensor_2, float) and input_tensor_2 == 2 \
-            or isinstance(input_tensor_2, int) and input_tensor_2 == 2:
+        if input_tensor_2_scalar is not None and np.isclose(input_tensor_2_scalar, 2.0):
             powed_tensor = \
                 tf.math.multiply(
                     x=input_tensor_1,
                     y=input_tensor_1,
                     name=graph_node.name,
                 )
-        elif isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 0 and input_tensor_2 == 3 \
-            or isinstance(input_tensor_2, np.ndarray) and input_tensor_2.ndim == 1 and np.squeeze(input_tensor_2) == 3 \
-            or isinstance(input_tensor_2, float) and input_tensor_2 == 3 \
-            or isinstance(input_tensor_2, int) and input_tensor_2 == 3:
+        elif input_tensor_2_scalar is not None and np.isclose(input_tensor_2_scalar, 3.0):
             powed_tensor = \
                 tf.math.multiply(
                     x=tf.math.multiply(
@@ -128,10 +140,8 @@ def make_node(
                     name=graph_node.name,
                 )
     else:
-        if is_integer_num(x=input_tensor_2):
-            if isinstance(input_tensor_2, np.ndarray):
-                pow = input_tensor_2.squeeze()
-            pow = int(pow)
+        if input_tensor_2_scalar is not None and is_integer_num(x=input_tensor_2_scalar):
+            pow = int(input_tensor_2_scalar)
             powed_tensor = input_tensor_1
             for i in range(pow-1):
                 powed_tensor = tf.math.multiply(

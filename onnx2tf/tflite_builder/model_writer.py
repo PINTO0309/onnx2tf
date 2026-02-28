@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import flatbuffers
@@ -79,7 +79,21 @@ def _prune_dead_operators_in_place(model_ir: ModelIR) -> None:
 def _sanitize_model_ir_for_serialization(model_ir: ModelIR) -> ModelIR:
     # Keep serialization side-effect free because one ModelIR instance can be
     # reused across multiple output variants.
-    sanitized_model_ir = deepcopy(model_ir)
+    #
+    # NOTE:
+    # We only mutate graph containers (operator/tensor membership) during
+    # sanitization. Tensor payload arrays are read-only in serialization paths,
+    # so avoid deep-copying full weight buffers here.
+    sanitized_model_ir = ModelIR(
+        name=model_ir.name,
+        description=model_ir.description,
+        tensors=dict(model_ir.tensors),
+        operators=list(model_ir.operators),
+        inputs=list(model_ir.inputs),
+        outputs=list(model_ir.outputs),
+        subgraphs=list(model_ir.subgraphs),
+        metadata=dict(model_ir.metadata),
+    )
     _prune_dead_operators_in_place(sanitized_model_ir)
     _prune_unused_tensors_in_place(sanitized_model_ir)
     return sanitized_model_ir
@@ -706,12 +720,12 @@ def _build_subgraph_tensors_and_append_buffers(
     return tensors, tensor_index_map
 
 
-def build_model_object(
+def _build_serialization_tables(
     *,
     schema_tflite: Dict[str, Any],
     model_ir: ModelIR,
     with_signature_defs: bool = True,
-) -> object:
+) -> Dict[str, Any]:
     all_subgraphs: List[ModelIR] = [model_ir] + list(model_ir.subgraphs)
     all_operators: List[OperatorIR] = []
     for subgraph_ir in all_subgraphs:
@@ -760,33 +774,708 @@ def build_model_object(
     if main_tensor_index_map is None:
         raise ValueError("Main subgraph tensor index map is missing.")
 
-    model = schema_tflite["ModelT"]()
-    model.version = 3
-    model.description = model_ir.description
-    model.operatorCodes = operator_codes
-    model.subgraphs = serialized_subgraphs
-    model.buffers = buffers
+    signature_defs: List[object] = []
     if with_signature_defs:
-        model.signatureDefs = build_signature_defs(
+        signature_defs = build_signature_defs(
             schema_tflite=schema_tflite,
             tensor_index_map=main_tensor_index_map,
             input_names=model_ir.inputs,
             output_names=model_ir.outputs,
         )
+
+    return {
+        "operator_codes": operator_codes,
+        "subgraphs": serialized_subgraphs,
+        "buffers": buffers,
+        "signature_defs": signature_defs,
+    }
+
+
+def build_model_object(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    with_signature_defs: bool = True,
+) -> object:
+    tables = _build_serialization_tables(
+        schema_tflite=schema_tflite,
+        model_ir=model_ir,
+        with_signature_defs=with_signature_defs,
+    )
+
+    model = schema_tflite["ModelT"]()
+    model.version = 3
+    model.description = model_ir.description
+    model.operatorCodes = tables["operator_codes"]
+    model.subgraphs = tables["subgraphs"]
+    model.buffers = tables["buffers"]
+    if with_signature_defs:
+        model.signatureDefs = tables["signature_defs"]
     return model
 
 
-def serialize_model(*, schema_tflite: Dict[str, Any], model_ir: ModelIR) -> bytes:
+def _pack_string(builder: flatbuffers.Builder, value: Optional[str]) -> int:
+    if value is None:
+        return 0
+    return int(builder.CreateString(str(value)))
+
+
+def _as_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    return list(value)
+
+
+def _pack_int32_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    values: List[int],
+) -> int:
+    if len(values) == 0:
+        return 0
+    start_vector_fn(builder, len(values))
+    for value in reversed(values):
+        builder.PrependInt32(int(value))
+    return int(builder.EndVector())
+
+
+def _pack_int64_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    values: List[int],
+) -> int:
+    if len(values) == 0:
+        return 0
+    start_vector_fn(builder, len(values))
+    for value in reversed(values):
+        builder.PrependInt64(int(value))
+    return int(builder.EndVector())
+
+
+def _pack_float32_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    values: List[float],
+) -> int:
+    if len(values) == 0:
+        return 0
+    start_vector_fn(builder, len(values))
+    for value in reversed(values):
+        builder.PrependFloat32(float(value))
+    return int(builder.EndVector())
+
+
+def _pack_bool_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    values: List[bool],
+) -> int:
+    if len(values) == 0:
+        return 0
+    start_vector_fn(builder, len(values))
+    for value in reversed(values):
+        builder.PrependBool(bool(value))
+    return int(builder.EndVector())
+
+
+def _pack_bytes_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    values: bytes,
+) -> int:
+    if len(values) == 0:
+        return 0
+    # FlatBuffers Builder has a dedicated fast path for raw byte vectors.
+    # Using it avoids Python-side per-byte loops for large constant buffers.
+    return int(builder.CreateByteVector(bytes(values)))
+
+
+def _pack_uoffset_vector(
+    *,
+    builder: flatbuffers.Builder,
+    start_vector_fn: Any,
+    offsets: List[int],
+) -> int:
+    if len(offsets) == 0:
+        return 0
+    start_vector_fn(builder, len(offsets))
+    for offset in reversed(offsets):
+        builder.PrependUOffsetTRelative(int(offset))
+    return int(builder.EndVector())
+
+
+def _pack_quantization_parameters(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    quantization: Optional[object],
+) -> int:
+    if quantization is None:
+        return 0
+
+    min_offset = _pack_float32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["QuantizationParametersStartMinVector"],
+        values=[float(v) for v in _as_list(getattr(quantization, "min", None))],
+    )
+    max_offset = _pack_float32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["QuantizationParametersStartMaxVector"],
+        values=[float(v) for v in _as_list(getattr(quantization, "max", None))],
+    )
+    scale_offset = _pack_float32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["QuantizationParametersStartScaleVector"],
+        values=[float(v) for v in _as_list(getattr(quantization, "scale", None))],
+    )
+    zero_point_offset = _pack_int64_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["QuantizationParametersStartZeroPointVector"],
+        values=[int(v) for v in _as_list(getattr(quantization, "zeroPoint", None))],
+    )
+
+    schema_tflite["QuantizationParametersStart"](builder)
+    if min_offset > 0:
+        schema_tflite["QuantizationParametersAddMin"](builder, min_offset)
+    if max_offset > 0:
+        schema_tflite["QuantizationParametersAddMax"](builder, max_offset)
+    if scale_offset > 0:
+        schema_tflite["QuantizationParametersAddScale"](builder, scale_offset)
+    if zero_point_offset > 0:
+        schema_tflite["QuantizationParametersAddZeroPoint"](builder, zero_point_offset)
+    schema_tflite["QuantizationParametersAddQuantizedDimension"](
+        builder,
+        int(getattr(quantization, "quantizedDimension", 0)),
+    )
+    return int(schema_tflite["QuantizationParametersEnd"](builder))
+
+
+def _pack_tensor(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    tensor: object,
+) -> int:
+    shape_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["TensorStartShapeVector"],
+        values=[int(v) for v in _as_list(getattr(tensor, "shape", None))],
+    )
+    shape_signature_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["TensorStartShapeSignatureVector"],
+        values=[int(v) for v in _as_list(getattr(tensor, "shapeSignature", None))],
+    )
+    name_offset = _pack_string(builder, getattr(tensor, "name", None))
+    quantization_offset = _pack_quantization_parameters(
+        schema_tflite=schema_tflite,
+        builder=builder,
+        quantization=getattr(tensor, "quantization", None),
+    )
+
+    schema_tflite["TensorStart"](builder)
+    if shape_offset > 0:
+        schema_tflite["TensorAddShape"](builder, shape_offset)
+    schema_tflite["TensorAddType"](builder, int(getattr(tensor, "type", 0)))
+    schema_tflite["TensorAddBuffer"](builder, int(getattr(tensor, "buffer", 0)))
+    if name_offset > 0:
+        schema_tflite["TensorAddName"](builder, name_offset)
+    if quantization_offset > 0:
+        schema_tflite["TensorAddQuantization"](builder, quantization_offset)
+    schema_tflite["TensorAddIsVariable"](
+        builder,
+        bool(getattr(tensor, "isVariable", False)),
+    )
+    if shape_signature_offset > 0:
+        schema_tflite["TensorAddShapeSignature"](builder, shape_signature_offset)
+    return int(schema_tflite["TensorEnd"](builder))
+
+
+def _pack_operator(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    operator: object,
+) -> int:
+    inputs_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["OperatorStartInputsVector"],
+        values=[int(v) for v in _as_list(getattr(operator, "inputs", None))],
+    )
+    outputs_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["OperatorStartOutputsVector"],
+        values=[int(v) for v in _as_list(getattr(operator, "outputs", None))],
+    )
+    intermediates_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["OperatorStartIntermediatesVector"],
+        values=[int(v) for v in _as_list(getattr(operator, "intermediates", None))],
+    )
+    mutating_inputs_offset = _pack_bool_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["OperatorStartMutatingVariableInputsVector"],
+        values=[
+            bool(v)
+            for v in _as_list(getattr(operator, "mutatingVariableInputs", None))
+        ],
+    )
+
+    custom_options = getattr(operator, "customOptions", b"")
+    if custom_options is None:
+        custom_options = b""
+    if isinstance(custom_options, str):
+        custom_options = custom_options.encode("utf-8")
+    custom_options_offset = _pack_bytes_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["OperatorStartCustomOptionsVector"],
+        values=bytes(custom_options),
+    )
+
+    builtin_options_offset = 0
+    builtin_options = getattr(operator, "builtinOptions", None)
+    if builtin_options is not None and hasattr(builtin_options, "Pack"):
+        builtin_options_offset = int(builtin_options.Pack(builder))
+
+    builtin_options2_offset = 0
+    builtin_options2 = getattr(operator, "builtinOptions2", None)
+    if builtin_options2 is not None and hasattr(builtin_options2, "Pack"):
+        builtin_options2_offset = int(builtin_options2.Pack(builder))
+
+    schema_tflite["OperatorStart"](builder)
+    schema_tflite["OperatorAddOpcodeIndex"](builder, int(getattr(operator, "opcodeIndex", 0)))
+    if inputs_offset > 0:
+        schema_tflite["OperatorAddInputs"](builder, inputs_offset)
+    if outputs_offset > 0:
+        schema_tflite["OperatorAddOutputs"](builder, outputs_offset)
+    schema_tflite["OperatorAddBuiltinOptionsType"](
+        builder,
+        int(getattr(operator, "builtinOptionsType", 0)),
+    )
+    if builtin_options_offset > 0:
+        schema_tflite["OperatorAddBuiltinOptions"](builder, builtin_options_offset)
+    if custom_options_offset > 0:
+        schema_tflite["OperatorAddCustomOptions"](builder, custom_options_offset)
+    schema_tflite["OperatorAddCustomOptionsFormat"](
+        builder,
+        int(getattr(operator, "customOptionsFormat", 0)),
+    )
+    if mutating_inputs_offset > 0:
+        schema_tflite["OperatorAddMutatingVariableInputs"](
+            builder,
+            mutating_inputs_offset,
+        )
+    if intermediates_offset > 0:
+        schema_tflite["OperatorAddIntermediates"](builder, intermediates_offset)
+    large_custom_offset = int(getattr(operator, "largeCustomOptionsOffset", 0))
+    large_custom_size = int(getattr(operator, "largeCustomOptionsSize", 0))
+    if large_custom_offset > 0:
+        schema_tflite["OperatorAddLargeCustomOptionsOffset"](builder, large_custom_offset)
+    if large_custom_size > 0:
+        schema_tflite["OperatorAddLargeCustomOptionsSize"](builder, large_custom_size)
+    schema_tflite["OperatorAddBuiltinOptions2Type"](
+        builder,
+        int(getattr(operator, "builtinOptions2Type", 0)),
+    )
+    if builtin_options2_offset > 0:
+        schema_tflite["OperatorAddBuiltinOptions2"](builder, builtin_options2_offset)
+    debug_metadata_index = int(getattr(operator, "debugMetadataIndex", -1))
+    if debug_metadata_index >= 0:
+        schema_tflite["OperatorAddDebugMetadataIndex"](builder, debug_metadata_index)
+    return int(schema_tflite["OperatorEnd"](builder))
+
+
+def _pack_subgraph(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    subgraph: object,
+) -> int:
+    tensor_offsets = [
+        _pack_tensor(schema_tflite=schema_tflite, builder=builder, tensor=tensor)
+        for tensor in _as_list(getattr(subgraph, "tensors", None))
+    ]
+    operator_offsets = [
+        _pack_operator(schema_tflite=schema_tflite, builder=builder, operator=operator)
+        for operator in _as_list(getattr(subgraph, "operators", None))
+    ]
+
+    tensors_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SubGraphStartTensorsVector"],
+        offsets=tensor_offsets,
+    )
+    inputs_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SubGraphStartInputsVector"],
+        values=[int(v) for v in _as_list(getattr(subgraph, "inputs", None))],
+    )
+    outputs_offset = _pack_int32_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SubGraphStartOutputsVector"],
+        values=[int(v) for v in _as_list(getattr(subgraph, "outputs", None))],
+    )
+    operators_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SubGraphStartOperatorsVector"],
+        offsets=operator_offsets,
+    )
+    name_offset = _pack_string(builder, getattr(subgraph, "name", None))
+
+    schema_tflite["SubGraphStart"](builder)
+    if tensors_offset > 0:
+        schema_tflite["SubGraphAddTensors"](builder, tensors_offset)
+    if inputs_offset > 0:
+        schema_tflite["SubGraphAddInputs"](builder, inputs_offset)
+    if outputs_offset > 0:
+        schema_tflite["SubGraphAddOutputs"](builder, outputs_offset)
+    if operators_offset > 0:
+        schema_tflite["SubGraphAddOperators"](builder, operators_offset)
+    if name_offset > 0:
+        schema_tflite["SubGraphAddName"](builder, name_offset)
+    debug_metadata_index = int(getattr(subgraph, "debugMetadataIndex", -1))
+    if debug_metadata_index >= 0:
+        schema_tflite["SubGraphAddDebugMetadataIndex"](builder, debug_metadata_index)
+    return int(schema_tflite["SubGraphEnd"](builder))
+
+
+def _pack_operator_code(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    operator_code: object,
+) -> int:
+    custom_code_value = getattr(operator_code, "customCode", None)
+    custom_code_offset = 0
+    if custom_code_value is not None and str(custom_code_value) != "":
+        custom_code_offset = _pack_string(builder, str(custom_code_value))
+
+    schema_tflite["OperatorCodeStart"](builder)
+    schema_tflite["OperatorCodeAddDeprecatedBuiltinCode"](
+        builder,
+        int(getattr(operator_code, "deprecatedBuiltinCode", 0)),
+    )
+    if custom_code_offset > 0:
+        schema_tflite["OperatorCodeAddCustomCode"](builder, custom_code_offset)
+    schema_tflite["OperatorCodeAddVersion"](
+        builder,
+        int(getattr(operator_code, "version", 1)),
+    )
+    schema_tflite["OperatorCodeAddBuiltinCode"](
+        builder,
+        int(getattr(operator_code, "builtinCode", 0)),
+    )
+    return int(schema_tflite["OperatorCodeEnd"](builder))
+
+
+def _pack_buffer(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    buffer_obj: object,
+) -> int:
+    data = getattr(buffer_obj, "data", b"")
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    data_offset = _pack_bytes_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["BufferStartDataVector"],
+        values=bytes(data),
+    )
+
+    schema_tflite["BufferStart"](builder)
+    if data_offset > 0:
+        schema_tflite["BufferAddData"](builder, data_offset)
+    size_value = int(getattr(buffer_obj, "size", 0))
+    offset_value = int(getattr(buffer_obj, "offset", 0))
+    if offset_value > 0:
+        schema_tflite["BufferAddOffset"](builder, offset_value)
+    if size_value > 0:
+        schema_tflite["BufferAddSize"](builder, size_value)
+    return int(schema_tflite["BufferEnd"](builder))
+
+
+def _pack_tensor_map(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    tensor_map: object,
+) -> int:
+    name_offset = _pack_string(builder, getattr(tensor_map, "name", None))
+    schema_tflite["TensorMapStart"](builder)
+    if name_offset > 0:
+        schema_tflite["TensorMapAddName"](builder, name_offset)
+    schema_tflite["TensorMapAddTensorIndex"](
+        builder,
+        int(getattr(tensor_map, "tensorIndex", 0)),
+    )
+    return int(schema_tflite["TensorMapEnd"](builder))
+
+
+def _pack_signature_def(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    signature_def: object,
+) -> int:
+    input_offsets = [
+        _pack_tensor_map(schema_tflite=schema_tflite, builder=builder, tensor_map=tm)
+        for tm in _as_list(getattr(signature_def, "inputs", None))
+    ]
+    output_offsets = [
+        _pack_tensor_map(schema_tflite=schema_tflite, builder=builder, tensor_map=tm)
+        for tm in _as_list(getattr(signature_def, "outputs", None))
+    ]
+    inputs_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SignatureDefStartInputsVector"],
+        offsets=input_offsets,
+    )
+    outputs_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["SignatureDefStartOutputsVector"],
+        offsets=output_offsets,
+    )
+    signature_key_offset = _pack_string(builder, getattr(signature_def, "signatureKey", None))
+
+    schema_tflite["SignatureDefStart"](builder)
+    if inputs_offset > 0:
+        schema_tflite["SignatureDefAddInputs"](builder, inputs_offset)
+    if outputs_offset > 0:
+        schema_tflite["SignatureDefAddOutputs"](builder, outputs_offset)
+    if signature_key_offset > 0:
+        schema_tflite["SignatureDefAddSignatureKey"](builder, signature_key_offset)
+    schema_tflite["SignatureDefAddSubgraphIndex"](
+        builder,
+        int(getattr(signature_def, "subgraphIndex", 0)),
+    )
+    return int(schema_tflite["SignatureDefEnd"](builder))
+
+
+def _pack_model(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    model_description: str,
+    operator_codes: List[object],
+    subgraphs: List[object],
+    buffers: List[object],
+    signature_defs: List[object],
+) -> int:
+    operator_code_offsets = [
+        _pack_operator_code(
+            schema_tflite=schema_tflite,
+            builder=builder,
+            operator_code=operator_code,
+        )
+        for operator_code in operator_codes
+    ]
+    subgraph_offsets = [
+        _pack_subgraph(
+            schema_tflite=schema_tflite,
+            builder=builder,
+            subgraph=subgraph,
+        )
+        for subgraph in subgraphs
+    ]
+    buffer_offsets = [
+        _pack_buffer(
+            schema_tflite=schema_tflite,
+            builder=builder,
+            buffer_obj=buffer_obj,
+        )
+        for buffer_obj in buffers
+    ]
+    signature_def_offsets = [
+        _pack_signature_def(
+            schema_tflite=schema_tflite,
+            builder=builder,
+            signature_def=signature_def,
+        )
+        for signature_def in signature_defs
+    ]
+
+    operator_codes_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["ModelStartOperatorCodesVector"],
+        offsets=operator_code_offsets,
+    )
+    subgraphs_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["ModelStartSubgraphsVector"],
+        offsets=subgraph_offsets,
+    )
+    description_offset = _pack_string(builder, model_description)
+    buffers_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["ModelStartBuffersVector"],
+        offsets=buffer_offsets,
+    )
+    signature_defs_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["ModelStartSignatureDefsVector"],
+        offsets=signature_def_offsets,
+    )
+
+    schema_tflite["ModelStart"](builder)
+    schema_tflite["ModelAddVersion"](builder, 3)
+    if operator_codes_offset > 0:
+        schema_tflite["ModelAddOperatorCodes"](builder, operator_codes_offset)
+    if subgraphs_offset > 0:
+        schema_tflite["ModelAddSubgraphs"](builder, subgraphs_offset)
+    if description_offset > 0:
+        schema_tflite["ModelAddDescription"](builder, description_offset)
+    if buffers_offset > 0:
+        schema_tflite["ModelAddBuffers"](builder, buffers_offset)
+    if signature_defs_offset > 0:
+        schema_tflite["ModelAddSignatureDefs"](builder, signature_defs_offset)
+    return int(schema_tflite["ModelEnd"](builder))
+
+
+def _serialize_model_with_object_pack(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    timing: Optional[Dict[str, Any]] = None,
+) -> bytearray:
+    t0 = time.perf_counter()
     sanitized_model_ir = _sanitize_model_ir_for_serialization(model_ir)
+    t1 = time.perf_counter()
     model = build_model_object(
         schema_tflite=schema_tflite,
         model_ir=sanitized_model_ir,
         with_signature_defs=True,
     )
+    t2 = time.perf_counter()
     builder = flatbuffers.Builder(0)
     model_offset = model.Pack(builder)
     builder.Finish(model_offset, file_identifier=b"TFL3")
-    return bytes(builder.Output())
+    t3 = time.perf_counter()
+    model_bytes = builder.Output()
+    t4 = time.perf_counter()
+    if timing is not None:
+        timing["serializer_mode"] = "object_pack"
+        timing["sanitize_model_ir_sec"] = float(t1 - t0)
+        timing["build_model_object_sec"] = float(t2 - t1)
+        timing["pack_builder_sec"] = float(t3 - t2)
+        timing["output_buffer_sec"] = float(t4 - t3)
+        timing["serialize_total_sec"] = float(t4 - t0)
+        timing["model_bytes"] = float(len(model_bytes))
+    return model_bytes
+
+
+def _serialize_model_with_direct_builder(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    timing: Optional[Dict[str, Any]] = None,
+) -> bytearray:
+    t0 = time.perf_counter()
+    sanitized_model_ir = _sanitize_model_ir_for_serialization(model_ir)
+    t1 = time.perf_counter()
+    tables = _build_serialization_tables(
+        schema_tflite=schema_tflite,
+        model_ir=sanitized_model_ir,
+        with_signature_defs=True,
+    )
+    t2 = time.perf_counter()
+    builder = flatbuffers.Builder(0)
+    model_offset = _pack_model(
+        schema_tflite=schema_tflite,
+        builder=builder,
+        model_description=sanitized_model_ir.description,
+        operator_codes=tables["operator_codes"],
+        subgraphs=tables["subgraphs"],
+        buffers=tables["buffers"],
+        signature_defs=tables["signature_defs"],
+    )
+    builder.Finish(model_offset, file_identifier=b"TFL3")
+    t3 = time.perf_counter()
+    model_bytes = builder.Output()
+    t4 = time.perf_counter()
+    if timing is not None:
+        timing["serializer_mode"] = "builder_direct"
+        timing["sanitize_model_ir_sec"] = float(t1 - t0)
+        timing["build_model_object_sec"] = float(t2 - t1)
+        timing["pack_builder_sec"] = float(t3 - t2)
+        timing["output_buffer_sec"] = float(t4 - t3)
+        timing["serialize_total_sec"] = float(t4 - t0)
+        timing["model_bytes"] = float(len(model_bytes))
+    return model_bytes
+
+
+def _is_enabled_env(var_name: str, default: bool) -> bool:
+    value = os.environ.get(var_name, "")
+    if str(value).strip() == "":
+        return bool(default)
+    return str(value).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def serialize_model(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    timing: Optional[Dict[str, Any]] = None,
+) -> bytearray:
+    serializer_mode = str(
+        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_SERIALIZER", "builder_direct")
+    ).strip().lower()
+    prefer_direct_builder = serializer_mode in {
+        "",
+        "builder_direct",
+        "builder",
+        "direct",
+    }
+    if serializer_mode in {"object_pack", "pack"}:
+        prefer_direct_builder = False
+    if serializer_mode not in {
+        "",
+        "builder_direct",
+        "builder",
+        "direct",
+        "object_pack",
+        "pack",
+    }:
+        raise ValueError(
+            "Unsupported ONNX2TF_FLATBUFFER_DIRECT_SERIALIZER value. "
+            f"got: {serializer_mode}"
+        )
+
+    if not prefer_direct_builder:
+        return _serialize_model_with_object_pack(
+            schema_tflite=schema_tflite,
+            model_ir=model_ir,
+            timing=timing,
+        )
+
+    try:
+        return _serialize_model_with_direct_builder(
+            schema_tflite=schema_tflite,
+            model_ir=model_ir,
+            timing=timing,
+        )
+    except Exception as ex:
+        allow_fallback = _is_enabled_env(
+            "ONNX2TF_FLATBUFFER_DIRECT_SERIALIZER_FALLBACK_TO_OBJECT_PACK",
+            True,
+        )
+        if not allow_fallback:
+            raise
+        fallback_error = f"{type(ex).__name__}: {ex}"
+        model_bytes = _serialize_model_with_object_pack(
+            schema_tflite=schema_tflite,
+            model_ir=model_ir,
+            timing=timing,
+        )
+        if timing is not None:
+            timing["serializer_mode"] = "object_pack_fallback_from_builder_direct"
+            timing["builder_direct_error"] = fallback_error
+        return model_bytes
 
 
 def write_model_file(
@@ -794,9 +1483,24 @@ def write_model_file(
     schema_tflite: Dict[str, Any],
     model_ir: ModelIR,
     output_tflite_path: str,
+    timing: Optional[Dict[str, Any]] = None,
 ) -> str:
+    t0 = time.perf_counter()
     os.makedirs(os.path.dirname(output_tflite_path) or ".", exist_ok=True)
-    model_bytes = serialize_model(schema_tflite=schema_tflite, model_ir=model_ir)
+    t1 = time.perf_counter()
+    model_bytes = serialize_model(
+        schema_tflite=schema_tflite,
+        model_ir=model_ir,
+        timing=timing,
+    )
+    t2 = time.perf_counter()
     with open(output_tflite_path, "wb") as f:
         f.write(model_bytes)
+    t3 = time.perf_counter()
+    if timing is not None:
+        timing["mkdir_sec"] = float(t1 - t0)
+        timing["serialize_call_sec"] = float(t2 - t1)
+        timing["file_write_sec"] = float(t3 - t2)
+        timing["write_model_file_total_sec"] = float(t3 - t0)
+        timing["output_tflite_path"] = str(output_tflite_path)
     return output_tflite_path

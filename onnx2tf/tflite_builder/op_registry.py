@@ -23,6 +23,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_cast_op,
     build_celu_op,
     build_clip_op,
+    build_col2im_op,
     build_concat_op,
     build_constant_of_shape_op,
     build_conv2d_or_depthwise_op,
@@ -1554,6 +1555,195 @@ def _validate_fused_conv(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+
+
+def _normalize_col2im_pair_attr(
+    values: Any,
+    *,
+    default: int,
+    node: Any,
+    label: str,
+) -> list[int]:
+    vals = [int(v) for v in list(values)] if values is not None else []
+    if len(vals) == 0:
+        return [int(default), int(default)]
+    if len(vals) == 1:
+        return [int(vals[0]), int(vals[0])]
+    if len(vals) == 2:
+        return [int(vals[0]), int(vals[1])]
+    raise NodeValidationError(
+        reason_code="unsupported_attribute_value",
+        message=f"Col2Im {label} must have length 1 or 2. {label}={vals}",
+        node_name=node.name,
+        node_op=node.op,
+    )
+
+
+def _normalize_col2im_pads_attr(values: Any, *, node: Any) -> list[int]:
+    pads = [int(v) for v in list(values)] if values is not None else []
+    if len(pads) == 0:
+        return [0, 0, 0, 0]
+    if len(pads) == 2:
+        return [int(pads[0]), int(pads[1]), int(pads[0]), int(pads[1])]
+    if len(pads) == 4:
+        return [int(pads[0]), int(pads[1]), int(pads[2]), int(pads[3])]
+    raise NodeValidationError(
+        reason_code="unsupported_attribute_value",
+        message=f"Col2Im pads must have length 2 or 4. pads={pads}",
+        node_name=node.name,
+        node_op=node.op,
+    )
+
+
+def _validate_col2im(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_dtype",
+            message=(
+                "Col2Im currently supports FLOAT16/FLOAT32 input/output in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+    if len(input_shape) != 3 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "Col2Im expects input rank=3 and output rank=4 in flatbuffer_direct. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im requires static positive input/output shapes in flatbuffer_direct. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    image_shape = _require_const_input(node, ctx, 1, "Col2Im image_shape")
+    block_shape = _require_const_input(node, ctx, 2, "Col2Im block_shape")
+    image_shape_values = np.asarray(image_shape).reshape(-1)
+    block_shape_values = np.asarray(block_shape).reshape(-1)
+    if int(image_shape_values.size) != 2 or int(block_shape_values.size) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im image_shape/block_shape must each contain exactly 2 elements. "
+                f"image_shape={list(image_shape_values.shape)} block_shape={list(block_shape_values.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    h_img = int(image_shape_values[0])
+    w_img = int(image_shape_values[1])
+    k_h = int(block_shape_values[0])
+    k_w = int(block_shape_values[1])
+    if min(h_img, w_img, k_h, k_w) <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im image_shape/block_shape values must be > 0. "
+                f"image_shape={[h_img, w_img]} block_shape={[k_h, k_w]}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    strides = _normalize_col2im_pair_attr(
+        node.attrs.get("strides", [1, 1]),
+        default=1,
+        node=node,
+        label="strides",
+    )
+    dilations = _normalize_col2im_pair_attr(
+        node.attrs.get("dilations", [1, 1]),
+        default=1,
+        node=node,
+        label="dilations",
+    )
+    pads = _normalize_col2im_pads_attr(node.attrs.get("pads", [0, 0, 0, 0]), node=node)
+    if any(int(v) < 0 for v in list(strides) + list(dilations) + list(pads)):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Col2Im strides/dilations/pads must be non-negative. "
+                f"strides={strides} dilations={dilations} pads={pads}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in strides + dilations):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Col2Im strides/dilations must be > 0. strides={strides} dilations={dilations}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in pads]
+    dilation_h, dilation_w = [int(v) for v in dilations]
+    stride_h, stride_w = [int(v) for v in strides]
+    eff_k_h = (int(k_h) - 1) * int(dilation_h) + 1
+    eff_k_w = (int(k_w) - 1) * int(dilation_w) + 1
+    h_pad = int(h_img) + int(pad_top) + int(pad_bottom)
+    w_pad = int(w_img) + int(pad_left) + int(pad_right)
+    out_h = int((int(h_pad) - int(eff_k_h)) // int(stride_h) + 1)
+    out_w = int((int(w_pad) - int(eff_k_w)) // int(stride_w) + 1)
+    if out_h <= 0 or out_w <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im folded spatial shape must be positive. "
+                f"out_h={out_h} out_w={out_w}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    n, d1, d2 = [int(v) for v in input_shape]
+    out_n, out_c, out_h_out, out_w_out = [int(v) for v in output_shape]
+    if int(out_n) != int(n) or int(out_h_out) != int(h_img) or int(out_w_out) != int(w_img):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im output shape does not match input/image_shape. "
+                f"input_shape={input_shape} output_shape={output_shape} image_shape={[h_img, w_img]}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    k_prod = int(k_h) * int(k_w)
+    out_hw = int(out_h) * int(out_w)
+    canonical_valid = bool(int(d1) % int(k_prod) == 0 and int(d2) == int(out_hw))
+    swapped_valid = bool(int(d2) % int(k_prod) == 0 and int(d1) == int(out_hw))
+    if canonical_valid and int(d1) // int(k_prod) != int(out_c):
+        canonical_valid = False
+    if swapped_valid and int(d2) // int(k_prod) != int(out_c):
+        swapped_valid = False
+    if not canonical_valid and not swapped_valid:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Col2Im input layout must resolve to [N,C*K,L] or [N,L,C*K] with expected output C/H/W. "
+                f"input_shape={input_shape} output_shape={output_shape} k_prod={k_prod} out_hw={out_hw}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_global_average_pool(node: Any, ctx: Any) -> None:
@@ -6149,6 +6339,20 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             max_outputs=1,
         ),
         extra_validator=_validate_conv_transpose,
+    ),
+    "Col2Im": DispatchEntry(
+        onnx_op="Col2Im",
+        tflite_ops=["RESHAPE", "TRANSPOSE", "TRANSPOSE_CONV", "SLICE", "CAST"],
+        builder=build_col2im_op,
+        validation=ValidationSpec(
+            min_inputs=3,
+            max_inputs=3,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [3], 1: [1], 2: [1]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_col2im,
     ),
     "GlobalAveragePool": DispatchEntry(
         onnx_op="GlobalAveragePool",

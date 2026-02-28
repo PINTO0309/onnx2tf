@@ -42,6 +42,46 @@ def _build_col2im_kernel(
     return kernel, eff_k_h, eff_k_w
 
 
+def _maybe_align_col2im_input_layout(
+    *,
+    input_tensor: tf.Tensor,
+    k_prod: tf.Tensor,
+    out_hw: tf.Tensor,
+) -> tf.Tensor:
+    """
+    Col2Im input is expected as [N, C*K, L] (K = k_h*k_w, L = out_h*out_w).
+    Some graphs reach this op as [N, L, C*K] after global transpose propagation.
+    When static hints are sufficient, swap axes to restore canonical layout.
+    """
+    static_shape = input_tensor.shape
+    if static_shape is None or static_shape.rank != 3:
+        return input_tensor
+    d1 = static_shape[1]
+    d2 = static_shape[2]
+    if d1 is None or d2 is None:
+        return input_tensor
+
+    k_prod_static = tf.get_static_value(k_prod)
+    if k_prod_static is None:
+        return input_tensor
+    k_prod_int = int(k_prod_static)
+    if k_prod_int <= 0:
+        return input_tensor
+
+    out_hw_static = tf.get_static_value(out_hw)
+    out_hw_int = int(out_hw_static) if out_hw_static is not None else None
+
+    as_nckl_valid = (int(d1) % k_prod_int) == 0
+    as_nlkc_valid = (int(d2) % k_prod_int) == 0
+    if out_hw_int is not None:
+        as_nckl_valid = as_nckl_valid and int(d2) == out_hw_int
+        as_nlkc_valid = as_nlkc_valid and int(d1) == out_hw_int
+
+    if as_nlkc_valid and not as_nckl_valid:
+        return tf.transpose(input_tensor, perm=[0, 2, 1])
+    return input_tensor
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -163,17 +203,25 @@ def make_node(
     out_h = tf.math.floordiv(h_pad - eff_k_h, stride_h) + 1
     out_w = tf.math.floordiv(w_pad - eff_k_w, stride_w) + 1
 
+    k_prod = k_h * k_w
+    out_hw = out_h * out_w
+    input_tensor = _maybe_align_col2im_input_layout(
+        input_tensor=input_tensor,
+        k_prod=k_prod,
+        out_hw=out_hw,
+    )
+
     input_shape = tf.shape(input_tensor)
     n = input_shape[0]
     ck = input_shape[1]
-    c = tf.math.floordiv(ck, k_h * k_w)
+    c = tf.math.floordiv(ck, k_prod)
 
     cols = tf.reshape(
         input_tensor,
-        tf.stack([n, c, k_h * k_w, out_h, out_w]),
+        tf.stack([n, c, k_prod, out_h, out_w]),
     )
     cols = tf.transpose(cols, [0, 1, 3, 4, 2])
-    cols = tf.reshape(cols, tf.stack([n * c, out_h, out_w, k_h * k_w]))
+    cols = tf.reshape(cols, tf.stack([n * c, out_h, out_w, k_prod]))
 
     output_shape = tf.stack([n * c, h_pad, w_pad, 1])
     output = tf.nn.conv2d_transpose(

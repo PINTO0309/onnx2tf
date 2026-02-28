@@ -129,9 +129,9 @@ def build_tensors_and_buffers(
                 if str(tensor.dtype).upper() == "STRING":
                     b.data = _serialize_tflite_string_buffer(tensor.data)
                 else:
-                    b.data = bytes(tensor.data.tobytes())
+                    b.data = tensor.data.tobytes()
             else:
-                b.data = bytes(tensor.data)
+                b.data = tensor.data if isinstance(tensor.data, bytes) else bytes(tensor.data)
             buffer_index = len(buffer_table)
             buffer_table.append(b)
             tensor_obj.buffer = buffer_index
