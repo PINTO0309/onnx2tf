@@ -89,8 +89,6 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update >/dev/null 2>&1
-        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq flatbuffers-compiler >/dev/null 2>&1
-        flatc --version
         pip install pip -U
         pip install cmake==3.26.4
         pip install psutil==5.9.5
@@ -104,7 +102,7 @@ jobs:
         pip install sng4onnx
         pip install ml_dtypes==0.5.1
         pip install tf-keras==2.19.0
-        pip install flatbuffers>=23.5.26
+        pip install "flatbuffers==25.12.19"
         pip install -e .
     - name: Download models
       run: |
@@ -120,24 +118,13 @@ jobs:
           --tflite-backend tf_converter \
           --report-filename model_status_tf_converter.md \
           --preserve-model-files
-    - name: Prepare schema artifacts for flatbuffer_direct
+    - name: Verify bundled schema artifacts for flatbuffer_direct
       run: |
         python - <<'PY'
-        from pathlib import Path
-        from onnx2tf.utils.common_functions import (
-            ensure_tflite_schema_artifacts,
-            get_tflite_schema_fbs_url,
-        )
-
-        output_dir = Path("wiki") / "test_model_pb"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Schema URL: {get_tflite_schema_fbs_url()}")
-        schema_fbs, schema_py = ensure_tflite_schema_artifacts(
-            output_folder_path=str(output_dir),
-            force_regenerate_schema_py=True,
-        )
-        print(f"Prepared: {schema_fbs}")
-        print(f"Prepared: {schema_py}")
+        import sys
+        sys.path.insert(0, ".")
+        import onnx2tf.tflite_builder.schema.schema_generated as schema_generated
+        print(f"Bundled schema is available. ModelT={hasattr(schema_generated, 'ModelT')}")
         PY
     - name: Run Model Convert Tests (flatbuffer_direct)
       run: |

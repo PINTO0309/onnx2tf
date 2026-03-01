@@ -4363,7 +4363,11 @@ def _make_einsum_fc_const_model() -> onnx.ModelProto:
 
 
 def _requires_flatbuffer_tools() -> bool:
-    return shutil.which("flatc") is not None and shutil.which("curl") is not None
+    try:
+        import onnx2tf.tflite_builder.schema.schema_generated as schema_generated
+    except Exception:
+        return False
+    return hasattr(schema_generated, "ModelT")
 
 
 @contextmanager
@@ -4451,7 +4455,7 @@ def test_tflite_backend_matrix_add() -> None:
         tf_pred = _run_add_inference(tf_tflite)
 
         if not _requires_flatbuffer_tools():
-            pytest.skip("flatbuffer_direct requires flatc and curl")
+            pytest.skip("flatbuffer_direct requires bundled schema artifacts")
 
         fb_out = os.path.join(tmpdir, "flatbuffer_direct")
         fb_tflite = _convert(model_path, fb_out, "flatbuffer_direct")
@@ -4461,7 +4465,7 @@ def test_tflite_backend_matrix_add() -> None:
         np.testing.assert_allclose(fb_pred, tf_pred, rtol=0.0, atol=1e-6)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.MonkeyPatch) -> None:
     import onnx2tf.tflite_builder as tflite_builder_backend
     from onnx2tf.tflite_builder.preprocess import clear_preprocess_rules
@@ -4512,7 +4516,7 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 @pytest.mark.parametrize(
     "name, model_factory",
     [
@@ -4586,7 +4590,7 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         _ = interpreter.get_tensor(output_details[0]["index"])
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_conv_fp16_generates_op_error_report() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_conv_fp16_model()
@@ -6871,7 +6875,7 @@ def test_flatbuffer_direct_resize_cubic_preserves_batch_dim() -> None:
     assert int(cubic_h_out.shape[0]) == 2
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tf_converter_resize_cubic_avoids_flex_resize_bicubic() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_resize_cubic_model()
@@ -6882,7 +6886,7 @@ def test_tf_converter_resize_cubic_avoids_flex_resize_bicubic() -> None:
         assert "FlexResizeBicubic" not in custom_codes
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tf_converter_resize_cubic_honors_cubic_coeff_a() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_resize_cubic_model(cubic_coeff_a=-0.5)
@@ -18229,7 +18233,7 @@ def test_flatbuffer_direct_multiclass_nms_without_onwa_matches_default_behavior(
     assert list(output_tensor.shape_signature) == [-1, 3]
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_multiclass_nms_auto_argmax_retry_avoids_custom_lowering() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_non_max_suppression_multiclass_model()
@@ -18333,7 +18337,7 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
     assert op_types.count("DIV") == 1
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_average_pool_exclude_pad_runtime_match() -> None:
     def _reference_avgpool_exclude_pad(x_nchw: np.ndarray) -> np.ndarray:
         out = np.zeros((1, 1, 2, 2), dtype=np.float32)
@@ -19707,7 +19711,7 @@ def test_flatbuffer_direct_transpose_binary_single_side_transpose_optimization(
     assert transpose_ops[0].outputs[0] in set(binary_ir.inputs)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_clip_relu6_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_clip_relu6_model()
@@ -19731,7 +19735,7 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_clip_relu_n1_to_1_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_clip_relu_n1_to_1_model()
@@ -19758,7 +19762,7 @@ def test_flatbuffer_direct_clip_relu_n1_to_1_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_prelu_model()
@@ -19769,7 +19773,7 @@ def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
         assert "PRELU" in op_names
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_leakyrelu_emits_builtin_leaky_relu() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_leakyrelu_model()
@@ -19780,7 +19784,7 @@ def test_flatbuffer_direct_leakyrelu_emits_builtin_leaky_relu() -> None:
         assert "LEAKY_RELU" in op_names
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_instance_normalization_emits_builtin_chain() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_instance_normalization_model()
@@ -19810,7 +19814,7 @@ def test_flatbuffer_direct_instance_normalization_emits_builtin_chain() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dropout_emits_builtin_chain() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_dropout_model()
@@ -19836,7 +19840,7 @@ def test_flatbuffer_direct_dropout_emits_builtin_chain() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -19860,7 +19864,7 @@ def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_enabled_generates_custom_code() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -19878,7 +19882,7 @@ def test_flatbuffer_direct_custom_op_enabled_generates_custom_code() -> None:
         assert "ONNX_EINSUM" in custom_codes
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_not_in_allowlist_fails() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -19894,7 +19898,7 @@ def test_flatbuffer_direct_custom_op_not_in_allowlist_fails() -> None:
             )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_coverage_report() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -19931,7 +19935,7 @@ def test_flatbuffer_direct_custom_op_coverage_report() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_einsum_builtin_preferred_over_custom() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_fc_const_model()
@@ -19961,7 +19965,7 @@ def test_flatbuffer_direct_einsum_builtin_preferred_over_custom() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_model()
@@ -19991,7 +19995,7 @@ def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_elu_model()
@@ -20015,7 +20019,7 @@ def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
         assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20056,7 +20060,7 @@ def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
         assert cov["schema_unresolved_ops"] == []
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -20088,7 +20092,7 @@ def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
         assert split_report["reference_mode"] == "unsplit_tflite"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gather_int32_model()
@@ -20122,7 +20126,7 @@ def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20148,7 +20152,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
         assert y.shape == (1, 3)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_const_model()
@@ -20179,7 +20183,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 @pytest.mark.parametrize(
     "quant_type, expected_multi_scale",
     [
@@ -20219,7 +20223,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_fc_quant_type(
         interpreter.allocate_tensors()
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integer_quantized_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20293,7 +20297,7 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
         assert y4.dtype == np.int16
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_reduce_model()
@@ -20320,7 +20324,7 @@ def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
         assert y.shape == (1, 1)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_percentile_calibration_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20342,7 +20346,7 @@ def test_flatbuffer_direct_dynamic_range_percentile_calibration_smoke() -> None:
         assert os.path.isfile(tflite_path)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20362,7 +20366,7 @@ def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
                 )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_generation() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -20395,7 +20399,7 @@ def test_flatbuffer_direct_accuracy_report_generation() -> None:
         assert report["overall_metrics"]["max_abs"] <= 1e-6
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20421,7 +20425,7 @@ def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
         assert "metric_threshold_judgement" in report
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20446,7 +20450,7 @@ def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
         assert report["evaluation_pass"] is False
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_plan_report_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20479,7 +20483,7 @@ def test_parse_auto_split_size_to_bytes_units() -> None:
     assert _parse_size_to_bytes("256", default_unit="MB", param_name="x") == 256 * 1_048_576
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -20502,7 +20506,7 @@ def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() 
         assert report["hard_max_bytes"] >= report["target_max_bytes"]
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -20536,7 +20540,7 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
             interpreter.allocate_tensors()
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -20562,7 +20566,7 @@ def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> Non
         assert report["allclose_summary"]["pass"] is True
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_split_accuracy_report_fail_on_threshold() -> None:
     from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
 
@@ -20604,7 +20608,7 @@ def test_split_accuracy_report_fail_on_threshold() -> None:
         assert report["evaluation_pass"] is False
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_op_coverage_report_generation() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -20630,7 +20634,7 @@ def test_flatbuffer_direct_op_coverage_report_generation() -> None:
         assert report["preprocess_report"]["summary"]["executed_rule_count"] >= 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_where_neg_inf_broadcast_no_nan() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_where_neg_inf_broadcast_model()
@@ -20684,7 +20688,7 @@ def test_flatbuffer_direct_where_neg_inf_broadcast_no_nan() -> None:
         np.testing.assert_allclose(out, expected, rtol=0.0, atol=0.0)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_elu_model()
@@ -20708,7 +20712,7 @@ def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_erf_tile_scatternd_builtin_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_erf_tile_scatternd_model()
@@ -20895,7 +20899,7 @@ def test_flatbuffer_direct_loop_while_lowers_to_builtin_ops_without_custom() -> 
     assert len(model_ir.subgraphs[1].operators) > 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_loop_static_unroll_op_coverage_reports_builtin_loop() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_loop_static_unroll_model()
@@ -20923,7 +20927,7 @@ def test_flatbuffer_direct_loop_static_unroll_op_coverage_reports_builtin_loop()
         assert loop_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_loop_while_op_coverage_reports_builtin_loop() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_loop_while_model()
@@ -21338,7 +21342,7 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     assert int(out_tensor.shape_signature[0]) == 100
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p1_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p1_model()
@@ -21366,7 +21370,7 @@ def test_flatbuffer_direct_if_p1_op_coverage_reports_builtin_if() -> None:
         assert if_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p2_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p2_model()
@@ -21394,7 +21398,7 @@ def test_flatbuffer_direct_if_p2_op_coverage_reports_builtin_if() -> None:
         assert if_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p3_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p3_model()

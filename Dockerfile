@@ -34,7 +34,7 @@ RUN set -eux; \
             psutil==5.9.5 \
             ml_dtypes==0.5.1 \
             tf-keras==2.19.0 \
-            'flatbuffers>=23.5.26' && break; \
+            'flatbuffers==25.12.19' && break; \
         if [ "${i}" -eq 3 ]; then \
             exit 1; \
         fi; \
@@ -52,20 +52,6 @@ RUN set -eux; \
         fi; \
         sleep 10; \
     done
-
-# Re-release flatc with some customizations of our own to address
-# the lack of arithmetic precision of the quantization parameters
-# https://github.com/PINTO0309/onnx2tf/issues/196
-RUN if [ "${BUILD_ARCH}" = "linux/amd64" ]; then \
-        wget -O flatc.tar.gz https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz; \
-    elif [ "${BUILD_ARCH}" = "linux/arm64" ]; then \
-        wget -O flatc.tar.gz https://github.com/PINTO0309/onnx2tf/releases/download/1.26.6/flatc_arm64.tar.gz; \
-    else \
-        echo "Unsupported architecture: ${BUILD_ARCH}" && exit 1; \
-    fi \
-    && tar -zxvf flatc.tar.gz \
-    && chmod +x flatc \
-    && mv flatc /usr/bin/
 
 ENV USERNAME=user
 ARG WKDIR=/workdir

@@ -51,6 +51,13 @@ _DEFAULT_DUMMY_VALUE_HINTS: Optional[List[str]] = None
 _DEFAULT_TFLITE_SCHEMA_REPOSITORY: str = 'google-ai-edge/LiteRT'
 _DEFAULT_TFLITE_SCHEMA_TAG: str = 'v2.1.2'
 _DEFAULT_TFLITE_SCHEMA_RELATIVE_PATH: str = 'tflite/converter/schema/schema.fbs'
+_BUNDLED_SCHEMA_DIR: str = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'tflite_builder',
+    'schema',
+)
+_BUNDLED_SCHEMA_FBS_PATH: str = os.path.join(_BUNDLED_SCHEMA_DIR, 'schema.fbs')
+_BUNDLED_SCHEMA_PY_PATH: str = os.path.join(_BUNDLED_SCHEMA_DIR, 'schema_generated.py')
 
 
 def get_tflite_schema_fbs_url() -> str:
@@ -75,6 +82,33 @@ def get_tflite_schema_fbs_url() -> str:
     return f'https://raw.githubusercontent.com/{repository}/{schema_tag}/{schema_relative_path}'
 
 
+def _get_default_tflite_schema_fbs_url() -> str:
+    return (
+        f'https://raw.githubusercontent.com/'
+        f'{_DEFAULT_TFLITE_SCHEMA_REPOSITORY}/'
+        f'{_DEFAULT_TFLITE_SCHEMA_TAG}/'
+        f'{_DEFAULT_TFLITE_SCHEMA_RELATIVE_PATH}'
+    )
+
+
+def _is_default_tflite_schema_source() -> bool:
+    return get_tflite_schema_fbs_url() == _get_default_tflite_schema_fbs_url()
+
+
+def _copy_schema_artifact_if_needed(
+    *,
+    src_path: str,
+    dst_path: str,
+    force_copy: bool = False,
+) -> bool:
+    if not os.path.isfile(src_path) or os.path.getsize(src_path) <= 0:
+        return False
+    if force_copy or not os.path.isfile(dst_path) or os.path.getsize(dst_path) <= 0:
+        shutil.copyfile(src_path, dst_path)
+        return True
+    return True
+
+
 def ensure_tflite_schema_artifacts(
     *,
     output_folder_path: str,
@@ -82,58 +116,37 @@ def ensure_tflite_schema_artifacts(
 ) -> Tuple[str, str]:
     os.makedirs(output_folder_path, exist_ok=True)
 
-    subprocess.check_output(
-        ['flatc', '--version'],
-        stderr=subprocess.PIPE,
-    )
-
     schema_fbs_path = os.path.join(output_folder_path, 'schema.fbs')
     schema_py_path = os.path.join(output_folder_path, 'schema_generated.py')
-    schema_fbs_url = get_tflite_schema_fbs_url()
-
-    def _download_schema_fbs() -> None:
-        subprocess.check_output(
-            [
-                'curl',
-                '-fL',
-                schema_fbs_url,
-                '-o',
-                schema_fbs_path,
-            ],
-            stderr=subprocess.PIPE,
+    default_schema_source = _is_default_tflite_schema_source()
+    bundled_schema_available = (
+        os.path.isfile(_BUNDLED_SCHEMA_PY_PATH)
+        and os.path.getsize(_BUNDLED_SCHEMA_PY_PATH) > 0
+        and os.path.isfile(_BUNDLED_SCHEMA_FBS_PATH)
+        and os.path.getsize(_BUNDLED_SCHEMA_FBS_PATH) > 0
+    )
+    if not bundled_schema_available:
+        raise RuntimeError(
+            'Bundled TFLite schema artifacts are missing. '
+            f'expected={_BUNDLED_SCHEMA_DIR}'
         )
 
-    if not os.path.isfile(schema_fbs_path) or os.path.getsize(schema_fbs_path) <= 0:
-        _download_schema_fbs()
+    if not default_schema_source:
+        warn(
+            'ONNX2TF_TFLITE_SCHEMA_TAG/REPOSITORY/RELATIVE_PATH are set, '
+            'but schema override is no longer used. Falling back to bundled schema artifacts.'
+        )
 
-    need_schema_py = (
-        force_regenerate_schema_py
-        or not os.path.isfile(schema_py_path)
-        or os.path.getsize(schema_py_path) <= 0
+    _copy_schema_artifact_if_needed(
+        src_path=_BUNDLED_SCHEMA_PY_PATH,
+        dst_path=schema_py_path,
+        force_copy=force_regenerate_schema_py,
     )
-    if need_schema_py:
-        flatc_cmd = [
-            'flatc',
-            '-t',
-            '--python',
-            '--gen-object-api',
-            '--gen-onefile',
-            'schema.fbs',
-        ]
-        try:
-            subprocess.check_output(
-                flatc_cmd,
-                stderr=subprocess.PIPE,
-                cwd=output_folder_path,
-            )
-        except subprocess.CalledProcessError:
-            # Retry once with a fresh schema in case of partial/corrupted download.
-            _download_schema_fbs()
-            subprocess.check_output(
-                flatc_cmd,
-                stderr=subprocess.PIPE,
-                cwd=output_folder_path,
-            )
+    _copy_schema_artifact_if_needed(
+        src_path=_BUNDLED_SCHEMA_FBS_PATH,
+        dst_path=schema_fbs_path,
+        force_copy=False,
+    )
 
     return schema_fbs_path, schema_py_path
 
@@ -5464,7 +5477,7 @@ def rewrite_tflite_inout_opname(
     onnx_graph_output_shapes: List[List[int |str]],
 ):
     """Rewrite the input/output OP name of tflite to the input/output OP name of ONNX.
-    Pre-installation of flatc is required.
+    Uses bundled schema artifacts.
 
     Parameters
     ----------
@@ -5758,13 +5771,10 @@ def rewrite_tflite_inout_opname(
         warn(
             'If you want tflite input OP name and output OP name ' +
             'to match ONNX input and output names, ' +
-            'convert them after installing "flatc". ' +
-            f'Current schema.fbs source: {get_tflite_schema_fbs_url()} ' +
-            '(override by ONNX2TF_TFLITE_SCHEMA_TAG/REPOSITORY/RELATIVE_PATH). ' +
+            'convert them using bundled schema_generated.py. ' +
+            f'Bundled schema path: {_BUNDLED_SCHEMA_DIR}. ' +
             'Also, do not use symbols such as slashes in input/output OP names. ' +
-            'To install flatc, run the following command:\n' +
-            'wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz' +
-            ' && tar -zxvf flatc.tar.gz && sudo chmod +x flatc && sudo mv flatc /usr/bin/'
+            f'error={str(ex).strip()}'
         )
 
 

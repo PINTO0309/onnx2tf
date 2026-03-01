@@ -630,24 +630,9 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - h5py==3.12.1
 - psutil==5.9.5
 - ml_dtypes==0.5.1
-- flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
-- flatbuffers>=23.1.21
-  ```bash
-  # Custom flatc binary for Ubuntu 22.04+
-  # https://github.com/PINTO0309/onnx2tf/issues/196
-
-  # x86_64/amd64 v23.5.26
-  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.16.31/flatc.tar.gz \
-  && tar -zxvf flatc.tar.gz \
-  && sudo chmod +x flatc \
-  && sudo mv flatc /usr/bin/
-
-  # arm64 v23.1.21
-  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.26.6/flatc_arm64.tar.gz \
-  && tar -zxvf flatc_arm64.tar.gz \
-  && sudo chmod +x flatc \
-  && sudo mv flatc /usr/bin/
-  ```
+- flatbuffers==25.12.19
+- Bundled TFLite schema artifacts are used for `-coion` (`--copy_onnx_input_output_names_to_tflite`).
+  No `flatbuffers-compiler`/`flatc` installation is required for normal onnx2tf conversion.
 
 ## Sample Usage
 ### 1. Install
@@ -1072,17 +1057,6 @@ If you do not like tflite input/output names such as `serving_default_*:0` or `S
 https://github.com/PINTO0309/tflite-input-output-rewriter
 
 ```bash
-# Install custom flatc
-wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
-&& tar -zxvf flatc.tar.gz \
-&& sudo chmod +x flatc \
-&& sudo mv flatc /usr/bin/ \
-&& rm flatc.tar.gz
-
-# Path check
-which flatc
-/usr/bin/flatc
-
 # Install tfliteiorewriter
 pip install -U tfliteiorewriter
 ```
@@ -1536,7 +1510,7 @@ This model calculates the similarity of features by cosine similarity. The batch
 
 ![image](https://github.com/PINTO0309/onnx2tf/assets/33194443/fb523260-c25b-4308-a856-5f0624ccb531)
 
-Convert the downloaded `OSNet` to `tflite` and `saved_model` as a variable batch. If you do not specify the `-b` or `-ois` options, onnx2tf does not change the batch size as `N`. The only important point is to convert the model with the `-osd` and `-coion` options. Note that if you use the `-coion` option, you must install `flatbuffers-compiler` with `apt-get install`, run the commands for building the environment described first in this [README](https://github.com/PINTO0309/onnx2tf#environment), or use a [Docker container](https://github.com/PINTO0309/onnx2tf#1-install).
+Convert the downloaded `OSNet` to `tflite` and `saved_model` as a variable batch. If you do not specify the `-b` or `-ois` options, onnx2tf does not change the batch size as `N`. The only important point is to convert the model with the `-osd` and `-coion` options.
 
 ```
 onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion
@@ -1579,6 +1553,7 @@ onnx2tf -i osnet_x0_25_msmt17.onnx -osd -coion
     ```
 
   To prove that the tflite structure has been converted correctly, I will convert the tflite to JSON and look at the structure.
+  (The `flatc` command below is only for manual inspection in the `tflite2json2tflite` container, not a requirement for onnx2tf conversion.)
   ```bash
   docker run --rm -it \
   -v `pwd`:/home/user/workdir \
@@ -2058,8 +2033,8 @@ optional arguments:
        `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
        If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
        If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-    10. `schema.fbs` is fetched from LiteRT by pinned tag by default (`v2.1.2`), and can be overridden by:
-       `ONNX2TF_TFLITE_SCHEMA_REPOSITORY`, `ONNX2TF_TFLITE_SCHEMA_TAG`, `ONNX2TF_TFLITE_SCHEMA_RELATIVE_PATH`.
+    10. Bundled schema artifacts (`onnx2tf/tflite_builder/schema/schema.fbs` and `schema_generated.py`) are used.
+        No external `flatc` invocation is required in normal flows.
     11. flatbuffer_direct quantization precision controls are configurable via environment variables:
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
