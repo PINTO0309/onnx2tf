@@ -1919,10 +1919,10 @@ def build_qlinear_global_average_pool_op(node: Any, ctx: Any) -> None:
                     last_op.options = last_opts
         return True
 
-    # Prefer the dequantize path for numerical parity with ONNX QLinearGlobalAveragePool.
-    # Quantized AVERAGE_POOL_2D kernels can introduce backend-specific rounding
-    # differences that amplify in later QLinear branches.
-    _lower_via_dequantize_mean_quantize()
+    # Prefer quantized builtin lowering when possible so layout optimizations can
+    # propagate NHWC contracts through concat/conv chains.
+    if not _lower_via_quantized_global_average_pool():
+        _lower_via_dequantize_mean_quantize()
 
 
 def build_qlinear_concat_op(node: Any, ctx: Any) -> None:

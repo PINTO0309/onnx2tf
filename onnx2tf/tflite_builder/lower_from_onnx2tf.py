@@ -334,8 +334,10 @@ def _align_boundary_signature_to_current_shape(
         return None
 
     # Fast-path when no layout permutation is observed.
-    positive_axes = [int(i) for i, v in enumerate(signature) if int(v) > 1]
-    if len(positive_axes) > 0 and all(int(signature[i]) == int(shape[i]) for i in positive_axes):
+    # Keep boundary axis contracts (including singleton dims) whenever the
+    # current static shape is compatible on the same axes.
+    static_axes = [int(i) for i, v in enumerate(signature) if int(v) >= 0]
+    if len(static_axes) > 0 and all(int(signature[i]) == int(shape[i]) for i in static_axes):
         return [int(v) for v in list(signature)]
 
     aligned = [-1 for _ in range(len(signature))]
@@ -48541,6 +48543,11 @@ def lower_onnx_to_ir(
 
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)
+    # Final boundary-signature restore:
+    # late static-shape reconciliations may overwrite graph-boundary dynamic
+    # contracts (e.g. NMS selected_indices leading axis).
+    _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _sanitize_static_shape_signature_consistency(model_ir)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_bar.close()

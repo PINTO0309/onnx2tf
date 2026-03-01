@@ -75,6 +75,69 @@ def get_tflite_schema_fbs_url() -> str:
     return f'https://raw.githubusercontent.com/{repository}/{schema_tag}/{schema_relative_path}'
 
 
+def ensure_tflite_schema_artifacts(
+    *,
+    output_folder_path: str,
+    force_regenerate_schema_py: bool = False,
+) -> Tuple[str, str]:
+    os.makedirs(output_folder_path, exist_ok=True)
+
+    subprocess.check_output(
+        ['flatc', '--version'],
+        stderr=subprocess.PIPE,
+    )
+
+    schema_fbs_path = os.path.join(output_folder_path, 'schema.fbs')
+    schema_py_path = os.path.join(output_folder_path, 'schema_generated.py')
+    schema_fbs_url = get_tflite_schema_fbs_url()
+
+    def _download_schema_fbs() -> None:
+        subprocess.check_output(
+            [
+                'curl',
+                '-fL',
+                schema_fbs_url,
+                '-o',
+                schema_fbs_path,
+            ],
+            stderr=subprocess.PIPE,
+        )
+
+    if not os.path.isfile(schema_fbs_path) or os.path.getsize(schema_fbs_path) <= 0:
+        _download_schema_fbs()
+
+    need_schema_py = (
+        force_regenerate_schema_py
+        or not os.path.isfile(schema_py_path)
+        or os.path.getsize(schema_py_path) <= 0
+    )
+    if need_schema_py:
+        flatc_cmd = [
+            'flatc',
+            '-t',
+            '--python',
+            '--gen-object-api',
+            '--gen-onefile',
+            'schema.fbs',
+        ]
+        try:
+            subprocess.check_output(
+                flatc_cmd,
+                stderr=subprocess.PIPE,
+                cwd=output_folder_path,
+            )
+        except subprocess.CalledProcessError:
+            # Retry once with a fresh schema in case of partial/corrupted download.
+            _download_schema_fbs()
+            subprocess.check_output(
+                flatc_cmd,
+                stderr=subprocess.PIPE,
+                cwd=output_folder_path,
+            )
+
+    return schema_fbs_path, schema_py_path
+
+
 def set_dummy_shape_hints(shape_hints: Optional[List[str]]) -> None:
     global _DEFAULT_DUMMY_SHAPE_HINTS
     _DEFAULT_DUMMY_SHAPE_HINTS = shape_hints
@@ -5499,42 +5562,12 @@ def rewrite_tflite_inout_opname(
             return None
 
     try:
-        # Check to see if flatc is installed
-        result = subprocess.check_output(
-            [
-                'flatc', '--version'
-            ],
-            stderr=subprocess.PIPE
-        ).decode('utf-8')
-
-        # Download schema.fbs if it does not exist
-        if not os.path.isfile(f'{output_folder_path}/schema.fbs'):
-            schema_fbs_url = get_tflite_schema_fbs_url()
-            result = subprocess.check_output(
-                [
-                    'curl',
-                    '-fL',
-                    schema_fbs_url,
-                    '-o',
-                    f'{output_folder_path}/schema.fbs'
-                ],
-                stderr=subprocess.PIPE
-            ).decode('utf-8')
-
-        # Generate Python API from schema
-        result = subprocess.check_output(
-            [
-                'flatc', '-t',
-                '--python',
-                '--gen-object-api',
-                '--gen-onefile',
-                'schema.fbs',
-            ],
-            stderr=subprocess.PIPE,
-            cwd=output_folder_path
-        ).decode('utf-8')
+        _, schema_py_path = ensure_tflite_schema_artifacts(
+            output_folder_path=output_folder_path,
+            force_regenerate_schema_py=False,
+        )
         schema_tflite = {}
-        with open(f'{output_folder_path}/schema_generated.py') as f:
+        with open(schema_py_path) as f:
             exec(f.read(), schema_tflite)
 
         tflite_file_path = f'{output_folder_path}/{tflite_file_name}'

@@ -120,19 +120,24 @@ jobs:
           --tflite-backend tf_converter \
           --report-filename model_status_tf_converter.md \
           --preserve-model-files
-    - name: Prefetch schema.fbs for flatbuffer_direct
+    - name: Prepare schema artifacts for flatbuffer_direct
       run: |
         python - <<'PY'
-        import subprocess
         from pathlib import Path
-        from onnx2tf.utils.common_functions import get_tflite_schema_fbs_url
+        from onnx2tf.utils.common_functions import (
+            ensure_tflite_schema_artifacts,
+            get_tflite_schema_fbs_url,
+        )
 
-        schema_url = get_tflite_schema_fbs_url()
-        schema_path = Path("wiki") / "test_model_pb" / "schema.fbs"
-        schema_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading schema.fbs from: {schema_url}")
-        subprocess.check_call(["curl", "-fL", schema_url, "-o", str(schema_path)])
-        print(f"Saved: {schema_path}")
+        output_dir = Path("wiki") / "test_model_pb"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Schema URL: {get_tflite_schema_fbs_url()}")
+        schema_fbs, schema_py = ensure_tflite_schema_artifacts(
+            output_folder_path=str(output_dir),
+            force_regenerate_schema_py=True,
+        )
+        print(f"Prepared: {schema_fbs}")
+        print(f"Prepared: {schema_py}")
         PY
     - name: Run Model Convert Tests (flatbuffer_direct)
       run: |

@@ -3425,3 +3425,14 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
     output_tensor = ctx.model_ir.tensors[output_name]
     output_tensor.shape = [1, 3]
     output_tensor.shape_signature = [-1, 3]
+    if str(output_name) in set(ctx.graph_output_names):
+        dynamic_outputs = ctx.model_ir.metadata.setdefault(
+            "onnx_dynamic_output_tensor_names",
+            [],
+        )
+        if isinstance(dynamic_outputs, list) and str(output_name) not in set(
+            str(v) for v in dynamic_outputs
+        ):
+            # NMS selected-indices length is runtime-dependent even when ONNX
+            # declares a static max_output upper bound.
+            dynamic_outputs.append(str(output_name))
