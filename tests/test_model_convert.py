@@ -10,7 +10,6 @@ warnings.simplefilter(action='ignore', category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
-import glob
 import platform
 import shutil
 import sys
@@ -20,6 +19,10 @@ import tensorflow as tf
 import onnx2tf
 
 _CFG = {}
+_SCHEMA_ARTIFACT_FILENAMES = (
+    'schema.fbs',
+    'schema_generated.py',
+)
 
 
 class Results:
@@ -61,6 +64,7 @@ class Results:
         self._report(f'onnx | {onnx.__version__}')
         self._report(f'onnx2tf | {_CFG["onnx2tf_version_md"]}')
         self._report(f'tensorflow | {tf.__version__}')
+        self._report(f'tflite_backend | {_CFG["tflite_backend"]}')
 
         self._report('\n## Summary')
         self._report(f'Value | Count')
@@ -95,6 +99,38 @@ def _del_location(loc):
             os.remove(loc)
 
 
+def _is_flatbuffer_direct_backend():
+    return str(_CFG.get('tflite_backend', '')).lower() == 'flatbuffer_direct'
+
+
+def _reset_output_directory(*, preserve_schema_artifacts=False):
+    output_directory = _CFG.get('output_directory', None)
+    if output_directory is None:
+        return
+    output_directory = os.path.normpath(output_directory)
+
+    preserved_files = {}
+    if (
+        preserve_schema_artifacts
+        and not _CFG['dry_run']
+        and os.path.isdir(output_directory)
+    ):
+        for filename in _SCHEMA_ARTIFACT_FILENAMES:
+            file_path = os.path.join(output_directory, filename)
+            if os.path.isfile(file_path):
+                with open(file_path, 'rb') as f:
+                    preserved_files[filename] = f.read()
+
+    _del_location(output_directory)
+    os.makedirs(output_directory, exist_ok=True)
+
+    if not _CFG['dry_run'] and len(preserved_files) > 0:
+        for filename, file_bytes in preserved_files.items():
+            file_path = os.path.join(output_directory, filename)
+            with open(file_path, 'wb') as f:
+                f.write(file_bytes)
+
+
 def _report_check_model(model):
     """Use ONNX checker to test if model is valid and return a report string."""
     try:
@@ -109,21 +145,34 @@ def _report_check_model(model):
 def _report_convert_model(file_path):
     """Test conversion and returns a report string."""
     try:
+        disable_model_save = True
+        # Keep tf_converter behavior as lightweight conversion-check only, but
+        # allow flatbuffer_direct fast path by avoiding this blocker.
+        if _CFG['tflite_backend'] == 'flatbuffer_direct':
+            disable_model_save = False
         onnx2tf.convert(
             input_onnx_file_path=file_path,
             output_folder_path=_CFG['output_directory'],
             output_nms_with_dynamic_tensor=True,
             disable_strict_mode=True,
-            disable_model_save=True,
+            disable_model_save=disable_model_save,
+            tflite_backend=_CFG['tflite_backend'],
+            not_use_onnxsim=_CFG['not_use_onnxsim'],
             verbosity="error",
         )
-        os.remove(file_path)
-        for tflitepath in glob.glob(f"{_CFG['output_directory']}/*.tflite"):
-            os.remove(tflitepath)
+        if not _CFG['preserve_model_files'] and os.path.exists(file_path):
+            os.remove(file_path)
+        # Clean all conversion artifacts (tflite/json/tmp dirs) to keep each
+        # model run isolated and avoid disk bloat in CI.
+        _reset_output_directory(
+            preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+        )
         return ''
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
-        _del_location(_CFG['output_directory'])
+        _reset_output_directory(
+            preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+        )
         stack_trace = str(ex).strip().split('\n')
         if len(stack_trace) > 1:
             err_msg = stack_trace[-1].strip()
@@ -190,6 +239,10 @@ def _configure(
     output_dir=tempfile.gettempdir(),
     verbose=False,
     dry_run=False,
+    tflite_backend='tf_converter',
+    report_filename='model_status.md',
+    preserve_model_files=False,
+    not_use_onnxsim=False,
 ):
     """Validate the configuration."""
     if not os.path.isdir(models_dir):
@@ -200,6 +253,10 @@ def _configure(
     _CFG['models_dir'] = os.path.normpath(models_dir)
     _CFG['verbose'] = verbose
     _CFG['dry_run'] = dry_run
+    _CFG['tflite_backend'] = str(tflite_backend)
+    _CFG['report_filename'] = str(report_filename)
+    _CFG['preserve_model_files'] = bool(preserve_model_files)
+    _CFG['not_use_onnxsim'] = bool(not_use_onnxsim)
 
     _configure_env()
 
@@ -215,8 +272,6 @@ def _configure_env():
     repo = os.getenv('GITHUB_REPOSITORY')
     sha = os.getenv('GITHUB_SHA')
     run_id = os.getenv('GITHUB_RUN_ID')
-
-    _CFG['report_filename'] = 'model_status.md'
 
     if repo:
         # actions ([run_id](url))
@@ -240,6 +295,10 @@ def model_convert_report(
     output_dir=tempfile.gettempdir(),
     verbose=False,
     dry_run=False,
+    tflite_backend='tf_converter',
+    report_filename='model_status.md',
+    preserve_model_files=False,
+    not_use_onnxsim=False,
 ):
     """model_convert_report.
 
@@ -253,6 +312,14 @@ def model_convert_report(
         verbose output
     dry_run: bool
         process directory without doing conversion
+    tflite_backend: str
+        backend to use for conversion ("tf_converter" or "flatbuffer_direct")
+    report_filename: str
+        output markdown filename
+    preserve_model_files: bool
+        do not remove source .onnx files after conversion
+    not_use_onnxsim: bool
+        skip onnx-simplifier optimization before conversion
 
     Returns
     ----------
@@ -260,9 +327,20 @@ def model_convert_report(
         Results object containing detailed status and counts for the report.
     """
 
-    _configure(models_dir, output_dir, verbose, dry_run)
+    _configure(
+        models_dir=models_dir,
+        output_dir=output_dir,
+        verbose=verbose,
+        dry_run=dry_run,
+        tflite_backend=tflite_backend,
+        report_filename=report_filename,
+        preserve_model_files=preserve_model_files,
+        not_use_onnxsim=not_use_onnxsim,
+    )
     _del_location(_CFG['report_filename'])
-    _del_location(_CFG['output_directory'])
+    _reset_output_directory(
+        preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+    )
     _del_location(_CFG['untar_directory'])
 
     # run tests first, but append to report after summary
@@ -316,12 +394,37 @@ if __name__ == '__main__':
         action='store_true',
         help='process directory without doing conversion'
     )
+    parser.add_argument(
+        '--tflite-backend',
+        default='tf_converter',
+        choices=['tf_converter', 'flatbuffer_direct'],
+        help='tflite backend for conversion (default: tf_converter)'
+    )
+    parser.add_argument(
+        '--report-filename',
+        default='model_status.md',
+        help='report markdown filename (default: model_status.md)'
+    )
+    parser.add_argument(
+        '--preserve-model-files',
+        action='store_true',
+        help='do not remove source .onnx files after conversion'
+    )
+    parser.add_argument(
+        '--not-use-onnxsim',
+        action='store_true',
+        help='skip onnxsim optimization before conversion'
+    )
     args = parser.parse_args()
     report = model_convert_report(
-        args.models,
-        args.output,
-        args.verbose,
-        args.dry_run,
+        models_dir=args.models,
+        output_dir=args.output,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        tflite_backend=args.tflite_backend,
+        report_filename=args.report_filename,
+        preserve_model_files=args.preserve_model_files,
+        not_use_onnxsim=args.not_use_onnxsim,
     )
     report.generate_report()
     print(report.summary())

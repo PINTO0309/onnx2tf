@@ -6,10 +6,13 @@ import os
 import queue as queue_module
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import onnx
+
+if TYPE_CHECKING:
+    from ai_edge_litert.interpreter import Interpreter as LiteRTInterpreter
 
 
 def _normalize_tensor_name(name: str) -> str:
@@ -21,7 +24,7 @@ def _normalize_tensor_name(name: str) -> str:
     return normalized
 
 
-def _create_tflite_interpreter(model_path: str) -> Any:
+def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
     from ai_edge_litert.interpreter import (
         Interpreter,
         OpResolverType,
@@ -1032,12 +1035,25 @@ def _run_worker_in_subprocess(
     start_time = time.monotonic()
     timeout_sec_float = float(timeout_sec)
     try:
-        try:
-            # Read worker result first. join-before-get can block indefinitely when
-            # worker exits while queue feeder is back-pressured by large payloads.
-            result = result_queue.get(timeout=timeout_sec_float)
-        except queue_module.Empty:
-            timed_out = True
+        # Read worker result first. join-before-get can block indefinitely when
+        # worker exits while queue feeder is back-pressured by large payloads.
+        #
+        # Also poll worker liveness in short intervals so abnormal worker exits
+        # (e.g. SIGABRT/SIGSEGV) are surfaced immediately instead of waiting for
+        # the full queue timeout.
+        poll_interval_sec = 1.0
+        while True:
+            elapsed = max(0.0, float(time.monotonic() - start_time))
+            remaining = max(0.0, timeout_sec_float - elapsed)
+            if remaining <= 0.0:
+                timed_out = True
+                break
+            try:
+                result = result_queue.get(timeout=min(poll_interval_sec, remaining))
+                break
+            except queue_module.Empty:
+                if not process.is_alive():
+                    break
     finally:
         # Ensure subprocess is fully reaped.
         elapsed = max(0.0, float(time.monotonic() - start_time))

@@ -8,6 +8,53 @@ from onnx2tf.tflite_builder.ir import OperatorIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
+def _normalize_spatial_pair(values: Any, *, default: int, label: str, node_name: str) -> list[int]:
+    vals = [int(v) for v in list(values)] if values is not None else []
+    if len(vals) == 0:
+        return [int(default), int(default)]
+    if len(vals) == 1:
+        return [int(vals[0]), int(vals[0])]
+    if len(vals) == 2:
+        return [int(vals[0]), int(vals[1])]
+    raise NotImplementedError(
+        f"{label} must have length 1 or 2 for Col2Im. op={node_name} {label}={vals}"
+    )
+
+
+def _normalize_col2im_pads(values: Any, *, node_name: str) -> list[int]:
+    pads = [int(v) for v in list(values)] if values is not None else []
+    if len(pads) == 0:
+        return [0, 0, 0, 0]
+    if len(pads) == 2:
+        return [int(pads[0]), int(pads[1]), int(pads[0]), int(pads[1])]
+    if len(pads) == 4:
+        return [int(pads[0]), int(pads[1]), int(pads[2]), int(pads[3])]
+    raise NotImplementedError(
+        f"pads must have length 2 or 4 for Col2Im. op={node_name} pads={pads}"
+    )
+
+
+def _add_reshape_operator(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    new_shape: list[int],
+) -> None:
+    shape_const = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape",
+        np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_const],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in list(new_shape)]},
+        )
+    )
+
+
 def _tensor_signature(ctx: Any, tensor_name: str) -> list[int]:
     tensor = ctx.model_ir.tensors[tensor_name]
     if tensor.shape_signature is not None:
@@ -380,6 +427,91 @@ def _extract_1d_pads(raw_pads: Any, *, op_name: str, node_name: str) -> list[int
     )
 
 
+def _conv1d_output_length(
+    input_width: int,
+    *,
+    kernel: int,
+    stride: int,
+    dilation: int,
+    pad_left: int,
+    pad_right: int,
+) -> int:
+    effective_kernel = int((int(kernel) - 1) * int(dilation) + 1)
+    numer = int(input_width) + int(pad_left) + int(pad_right) - int(effective_kernel)
+    return int(numer // int(stride) + 1)
+
+
+def _select_conv1d_pads_for_static_output(
+    *,
+    raw_pads: Any,
+    default_pads: list[int],
+    input_width: int,
+    output_width: int,
+    kernel: int,
+    stride: int,
+    dilation: int,
+) -> list[int]:
+    if int(input_width) <= 0 or int(output_width) <= 0:
+        return [int(default_pads[0]), int(default_pads[1])]
+
+    raw = [int(v) for v in list(raw_pads)]
+    candidates: list[list[int]] = [
+        [int(default_pads[0]), int(default_pads[1])],
+    ]
+    if len(raw) == 1:
+        v = int(raw[0])
+        candidates.extend(
+            [
+                [v, 0],
+                [0, v],
+                [v, v],
+            ]
+        )
+    elif len(raw) == 2:
+        candidates.append([int(raw[0]), int(raw[1])])
+    elif len(raw) == 4:
+        # Legacy 1D normalization often repeats the begin/end pair as [b, e, b, e].
+        if int(raw[0]) == int(raw[2]) and int(raw[1]) == int(raw[3]):
+            candidates.append([int(raw[0]), int(raw[1])])
+        # Generic rank-2 style [h0, w0, h1, w1] -> pick width axis.
+        if int(raw[0]) == 0 and int(raw[2]) == 0:
+            candidates.append([int(raw[1]), int(raw[3])])
+        if int(raw[1]) == 0 and int(raw[3]) == 0:
+            candidates.append([int(raw[0]), int(raw[2])])
+        if int(raw[0]) == int(raw[1]) and int(raw[2]) == int(raw[3]):
+            candidates.append([int(raw[0]), int(raw[2])])
+        candidates.extend(
+            [
+                [int(raw[0]), int(raw[1])],
+                [int(raw[1]), int(raw[3])],
+                [int(raw[0]), int(raw[2])],
+            ]
+        )
+
+    deduped: list[list[int]] = []
+    for cand in candidates:
+        c0 = int(cand[0])
+        c1 = int(cand[1])
+        if c0 < 0 or c1 < 0:
+            continue
+        normalized = [c0, c1]
+        if normalized not in deduped:
+            deduped.append(normalized)
+
+    for cand in deduped:
+        out_len = _conv1d_output_length(
+            int(input_width),
+            kernel=int(kernel),
+            stride=int(stride),
+            dilation=int(dilation),
+            pad_left=int(cand[0]),
+            pad_right=int(cand[1]),
+        )
+        if int(out_len) == int(output_width):
+            return [int(cand[0]), int(cand[1])]
+    return [int(default_pads[0]), int(default_pads[1])]
+
+
 def _build_conv1d_via_conv2d(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     weight_name = node.inputs[1].name
@@ -449,8 +581,9 @@ def _build_conv1d_via_conv2d(node: Any, ctx: Any) -> None:
     )
 
     kernel_1d = int(weights.shape[2])
+    raw_pads_1d = node.attrs.get("pads", [0, 0])
     pads_1d = _extract_1d_pads(
-        node.attrs.get("pads", [0, 0]),
+        raw_pads_1d,
         op_name="Conv",
         node_name=str(node.name),
     )
@@ -460,6 +593,15 @@ def _build_conv1d_via_conv2d(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"Conv1D strides/dilations must be length 1. op={node.name} strides={strides_1d} dilations={dilations_1d}"
         )
+    pads_1d = _select_conv1d_pads_for_static_output(
+        raw_pads=raw_pads_1d,
+        default_pads=pads_1d,
+        input_width=int(input_shape[2]),
+        output_width=int(output_shape[2]),
+        kernel=int(kernel_1d),
+        stride=int(strides_1d[0]),
+        dilation=int(dilations_1d[0]),
+    )
 
     attrs_2d = dict(node.attrs)
     attrs_2d["kernel_shape"] = [1, kernel_1d]
@@ -601,6 +743,323 @@ def _build_conv_transpose1d_via_conv2d(node: Any, ctx: Any) -> None:
             options={"squeezeDims": [2]},
         )
     )
+
+
+def build_col2im_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    image_shape_name = node.inputs[1].name
+    block_shape_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(image_shape_name)
+    ctx.ensure_tensor(block_shape_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    if len(input_shape) != 3 or len(output_shape) != 4:
+        raise NotImplementedError(
+            f"Col2Im expects input rank=3 and output rank=4. op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NotImplementedError(
+            f"Col2Im requires static positive input/output shapes in flatbuffer_direct. op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    supported_dtypes = {"FLOAT16", "FLOAT32"}
+    if input_dtype not in supported_dtypes or output_dtype not in supported_dtypes:
+        raise NotImplementedError(
+            "Col2Im currently supports FLOAT16/FLOAT32 input/output in flatbuffer_direct. "
+            f"op={node.name} input_dtype={input_dtype} output_dtype={output_dtype}"
+        )
+
+    compute_dtype = "FLOAT32" if "FLOAT32" in {input_dtype, output_dtype} else "FLOAT16"
+    compute_np_dtype = np.float32 if compute_dtype == "FLOAT32" else np.float16
+
+    image_shape_values = ctx.get_constant_array(image_shape_name)
+    if image_shape_values is None:
+        raise NotImplementedError(
+            f"Col2Im image_shape input must be constant for flatbuffer_direct. op={node.name}"
+        )
+    image_shape_values = np.asarray(image_shape_values).reshape(-1)
+    if int(image_shape_values.size) != 2:
+        raise NotImplementedError(
+            f"Col2Im image_shape must contain 2 elements [H, W]. op={node.name} shape={list(image_shape_values.shape)}"
+        )
+    h_img = int(image_shape_values[0])
+    w_img = int(image_shape_values[1])
+    if h_img <= 0 or w_img <= 0:
+        raise NotImplementedError(
+            f"Col2Im image_shape values must be > 0. op={node.name} image_shape={[h_img, w_img]}"
+        )
+
+    block_shape_values = ctx.get_constant_array(block_shape_name)
+    if block_shape_values is None:
+        raise NotImplementedError(
+            f"Col2Im block_shape input must be constant for flatbuffer_direct. op={node.name}"
+        )
+    block_shape_values = np.asarray(block_shape_values).reshape(-1)
+    if int(block_shape_values.size) != 2:
+        raise NotImplementedError(
+            f"Col2Im block_shape must contain 2 elements [kH, kW]. op={node.name} shape={list(block_shape_values.shape)}"
+        )
+    k_h = int(block_shape_values[0])
+    k_w = int(block_shape_values[1])
+    if k_h <= 0 or k_w <= 0:
+        raise NotImplementedError(
+            f"Col2Im block_shape values must be > 0. op={node.name} block_shape={[k_h, k_w]}"
+        )
+
+    dilations = _normalize_spatial_pair(
+        node.attrs.get("dilations", [1, 1]),
+        default=1,
+        label="dilations",
+        node_name=str(node.name),
+    )
+    strides = _normalize_spatial_pair(
+        node.attrs.get("strides", [1, 1]),
+        default=1,
+        label="strides",
+        node_name=str(node.name),
+    )
+    pads = _normalize_col2im_pads(node.attrs.get("pads", [0, 0, 0, 0]), node_name=str(node.name))
+    if any(int(v) < 0 for v in list(dilations) + list(strides) + list(pads)):
+        raise NotImplementedError(
+            f"Col2Im dilations/strides/pads must be non-negative. op={node.name} dilations={dilations} strides={strides} pads={pads}"
+        )
+    if any(int(v) <= 0 for v in strides + dilations):
+        raise NotImplementedError(
+            f"Col2Im dilations/strides must be > 0. op={node.name} dilations={dilations} strides={strides}"
+        )
+
+    dilation_h, dilation_w = [int(v) for v in dilations]
+    stride_h, stride_w = [int(v) for v in strides]
+    pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in pads]
+    eff_k_h = (int(k_h) - 1) * int(dilation_h) + 1
+    eff_k_w = (int(k_w) - 1) * int(dilation_w) + 1
+    h_pad = int(h_img) + int(pad_top) + int(pad_bottom)
+    w_pad = int(w_img) + int(pad_left) + int(pad_right)
+    out_h = int((int(h_pad) - int(eff_k_h)) // int(stride_h) + 1)
+    out_w = int((int(w_pad) - int(eff_k_w)) // int(stride_w) + 1)
+    if out_h <= 0 or out_w <= 0:
+        raise NotImplementedError(
+            f"Col2Im produced non-positive folded spatial shape. op={node.name} out_h={out_h} out_w={out_w}"
+        )
+
+    n = int(input_shape[0])
+    dim1 = int(input_shape[1])
+    dim2 = int(input_shape[2])
+    k_prod = int(k_h) * int(k_w)
+    out_hw = int(out_h) * int(out_w)
+    canonical_valid = bool(int(dim1) % int(k_prod) == 0 and int(dim2) == int(out_hw))
+    swapped_valid = bool(int(dim2) % int(k_prod) == 0 and int(dim1) == int(out_hw))
+    expected_c = int(output_shape[1])
+    if canonical_valid and int(dim1) // int(k_prod) != int(expected_c):
+        canonical_valid = False
+    if swapped_valid and int(dim2) // int(k_prod) != int(expected_c):
+        swapped_valid = False
+    if not canonical_valid and not swapped_valid:
+        raise NotImplementedError(
+            "Col2Im input layout could not be resolved as [N,C*K,L] or [N,L,C*K]. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape} "
+            f"k_prod={k_prod} out_hw={out_hw}"
+        )
+
+    compute_input_name = input_name
+    if input_dtype != compute_dtype:
+        compute_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_col2im_input_{compute_dtype.lower()}",
+            dtype=compute_dtype,
+            shape=[int(v) for v in list(input_shape)],
+        )
+        _clone_shape_signature(ctx, input_name, compute_input_name)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[compute_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    aligned_input_name = compute_input_name
+    aligned_dim1 = int(dim1)
+    aligned_dim2 = int(dim2)
+    if swapped_valid and not canonical_valid:
+        aligned_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_col2im_input_aligned",
+            dtype=compute_dtype,
+            shape=[int(n), int(dim2), int(dim1)],
+        )
+        make_transpose(
+            ctx=ctx,
+            input_name=compute_input_name,
+            output_name=aligned_input_name,
+            perm_values=[0, 2, 1],
+        )
+        aligned_dim1 = int(dim2)
+        aligned_dim2 = int(dim1)
+
+    if int(aligned_dim2) != int(out_hw) or int(aligned_dim1) % int(k_prod) != 0:
+        raise NotImplementedError(
+            "Col2Im aligned input is inconsistent with folded shape. "
+            f"op={node.name} aligned_dim1={aligned_dim1} aligned_dim2={aligned_dim2} "
+            f"k_prod={k_prod} out_hw={out_hw}"
+        )
+    c = int(aligned_dim1) // int(k_prod)
+    if [int(output_shape[0]), int(output_shape[1]), int(output_shape[2]), int(output_shape[3])] != [
+        int(n),
+        int(c),
+        int(h_img),
+        int(w_img),
+    ]:
+        raise NotImplementedError(
+            f"Col2Im output shape mismatch. op={node.name} "
+            f"expected={[n, c, h_img, w_img]} actual={output_shape}"
+        )
+
+    cols_nckhw_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_cols_nckhw",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(k_prod), int(out_h), int(out_w)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=aligned_input_name,
+        output_name=cols_nckhw_name,
+        new_shape=[int(n), int(c), int(k_prod), int(out_h), int(out_w)],
+    )
+
+    # ONNX Col2Im canonical lowering:
+    # [N, C, K, OH, OW] -> [N, C, OH, OW, K] -> [N*C, OH, OW, K] -> [N*C, K, OH, OW]
+    cols_nchwk_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_cols_nchwk",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(out_h), int(out_w), int(k_prod)],
+    )
+    make_transpose(
+        ctx=ctx,
+        input_name=cols_nckhw_name,
+        output_name=cols_nchwk_name,
+        perm_values=[0, 1, 3, 4, 2],
+    )
+
+    cols_folded_nhwc_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_cols_folded_nhwc",
+        dtype=compute_dtype,
+        shape=[int(n) * int(c), int(out_h), int(out_w), int(k_prod)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=cols_nchwk_name,
+        output_name=cols_folded_nhwc_name,
+        new_shape=[int(n) * int(c), int(out_h), int(out_w), int(k_prod)],
+    )
+
+    cols_folded_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_cols_folded_nchw",
+        dtype=compute_dtype,
+        shape=[int(n) * int(c), int(k_prod), int(out_h), int(out_w)],
+    )
+    make_transpose(
+        ctx=ctx,
+        input_name=cols_folded_nhwc_name,
+        output_name=cols_folded_name,
+        perm_values=[0, 3, 1, 2],
+    )
+
+    ky = np.repeat(np.arange(int(k_h), dtype=np.int32), int(k_w))
+    kx = np.tile(np.arange(int(k_w), dtype=np.int32), int(k_h))
+    positions = ky * int(dilation_h) * int(eff_k_w) + kx * int(dilation_w)
+    one_hot = np.eye(int(eff_k_h) * int(eff_k_w), dtype=np.float32)[positions]
+    kernel_cin_cout_hw = np.reshape(one_hot, [int(k_prod), int(eff_k_h), int(eff_k_w)])
+    kernel_cin_cout_hw = np.expand_dims(kernel_cin_cout_hw, axis=1)
+    kernel_cin_cout_hw = np.asarray(kernel_cin_cout_hw, dtype=compute_np_dtype)
+    kernel_name = ctx.add_const_tensor(
+        f"{node.name}_col2im_transpose_conv_kernel",
+        kernel_cin_cout_hw,
+    )
+
+    deconv_output_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_transpose_conv_out",
+        dtype=compute_dtype,
+        shape=[int(n) * int(c), 1, int(h_pad), int(w_pad)],
+    )
+    pseudo_node = _make_pseudo_node(
+        base_node=node,
+        input_names=[cols_folded_name, kernel_name],
+        output_name=deconv_output_name,
+        attrs={
+            "group": 1,
+            "kernel_shape": [int(eff_k_h), int(eff_k_w)],
+            "strides": [int(stride_h), int(stride_w)],
+            "dilations": [1, 1],
+            "pads": [0, 0, 0, 0],
+            "output_padding": [0, 0],
+            "auto_pad": "VALID",
+        },
+    )
+    build_conv_transpose_op(pseudo_node, ctx)
+
+    folded_padded_name = ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_folded_padded",
+        dtype=compute_dtype,
+        shape=[int(n), int(c), int(h_pad), int(w_pad)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=deconv_output_name,
+        output_name=folded_padded_name,
+        new_shape=[int(n), int(c), int(h_pad), int(w_pad)],
+    )
+
+    output_compute_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+        f"{node.name}_col2im_output_{compute_dtype.lower()}",
+        dtype=compute_dtype,
+        shape=[int(v) for v in list(output_shape)],
+    )
+    if any(int(v) != 0 for v in [pad_top, pad_left, pad_bottom, pad_right]):
+        crop_begin = ctx.add_const_tensor(
+            f"{node.name}_col2im_crop_begin",
+            np.asarray([0, 0, int(pad_top), int(pad_left)], dtype=np.int32),
+        )
+        crop_size = ctx.add_const_tensor(
+            f"{node.name}_col2im_crop_size",
+            np.asarray([int(n), int(c), int(h_img), int(w_img)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[folded_padded_name, crop_begin, crop_size],
+                outputs=[output_compute_name],
+            )
+        )
+    else:
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=folded_padded_name,
+            output_name=output_compute_name,
+            new_shape=[int(n), int(c), int(h_img), int(w_img)],
+        )
+
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[output_compute_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def _dummy_input_from_ort_meta(meta: Any) -> np.ndarray:

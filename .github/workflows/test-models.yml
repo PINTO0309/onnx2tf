@@ -88,6 +88,7 @@ jobs:
         python-version: '3.12'
     - name: Install dependencies
       run: |
+        sudo apt-get update >/dev/null 2>&1
         pip install pip -U
         pip install cmake==3.26.4
         pip install psutil==5.9.5
@@ -101,16 +102,58 @@ jobs:
         pip install sng4onnx
         pip install ml_dtypes==0.5.1
         pip install tf-keras==2.19.0
-        pip install flatbuffers>=23.5.26
+        pip install "flatbuffers==25.12.19"
         pip install -e .
     - name: Download models
       run: |
         curl "https://s3.us-central-1.wasabisys.com/onnx2tf-en/models/resources.tar.gz" -o resources.tar.gz
         tar -zxvf resources.tar.gz
         rm resources.tar.gz
-    - name: Run Model Convert Tests
+    - name: Run Model Convert Tests (tf_converter)
       run: |
-        python tests/test_model_convert.py -m models -o wiki -v
+        python tests/test_model_convert.py \
+          -m models \
+          -o wiki \
+          -v \
+          --tflite-backend tf_converter \
+          --report-filename model_status_tf_converter.md \
+          --preserve-model-files
+    - name: Verify bundled schema artifacts for flatbuffer_direct
+      run: |
+        python - <<'PY'
+        import sys
+        sys.path.insert(0, ".")
+        import onnx2tf.tflite_builder.schema.schema_generated as schema_generated
+        print(f"Bundled schema is available. ModelT={hasattr(schema_generated, 'ModelT')}")
+        PY
+    - name: Run Model Convert Tests (flatbuffer_direct)
+      run: |
+        python tests/test_model_convert.py \
+          -m models \
+          -o wiki \
+          -v \
+          --tflite-backend flatbuffer_direct \
+          --report-filename model_status_flatbuffer_direct.md \
+          --preserve-model-files \
+          --not-use-onnxsim
+    - name: Merge wiki reports
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+        wiki_dir = Path("wiki")
+        tf_report = wiki_dir / "model_status_tf_converter.md"
+        fd_report = wiki_dir / "model_status_flatbuffer_direct.md"
+        merged = wiki_dir / "model_status.md"
+        tf_body = tf_report.read_text() if tf_report.exists() else "_No tf_converter report generated._"
+        fd_body = fd_report.read_text() if fd_report.exists() else "_No flatbuffer_direct report generated._"
+        merged.write_text(
+            "# Model Convert Status\n\n"
+            "## tf_converter\n\n"
+            f"{tf_body}\n\n"
+            "## flatbuffer_direct\n\n"
+            f"{fd_body}\n"
+        )
+        PY
     - name: Update wiki content
       uses: Andrew-Chen-Wang/github-wiki-action@v4
       continue-on-error: true

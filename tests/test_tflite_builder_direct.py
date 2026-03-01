@@ -13,10 +13,14 @@ import pytest
 from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _align_boundary_signature_to_current_shape,
+    _apply_safe_transpose_reduction_lite,
     _dtype_from_onnx_elem_type,
+    _infer_rank4_signature_from_input,
     _optimize_asin_transpose_passthrough_chains,
     _optimize_erf_transpose_passthrough_chains,
     _optimize_boundary_input_transpose_channel_slice_blocks,
+    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks,
     _optimize_center_size_offset_terminal_transpose_chains,
     _optimize_duplicate_transpose_fanout,
     _optimize_fuse_conv_activation_chains,
@@ -28,7 +32,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_singleton_channel_layout_transpose_to_reshape,
     _optimize_consecutive_inverse_singleton_layout_reshapes,
     _optimize_consecutive_reshape_passthrough_chains,
+    _optimize_dequant_logistic_quantize_chains,
     _optimize_flatten_concat_expanddims_to_nhwc_concat,
+    _optimize_nhwc_propagation_qlinear_concat_conv,
     _optimize_singleton_layout_reshape_unary_passthrough_chains,
     _optimize_squeeze_reshape_identity_chains,
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten,
@@ -40,6 +46,8 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains,
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains,
     _optimize_transpose_elementwise_concat_conv_nhwc_groups,
+    _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains,
+    _optimize_convpool_output_transpose_nhwc_passthrough_chains,
     _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains,
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains,
     _optimize_shufflenet_transpose_shuffle_chains,
@@ -48,6 +56,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transposeconv_output_nhwc_passthrough_chains,
     _optimize_batchmatmul_affine_transpose_input_chains,
     _optimize_batchmatmul_reshape_se_nhwc_chains,
+    _optimize_transpose_dequant_logistic_mul_quantize_bridges,
+    _optimize_transpose_swish_residual_concat_closure_nhwc_chains,
+    _optimize_transpose_swish_qdq_nhwc_islands,
     _optimize_transpose_mean_prepost_nhwc_passthrough_chains,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains,
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains,
@@ -69,7 +80,10 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains,
     _topologically_sort_operators,
     _reconcile_static_tensor_shapes,
+    _realign_dynamic_boundary_shape_signature_map,
     _resolve_dynamic_reshape_shapes,
+    _sanitize_squeeze_axes_with_static_input_shapes,
+    _sanitize_static_shape_signature_consistency,
     lower_onnx_to_ir,
 )
 from onnx2tf.tflite_builder.model_writer import serialize_model
@@ -4349,7 +4363,11 @@ def _make_einsum_fc_const_model() -> onnx.ModelProto:
 
 
 def _requires_flatbuffer_tools() -> bool:
-    return shutil.which("flatc") is not None and shutil.which("curl") is not None
+    try:
+        import onnx2tf.tflite_builder.schema.schema_generated as schema_generated
+    except Exception:
+        return False
+    return hasattr(schema_generated, "ModelT")
 
 
 @contextmanager
@@ -4437,7 +4455,7 @@ def test_tflite_backend_matrix_add() -> None:
         tf_pred = _run_add_inference(tf_tflite)
 
         if not _requires_flatbuffer_tools():
-            pytest.skip("flatbuffer_direct requires flatc and curl")
+            pytest.skip("flatbuffer_direct requires bundled schema artifacts")
 
         fb_out = os.path.join(tmpdir, "flatbuffer_direct")
         fb_tflite = _convert(model_path, fb_out, "flatbuffer_direct")
@@ -4447,7 +4465,7 @@ def test_tflite_backend_matrix_add() -> None:
         np.testing.assert_allclose(fb_pred, tf_pred, rtol=0.0, atol=1e-6)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.MonkeyPatch) -> None:
     import onnx2tf.tflite_builder as tflite_builder_backend
     from onnx2tf.tflite_builder.preprocess import clear_preprocess_rules
@@ -4498,7 +4516,7 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 @pytest.mark.parametrize(
     "name, model_factory",
     [
@@ -4572,7 +4590,7 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         _ = interpreter.get_tensor(output_details[0]["index"])
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_conv_fp16_generates_op_error_report() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_conv_fp16_model()
@@ -4867,6 +4885,729 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
         and any(str(v).startswith("x_onnx_ncx_internal_local") for v in list(op.outputs))
         for op in model_ir.operators
     )
+
+
+def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip() -> None:
+    model_ir = ModelIR(name="boundary_input_transpose_stridedslice_qdq_concat_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y", "z"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+    )
+    model_ir.tensors["x_onnx_ncx_internal_perm"] = TensorIR(
+        name="x_onnx_ncx_internal_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_onnx_ncx_internal"] = TensorIR(
+        name="x_onnx_ncx_internal",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+    )
+    model_ir.tensors["s0"] = TensorIR(
+        name="s0",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["s1"] = TensorIR(
+        name="s1",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["s2"] = TensorIR(
+        name="s2",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["s3"] = TensorIR(
+        name="s3",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["s0_b"] = TensorIR(
+        name="s0_b",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 0, 0, 0], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s0_e"] = TensorIR(
+        name="s0_e",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 3, 2, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s1_b"] = TensorIR(
+        name="s1_b",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 0, 0, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s1_e"] = TensorIR(
+        name="s1_e",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 3, 2, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s2_b"] = TensorIR(
+        name="s2_b",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 0, 2, 0], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s2_e"] = TensorIR(
+        name="s2_e",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 3, 4, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s3_b"] = TensorIR(
+        name="s3_b",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 0, 2, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["s3_e"] = TensorIR(
+        name="s3_e",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 3, 4, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["ss_stride"] = TensorIR(
+        name="ss_stride",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 1, 1, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["q0"] = TensorIR(name="q0", dtype="INT8", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
+    model_ir.tensors["q1"] = TensorIR(name="q1", dtype="INT8", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
+    model_ir.tensors["q2"] = TensorIR(name="q2", dtype="INT8", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
+    model_ir.tensors["q3"] = TensorIR(name="q3", dtype="INT8", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
+    model_ir.tensors["dq0"] = TensorIR(
+        name="dq0",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["dq1"] = TensorIR(
+        name="dq1",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["dq2"] = TensorIR(
+        name="dq2",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["dq3"] = TensorIR(
+        name="dq3",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["cat"] = TensorIR(
+        name="cat",
+        dtype="FLOAT32",
+        shape=[1, 12, 2, 2],
+        shape_signature=[1, 12, 2, 2],
+    )
+    model_ir.tensors["cat_q"] = TensorIR(
+        name="cat_q",
+        dtype="INT8",
+        shape=[1, 12, 2, 2],
+        shape_signature=[1, 12, 2, 2],
+    )
+    model_ir.tensors["post0_perm"] = TensorIR(
+        name="post0_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post1_perm"] = TensorIR(
+        name="post1_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post0"] = TensorIR(
+        name="post0",
+        dtype="INT8",
+        shape=[1, 2, 2, 12],
+        shape_signature=[1, 2, 2, 12],
+    )
+    model_ir.tensors["post1"] = TensorIR(
+        name="post1",
+        dtype="INT8",
+        shape=[1, 2, 2, 12],
+        shape_signature=[1, 2, 2, 12],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 2, 2, 12],
+        shape_signature=[1, 2, 2, 12],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="INT8",
+        shape=[1, 2, 2, 12],
+        shape_signature=[1, 2, 2, 12],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "x_onnx_ncx_internal_perm"],
+            outputs=["x_onnx_ncx_internal"],
+        ),
+        OperatorIR(
+            op_type="STRIDED_SLICE",
+            inputs=["x_onnx_ncx_internal", "s0_b", "s0_e", "ss_stride"],
+            outputs=["s0"],
+            options={"beginMask": 0, "endMask": 0, "ellipsisMask": 0, "newAxisMask": 0, "shrinkAxisMask": 0},
+        ),
+        OperatorIR(
+            op_type="STRIDED_SLICE",
+            inputs=["x_onnx_ncx_internal", "s1_b", "s1_e", "ss_stride"],
+            outputs=["s1"],
+            options={"beginMask": 0, "endMask": 0, "ellipsisMask": 0, "newAxisMask": 0, "shrinkAxisMask": 0},
+        ),
+        OperatorIR(
+            op_type="STRIDED_SLICE",
+            inputs=["x_onnx_ncx_internal", "s2_b", "s2_e", "ss_stride"],
+            outputs=["s2"],
+            options={"beginMask": 0, "endMask": 0, "ellipsisMask": 0, "newAxisMask": 0, "shrinkAxisMask": 0},
+        ),
+        OperatorIR(
+            op_type="STRIDED_SLICE",
+            inputs=["x_onnx_ncx_internal", "s3_b", "s3_e", "ss_stride"],
+            outputs=["s3"],
+            options={"beginMask": 0, "endMask": 0, "ellipsisMask": 0, "newAxisMask": 0, "shrinkAxisMask": 0},
+        ),
+        OperatorIR(op_type="QUANTIZE", inputs=["s0"], outputs=["q0"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["s1"], outputs=["q1"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["s2"], outputs=["q2"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["s3"], outputs=["q3"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q0"], outputs=["dq0"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q1"], outputs=["dq1"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q2"], outputs=["dq2"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q3"], outputs=["dq3"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["dq0", "dq1", "dq2", "dq3"],
+            outputs=["cat"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="QUANTIZE", inputs=["cat"], outputs=["cat_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "post0_perm"], outputs=["post0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "post1_perm"], outputs=["post1"]),
+        OperatorIR(op_type="RELU", inputs=["post0"], outputs=["y"]),
+        OperatorIR(op_type="RELU", inputs=["post1"], outputs=["z"]),
+    ]
+
+    stats = _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(model_ir)
+    assert stats["removed_boundary_input_transpose_stridedslice_blocks"] == 1
+    assert stats["rewritten_boundary_stridedslices"] == 4
+    assert stats["rewritten_boundary_qdq_concat_axis"] == 1
+    assert stats["removed_boundary_post_transposes"] == 2
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert list(model_ir.tensors["cat"].shape) == [1, 2, 2, 12]
+    assert "cat_q" not in model_ir.tensors
+    assert list(model_ir.tensors["post0"].shape) == [1, 2, 2, 12]
+
+    first_slice = next(op for op in model_ir.operators if str(op.op_type) == "STRIDED_SLICE")
+    assert list(first_slice.inputs)[0] == "x"
+    relu_inputs = [list(op.inputs)[0] for op in model_ir.operators if str(op.op_type) == "RELU"]
+    assert relu_inputs == ["post0", "post0"]
+
+    # begin=[0,0,0,0] is unchanged by permutation and must not be treated as rewrite failure.
+    assert np.array_equal(np.asarray(model_ir.tensors["s0_b"].data), np.asarray([0, 0, 0, 0], dtype=np.int32))
+    assert np.array_equal(np.asarray(model_ir.tensors["s1_b"].data), np.asarray([0, 0, 2, 0], dtype=np.int32))
+    assert np.array_equal(np.asarray(model_ir.tensors["s2_b"].data), np.asarray([0, 2, 0, 0], dtype=np.int32))
+    assert np.array_equal(np.asarray(model_ir.tensors["s3_b"].data), np.asarray([0, 2, 2, 0], dtype=np.int32))
+
+
+def test_flatbuffer_direct_transpose_dequant_logistic_mul_quantize_bridges_elide_roundtrip() -> None:
+    model_ir = ModelIR(name="transpose_dequant_logistic_mul_quantize_bridge_test")
+    model_ir.inputs = ["x_q"]
+    model_ir.outputs = ["y", "z"]
+
+    model_ir.tensors["x_q"] = TensorIR(
+        name="x_q",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["perm_pre"] = TensorIR(
+        name="perm_pre",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_post"] = TensorIR(
+        name="perm_post",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_q_nchw"] = TensorIR(
+        name="x_q_nchw",
+        dtype="INT8",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["dq_log"] = TensorIR(
+        name="dq_log",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["sigmoid"] = TensorIR(
+        name="sigmoid",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["sigmoid_q"] = TensorIR(
+        name="sigmoid_q",
+        dtype="INT8",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["sigmoid_dq"] = TensorIR(
+        name="sigmoid_dq",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["dq_data"] = TensorIR(
+        name="dq_data",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["mul_f"] = TensorIR(
+        name="mul_f",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["mul_q"] = TensorIR(
+        name="mul_q",
+        dtype="INT8",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+    )
+    model_ir.tensors["post0"] = TensorIR(
+        name="post0",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["post1"] = TensorIR(
+        name="post1",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_q", "perm_pre"], outputs=["x_q_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["x_q_nchw"], outputs=["dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["dq_log"], outputs=["sigmoid"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["sigmoid"], outputs=["sigmoid_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["sigmoid_q"], outputs=["sigmoid_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["x_q_nchw"], outputs=["dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["dq_data", "sigmoid_dq"], outputs=["mul_f"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["mul_f"], outputs=["mul_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_q", "perm_post"], outputs=["post0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_q", "perm_post"], outputs=["post1"]),
+        OperatorIR(op_type="RELU", inputs=["post0"], outputs=["y"]),
+        OperatorIR(op_type="RELU", inputs=["post1"], outputs=["z"]),
+    ]
+
+    stats = _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
+    assert stats["removed_transpose_dequant_logistic_mul_quantize_bridges"] == 1
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert list(next(op for op in model_ir.operators if str(op.op_type) == "DEQUANTIZE" and list(op.outputs) == ["dq_log"]).inputs) == ["x_q"]
+    assert list(next(op for op in model_ir.operators if str(op.op_type) == "DEQUANTIZE" and list(op.outputs) == ["dq_data"]).inputs) == ["x_q"]
+
+    assert list(model_ir.tensors["dq_log"].shape) == [1, 2, 2, 3]
+    assert list(model_ir.tensors["dq_data"].shape) == [1, 2, 2, 3]
+    assert list(model_ir.tensors["mul_f"].shape) == [1, 2, 2, 3]
+    assert list(model_ir.tensors["post0"].shape) == [1, 2, 2, 3]
+
+    relu_inputs = [list(op.inputs)[0] for op in model_ir.operators if str(op.op_type) == "RELU"]
+    assert relu_inputs == ["post0", "post0"]
+
+
+def test_flatbuffer_direct_dequant_logistic_quantize_chain_folded_to_quantized_logistic() -> None:
+    model_ir = ModelIR(name="dequant_logistic_quantize_fold_test")
+    model_ir.inputs = ["x_q"]
+    model_ir.outputs = ["y_q"]
+
+    model_ir.tensors["x_q"] = TensorIR(
+        name="x_q",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+        quantization={"scale": [0.125], "zero_point": [0], "quantized_dimension": 0},
+    )
+    model_ir.tensors["x_f"] = TensorIR(
+        name="x_f",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["y_f"] = TensorIR(
+        name="y_f",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["y_q"] = TensorIR(
+        name="y_q",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+        quantization={"scale": [1.0 / 256.0], "zero_point": [-128], "quantized_dimension": 0},
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="DEQUANTIZE", inputs=["x_q"], outputs=["x_f"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["x_f"], outputs=["y_f"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["y_f"], outputs=["y_q"]),
+    ]
+
+    stats = _optimize_dequant_logistic_quantize_chains(model_ir)
+    assert stats["folded_dequant_logistic_quantize_chains"] == 1
+
+    assert [str(op.op_type) for op in model_ir.operators] == ["LOGISTIC"]
+    logistic_op = model_ir.operators[0]
+    assert list(logistic_op.inputs) == ["x_q"]
+    assert list(logistic_op.outputs) == ["y_q"]
+    assert int(logistic_op.version) == 2
+    assert "x_f" not in model_ir.tensors
+    assert "y_f" not in model_ir.tensors
+
+
+def test_flatbuffer_direct_dequant_logistic_quantize_chain_noncanonical_output_not_folded() -> None:
+    model_ir = ModelIR(name="dequant_logistic_quantize_no_fold_test")
+    model_ir.inputs = ["x_q"]
+    model_ir.outputs = ["y_q"]
+
+    model_ir.tensors["x_q"] = TensorIR(
+        name="x_q",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+        quantization={"scale": [0.125], "zero_point": [0], "quantized_dimension": 0},
+    )
+    model_ir.tensors["x_f"] = TensorIR(
+        name="x_f",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["y_f"] = TensorIR(
+        name="y_f",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+    )
+    model_ir.tensors["y_q"] = TensorIR(
+        name="y_q",
+        dtype="INT8",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+        quantization={"scale": [0.25], "zero_point": [-128], "quantized_dimension": 0},
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="DEQUANTIZE", inputs=["x_q"], outputs=["x_f"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["x_f"], outputs=["y_f"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["y_f"], outputs=["y_q"]),
+    ]
+
+    stats = _optimize_dequant_logistic_quantize_chains(model_ir)
+    assert stats["folded_dequant_logistic_quantize_chains"] == 0
+    assert [str(op.op_type) for op in model_ir.operators] == ["DEQUANTIZE", "LOGISTIC", "QUANTIZE"]
+
+
+def test_flatbuffer_direct_transpose_swish_qdq_nhwc_islands_elide_prepost_chain() -> None:
+    model_ir = ModelIR(name="transpose_swish_qdq_nhwc_island_test")
+    model_ir.inputs = ["a_q", "b_q"]
+    model_ir.outputs = ["y"]
+
+    model_ir.tensors["a_q"] = TensorIR(name="a_q", dtype="INT8", shape=[1, 160, 160, 2], shape_signature=[1, 160, 160, 2])
+    model_ir.tensors["b_q"] = TensorIR(name="b_q", dtype="INT8", shape=[1, 160, 160, 2], shape_signature=[1, 160, 160, 2])
+    model_ir.tensors["perm_pre"] = TensorIR(
+        name="perm_pre",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_post"] = TensorIR(
+        name="perm_post",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(name="a_nchw", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_nchw"] = TensorIR(name="b_nchw", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+
+    # A branch 1: quantized swish output used by post transpose and ADD.
+    model_ir.tensors["a1_dq_log"] = TensorIR(name="a1_dq_log", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_sig"] = TensorIR(name="a1_sig", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_sig_q"] = TensorIR(name="a1_sig_q", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_sig_dq"] = TensorIR(name="a1_sig_dq", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_dq_data"] = TensorIR(name="a1_dq_data", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_mul"] = TensorIR(name="a1_mul", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_q"] = TensorIR(name="a1_q", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a1_q_nhwc"] = TensorIR(name="a1_q_nhwc", dtype="INT8", shape=[1, 160, 160, 2], shape_signature=[1, 160, 160, 2])
+    model_ir.tensors["tap"] = TensorIR(name="tap", dtype="INT8", shape=[1, 160, 160, 2], shape_signature=[1, 160, 160, 2])
+
+    # A branch 2: float swish output used by CONCAT.
+    model_ir.tensors["a2_dq_log"] = TensorIR(name="a2_dq_log", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a2_sig"] = TensorIR(name="a2_sig", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a2_sig_q"] = TensorIR(name="a2_sig_q", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a2_sig_dq"] = TensorIR(name="a2_sig_dq", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a2_dq_data"] = TensorIR(name="a2_dq_data", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["a2_mul"] = TensorIR(name="a2_mul", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+
+    # B branch: quantized swish output used by ADD.
+    model_ir.tensors["b_dq_log"] = TensorIR(name="b_dq_log", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_sig"] = TensorIR(name="b_sig", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_sig_q"] = TensorIR(name="b_sig_q", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_sig_dq"] = TensorIR(name="b_sig_dq", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_dq_data"] = TensorIR(name="b_dq_data", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_mul"] = TensorIR(name="b_mul", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["b_q_swish"] = TensorIR(name="b_q_swish", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+
+    model_ir.tensors["add_q"] = TensorIR(name="add_q", dtype="INT8", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["add_dq"] = TensorIR(name="add_dq", dtype="FLOAT32", shape=[1, 2, 160, 160], shape_signature=[1, 2, 160, 160])
+    model_ir.tensors["cat_f"] = TensorIR(name="cat_f", dtype="FLOAT32", shape=[1, 160, 160, 4], shape_signature=[1, 160, 160, 4])
+    model_ir.tensors["cat_q"] = TensorIR(name="cat_q", dtype="INT8", shape=[1, 160, 160, 4], shape_signature=[1, 160, 160, 4])
+    model_ir.tensors["cat_q_nhwc"] = TensorIR(name="cat_q_nhwc", dtype="INT8", shape=[1, 160, 160, 4], shape_signature=[1, 160, 160, 4])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="INT8", shape=[1, 160, 160, 4], shape_signature=[1, 160, 160, 4])
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_q", "perm_pre"], outputs=["a_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_q", "perm_pre"], outputs=["b_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a1_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["a1_dq_log"], outputs=["a1_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a1_sig"], outputs=["a1_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a1_sig_q"], outputs=["a1_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a1_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["a1_dq_data", "a1_sig_dq"], outputs=["a1_mul"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a1_mul"], outputs=["a1_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["a1_q", "perm_post"], outputs=["a1_q_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["a1_q_nhwc"], outputs=["tap"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a2_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["a2_dq_log"], outputs=["a2_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a2_sig"], outputs=["a2_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a2_sig_q"], outputs=["a2_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a2_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["a2_dq_data", "a2_sig_dq"], outputs=["a2_mul"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_nchw"], outputs=["b_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["b_dq_log"], outputs=["b_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["b_sig"], outputs=["b_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_sig_q"], outputs=["b_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_nchw"], outputs=["b_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["b_dq_data", "b_sig_dq"], outputs=["b_mul"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["b_mul"], outputs=["b_q_swish"]),
+        OperatorIR(op_type="ADD", inputs=["a1_q", "b_q_swish"], outputs=["add_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["add_q"], outputs=["add_dq"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["add_dq", "a2_mul"],
+            outputs=["cat_f"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="QUANTIZE", inputs=["cat_f"], outputs=["cat_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "perm_post"], outputs=["cat_q_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["cat_q_nhwc"], outputs=["y"]),
+    ]
+
+    stats = _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
+    assert stats["removed_transpose_swish_pre"] >= 2
+    assert stats["removed_transpose_swish_post"] >= 2
+    assert stats["rewritten_concat_axis_to_nhwc"] >= 1
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+
+    assert list(model_ir.tensors["a1_q"].shape) == [1, 160, 160, 2]
+    assert list(model_ir.tensors["b_q_swish"].shape) == [1, 160, 160, 2]
+    assert list(model_ir.tensors["add_q"].shape) == [1, 160, 160, 2]
+    assert list(model_ir.tensors["cat_q"].shape) == [1, 160, 160, 4]
+
+
+def test_flatbuffer_direct_transpose_swish_residual_concat_closure_nhwc_is_spatial_agnostic() -> None:
+    model_ir = ModelIR(name="transpose_swish_residual_concat_closure_spatial_agnostic_test")
+    model_ir.inputs = ["a_q", "b_q"]
+    model_ir.outputs = ["y"]
+
+    model_ir.tensors["a_q"] = TensorIR(name="a_q", dtype="INT8", shape=[1, 80, 80, 2], shape_signature=[1, 80, 80, 2])
+    model_ir.tensors["b_q"] = TensorIR(name="b_q", dtype="INT8", shape=[1, 80, 80, 2], shape_signature=[1, 80, 80, 2])
+    model_ir.tensors["perm_pre"] = TensorIR(
+        name="perm_pre",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_post"] = TensorIR(
+        name="perm_post",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["a_nchw"] = TensorIR(name="a_nchw", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_nchw"] = TensorIR(name="b_nchw", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+
+    model_ir.tensors["a1_dq_log"] = TensorIR(name="a1_dq_log", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_sig"] = TensorIR(name="a1_sig", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_sig_q"] = TensorIR(name="a1_sig_q", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_sig_dq"] = TensorIR(name="a1_sig_dq", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_dq_data"] = TensorIR(name="a1_dq_data", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_mul"] = TensorIR(name="a1_mul", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_q"] = TensorIR(name="a1_q", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a1_q_nhwc"] = TensorIR(name="a1_q_nhwc", dtype="INT8", shape=[1, 80, 80, 2], shape_signature=[1, 80, 80, 2])
+    model_ir.tensors["tap"] = TensorIR(name="tap", dtype="INT8", shape=[1, 80, 80, 2], shape_signature=[1, 80, 80, 2])
+
+    model_ir.tensors["a2_dq_log"] = TensorIR(name="a2_dq_log", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a2_sig"] = TensorIR(name="a2_sig", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a2_sig_q"] = TensorIR(name="a2_sig_q", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a2_sig_dq"] = TensorIR(name="a2_sig_dq", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a2_dq_data"] = TensorIR(name="a2_dq_data", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["a2_mul"] = TensorIR(name="a2_mul", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+
+    model_ir.tensors["b_dq_log"] = TensorIR(name="b_dq_log", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_sig"] = TensorIR(name="b_sig", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_sig_q"] = TensorIR(name="b_sig_q", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_sig_dq"] = TensorIR(name="b_sig_dq", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_dq_data"] = TensorIR(name="b_dq_data", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_mul"] = TensorIR(name="b_mul", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["b_q_swish"] = TensorIR(name="b_q_swish", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+
+    model_ir.tensors["add_q"] = TensorIR(name="add_q", dtype="INT8", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["add_dq"] = TensorIR(name="add_dq", dtype="FLOAT32", shape=[1, 2, 80, 80], shape_signature=[1, 2, 80, 80])
+    model_ir.tensors["cat_f"] = TensorIR(name="cat_f", dtype="FLOAT32", shape=[1, 80, 80, 4], shape_signature=[1, 80, 80, 4])
+    model_ir.tensors["cat_q"] = TensorIR(name="cat_q", dtype="INT8", shape=[1, 80, 80, 4], shape_signature=[1, 80, 80, 4])
+    model_ir.tensors["cat_q_nhwc"] = TensorIR(name="cat_q_nhwc", dtype="INT8", shape=[1, 80, 80, 4], shape_signature=[1, 80, 80, 4])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="INT8", shape=[1, 80, 80, 4], shape_signature=[1, 80, 80, 4])
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_q", "perm_pre"], outputs=["a_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_q", "perm_pre"], outputs=["b_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a1_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["a1_dq_log"], outputs=["a1_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a1_sig"], outputs=["a1_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a1_sig_q"], outputs=["a1_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a1_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["a1_dq_data", "a1_sig_dq"], outputs=["a1_mul"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a1_mul"], outputs=["a1_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["a1_q", "perm_post"], outputs=["a1_q_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["a1_q_nhwc"], outputs=["tap"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a2_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["a2_dq_log"], outputs=["a2_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["a2_sig"], outputs=["a2_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a2_sig_q"], outputs=["a2_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_nchw"], outputs=["a2_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["a2_dq_data", "a2_sig_dq"], outputs=["a2_mul"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_nchw"], outputs=["b_dq_log"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["b_dq_log"], outputs=["b_sig"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["b_sig"], outputs=["b_sig_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_sig_q"], outputs=["b_sig_dq"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_nchw"], outputs=["b_dq_data"]),
+        OperatorIR(op_type="MUL", inputs=["b_dq_data", "b_sig_dq"], outputs=["b_mul"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["b_mul"], outputs=["b_q_swish"]),
+        OperatorIR(op_type="ADD", inputs=["a1_q", "b_q_swish"], outputs=["add_q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["add_q"], outputs=["add_dq"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["add_dq", "a2_mul"],
+            outputs=["cat_f"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="QUANTIZE", inputs=["cat_f"], outputs=["cat_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "perm_post"], outputs=["cat_q_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["cat_q_nhwc"], outputs=["y"]),
+    ]
+
+    stats = _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_swish_residual_concat_closure_nhwc_chains"] >= 3
+    assert stats["rewritten_transpose_swish_residual_concat_closure_axis_to_nhwc"] >= 1
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+
+    assert list(model_ir.tensors["a1_q"].shape) == [1, 80, 80, 2]
+    assert list(model_ir.tensors["b_q_swish"].shape) == [1, 80, 80, 2]
+    assert list(model_ir.tensors["add_q"].shape) == [1, 80, 80, 2]
+    assert list(model_ir.tensors["cat_q"].shape) == [1, 80, 80, 4]
 
 
 def test_flatbuffer_direct_boundary_input_slice_depthwise_nhwc_propagation_avoids_bridge_transpose() -> None:
@@ -5959,9 +6700,31 @@ def test_flatbuffer_direct_expand_dynamic_shape_uses_fill() -> None:
     shape_tensor = model_ir.tensors[shape_name]
     assert str(shape_tensor.dtype).upper() == "INT32"
     assert shape_tensor.data is None
+    value_name = str(fill_op.inputs[1])
+    value_tensor = model_ir.tensors[value_name]
+    assert list(value_tensor.shape) == []
+    assert value_tensor.data is not None
 
     output_tensor = model_ir.tensors["y"]
     assert list(output_tensor.shape_signature) == [-1]
+
+
+def test_flatbuffer_direct_matmul_integer_defaults_to_float_compute_path() -> None:
+    model = _make_matmul_integer_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="matmul_integer_float_compute_path_test",
+        allow_custom_ops=False,
+    )
+
+    sub_ops = [op for op in model_ir.operators if str(op.op_type) == "SUB"]
+    assert len(sub_ops) >= 1
+    for sub_op in sub_ops:
+        out_name = str(sub_op.outputs[0])
+        out_tensor = model_ir.tensors[out_name]
+        assert str(out_tensor.dtype).upper() == "FLOAT32"
 
 
 def test_flatbuffer_direct_unsqueeze_scalar_multi_axis_shape() -> None:
@@ -6112,7 +6875,7 @@ def test_flatbuffer_direct_resize_cubic_preserves_batch_dim() -> None:
     assert int(cubic_h_out.shape[0]) == 2
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tf_converter_resize_cubic_avoids_flex_resize_bicubic() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_resize_cubic_model()
@@ -6123,7 +6886,7 @@ def test_tf_converter_resize_cubic_avoids_flex_resize_bicubic() -> None:
         assert "FlexResizeBicubic" not in custom_codes
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_tf_converter_resize_cubic_honors_cubic_coeff_a() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_resize_cubic_model(cubic_coeff_a=-0.5)
@@ -6704,6 +7467,384 @@ def test_flatbuffer_direct_reconcile_slice_preserves_dynamic_full_extent_size() 
     assert list(model_ir.tensors["y"].shape_signature) == [1, 1, -1, 1]
 
 
+def test_flatbuffer_direct_reconcile_slice_fixed_size_overrides_stale_dynamic_signature() -> None:
+    model_ir = ModelIR(name="reconcile_slice_fixed_size_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT64",
+        shape=[4],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["slice_begin"] = TensorIR(
+        name="slice_begin",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["slice_size"] = TensorIR(
+        name="slice_size",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT64",
+        shape=[2],
+        shape_signature=[-1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="SLICE",
+            inputs=["x", "slice_begin", "slice_size"],
+            outputs=["y"],
+        )
+    ]
+
+    _ = _reconcile_static_tensor_shapes(model_ir)
+    assert list(model_ir.tensors["y"].shape) == [2]
+    assert list(model_ir.tensors["y"].shape_signature) == [2]
+
+
+def test_flatbuffer_direct_reconcile_pad_updates_output_shape_signature() -> None:
+    model_ir = ModelIR(name="reconcile_pad_shape_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT8",
+        shape=[1, 56, 56, 192],
+        shape_signature=[1, 56, 56, 192],
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray(
+            [
+                [0, 0],
+                [1, 2],
+                [1, 2],
+                [0, 0],
+            ],
+            dtype=np.int32,
+        ),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 4, 4, 192],
+        shape_signature=[1, 4, 4, 192],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="PAD",
+            inputs=["x", "pads"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert int(stats["reconciled_static_tensor_shapes"]) >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 59, 59, 192]
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 59, 59, 192]
+
+
+def test_flatbuffer_direct_reconcile_pad_preserves_dynamic_spatial_signature() -> None:
+    model_ir = ModelIR(name="reconcile_pad_dynamic_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT8",
+        shape=[1, 56, 56, 192],
+        shape_signature=[1, -1, -1, 192],
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray(
+            [
+                [0, 0],
+                [1, 2],
+                [1, 2],
+                [0, 0],
+            ],
+            dtype=np.int32,
+        ),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 4, 4, 192],
+        shape_signature=[1, 4, 4, 192],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="PAD",
+            inputs=["x", "pads"],
+            outputs=["y"],
+        )
+    ]
+
+    _ = _reconcile_static_tensor_shapes(model_ir)
+    assert list(model_ir.tensors["y"].shape) == [1, 59, 59, 192]
+    assert list(model_ir.tensors["y"].shape_signature) == [1, -1, -1, 192]
+
+
+def test_flatbuffer_direct_reconcile_conv2d_complements_static_output_channel_from_filter() -> None:
+    model_ir = ModelIR(name="reconcile_conv2d_static_output_channel_signature_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT8",
+        shape=[1, 1, 1, 256],
+        shape_signature=[-1, -1, -1, 256],
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="INT8",
+        shape=[64, 1, 1, 256],
+        shape_signature=[64, 1, 1, 256],
+        data=np.zeros((64, 1, 1, 256), dtype=np.int8),
+        is_variable=False,
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="INT32",
+        shape=[64],
+        shape_signature=[64],
+        data=np.zeros((64,), dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 1, 1, 64],
+        shape_signature=[-1, -1, -1, -1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["x", "w", "b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    ]
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] >= 1
+    assert list(model_ir.tensors["y"].shape) == [1, 1, 1, 64]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, -1, -1, 64]
+
+
+def test_flatbuffer_direct_rank4_signature_inference_ignores_stale_unrelated_unknown_axes() -> None:
+    signature = _infer_rank4_signature_from_input(
+        input_signature=[-1, -1, -1, 256],
+        output_shape=[1, 1, 1, 64],
+        existing_output_signature=[-1, -1, -1, -1],
+        propagate_channel=False,
+    )
+    assert signature is not None
+    assert list(signature) == [-1, -1, -1, 64]
+
+
+def test_flatbuffer_direct_align_boundary_signature_to_current_shape_recovers_static_channel() -> None:
+    aligned = _align_boundary_signature_to_current_shape(
+        boundary_signature=[-1, 21, -1, -1],
+        current_shape=[1, 1, 1, 21],
+    )
+    assert aligned is not None
+    assert list(aligned) == [-1, -1, -1, 21]
+
+
+def test_flatbuffer_direct_realign_dynamic_boundary_shape_signature_map_tracks_layout_change() -> None:
+    model_ir = ModelIR(name="realign_dynamic_boundary_signature_map_test")
+    model_ir.tensors["out"] = TensorIR(
+        name="out",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 21],
+        shape_signature=[-1, -1, -1, -1],
+    )
+    model_ir.metadata["dynamic_boundary_shape_signature_map"] = {
+        "out": [-1, 21, -1, -1],
+    }
+
+    stats = _realign_dynamic_boundary_shape_signature_map(model_ir)
+    assert int(stats["realigned_dynamic_boundary_shape_signature_map"]) == 1
+    assert list(model_ir.metadata["dynamic_boundary_shape_signature_map"]["out"]) == [-1, -1, -1, 21]
+
+
+def test_flatbuffer_direct_sanitize_static_shape_signature_preserves_dynamic_lineage() -> None:
+    model_ir = ModelIR(name="sanitize_dynamic_lineage_test")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["q_out"]
+    model_ir.metadata["onnx_dynamic_input_tensor_names"] = ["input"]
+    model_ir.metadata["onnx_dynamic_output_tensor_names"] = []
+    model_ir.metadata["dynamic_boundary_shape_signature_map"] = {
+        "input": [-1, -1, -1, 3],
+    }
+
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 3],
+        shape_signature=[-1, -1, -1, 3],
+    )
+    model_ir.tensors["q_out"] = TensorIR(
+        name="q_out",
+        dtype="INT8",
+        shape=[1, 1, 1, 3],
+        shape_signature=[-1, -1, -1, 3],
+    )
+    model_ir.tensors["dead_internal"] = TensorIR(
+        name="dead_internal",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 3],
+        shape_signature=[-1, -1, -1, 3],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=["input"],
+            outputs=["q_out"],
+        )
+    ]
+
+    stats = _sanitize_static_shape_signature_consistency(model_ir)
+    assert int(stats["preserved_dynamic_lineage_shape_signature"]) >= 1
+    assert list(model_ir.tensors["input"].shape_signature) == [-1, -1, -1, 3]
+    assert list(model_ir.tensors["q_out"].shape_signature) == [-1, -1, -1, 3]
+    assert list(model_ir.tensors["dead_internal"].shape_signature) == [1, 1, 1, 3]
+
+
+def test_flatbuffer_direct_sanitize_static_shape_signature_fixes_stale_batch_dynamic_without_lineage() -> None:
+    model_ir = ModelIR(name="sanitize_stale_batch_dynamic_without_lineage_test")
+    model_ir.inputs = ["a", "b"]
+    model_ir.outputs = []
+
+    model_ir.tensors["a"] = TensorIR(
+        name="a",
+        dtype="FLOAT32",
+        shape=[1, 1, 1],
+        shape_signature=[1, 1, 1],
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[1, 4420, 2],
+        shape_signature=[1, 4420, 2],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 4420, 2],
+        shape_signature=[-1, 4420, 2],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MUL",
+            inputs=["a", "b"],
+            outputs=["y"],
+        )
+    ]
+
+    stats = _sanitize_static_shape_signature_consistency(model_ir)
+    assert int(stats["sanitized_static_shape_signature_consistency"]) >= 1
+    assert int(stats["preserved_dynamic_leading_axis_shape_signature"]) == 0
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 4420, 2]
+
+
+def test_flatbuffer_direct_sanitize_squeeze_axes_repairs_non_singleton_dynamic_input() -> None:
+    model_ir = ModelIR(name="sanitize_squeeze_axes_dynamic_input_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[2, 1, 8, 3],
+        shape_signature=[-1, 1, 8, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 8, 3],
+        shape_signature=[1, 8, 3],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=["x"],
+            outputs=["y"],
+            options={"squeezeDims": [0]},
+        )
+    ]
+
+    stats = _sanitize_squeeze_axes_with_static_input_shapes(model_ir)
+    assert int(stats["sanitized_squeeze_axes_with_static_input_shapes"]) >= 0
+    assert int(stats["repaired_squeeze_input_singleton_dims"]) == 1
+    assert list(model_ir.tensors["x"].shape) == [1, 1, 8, 3]
+    assert list(model_ir.tensors["x"].shape_signature) == [1, 1, 8, 3]
+    assert list(model_ir.tensors["y"].shape) == [1, 8, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 8, 3]
+    assert list(model_ir.operators[0].options.get("squeezeDims", [])) == [0]
+
+
+def test_flatbuffer_direct_sanitize_squeeze_axes_drops_const_invalid_axis() -> None:
+    model_ir = ModelIR(name="sanitize_squeeze_axes_const_input_test")
+    model_ir.inputs = []
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x_const"] = TensorIR(
+        name="x_const",
+        dtype="FLOAT32",
+        shape=[2, 3],
+        shape_signature=[2, 3],
+        data=np.arange(6, dtype=np.float32).reshape(2, 3),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=["x_const"],
+            outputs=["y"],
+            options={"squeezeDims": [0]},
+        )
+    ]
+
+    stats = _sanitize_squeeze_axes_with_static_input_shapes(model_ir)
+    assert int(stats["sanitized_squeeze_axes_with_static_input_shapes"]) == 1
+    assert int(stats["repaired_squeeze_input_singleton_dims"]) == 0
+    assert list(model_ir.operators[0].options.get("squeezeDims", [])) == []
+    assert list(model_ir.tensors["x_const"].shape) == [2, 3]
+    assert list(model_ir.tensors["y"].shape) == [2, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [2, 3]
+
+
 def test_flatbuffer_direct_transpose_mul_add_const_rewrite_keeps_nhwc_consts_stable() -> None:
     model_ir = ModelIR(name="transpose_mul_add_const_rewrite_idempotent_const_shape_test")
     model_ir.inputs = ["x_nhwc"]
@@ -6896,6 +8037,248 @@ def test_flatbuffer_direct_transpose_mul_add_const_rewrite_does_not_mutate_on_pa
     stats = _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
     assert stats["optimized_transpose_mul_add_const_prepost_nhwc_chains"] == 0
     assert list(model_ir.tensors["mul_const"].shape) == [1, 40, 1, 1]
+
+
+def test_flatbuffer_direct_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_optimized() -> None:
+    model_ir = ModelIR(name="transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z0", "z1"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["mul_scale"] = TensorIR(
+        name="mul_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.ones((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch0_mul"] = TensorIR(
+        name="branch0_mul",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch0_erf"] = TensorIR(
+        name="branch0_erf",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["add_bias"] = TensorIR(
+        name="add_bias",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.zeros((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch0_out_nchw"] = TensorIR(
+        name="branch0_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch1_sign"] = TensorIR(
+        name="branch1_sign",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["branch1_scale"] = TensorIR(
+        name="branch1_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.full((1, 8, 1, 1), 0.5, dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["branch1_out_nchw"] = TensorIR(
+        name="branch1_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["y0"] = TensorIR(
+        name="y0",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["y1"] = TensorIR(
+        name="y1",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["z0"] = TensorIR(
+        name="z0",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["z1"] = TensorIR(
+        name="z1",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MUL", inputs=["x_nchw", "mul_scale"], outputs=["branch0_mul"]),
+        OperatorIR(op_type="ERF", inputs=["branch0_mul"], outputs=["branch0_erf"]),
+        OperatorIR(op_type="ADD", inputs=["branch0_erf", "add_bias"], outputs=["branch0_out_nchw"]),
+        OperatorIR(op_type="SIGN", inputs=["x_nchw"], outputs=["branch1_sign"]),
+        OperatorIR(op_type="MUL", inputs=["branch1_sign", "branch1_scale"], outputs=["branch1_out_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["branch0_out_nchw", "post_perm"], outputs=["y0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["branch1_out_nchw", "post_perm"], outputs=["y1"]),
+        OperatorIR(op_type="RELU", inputs=["y0"], outputs=["z0"]),
+        OperatorIR(op_type="RELU", inputs=["y1"], outputs=["z1"]),
+    ]
+
+    stats = _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
+    assert stats["optimized_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"] == 1
+
+    assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert list(model_ir.tensors["mul_scale"].shape) == [1, 1, 1, 8]
+    assert list(model_ir.tensors["add_bias"].shape) == [1, 1, 1, 8]
+    assert list(model_ir.tensors["branch1_scale"].shape) == [1, 1, 1, 8]
+
+    mul0_op = next(op for op in model_ir.operators if list(op.outputs) == ["branch0_mul"])
+    sign_op = next(op for op in model_ir.operators if list(op.outputs) == ["branch1_sign"])
+    assert [str(v) for v in list(mul0_op.inputs)][0] == "x_nhwc"
+    assert [str(v) for v in list(sign_op.inputs)] == ["x_nhwc"]
+
+    add_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD")
+    mul1_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL" and list(op.outputs) == ["y1"])
+    assert list(add_op.outputs) == ["y0"]
+    assert list(mul1_op.outputs) == ["y1"]
+
+
+def test_flatbuffer_direct_conv_output_transpose_nhwc_passthrough_chain_optimized() -> None:
+    model_ir = ModelIR(name="conv_output_transpose_nhwc_passthrough_opt_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["conv_filter"] = TensorIR(
+        name="conv_filter",
+        dtype="FLOAT32",
+        shape=[1, 1, 8, 8],
+        shape_signature=[1, 1, 8, 8],
+        data=np.ones((1, 1, 8, 8), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_bias"] = TensorIR(
+        name="conv_bias",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_out_nhwc"] = TensorIR(
+        name="conv_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_out_nchw"] = TensorIR(
+        name="conv_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["mul_scale"] = TensorIR(
+        name="mul_scale",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.ones((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["mul_out_nchw"] = TensorIR(
+        name="mul_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["add_bias"] = TensorIR(
+        name="add_bias",
+        dtype="FLOAT32",
+        shape=[1, 8, 1, 1],
+        shape_signature=[1, 8, 1, 1],
+        data=np.zeros((1, 8, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["add_out_nchw"] = TensorIR(
+        name="add_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="CONV_2D", inputs=["x_nhwc", "conv_filter", "conv_bias"], outputs=["conv_out_nhwc"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["conv_out_nhwc", "pre_perm"], outputs=["conv_out_nchw"]),
+        OperatorIR(op_type="MUL", inputs=["conv_out_nchw", "mul_scale"], outputs=["mul_out_nchw"]),
+        OperatorIR(op_type="ADD", inputs=["mul_out_nchw", "add_bias"], outputs=["add_out_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["add_out_nchw"], outputs=["z"]),
+    ]
+
+    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
+    assert stats["optimized_convpool_output_transpose_nhwc_passthrough_chains"] == 1
+
+    # Leading post-conv transpose is removed.
+    assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["conv_out_nchw"] for op in model_ir.operators)
+
+    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
+    assert [str(v) for v in list(mul_op.inputs)][0] == "conv_out_nhwc"
 
 
 def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized() -> None:
@@ -10933,6 +12316,117 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_pad_input_optimized() -> No
     assert list(concat_op.outputs) == ["cat_nhwc"]
 
 
+def test_flatbuffer_direct_transpose_pre_concat_nhwc_dequant_input_optimized() -> None:
+    model_ir = ModelIR(name="transpose_pre_concat_nhwc_dequant_input_opt_test")
+    model_ir.inputs = ["a_q_nhwc", "b_q_nhwc"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["a_q_nhwc"] = TensorIR(
+        name="a_q_nhwc",
+        dtype="INT8",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["b_q_nhwc"] = TensorIR(
+        name="b_q_nhwc",
+        dtype="INT8",
+        shape=[1, 6, 6, 8],
+        shape_signature=[1, 6, 6, 8],
+    )
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["a_q_nchw"] = TensorIR(
+        name="a_q_nchw",
+        dtype="INT8",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["b_q_nchw"] = TensorIR(
+        name="b_q_nchw",
+        dtype="INT8",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["a_dq_nchw"] = TensorIR(
+        name="a_dq_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["b_dq_nchw"] = TensorIR(
+        name="b_dq_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 6, 6],
+        shape_signature=[1, 8, 6, 6],
+    )
+    model_ir.tensors["cat_nchw"] = TensorIR(
+        name="cat_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 6, 6],
+        shape_signature=[1, 16, 6, 6],
+    )
+    model_ir.tensors["cat_nhwc"] = TensorIR(
+        name="cat_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 16],
+        shape_signature=[1, 6, 6, 16],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 6, 6, 16],
+        shape_signature=[1, 6, 6, 16],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_q_nhwc", "pre_perm"], outputs=["a_q_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_q_nchw"], outputs=["a_dq_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_q_nhwc", "pre_perm"], outputs=["b_q_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_q_nchw"], outputs=["b_dq_nchw"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["a_dq_nchw", "b_dq_nchw"],
+            outputs=["cat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_nchw", "post_perm"], outputs=["cat_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["cat_nhwc"], outputs=["y"]),
+    ]
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_pre_concat_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+    assert op_types == ["DEQUANTIZE", "DEQUANTIZE", "CONCATENATION", "RELU"]
+
+    dq_ops = [op for op in model_ir.operators if str(op.op_type) == "DEQUANTIZE"]
+    assert len(dq_ops) == 2
+    assert list(dq_ops[0].inputs) == ["a_q_nhwc"]
+    assert list(dq_ops[1].inputs) == ["b_q_nhwc"]
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert list(concat_op.inputs) == ["a_dq_nchw", "b_dq_nchw"]
+    assert list(concat_op.outputs) == ["cat_nhwc"]
+
+    assert list(model_ir.tensors["a_dq_nchw"].shape) == [1, 6, 6, 8]
+    assert list(model_ir.tensors["b_dq_nchw"].shape) == [1, 6, 6, 8]
+    assert list(model_ir.tensors["cat_nhwc"].shape) == [1, 6, 6, 16]
+
+
 def test_flatbuffer_direct_transpose_axis3_const_concat_bridge_nhwc_chain_optimized() -> None:
     model_ir = ModelIR(name="transpose_axis3_const_concat_bridge_nhwc_opt_test")
     model_ir.inputs = ["stem_nhwc"]
@@ -14816,6 +16310,220 @@ def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_without_pool_p
     assert "gate_nchw" in list(mul_op.inputs)
 
 
+def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_with_mean_and_post_relu0to1() -> None:
+    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_mean_relu0to1_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+            data=data,
+            is_variable=False if data is not None else True,
+        )
+
+    _add_tensor("x_nhwc", [1, 8, 128, 8])
+    _add_tensor("x_nchw", [1, 8, 8, 128])
+    _add_tensor("mean_nchw", [1, 8, 1, 1])
+    _add_tensor("fc_in", [1, 8])
+    _add_tensor("fc0_out", [1, 8])
+    _add_tensor("fc0_act", [1, 8])
+    _add_tensor("fc1_out", [1, 8])
+    _add_tensor("gate_nchw", [1, 8, 1, 1])
+    _add_tensor("gate", [1, 8, 1, 1])
+    _add_tensor("mul_out_nchw", [1, 8, 8, 128])
+    _add_tensor("mul_out_nhwc", [1, 8, 128, 8])
+    _add_tensor("y", [1, 8, 128, 8])
+
+    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
+    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
+    _add_tensor("mean_axes", [2], "INT32", np.asarray([2, 3], dtype=np.int32))
+    _add_tensor("shape_fc_in", [2], "INT32", np.asarray([1, 8], dtype=np.int32))
+    _add_tensor("shape_gate", [4], "INT32", np.asarray([1, 8, 1, 1], dtype=np.int32))
+    _add_tensor("fc0_w", [8, 8], data=np.ones((8, 8), dtype=np.float32))
+    _add_tensor("fc0_b", [8], data=np.zeros((8,), dtype=np.float32))
+    _add_tensor("fc1_w", [8, 8], data=np.ones((8, 8), dtype=np.float32))
+    _add_tensor("fc1_b", [8], data=np.zeros((8,), dtype=np.float32))
+    _add_tensor("conv_w", [1, 1, 8, 8], data=np.ones((1, 1, 8, 8), dtype=np.float32))
+    _add_tensor("conv_b", [8], data=np.zeros((8,), dtype=np.float32))
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "perm_nhwc_to_nchw"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["x_nchw", "mean_axes"], outputs=["mean_nchw"], options={"keepDims": True, "axes": [2, 3]}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["mean_nchw", "shape_fc_in"],
+            outputs=["fc_in"],
+            options={"newShape": [1, 8], "onnxRawNewShape": [1, 8]},
+        ),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc_in", "fc0_w", "fc0_b"], outputs=["fc0_out"], options={}),
+        OperatorIR(op_type="RELU", inputs=["fc0_out"], outputs=["fc0_act"]),
+        OperatorIR(op_type="FULLY_CONNECTED", inputs=["fc0_act", "fc1_w", "fc1_b"], outputs=["fc1_out"], options={}),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["fc1_out", "shape_gate"],
+            outputs=["gate_nchw"],
+            options={"newShape": [1, 8, 1, 1], "onnxRawNewShape": [1, 8, 1, 1]},
+        ),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["gate_nchw"], outputs=["gate"]),
+        OperatorIR(op_type="MUL", inputs=["x_nchw", "gate"], outputs=["mul_out_nchw"], options={}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["mul_out_nchw", "perm_nchw_to_nhwc"], outputs=["mul_out_nhwc"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["mul_out_nhwc", "conv_w", "conv_b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideH": 1,
+                "strideW": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+    ]
+
+    stats = _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_se_fc_mul_prepost_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == [
+        "MEAN",
+        "RESHAPE",
+        "FULLY_CONNECTED",
+        "RELU",
+        "FULLY_CONNECTED",
+        "RESHAPE",
+        "RELU_0_TO_1",
+        "MUL",
+        "CONV_2D",
+    ]
+    assert "TRANSPOSE" not in op_types
+
+    mean_op = model_ir.operators[0]
+    assert list(mean_op.inputs)[0] == "x_nhwc"
+    mean_axes_vals = np.asarray(model_ir.tensors["mean_axes__se_fc_nhwc_axes"].data, dtype=np.int32).reshape(-1).tolist()
+    assert mean_axes_vals == [1, 2]
+    assert list(mean_op.options.get("axes", [])) == [1, 2]
+
+    gate_shape_vals = np.asarray(model_ir.tensors["shape_gate"].data, dtype=np.int32).reshape(-1).tolist()
+    assert gate_shape_vals == [1, 1, 1, 8]
+    gate_reshape_op = model_ir.operators[5]
+    assert list(gate_reshape_op.options.get("newShape", [])) == [1, 1, 1, 8]
+    assert list(gate_reshape_op.options.get("onnxRawNewShape", [])) == [1, 1, 1, 8]
+
+    mul_op = model_ir.operators[7]
+    assert "x_nhwc" in list(mul_op.inputs)
+    assert "gate" in list(mul_op.inputs)
+    assert list(mul_op.outputs) == ["mul_out_nhwc"]
+
+    conv_op = model_ir.operators[8]
+    assert list(conv_op.inputs)[0] == "mul_out_nhwc"
+
+
+def test_flatbuffer_direct_safe_transpose_reduction_lite_removes_transpose_quantize_transpose_chain() -> None:
+    model_ir = ModelIR(name="safe_transpose_reduction_lite_tqt_chain_test")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["output"]
+
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+    )
+    model_ir.tensors["perm_nhwc_to_nchw"] = TensorIR(
+        name="perm_nhwc_to_nchw",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["input_nchw"] = TensorIR(
+        name="input_nchw",
+        dtype="FLOAT32",
+        shape=[1, 3, 32, 100],
+        shape_signature=[1, 3, 32, 100],
+    )
+    model_ir.tensors["input_quantized"] = TensorIR(
+        name="input_quantized",
+        dtype="INT8",
+        shape=[1, 3, 32, 100],
+        shape_signature=[1, 3, 32, 100],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+    model_ir.tensors["input_quantized_nhwc"] = TensorIR(
+        name="input_quantized_nhwc",
+        dtype="INT8",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="INT8",
+        shape=[1, 32, 100, 3],
+        shape_signature=[1, 32, 100, 3],
+        quantization={
+            "scale": [1.0],
+            "zero_point": [-127],
+            "quantized_dimension": 0,
+        },
+    )
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["input", "perm_nhwc_to_nchw"],
+            outputs=["input_nchw"],
+        ),
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=["input_nchw"],
+            outputs=["input_quantized"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["input_quantized", "perm_nchw_to_nhwc"],
+            outputs=["input_quantized_nhwc"],
+        ),
+        OperatorIR(
+            op_type="RELU",
+            inputs=["input_quantized_nhwc"],
+            outputs=["output"],
+        ),
+    ]
+
+    stats = _apply_safe_transpose_reduction_lite(model_ir)
+    assert stats["safe_transpose_reduction_lite_reduced"] >= 2
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["QUANTIZE", "RELU"]
+    assert model_ir.operators[0].inputs[0] == "input"
+    assert model_ir.operators[0].outputs[0] == "input_quantized_nhwc"
+    assert model_ir.operators[1].inputs[0] == "input_quantized_nhwc"
+
+
 def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_reshape() -> None:
     model_ir = ModelIR(name="singleton_channel_transpose_to_reshape_test")
     model_ir.inputs = ["x_nhwc"]
@@ -16445,6 +18153,23 @@ def test_flatbuffer_direct_nms_scalar_const_inputs_do_not_emit_squeeze() -> None
         for op in model_ir.operators
         if str(op.op_type) in {"NON_MAX_SUPPRESSION_V4", "NON_MAX_SUPPRESSION_V5"}
     )
+    nms_valid_count_name = str(list(nms_op.outputs)[-1])
+    nms_valid_count_tensor = model_ir.tensors.get(nms_valid_count_name, None)
+    assert nms_valid_count_tensor is not None
+    assert list(nms_valid_count_tensor.shape) == []
+    assert list(nms_valid_count_tensor.shape_signature) == []
+
+    reshape_from_valid_count_ops = [
+        op
+        for op in model_ir.operators
+        if (
+            str(op.op_type) == "RESHAPE"
+            and len(list(op.inputs)) >= 1
+            and str(op.inputs[0]) == nms_valid_count_name
+        )
+    ]
+    assert len(reshape_from_valid_count_ops) >= 1
+
     for scalar_input_name in list(nms_op.inputs)[2:5]:
         scalar_tensor = model_ir.tensors.get(str(scalar_input_name), None)
         assert scalar_tensor is not None
@@ -16508,7 +18233,7 @@ def test_flatbuffer_direct_multiclass_nms_without_onwa_matches_default_behavior(
     assert list(output_tensor.shape_signature) == [-1, 3]
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_multiclass_nms_auto_argmax_retry_avoids_custom_lowering() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_non_max_suppression_multiclass_model()
@@ -16612,7 +18337,7 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
     assert op_types.count("DIV") == 1
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_average_pool_exclude_pad_runtime_match() -> None:
     def _reference_avgpool_exclude_pad(x_nchw: np.ndarray) -> np.ndarray:
         out = np.zeros((1, 1, 2, 2), dtype=np.float32)
@@ -16784,6 +18509,127 @@ def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:
     )
     concat_inputs = list(concat_ops[0].inputs)
     assert "QLCatConv_MaxPool_output_nhwc" in concat_inputs
+
+
+def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation_with_concat_post_transpose() -> None:
+    model_ir = ModelIR(name="qlinear_concat_conv_layout_with_concat_post_transpose_test")
+    model_ir.inputs = ["a_q_nhwc", "b_q_nhwc"]
+    model_ir.outputs = ["y0", "pool_out"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+            data=data,
+            is_variable=False if data is not None else True,
+        )
+
+    _add_tensor("a_q_nhwc", [1, 3, 5, 2], "INT8")
+    _add_tensor("b_q_nhwc", [1, 3, 5, 2], "INT8")
+    _add_tensor("a_q_nchw", [1, 2, 3, 5], "INT8")
+    _add_tensor("b_q_nchw", [1, 2, 3, 5], "INT8")
+    _add_tensor("a_f_nchw", [1, 2, 3, 5])
+    _add_tensor("b_f_nchw", [1, 2, 3, 5])
+    _add_tensor("cat_f_nchw", [1, 4, 3, 5])
+    _add_tensor("cat_f_nhwc", [1, 3, 5, 4])
+    _add_tensor("pool_out", [1, 3, 5, 4])
+    _add_tensor("cat_q", [1, 4, 3, 5], "INT8")
+    _add_tensor("cat_q_nhwc_0", [1, 3, 5, 4], "INT8")
+    _add_tensor("cat_q_nhwc_1", [1, 3, 5, 4], "INT8")
+    _add_tensor("conv_w0", [3, 1, 1, 4], "INT8", np.ones((3, 1, 1, 4), dtype=np.int8))
+    _add_tensor("conv_b0", [3], "INT32", np.zeros((3,), dtype=np.int32))
+    _add_tensor("conv_w1", [3, 1, 1, 4], "INT8", np.ones((3, 1, 1, 4), dtype=np.int8))
+    _add_tensor("conv_b1", [3], "INT32", np.zeros((3,), dtype=np.int32))
+    _add_tensor("y0", [1, 3, 5, 3], "INT8")
+    _add_tensor("y1", [1, 3, 5, 3], "INT8")
+    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
+    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
+
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["a_q_nhwc", "perm_nhwc_to_nchw"], outputs=["a_q_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["a_q_nchw"], outputs=["a_f_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["b_q_nhwc", "perm_nhwc_to_nchw"], outputs=["b_q_nchw"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["b_q_nchw"], outputs=["b_f_nchw"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["a_f_nchw", "b_f_nchw"],
+            outputs=["cat_f_nchw"],
+            options={"axis": 1, "fused_activation_function": "NONE"},
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_f_nchw", "perm_nchw_to_nhwc"], outputs=["cat_f_nhwc"]),
+        OperatorIR(
+            op_type="MAX_POOL_2D",
+            inputs=["cat_f_nhwc"],
+            outputs=["pool_out"],
+            options={
+                "padding": "SAME",
+                "stride_w": 1,
+                "stride_h": 1,
+                "filter_width": 3,
+                "filter_height": 3,
+                "fused_activation_function": "NONE",
+            },
+        ),
+        OperatorIR(op_type="QUANTIZE", inputs=["cat_f_nchw"], outputs=["cat_q"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "perm_nchw_to_nhwc"], outputs=["cat_q_nhwc_0"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["cat_q_nhwc_0", "conv_w0", "conv_b0"],
+            outputs=["y0"],
+            options={
+                "padding": "SAME",
+                "stride_w": 1,
+                "stride_h": 1,
+                "dilation_w_factor": 1,
+                "dilation_h_factor": 1,
+                "fused_activation_function": "NONE",
+                "quantized_bias_type": "INT32",
+            },
+        ),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_q", "perm_nchw_to_nhwc"], outputs=["cat_q_nhwc_1"]),
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["cat_q_nhwc_1", "conv_w1", "conv_b1"],
+            outputs=["y1"],
+            options={
+                "padding": "SAME",
+                "stride_w": 1,
+                "stride_h": 1,
+                "dilation_w_factor": 1,
+                "dilation_h_factor": 1,
+                "fused_activation_function": "NONE",
+                "quantized_bias_type": "INT32",
+            },
+        ),
+    ]
+
+    stats = _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
+    assert stats["propagated_qlinear_concat_conv_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+
+    dq_ops = [op for op in model_ir.operators if str(op.op_type) == "DEQUANTIZE"]
+    assert len(dq_ops) == 2
+    assert [str(dq_ops[0].inputs[0]), str(dq_ops[1].inputs[0])] == ["a_q_nhwc", "b_q_nhwc"]
+
+    maxpool_op = next(op for op in model_ir.operators if str(op.op_type) == "MAX_POOL_2D")
+    assert list(maxpool_op.inputs) == ["cat_f_nchw"]
+
+    conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
+    assert len(conv_ops) == 2
+    assert all(str(op.inputs[0]) == "cat_q" for op in conv_ops)
+
+    cat_f_tensor = model_ir.tensors["cat_f_nchw"]
+    cat_q_tensor = model_ir.tensors["cat_q"]
+    assert list(cat_f_tensor.shape) == [1, 3, 5, 4]
+    assert list(cat_q_tensor.shape) == [1, 3, 5, 4]
+    assert list(cat_q_tensor.shape_signature) == [1, 3, 5, 4]
 
 
 def test_flatbuffer_direct_fuse_add_relu_activation_chain() -> None:
@@ -17865,7 +19711,7 @@ def test_flatbuffer_direct_transpose_binary_single_side_transpose_optimization(
     assert transpose_ops[0].outputs[0] in set(binary_ir.inputs)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_clip_relu6_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_clip_relu6_model()
@@ -17889,7 +19735,7 @@ def test_flatbuffer_direct_clip_relu6_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_clip_relu_n1_to_1_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_clip_relu_n1_to_1_model()
@@ -17916,7 +19762,7 @@ def test_flatbuffer_direct_clip_relu_n1_to_1_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_prelu_model()
@@ -17927,7 +19773,7 @@ def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
         assert "PRELU" in op_names
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_leakyrelu_emits_builtin_leaky_relu() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_leakyrelu_model()
@@ -17938,7 +19784,7 @@ def test_flatbuffer_direct_leakyrelu_emits_builtin_leaky_relu() -> None:
         assert "LEAKY_RELU" in op_names
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_instance_normalization_emits_builtin_chain() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_instance_normalization_model()
@@ -17968,7 +19814,7 @@ def test_flatbuffer_direct_instance_normalization_emits_builtin_chain() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dropout_emits_builtin_chain() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_dropout_model()
@@ -17994,7 +19840,7 @@ def test_flatbuffer_direct_dropout_emits_builtin_chain() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -18018,7 +19864,7 @@ def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_enabled_generates_custom_code() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -18036,7 +19882,7 @@ def test_flatbuffer_direct_custom_op_enabled_generates_custom_code() -> None:
         assert "ONNX_EINSUM" in custom_codes
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_not_in_allowlist_fails() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -18052,7 +19898,7 @@ def test_flatbuffer_direct_custom_op_not_in_allowlist_fails() -> None:
             )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_coverage_report() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -18089,7 +19935,7 @@ def test_flatbuffer_direct_custom_op_coverage_report() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_einsum_builtin_preferred_over_custom() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_fc_const_model()
@@ -18119,7 +19965,7 @@ def test_flatbuffer_direct_einsum_builtin_preferred_over_custom() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_model()
@@ -18149,7 +19995,7 @@ def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_elu_model()
@@ -18173,7 +20019,7 @@ def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
         assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18214,7 +20060,7 @@ def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
         assert cov["schema_unresolved_ops"] == []
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -18246,7 +20092,7 @@ def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
         assert split_report["reference_mode"] == "unsplit_tflite"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gather_int32_model()
@@ -18280,7 +20126,7 @@ def test_flatbuffer_direct_gather_int32_dtype_boundary() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18306,7 +20152,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_smoke() -> None:
         assert y.shape == (1, 3)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_const_model()
@@ -18337,7 +20183,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_add_const_smoke() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 @pytest.mark.parametrize(
     "quant_type, expected_multi_scale",
     [
@@ -18377,7 +20223,7 @@ def test_flatbuffer_direct_dynamic_range_quantized_fc_quant_type(
         interpreter.allocate_tensors()
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integer_quantized_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18451,7 +20297,7 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
         assert y4.dtype == np.int16
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_reduce_model()
@@ -18478,7 +20324,7 @@ def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
         assert y.shape == (1, 1)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_percentile_calibration_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18500,7 +20346,7 @@ def test_flatbuffer_direct_dynamic_range_percentile_calibration_smoke() -> None:
         assert os.path.isfile(tflite_path)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18520,7 +20366,7 @@ def test_flatbuffer_direct_dynamic_range_threshold_control() -> None:
                 )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_generation() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -18553,7 +20399,7 @@ def test_flatbuffer_direct_accuracy_report_generation() -> None:
         assert report["overall_metrics"]["max_abs"] <= 1e-6
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18579,7 +20425,7 @@ def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
         assert "metric_threshold_judgement" in report
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18604,7 +20450,7 @@ def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
         assert report["evaluation_pass"] is False
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_plan_report_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18637,7 +20483,7 @@ def test_parse_auto_split_size_to_bytes_units() -> None:
     assert _parse_size_to_bytes("256", default_unit="MB", param_name="x") == 256 * 1_048_576
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -18660,7 +20506,7 @@ def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() 
         assert report["hard_max_bytes"] >= report["target_max_bytes"]
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -18694,7 +20540,7 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
             interpreter.allocate_tensors()
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -18720,7 +20566,7 @@ def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> Non
         assert report["allclose_summary"]["pass"] is True
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_split_accuracy_report_fail_on_threshold() -> None:
     from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
 
@@ -18762,7 +20608,7 @@ def test_split_accuracy_report_fail_on_threshold() -> None:
         assert report["evaluation_pass"] is False
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_op_coverage_report_generation() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_model()
@@ -18788,7 +20634,7 @@ def test_flatbuffer_direct_op_coverage_report_generation() -> None:
         assert report["preprocess_report"]["summary"]["executed_rule_count"] >= 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_where_neg_inf_broadcast_no_nan() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_where_neg_inf_broadcast_model()
@@ -18842,7 +20688,7 @@ def test_flatbuffer_direct_where_neg_inf_broadcast_no_nan() -> None:
         np.testing.assert_allclose(out, expected, rtol=0.0, atol=0.0)
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_elu_model()
@@ -18866,7 +20712,7 @@ def test_flatbuffer_direct_op_coverage_report_on_unsupported_op() -> None:
         )
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_erf_tile_scatternd_builtin_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_erf_tile_scatternd_model()
@@ -19053,7 +20899,7 @@ def test_flatbuffer_direct_loop_while_lowers_to_builtin_ops_without_custom() -> 
     assert len(model_ir.subgraphs[1].operators) > 0
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_loop_static_unroll_op_coverage_reports_builtin_loop() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_loop_static_unroll_model()
@@ -19081,7 +20927,7 @@ def test_flatbuffer_direct_loop_static_unroll_op_coverage_reports_builtin_loop()
         assert loop_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_loop_while_op_coverage_reports_builtin_loop() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_loop_while_model()
@@ -19496,7 +21342,7 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     assert int(out_tensor.shape_signature[0]) == 100
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p1_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p1_model()
@@ -19524,7 +21370,7 @@ def test_flatbuffer_direct_if_p1_op_coverage_reports_builtin_if() -> None:
         assert if_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p2_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p2_model()
@@ -19552,7 +21398,7 @@ def test_flatbuffer_direct_if_p2_op_coverage_reports_builtin_if() -> None:
         assert if_reports[0]["dispatch_mode"] == "builtin"
 
 
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires flatc and curl")
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_if_p3_op_coverage_reports_builtin_if() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_if_p3_model()

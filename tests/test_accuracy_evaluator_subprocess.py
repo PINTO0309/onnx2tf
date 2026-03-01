@@ -1,3 +1,6 @@
+import os
+import time
+
 import numpy as np
 import pytest
 
@@ -20,6 +23,10 @@ def _worker_error(payload, result_queue) -> None:
     )
 
 
+def _worker_abort(payload, result_queue) -> None:
+    os.abort()
+
+
 def test_run_worker_in_subprocess_large_payload_returns_without_deadlock() -> None:
     result = _run_worker_in_subprocess(
         worker=_worker_large_payload,
@@ -37,3 +44,15 @@ def test_run_worker_in_subprocess_propagates_worker_error_payload() -> None:
             payload={"error": "boom"},
             timeout_sec=10,
         )
+
+
+def test_run_worker_in_subprocess_surfaces_abnormal_exit_without_waiting_full_timeout() -> None:
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="Worker exited abnormally"):
+        _run_worker_in_subprocess(
+            worker=_worker_abort,
+            payload={},
+            timeout_sec=30,
+        )
+    elapsed = float(time.monotonic() - start)
+    assert elapsed < 8.0

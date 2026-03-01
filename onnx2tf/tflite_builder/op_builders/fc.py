@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -294,11 +295,22 @@ def build_matmul_integer_op(node: Any, ctx: Any) -> None:
 
     a_dtype = str(ctx.get_tensor_dtype(a_name)).upper()
     b_dtype = str(ctx.get_tensor_dtype(b_name)).upper()
-    compute_dtype = (
-        "INT16"
-        if a_dtype in {"INT8", "UINT8", "INT16"} and b_dtype in {"INT8", "UINT8", "INT16"}
-        else "FLOAT32"
+    # NOTE:
+    # Keep MatMulInteger lowering on FLOAT32 by default. INT16 lowering builds
+    # SUB(B, zero_point) style integer pre-processing chains that can trigger
+    # LiteRT prepare-time aborts on some models (e.g. bertsquad-12-int8) when
+    # quantized SUB scale constraints are not satisfiable.
+    # For controlled experiments, the legacy INT16 path can be re-enabled via:
+    #   ONNX2TF_MATMULINTEGER_COMPUTE_DTYPE=INT16
+    requested_compute_dtype = str(
+        os.environ.get("ONNX2TF_MATMULINTEGER_COMPUTE_DTYPE", "FLOAT32")
+    ).strip().upper()
+    use_int16_compute = (
+        requested_compute_dtype == "INT16"
+        and a_dtype in {"INT8", "UINT8", "INT16"}
+        and b_dtype in {"INT8", "UINT8", "INT16"}
     )
+    compute_dtype = "INT16" if use_int16_compute else "FLOAT32"
     matmul_output_dtype = "INT32" if compute_dtype == "INT16" else "FLOAT32"
 
     def _cast_to_dtype(src_name: str, hint: str, shape: list[int], target_dtype: str) -> str:
@@ -350,7 +362,7 @@ def build_matmul_integer_op(node: Any, ctx: Any) -> None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
-                    inputs=[a_zp_i32, a_zp_shape_const],
+                    inputs=[a_zp_compute, a_zp_shape_const],
                     outputs=[a_zp_reshaped],
                     options={"newShape": [int(a_shape[0]), 1]},
                 )

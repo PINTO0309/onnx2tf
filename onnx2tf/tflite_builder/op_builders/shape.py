@@ -1347,6 +1347,10 @@ def build_dropout_op(node: Any, ctx: Any) -> None:
         f"{mask_output_name}_dropout_mask_fill_value",
         np.asarray(fill_value, dtype=mask_np_dtype),
     )
+    fill_value_tensor = ctx.model_ir.tensors.get(fill_value_name, None)
+    if fill_value_tensor is not None:
+        fill_value_tensor.shape = []
+        fill_value_tensor.shape_signature = []
     ctx.add_operator(
         OperatorIR(
             op_type="FILL",
@@ -1799,6 +1803,10 @@ def build_constant_of_shape_op(node: Any, ctx: Any) -> None:
         f"{output_name}_constofshape_value",
         np.asarray(scalar_value, dtype=output_np_dtype),
     )
+    fill_value_tensor = ctx.model_ir.tensors.get(fill_value_name, None)
+    if fill_value_tensor is not None:
+        fill_value_tensor.shape = []
+        fill_value_tensor.shape_signature = []
     ctx.add_operator(
         OperatorIR(
             op_type="FILL",
@@ -1982,23 +1990,14 @@ def build_expand_op(node: Any, ctx: Any) -> None:
             f"{output_name}_expand_one",
             np.asarray(1, dtype=ones_dtype),
         )
-        one_scalar_for_fill = ctx.add_intermediate_tensor(
-            f"{output_name}_expand_one_scalar",
-            dtype=mul_lhs_dtype,
-            shape=[1],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SQUEEZE",
-                inputs=[one_const_name],
-                outputs=[one_scalar_for_fill],
-                options={"squeezeDims": [0]},
-            )
-        )
+        one_const_tensor = ctx.model_ir.tensors.get(one_const_name, None)
+        if one_const_tensor is not None:
+            one_const_tensor.shape = []
+            one_const_tensor.shape_signature = []
         ctx.add_operator(
             OperatorIR(
                 op_type="FILL",
-                inputs=[shape_for_fill, one_scalar_for_fill],
+                inputs=[shape_for_fill, one_const_name],
                 outputs=[ones_name],
             )
         )
