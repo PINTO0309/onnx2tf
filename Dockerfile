@@ -13,7 +13,6 @@ RUN apt-get update \
         nano python3-pip python3-mock libpython3-dev git \
         libpython3-all-dev python-is-python3 wget curl cmake \
         software-properties-common sudo pkg-config libhdf5-dev \
-        flatbuffers-compiler \
     && sed -i 's/# set linenumbers/set linenumbers/g' /etc/nanorc \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
