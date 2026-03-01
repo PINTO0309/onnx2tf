@@ -88,6 +88,9 @@ jobs:
         python-version: '3.12'
     - name: Install dependencies
       run: |
+        sudo apt-get update >/dev/null 2>&1
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq flatbuffers-compiler >/dev/null 2>&1
+        flatc --version
         pip install pip -U
         pip install cmake==3.26.4
         pip install psutil==5.9.5
