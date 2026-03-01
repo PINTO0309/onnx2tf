@@ -1818,7 +1818,9 @@ def convert(
                 and 'Worker exited abnormally' in ex_str
                 and 'worker=_tflite_inference_worker' in ex_str
                 and (
-                    'exit_code=-11' in ex_str
+                    'exit_code=-6' in ex_str
+                    or 'exit_code=134' in ex_str
+                    or 'exit_code=-11' in ex_str
                     or 'exit_code=139' in ex_str
                 )
             ):

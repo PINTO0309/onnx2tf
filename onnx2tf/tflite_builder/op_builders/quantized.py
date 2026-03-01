@@ -835,12 +835,61 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         quantized_dimension=0 if np.asarray(c_scale).size <= 1 else _normalize_axis(1, out_rank),
     )
 
+    if str(op_type).upper() != "MUL":
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[a_name, b_name],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
+    # Prefer float-path lowering for QLinearMul to match ONNX quantized
+    # multiply semantics more closely across runtimes.
+    a_f_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{str(op_type).lower()}_a_f32",
+        dtype="FLOAT32",
+        shape=list(ctx.get_tensor_shape(a_name)),
+    )
+    b_f_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{str(op_type).lower()}_b_f32",
+        dtype="FLOAT32",
+        shape=list(ctx.get_tensor_shape(b_name)),
+    )
+    out_f_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{str(op_type).lower()}_f32",
+        dtype="FLOAT32",
+        shape=list(ctx.get_tensor_shape(output_name)),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DEQUANTIZE",
+            inputs=[a_name],
+            outputs=[a_f_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DEQUANTIZE",
+            inputs=[b_name],
+            outputs=[b_f_name],
+        )
+    )
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
-            inputs=[a_name, b_name],
-            outputs=[output_name],
+            inputs=[a_f_name, b_f_name],
+            outputs=[out_f_name],
             options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="QUANTIZE",
+            inputs=[out_f_name],
+            outputs=[output_name],
         )
     )
 
@@ -1870,8 +1919,9 @@ def build_qlinear_global_average_pool_op(node: Any, ctx: Any) -> None:
                     last_op.options = last_opts
         return True
 
-    if _lower_via_quantized_global_average_pool():
-        return
+    # Prefer the dequantize path for numerical parity with ONNX QLinearGlobalAveragePool.
+    # Quantized AVERAGE_POOL_2D kernels can introduce backend-specific rounding
+    # differences that amplify in later QLinear branches.
     _lower_via_dequantize_mean_quantize()
 
 

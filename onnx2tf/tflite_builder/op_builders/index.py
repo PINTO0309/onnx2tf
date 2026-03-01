@@ -352,19 +352,10 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
         f"{output_name}_scatter_nd_one",
         np.asarray(1, dtype=_DTYPE_TO_NP[data_dtype]),
     )
-    ones_scalar_for_fill = ctx.add_intermediate_tensor(
-        f"{output_name}_scatter_nd_one_scalar",
-        dtype=data_dtype,
-        shape=[1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SQUEEZE",
-            inputs=[ones_scalar],
-            outputs=[ones_scalar_for_fill],
-            options={"squeezeDims": [0]},
-        )
-    )
+    ones_scalar_tensor = ctx.model_ir.tensors.get(ones_scalar, None)
+    if ones_scalar_tensor is not None:
+        ones_scalar_tensor.shape = []
+        ones_scalar_tensor.shape_signature = []
     updates_ones = ""
     if len(updates_shape) > 0 and all(int(dim) > 0 for dim in updates_shape):
         updates_ones = ctx.add_const_tensor(
@@ -393,7 +384,7 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
         ctx.add_operator(
             OperatorIR(
                 op_type="FILL",
-                inputs=[updates_shape_name, ones_scalar_for_fill],
+                inputs=[updates_shape_name, ones_scalar],
                 outputs=[updates_ones],
             )
         )
@@ -871,19 +862,10 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         f"{output_name}_scatter_elements_one",
         np.asarray(1, dtype=_DTYPE_TO_NP[data_dtype]),
     )
-    one_scalar_for_fill_name = ctx.add_intermediate_tensor(
-        f"{output_name}_scatter_elements_one_scalar",
-        dtype=data_dtype,
-        shape=[1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SQUEEZE",
-            inputs=[one_name],
-            outputs=[one_scalar_for_fill_name],
-            options={"squeezeDims": [0]},
-        )
-    )
+    one_tensor = ctx.model_ir.tensors.get(one_name, None)
+    if one_tensor is not None:
+        one_tensor.shape = []
+        one_tensor.shape_signature = []
     updates_flat_shape_name = ctx.add_intermediate_tensor(
         f"{output_name}_scatter_elements_updates_flat_shape",
         dtype="INT32",
@@ -905,7 +887,7 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="FILL",
-            inputs=[updates_flat_shape_name, one_scalar_for_fill_name],
+            inputs=[updates_flat_shape_name, one_name],
             outputs=[updates_ones_name],
         )
     )
@@ -3096,6 +3078,12 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             dtype="INT32",
             shape=[],
         )
+        nms_valid_count_tensor = ctx.model_ir.tensors.get(nms_valid_count_name, None)
+        if nms_valid_count_tensor is not None:
+            # NMS valid_count is scalar in LiteRT runtime. Keep rank-0 metadata so
+            # downstream RESHAPE([1]) is preserved and SLICE size receives rank-1.
+            nms_valid_count_tensor.shape = []
+            nms_valid_count_tensor.shape_signature = []
         nms_inputs = [
             boxes_2d_name,
             class_scores_1d_name,

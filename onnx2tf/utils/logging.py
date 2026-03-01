@@ -30,7 +30,7 @@ class Color(Enum):
 
     def __str__(self):
         return self.value
-    
+
     def __call__(self, s):
         return str(self) + str(s) + str(Color.RESET)
 

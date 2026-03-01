@@ -19,6 +19,10 @@ import tensorflow as tf
 import onnx2tf
 
 _CFG = {}
+_SCHEMA_ARTIFACT_FILENAMES = (
+    'schema.fbs',
+    'schema_generated.py',
+)
 
 
 class Results:
@@ -95,6 +99,38 @@ def _del_location(loc):
             os.remove(loc)
 
 
+def _is_flatbuffer_direct_backend():
+    return str(_CFG.get('tflite_backend', '')).lower() == 'flatbuffer_direct'
+
+
+def _reset_output_directory(*, preserve_schema_artifacts=False):
+    output_directory = _CFG.get('output_directory', None)
+    if output_directory is None:
+        return
+    output_directory = os.path.normpath(output_directory)
+
+    preserved_files = {}
+    if (
+        preserve_schema_artifacts
+        and not _CFG['dry_run']
+        and os.path.isdir(output_directory)
+    ):
+        for filename in _SCHEMA_ARTIFACT_FILENAMES:
+            file_path = os.path.join(output_directory, filename)
+            if os.path.isfile(file_path):
+                with open(file_path, 'rb') as f:
+                    preserved_files[filename] = f.read()
+
+    _del_location(output_directory)
+    os.makedirs(output_directory, exist_ok=True)
+
+    if not _CFG['dry_run'] and len(preserved_files) > 0:
+        for filename, file_bytes in preserved_files.items():
+            file_path = os.path.join(output_directory, filename)
+            with open(file_path, 'wb') as f:
+                f.write(file_bytes)
+
+
 def _report_check_model(model):
     """Use ONNX checker to test if model is valid and return a report string."""
     try:
@@ -128,12 +164,15 @@ def _report_convert_model(file_path):
             os.remove(file_path)
         # Clean all conversion artifacts (tflite/json/tmp dirs) to keep each
         # model run isolated and avoid disk bloat in CI.
-        _del_location(_CFG['output_directory'])
-        os.makedirs(_CFG['output_directory'], exist_ok=True)
+        _reset_output_directory(
+            preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+        )
         return ''
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
-        _del_location(_CFG['output_directory'])
+        _reset_output_directory(
+            preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+        )
         stack_trace = str(ex).strip().split('\n')
         if len(stack_trace) > 1:
             err_msg = stack_trace[-1].strip()
@@ -299,7 +338,9 @@ def model_convert_report(
         not_use_onnxsim=not_use_onnxsim,
     )
     _del_location(_CFG['report_filename'])
-    _del_location(_CFG['output_directory'])
+    _reset_output_directory(
+        preserve_schema_artifacts=_is_flatbuffer_direct_backend(),
+    )
     _del_location(_CFG['untar_directory'])
 
     # run tests first, but append to report after summary

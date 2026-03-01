@@ -262,6 +262,38 @@ def _make_constant_qdq_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_constant_dq_block_quant_1d_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [96])
+    x = numpy_helper.from_array(
+        np.asarray([(i % 127) - 63 for i in range(96)], dtype=np.int8),
+        name="x_const",
+    )
+    scale = numpy_helper.from_array(
+        np.asarray([0.25, 0.5], dtype=np.float32),
+        name="x_scale",
+    )
+    zero_point = numpy_helper.from_array(
+        np.asarray([1, -2], dtype=np.int8),
+        name="x_zero_point",
+    )
+    n0 = helper.make_node(
+        "DequantizeLinear",
+        ["x_const", "x_scale", "x_zero_point"],
+        ["y"],
+        name="DQBlockConstNode",
+        axis=0,
+        block_size=48,
+    )
+    graph = helper.make_graph(
+        [n0],
+        "constant_dq_block_quant_1d_graph",
+        [],
+        [y],
+        initializer=[x, scale, zero_point],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 21)])
+
+
 def test_preprocess_wave1_keeps_hardswish_builtin() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
@@ -456,6 +488,30 @@ def test_constant_fold_rewrites_constant_qdq_chain() -> None:
         y_value,
         np.asarray([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32),
     )
+
+
+def test_constant_fold_rewrites_block_quantized_1d_dequantize_linear() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_constant_dq_block_quant_1d_model()
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[CONSTANT_FOLD_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["Constant"]
+
+    y_const = preprocessed.graph.node[0]
+    value_attr = next((a for a in y_const.attribute if str(a.name) == "value"), None)
+    assert value_attr is not None
+    y_value = np.asarray(numpy_helper.to_array(value_attr.t))
+
+    x = np.asarray([(i % 127) - 63 for i in range(96)], dtype=np.float32)
+    expected = np.empty((96,), dtype=np.float32)
+    expected[:48] = (x[:48] - 1.0) * 0.25
+    expected[48:] = (x[48:] - (-2.0)) * 0.5
+    assert np.allclose(y_value, expected, rtol=0.0, atol=1e-6)
 
 
 def test_quant_chain_fusion_wave3_rewrites_dq_bn_prelu_q_chain() -> None:

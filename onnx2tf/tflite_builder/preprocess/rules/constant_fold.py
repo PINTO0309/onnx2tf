@@ -120,6 +120,84 @@ def _fold_cast(values: List[np.ndarray], node: onnx.NodeProto) -> Optional[np.nd
     return np.asarray(values[0]).astype(np_dtype)
 
 
+def _reshape_quant_param_for_axis(
+    *,
+    param: np.ndarray,
+    x_shape: Sequence[int],
+    axis: int,
+    block_size: int,
+) -> Optional[np.ndarray]:
+    arr = np.asarray(param)
+    x_rank = int(len(x_shape))
+    if arr.ndim == 0:
+        return arr
+    if x_rank <= 0:
+        return None
+
+    normalized_axis = int(axis)
+    if normalized_axis < 0:
+        normalized_axis += x_rank
+    if normalized_axis < 0 or normalized_axis >= x_rank:
+        return None
+
+    # Normalize scalar-like wrappers such as [1, C] or [C, 1] into rank-1.
+    if arr.ndim not in (1, x_rank):
+        squeezed = np.squeeze(arr)
+        if squeezed.ndim in (0, 1, x_rank):
+            arr = np.asarray(squeezed)
+        else:
+            return arr
+    if arr.ndim == 0:
+        return arr
+
+    axis_dim_x = int(x_shape[normalized_axis])
+    if axis_dim_x <= 0:
+        return None
+
+    if arr.ndim == 1:
+        axis_dim_arr = int(arr.shape[0])
+        if axis_dim_arr <= 0:
+            return None
+        if axis_dim_arr != axis_dim_x:
+            repeat_count = int(block_size) if int(block_size) > 0 else 0
+            if repeat_count <= 0:
+                if axis_dim_x % axis_dim_arr != 0:
+                    return None
+                repeat_count = int(axis_dim_x // axis_dim_arr)
+            expanded = np.repeat(arr, repeats=repeat_count, axis=0)
+            if int(expanded.shape[0]) < axis_dim_x:
+                return None
+            if int(expanded.shape[0]) > axis_dim_x:
+                expanded = expanded[:axis_dim_x]
+            arr = np.asarray(expanded)
+        reshape_dims = [1 for _ in range(x_rank)]
+        reshape_dims[normalized_axis] = int(arr.shape[0])
+        return np.reshape(arr, reshape_dims)
+
+    if arr.ndim == x_rank:
+        if int(arr.shape[normalized_axis]) == axis_dim_x:
+            return arr
+        axis_dim_arr = int(arr.shape[normalized_axis])
+        if axis_dim_arr <= 0:
+            return None
+        repeat_count = int(block_size) if int(block_size) > 0 else 0
+        if repeat_count <= 0:
+            if axis_dim_x % axis_dim_arr != 0:
+                return None
+            repeat_count = int(axis_dim_x // axis_dim_arr)
+        expanded = np.repeat(arr, repeats=repeat_count, axis=normalized_axis)
+        expanded_axis_dim = int(expanded.shape[normalized_axis])
+        if expanded_axis_dim < axis_dim_x:
+            return None
+        if expanded_axis_dim > axis_dim_x:
+            slicing = [slice(None) for _ in range(x_rank)]
+            slicing[normalized_axis] = slice(0, axis_dim_x)
+            expanded = expanded[tuple(slicing)]
+        return np.asarray(expanded)
+
+    return arr
+
+
 def _fold_dequantize_linear(values: List[np.ndarray], node: onnx.NodeProto) -> Optional[np.ndarray]:
     if len(values) < 2:
         return None
@@ -129,59 +207,24 @@ def _fold_dequantize_linear(values: List[np.ndarray], node: onnx.NodeProto) -> O
         return None
     axis = int(_get_attr_int(node, "axis", 1))
     block_size = int(_get_attr_int(node, "block_size", 0))
-    x_rank = int(x.ndim)
     x_shape = list(x.shape)
-
-    def _reshape_param_for_axis(param: np.ndarray) -> Optional[np.ndarray]:
-        arr = np.asarray(param)
-        if arr.ndim == 0:
-            return arr
-        if arr.ndim == 1:
-            if x_rank <= 0:
-                return None
-            normalized_axis = int(axis)
-            if normalized_axis < 0:
-                normalized_axis += x_rank
-            if normalized_axis < 0 or normalized_axis >= x_rank:
-                return None
-            reshape_dims = [1 for _ in range(x_rank)]
-            reshape_dims[normalized_axis] = int(arr.shape[0])
-            return np.reshape(arr, reshape_dims)
-        if arr.ndim == x_rank:
-            normalized_axis = int(axis)
-            if normalized_axis < 0:
-                normalized_axis += x_rank
-            if normalized_axis < 0 or normalized_axis >= x_rank:
-                return None
-            if int(arr.shape[normalized_axis]) == int(x_shape[normalized_axis]):
-                return arr
-            axis_dim_arr = int(arr.shape[normalized_axis])
-            axis_dim_x = int(x_shape[normalized_axis])
-            if axis_dim_arr <= 0 or axis_dim_x <= 0:
-                return None
-            repeat_count = int(block_size) if int(block_size) > 0 else 0
-            if repeat_count <= 0:
-                if axis_dim_x % axis_dim_arr != 0:
-                    return None
-                repeat_count = int(axis_dim_x // axis_dim_arr)
-            expanded = np.repeat(arr, repeats=repeat_count, axis=normalized_axis)
-            expanded_axis_dim = int(expanded.shape[normalized_axis])
-            if expanded_axis_dim < axis_dim_x:
-                return None
-            if expanded_axis_dim > axis_dim_x:
-                slicing = [slice(None) for _ in range(x_rank)]
-                slicing[normalized_axis] = slice(0, axis_dim_x)
-                expanded = expanded[tuple(slicing)]
-            return np.asarray(expanded)
-        return arr
-
-    scale_arr = _reshape_param_for_axis(scale)
+    scale_arr = _reshape_quant_param_for_axis(
+        param=scale,
+        x_shape=x_shape,
+        axis=axis,
+        block_size=block_size,
+    )
     if scale_arr is None:
         return None
 
     if len(values) >= 3:
         zero_point = np.asarray(values[2])
-        zero_point_arr = _reshape_param_for_axis(zero_point)
+        zero_point_arr = _reshape_quant_param_for_axis(
+            param=zero_point,
+            x_shape=x_shape,
+            axis=axis,
+            block_size=block_size,
+        )
         if zero_point_arr is None:
             return None
     else:
@@ -203,53 +246,13 @@ def _fold_quantize_linear(values: List[np.ndarray], node: onnx.NodeProto) -> Opt
         return None
     axis = int(_get_attr_int(node, "axis", 1))
     block_size = int(_get_attr_int(node, "block_size", 0))
-    x_rank = int(x.ndim)
     x_shape = list(x.shape)
-
-    def _reshape_param_for_axis(param: np.ndarray) -> Optional[np.ndarray]:
-        arr = np.asarray(param)
-        if arr.ndim == 0:
-            return arr
-        if arr.ndim == 1:
-            if x_rank <= 0:
-                return None
-            normalized_axis = int(axis)
-            if normalized_axis < 0:
-                normalized_axis += x_rank
-            if normalized_axis < 0 or normalized_axis >= x_rank:
-                return None
-            reshape_dims = [1 for _ in range(x_rank)]
-            reshape_dims[normalized_axis] = int(arr.shape[0])
-            return np.reshape(arr, reshape_dims)
-        if arr.ndim == x_rank:
-            normalized_axis = int(axis)
-            if normalized_axis < 0:
-                normalized_axis += x_rank
-            if normalized_axis < 0 or normalized_axis >= x_rank:
-                return None
-            if int(arr.shape[normalized_axis]) == int(x_shape[normalized_axis]):
-                return arr
-            axis_dim_arr = int(arr.shape[normalized_axis])
-            axis_dim_x = int(x_shape[normalized_axis])
-            if axis_dim_arr <= 0 or axis_dim_x <= 0:
-                return None
-            repeat_count = int(block_size) if int(block_size) > 0 else 0
-            if repeat_count <= 0:
-                if axis_dim_x % axis_dim_arr != 0:
-                    return None
-                repeat_count = int(axis_dim_x // axis_dim_arr)
-            expanded = np.repeat(arr, repeats=repeat_count, axis=normalized_axis)
-            expanded_axis_dim = int(expanded.shape[normalized_axis])
-            if expanded_axis_dim < axis_dim_x:
-                return None
-            if expanded_axis_dim > axis_dim_x:
-                slicing = [slice(None) for _ in range(x_rank)]
-                slicing[normalized_axis] = slice(0, axis_dim_x)
-                expanded = expanded[tuple(slicing)]
-            return np.asarray(expanded)
-        return arr
-
-    scale_arr = _reshape_param_for_axis(scale)
+    scale_arr = _reshape_quant_param_for_axis(
+        param=scale,
+        x_shape=x_shape,
+        axis=axis,
+        block_size=block_size,
+    )
     if scale_arr is None:
         return None
     if np.any(np.asarray(scale_arr).astype(np.float32) == 0.0):
@@ -257,7 +260,12 @@ def _fold_quantize_linear(values: List[np.ndarray], node: onnx.NodeProto) -> Opt
 
     if len(values) >= 3:
         zero_point = np.asarray(values[2])
-        zero_point_arr = _reshape_param_for_axis(zero_point)
+        zero_point_arr = _reshape_quant_param_for_axis(
+            param=zero_point,
+            x_shape=x_shape,
+            axis=axis,
+            block_size=block_size,
+        )
         if zero_point_arr is None:
             return None
         output_dtype = np.asarray(values[2]).dtype
