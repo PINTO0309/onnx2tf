@@ -32,6 +32,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_dropout_op,
     build_cosh_op,
     build_custom_passthrough_op,
+    build_conv_integer_op,
     build_dequantize_linear_op,
     build_depth_to_space_op,
     build_dynamic_quantize_linear_op,
@@ -4379,6 +4380,104 @@ def _validate_qlinear_conv(node: Any, ctx: Any) -> None:
         _require_const_input(node, ctx, 8, "QLinearConv bias")
 
 
+def _validate_conv_integer(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if len(input_shape) not in [1, 4] or len(output_shape) not in [1, 4]:
+        raise NodeValidationError(
+            reason_code="unsupported_tensor_rank",
+            message=(
+                "ConvInteger supports only rank-4 tensors. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    supported_input_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32"}
+    x_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    if x_dtype not in supported_input_dtypes:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "ConvInteger input dtype must be an integer tensor type for builtin lowering. "
+                f"input_dtype={x_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"INT32", "INT64"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"ConvInteger output dtype must be INT32 or INT64. got={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    weights = _require_const_input(node, ctx, 1, "ConvInteger weights")
+    if weights.ndim != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_weight_rank",
+            message=f"ConvInteger weight rank must be 4. weight_shape={list(weights.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    group = int(node.attrs.get("group", 1))
+    if len(input_shape) == 4:
+        in_channels = int(input_shape[1])
+        weight_in_channels_per_group = int(weights.shape[1])
+        weight_out_channels = int(weights.shape[0])
+        is_depthwise = (
+            group > 1
+            and weight_in_channels_per_group == 1
+            and (weight_out_channels % group) == 0
+        )
+        if group != 1 and not is_depthwise:
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=(
+                    "ConvInteger supports only regular or depthwise group conv. "
+                    f"group={group} in_channels={in_channels} weight_shape={list(weights.shape)}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    if len(node.inputs) >= 3:
+        x_zero_shape = ctx.get_tensor_shape(node.inputs[2].name)
+        if len(x_zero_shape) > 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=f"ConvInteger x_zero_point must be scalar or rank-1. shape={x_zero_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    if len(node.inputs) >= 4:
+        w_zero = _require_const_input(node, ctx, 3, "ConvInteger w_zero_point")
+        w_zero_shape = list(np.asarray(w_zero).shape)
+        if len(w_zero_shape) > 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=f"ConvInteger w_zero_point must be scalar or rank-1. shape={w_zero_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if len(w_zero_shape) == 1 and int(w_zero_shape[0]) > 1 and int(w_zero_shape[0]) != int(weights.shape[0]):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "ConvInteger w_zero_point length mismatch. "
+                    f"shape={w_zero_shape} expected={int(weights.shape[0])}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _validate_qlinear_matmul(node: Any, ctx: Any) -> None:
     input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
     if input_rank not in [1, 2]:
@@ -5581,6 +5680,18 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             max_outputs=1,
         ),
         extra_validator=_validate_qlinear_conv,
+    ),
+    "ConvInteger": DispatchEntry(
+        onnx_op="ConvInteger",
+        tflite_ops=["CAST", "SUB", "PAD", "CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE"],
+        builder=build_conv_integer_op,
+        validation=ValidationSpec(
+            min_inputs=2,
+            max_inputs=4,
+            min_outputs=1,
+            max_outputs=1,
+        ),
+        extra_validator=_validate_conv_integer,
     ),
     "QLinearMatMul": DispatchEntry(
         onnx_op="QLinearMatMul",

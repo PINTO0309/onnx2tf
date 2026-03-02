@@ -2006,6 +2006,50 @@ def _make_matmul_integer_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_conv_integer_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.UINT8, [1, 3, 4, 4])
+    x_zero = helper.make_tensor_value_info("x_zero", TensorProto.UINT8, [])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [1, 2, 4, 4])
+    w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [
+                    [[1, 2, 0], [2, 1, 1], [0, 1, 2]],
+                    [[0, 1, 1], [1, 2, 1], [1, 0, 1]],
+                    [[1, 0, 2], [1, 1, 1], [2, 1, 0]],
+                ],
+                [
+                    [[2, 1, 1], [1, 0, 1], [1, 2, 0]],
+                    [[1, 1, 0], [0, 1, 2], [2, 1, 1]],
+                    [[0, 2, 1], [1, 1, 0], [1, 0, 2]],
+                ],
+            ],
+            dtype=np.uint8,
+        ),
+        name="ci_w",
+    )
+    w_zero = numpy_helper.from_array(np.asarray(1, dtype=np.uint8), name="ci_w_zero")
+    node = helper.make_node(
+        "ConvInteger",
+        ["x", "ci_w", "x_zero", "ci_w_zero"],
+        ["y"],
+        name="ConvIntegerNode",
+        dilations=[1, 1],
+        group=1,
+        kernel_shape=[3, 3],
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+    )
+    graph = helper.make_graph(
+        [node],
+        "conv_integer_graph",
+        [x, x_zero],
+        [y],
+        initializer=[w, w_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_dynamic_quantize_linear_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.UINT8, [2, 3])
@@ -8037,6 +8081,22 @@ def test_flatbuffer_direct_matmul_integer_batch_matmul_runtime_dtypes() -> None:
             continue
         in_dtypes = [str(model_ir.tensors[name].dtype).upper() for name in op.inputs]
         assert all(dtype in allowed for dtype in in_dtypes), in_dtypes
+
+
+def test_flatbuffer_direct_conv_integer_lowering() -> None:
+    model = _make_conv_integer_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="conv_integer_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("CONV_2D") == 1
+    assert op_types.count("CUSTOM") == 0
+    assert op_types.count("CAST") >= 1
+    assert str(model_ir.tensors["y"].dtype).upper() == "INT32"
 
 
 def test_flatbuffer_direct_dynamic_quantize_linear_lowering() -> None:
