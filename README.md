@@ -317,9 +317,7 @@ In that fallback mode, direct-only features (`--report_op_coverage`, `--auto_spl
   ```bash
   onnx2tf \
   -i iat_llie_180x320.onnx \
-  -tb flatbuffer_direct \
-  -cotof \
-  --report_op_coverage
+  -tb flatbuffer_direct
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
