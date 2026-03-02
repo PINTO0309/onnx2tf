@@ -1727,11 +1727,21 @@ def convert(
         *,
         tflite_paths: Dict[str, str],
         source_label: str,
+        contains_custom_ops: bool = False,
     ) -> None:
         if not run_onnx_tflite_output_check:
             return
         explicit_eval = bool(eval_with_onnx)
         required = bool(explicit_eval)
+        if contains_custom_ops and not explicit_eval:
+            info(
+                Color.YELLOW(
+                    'ONNX/TFLite output check was skipped because generated TFLite includes '
+                    'CUSTOM ops from auto custom-op retry. '
+                    f'source={source_label}'
+                )
+            )
+            return
         report_path = os.path.join(
             output_folder_path,
             f'{output_file_name}_accuracy_report.json',
@@ -1739,6 +1749,21 @@ def convert(
         eval_in_process = str(
             os.environ.get('ONNX2TF_EVAL_IN_PROCESS', '0')
         ).strip().lower() in {'1', 'true', 'yes', 'on'}
+        eval_timeout_default_sec = 600 if explicit_eval else 180
+        eval_timeout_sec = int(eval_timeout_default_sec)
+        eval_timeout_env = str(
+            os.environ.get('ONNX2TF_EVAL_TIMEOUT_SEC', '')
+        ).strip()
+        if eval_timeout_env != '':
+            try:
+                parsed_eval_timeout = int(eval_timeout_env)
+                if parsed_eval_timeout > 0:
+                    eval_timeout_sec = int(parsed_eval_timeout)
+            except Exception:
+                warn(
+                    'Invalid ONNX2TF_EVAL_TIMEOUT_SEC value was ignored. '
+                    f'value={eval_timeout_env}'
+                )
         try:
             if eval_in_process:
                 from onnx2tf.tflite_builder.accuracy_evaluator import (
@@ -1786,17 +1811,22 @@ def convert(
             )
             if onnx_graph_for_eval is None:
                 raise RuntimeError('ONNX graph is unavailable for evaluation.')
+            eval_kwargs = {
+                'onnx_graph': onnx_graph_for_eval,
+                'tflite_path': tflite_path,
+                'output_report_path': report_path,
+                'num_samples': eval_num_samples_local,
+                'seed': 0,
+                'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
+                'rtol': eval_rtol,
+                'atol': eval_atol,
+                'compare_mode': eval_compare_mode,
+                'fail_on_threshold': eval_fail_on_threshold_local,
+            }
+            if not eval_in_process:
+                eval_kwargs['timeout_sec'] = int(eval_timeout_sec)
             report = evaluate_onnx_tflite_outputs_impl(
-                onnx_graph=onnx_graph_for_eval,
-                tflite_path=tflite_path,
-                output_report_path=report_path,
-                num_samples=eval_num_samples_local,
-                seed=0,
-                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                rtol=eval_rtol,
-                atol=eval_atol,
-                compare_mode=eval_compare_mode,
-                fail_on_threshold=eval_fail_on_threshold_local,
+                **eval_kwargs,
             )
         except Exception as ex:
             ex_str = str(ex)
@@ -1856,6 +1886,7 @@ def convert(
         *,
         tflite_path: Optional[str],
         tensor_correspondence_report_path: Optional[str] = None,
+        contains_custom_ops: bool = False,
     ) -> None:
         if not run_flatbuffer_direct_op_error_report:
             return
@@ -1864,8 +1895,30 @@ def convert(
                 'OP error report generation was skipped because float32 TFLite output is unavailable.'
             )
             return
+        if contains_custom_ops:
+            info(
+                Color.YELLOW(
+                    'OP error report generation was skipped because generated TFLite includes '
+                    'CUSTOM ops and per-op built-in comparison is not supported.'
+                )
+            )
+            return
 
         op_error_report_module = 'onnx2tf.utils.flatbuffer_direct_op_error_report'
+        op_error_report_timeout_sec = 180
+        op_error_report_timeout_env = str(
+            os.environ.get('ONNX2TF_OP_ERROR_REPORT_TIMEOUT_SEC', '')
+        ).strip()
+        if op_error_report_timeout_env != '':
+            try:
+                parsed_op_error_timeout = int(op_error_report_timeout_env)
+                if parsed_op_error_timeout > 0:
+                    op_error_report_timeout_sec = int(parsed_op_error_timeout)
+            except Exception:
+                warn(
+                    'Invalid ONNX2TF_OP_ERROR_REPORT_TIMEOUT_SEC value was ignored. '
+                    f'value={op_error_report_timeout_env}'
+                )
 
         temp_onnx_path = None
         report_onnx_path = None
@@ -1946,7 +1999,7 @@ def convert(
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
-                timeout=600,
+                timeout=op_error_report_timeout_sec,
             )
             return_code = int(completed.returncode)
             helper_stdout = str(completed.stdout or '').strip()
@@ -2027,6 +2080,59 @@ def convert(
         finally:
             if temp_onnx_path and os.path.exists(temp_onnx_path):
                 os.remove(temp_onnx_path)
+
+    def _log_flatbuffer_direct_custom_op_summary(
+        *,
+        direct_outputs: Dict[str, Any],
+        source_label: str = 'flatbuffer_direct',
+    ) -> None:
+        custom_op_count = int(direct_outputs.get('custom_op_count', 0))
+        if custom_op_count <= 0:
+            return
+        custom_ops_used_raw = direct_outputs.get('custom_ops_used', [])
+        custom_ops_used: List[str] = []
+        if isinstance(custom_ops_used_raw, (list, tuple, set)):
+            custom_ops_used = [
+                str(v).strip()
+                for v in custom_ops_used_raw
+                if str(v).strip() != ''
+            ]
+        elif custom_ops_used_raw is not None:
+            v = str(custom_ops_used_raw).strip()
+            if v != '':
+                custom_ops_used = [v]
+        custom_ops_display = ', '.join(custom_ops_used) if len(custom_ops_used) > 0 else '(unknown)'
+
+        custom_op_nodes_raw = direct_outputs.get('custom_op_nodes', [])
+        onnx_ops: List[str] = []
+        onnx_nodes: List[str] = []
+        if isinstance(custom_op_nodes_raw, (list, tuple)):
+            for node_info in custom_op_nodes_raw:
+                if not isinstance(node_info, dict):
+                    continue
+                onnx_op = str(node_info.get('onnx_op', '')).strip()
+                onnx_node_name = str(node_info.get('onnx_node_name', '')).strip()
+                if onnx_op != '' and onnx_op not in onnx_ops:
+                    onnx_ops.append(onnx_op)
+                if onnx_node_name != '' and onnx_node_name not in onnx_nodes:
+                    onnx_nodes.append(onnx_node_name)
+        onnx_ops_display = ', '.join(onnx_ops) if len(onnx_ops) > 0 else ''
+        onnx_nodes_display = ', '.join(onnx_nodes) if len(onnx_nodes) > 0 else ''
+        onnx_suffix = ''
+        if onnx_ops_display != '':
+            onnx_suffix += f' onnx_ops=[{onnx_ops_display}]'
+        if onnx_nodes_display != '':
+            onnx_suffix += f' onnx_nodes=[{onnx_nodes_display}]'
+
+        info(
+            Color.YELLOW(
+                'Custom ops lowered: '
+                f'source={source_label} '
+                f'count={custom_op_count} '
+                f'op_types=[{custom_ops_display}]'
+                f'{onnx_suffix}'
+            )
+        )
 
     if flatbuffer_direct_custom_op_allowlist is not None and not flatbuffer_direct_allow_custom_ops:
         error(
@@ -3077,6 +3183,8 @@ def convert(
                             switch_nms_version=switch_nms_version,
                             tflite_split_max_bytes=tflite_split_max_bytes,
                             tflite_split_target_bytes=tflite_split_target_bytes,
+                            number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+                            number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
                         )
                         if direct_output_nms_with_argmax and not output_nms_with_argmax:
                             info(
@@ -3259,12 +3367,18 @@ def convert(
                 info(
                     'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
                 )
+            direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
+            _log_flatbuffer_direct_custom_op_summary(
+                direct_outputs=direct_outputs,
+                source_label='flatbuffer_direct',
+            )
             _run_flatbuffer_direct_op_error_report(
                 tflite_path=direct_outputs.get('float32_tflite_path', None),
                 tensor_correspondence_report_path=direct_outputs.get(
                     'tensor_correspondence_report_path',
                     None,
                 ),
+                contains_custom_ops=direct_contains_custom_ops,
             )
             direct_eval_paths = {}
             if 'float32_tflite_path' in direct_outputs:
@@ -3284,6 +3398,7 @@ def convert(
             _run_onnx_tflite_output_check(
                 tflite_paths=direct_eval_paths,
                 source_label='flatbuffer_direct',
+                contains_custom_ops=direct_contains_custom_ops,
             )
             if eval_split_models:
                 if 'split_manifest_path' not in direct_outputs:
@@ -3801,6 +3916,8 @@ def convert(
                                     switch_nms_version=switch_nms_version,
                                     tflite_split_max_bytes=tflite_split_max_bytes,
                                     tflite_split_target_bytes=tflite_split_target_bytes,
+                                    number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+                                    number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
                                 )
                                 if direct_output_nms_with_argmax and not output_nms_with_argmax:
                                     info(
@@ -3854,12 +3971,18 @@ def convert(
                     if direct_error is not None:
                         raise direct_error
                     if direct_outputs is not None:
+                        direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
+                        _log_flatbuffer_direct_custom_op_summary(
+                            direct_outputs=direct_outputs,
+                            source_label='flatbuffer_direct',
+                        )
                         _run_flatbuffer_direct_op_error_report(
                             tflite_path=direct_outputs.get('float32_tflite_path', None),
                             tensor_correspondence_report_path=direct_outputs.get(
                                 'tensor_correspondence_report_path',
                                 None,
                             ),
+                            contains_custom_ops=direct_contains_custom_ops,
                         )
                         direct_eval_paths = {}
                         if 'float32_tflite_path' in direct_outputs:
@@ -3879,6 +4002,7 @@ def convert(
                         _run_onnx_tflite_output_check(
                             tflite_paths=direct_eval_paths,
                             source_label='flatbuffer_direct',
+                            contains_custom_ops=direct_contains_custom_ops,
                         )
                     return None
                 except Exception as direct_ex:
@@ -4217,6 +4341,8 @@ def convert(
                                 switch_nms_version=switch_nms_version,
                                 tflite_split_max_bytes=tflite_split_max_bytes,
                                 tflite_split_target_bytes=tflite_split_target_bytes,
+                                number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+                                number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
                             )
                             if direct_output_nms_with_argmax and not output_nms_with_argmax:
                                 info(
@@ -4351,13 +4477,6 @@ def convert(
                             f'({direct_outputs["tensor_correspondence_report_path"]})'
                         )
                     )
-                if int(direct_outputs.get('custom_op_count', 0)) > 0:
-                    info(
-                        Color.YELLOW(
-                            f'Custom ops lowered: count={direct_outputs["custom_op_count"]} '
-                            f'codes={direct_outputs.get("custom_ops_used", [])}'
-                        )
-                    )
                 if output_dynamic_range_quantized_tflite:
                     if 'dynamic_range_quant_tflite_path' not in direct_outputs:
                         raise RuntimeError(
@@ -4414,12 +4533,18 @@ def convert(
                     info(
                         'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
                     )
+                direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
+                _log_flatbuffer_direct_custom_op_summary(
+                    direct_outputs=direct_outputs,
+                    source_label='flatbuffer_direct',
+                )
                 _run_flatbuffer_direct_op_error_report(
                     tflite_path=direct_outputs.get('float32_tflite_path', None),
                     tensor_correspondence_report_path=direct_outputs.get(
                         'tensor_correspondence_report_path',
                         None,
                     ),
+                    contains_custom_ops=direct_contains_custom_ops,
                 )
                 direct_eval_paths = {}
                 if 'float32_tflite_path' in direct_outputs:
@@ -4439,6 +4564,7 @@ def convert(
                 _run_onnx_tflite_output_check(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',
+                    contains_custom_ops=direct_contains_custom_ops,
                 )
                 if eval_split_models:
                     if 'split_manifest_path' not in direct_outputs:

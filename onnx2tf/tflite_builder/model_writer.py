@@ -61,9 +61,21 @@ def _prune_dead_operators_in_place(model_ir: ModelIR) -> None:
 
     for op_idx in range(len(model_ir.operators) - 1, -1, -1):
         op = model_ir.operators[op_idx]
-        if len(op.outputs) == 0:
-            continue
-        if any(output_name in live_tensors for output_name in op.outputs):
+        outputs_live = any(output_name in live_tensors for output_name in op.outputs)
+
+        # Keep stateful ops that mutate live variable tensors in-place even when
+        # their explicit outputs are not referenced.
+        mutates_live_variable_input = False
+        if not outputs_live:
+            for input_name in op.inputs:
+                if input_name not in live_tensors:
+                    continue
+                input_tensor = model_ir.tensors.get(str(input_name), None)
+                if input_tensor is not None and bool(input_tensor.is_variable):
+                    mutates_live_variable_input = True
+                    break
+
+        if outputs_live or mutates_live_variable_input:
             keep_flags[op_idx] = True
             for input_name in op.inputs:
                 live_tensors.add(input_name)

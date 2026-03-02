@@ -260,6 +260,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     flatbuffer_direct_show_progress = bool(
         kwargs.get("flatbuffer_direct_show_progress", True)
     )
+    number_of_dimensions_after_flextranspose_compression = int(
+        kwargs.get("number_of_dimensions_after_flextranspose_compression", 6)
+    )
+    number_of_dimensions_after_flexstridedslice_compression = int(
+        kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
+    )
 
     if onnx_graph is None:
         raise ValueError(
@@ -337,6 +343,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             output_nms_with_argmax=output_nms_with_argmax,
             switch_nms_version=switch_nms_version,
             show_progress=flatbuffer_direct_show_progress,
+            number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+            number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
         )
     except Exception as ex:
         try:
@@ -404,6 +412,35 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     for op in model_ir.operators
                     if str(op.op_type) == "CUSTOM"
                 }
+            )
+        )
+        custom_op_nodes: List[Dict[str, str]] = []
+        custom_op_nodes_seen = set()
+        for op in model_ir.operators:
+            if str(op.op_type) != "CUSTOM":
+                continue
+            options = op.options if isinstance(op.options, dict) else {}
+            custom_code = str(options.get("customCode", "CUSTOM")).strip()
+            if custom_code == "":
+                custom_code = "CUSTOM"
+            onnx_op = str(options.get("onnxOp", "")).strip()
+            onnx_node_name = str(options.get("onnxNodeName", "")).strip()
+            key = (custom_code, onnx_op, onnx_node_name)
+            if key in custom_op_nodes_seen:
+                continue
+            custom_op_nodes_seen.add(key)
+            custom_op_nodes.append(
+                {
+                    "custom_code": custom_code,
+                    "onnx_op": onnx_op,
+                    "onnx_node_name": onnx_node_name,
+                }
+            )
+        custom_op_nodes.sort(
+            key=lambda v: (
+                str(v.get("custom_code", "")),
+                str(v.get("onnx_op", "")),
+                str(v.get("onnx_node_name", "")),
             )
         )
 
@@ -767,4 +804,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     outputs["custom_op_count"] = int(len(custom_ops_used))
     if len(custom_ops_used) > 0:
         outputs["custom_ops_used"] = custom_ops_used
+    if len(custom_op_nodes) > 0:
+        outputs["custom_op_nodes"] = custom_op_nodes
     return outputs

@@ -2377,6 +2377,12 @@ def build_selu_op(node: Any, ctx: Any) -> None:
     compute_input_name, compute_output_name, output_name, output_dtype, compute_dtype, out_shape = (
         _prepare_float_compute(node, ctx, tag="selu")
     )
+    compute_input_tensor = ctx.model_ir.tensors.get(compute_input_name, None)
+    compute_signature = (
+        [int(v) for v in list(compute_input_tensor.shape_signature)]
+        if compute_input_tensor is not None and compute_input_tensor.shape_signature is not None
+        else [int(v) for v in list(out_shape)]
+    )
     alpha = float(node.attrs.get("alpha", 1.6732631921768188))
     gamma = float(node.attrs.get("gamma", 1.0507009873554805))
     alpha_name = _add_scalar_const(ctx, f"{output_name}_selu_alpha", alpha, compute_dtype)
@@ -2413,6 +2419,17 @@ def build_selu_op(node: Any, ctx: Any) -> None:
         dtype=compute_dtype,
         shape=out_shape,
     )
+    for tensor_name in (
+        pos_name,
+        neg_name,
+        exp_neg_name,
+        exp_neg_minus_one_name,
+        scaled_neg_name,
+        elu_alpha_name,
+    ):
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.shape_signature = [int(v) for v in list(compute_signature)]
     ctx.add_operator(OperatorIR(op_type="MAXIMUM", inputs=[compute_input_name, zero_name], outputs=[pos_name]))
     ctx.add_operator(OperatorIR(op_type="MINIMUM", inputs=[compute_input_name, zero_name], outputs=[neg_name]))
     ctx.add_operator(OperatorIR(op_type="EXP", inputs=[neg_name], outputs=[exp_neg_name]))

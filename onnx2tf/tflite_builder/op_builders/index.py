@@ -186,6 +186,11 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             expected_rank = len(existing_output_signature)
             scalar_output_rank = int(input_rank) - 1
             scalarize_single_index = expected_rank == scalar_output_rank
+        if scalarize_single_index and int(input_rank) == 1:
+            # The IR represents rank-0 tensors as shape [1]. For rank-1 params,
+            # scalarizing indices would produce runtime scalar Gather output and
+            # can break downstream rank-1 CONCAT size assembly chains.
+            scalarize_single_index = False
         if scalarize_single_index:
             scalar_value = np.asarray(indices_const_arr.reshape(-1)[0], dtype=indices_const_arr.dtype)
             scalarized_indices_name = ctx.add_const_tensor(

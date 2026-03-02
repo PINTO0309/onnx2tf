@@ -2038,10 +2038,10 @@ def _validate_pool(node: Any, ctx: Any) -> None:
                     node_op=node.op,
                 )
     else:
-        if ceil_mode != 0:
+        if ceil_mode not in [0, 1]:
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",
-                message="Pool ceil_mode must be 0.",
+                message=f"AveragePool ceil_mode must be 0 or 1. got={ceil_mode}",
                 node_name=node.name,
                 node_op=node.op,
             )
@@ -3818,6 +3818,128 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
             )
         return
 
+    # Specialized builtin lowering:
+    #   aijk,aijh->ajkh
+    # using TRANSPOSE+TRANSPOSE+BATCH_MATMUL.
+    if (
+        len(lhs) == 4
+        and len(rhs) == 4
+        and len(out) == 4
+        and lhs[0] == rhs[0]
+        and lhs[1] == rhs[1]
+        and lhs[2] == rhs[2]
+        and out[0] == lhs[0]
+        and out[1] == lhs[2]
+        and out[2] == lhs[3]
+        and out[3] == rhs[3]
+        and lhs[1] not in out
+    ):
+        lhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+        rhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+        out_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+        if len(lhs_shape) != 4 or len(rhs_shape) != 4 or len(out_shape) != 4:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "Einsum equation aijk,aijh->ajkh requires lhs/rhs/output rank-4. "
+                    f"lhs_shape={lhs_shape} rhs_shape={rhs_shape} out_shape={out_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        def _known_dim(shape: List[int], axis: int) -> Optional[int]:
+            dim = int(shape[axis])
+            return dim if dim > 0 else None
+
+        lhs_a = _known_dim(lhs_shape, 0)
+        rhs_a = _known_dim(rhs_shape, 0)
+        out_a = _known_dim(out_shape, 0)
+        if lhs_a is not None and rhs_a is not None and lhs_a != rhs_a:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum batch dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_a={lhs_a} rhs_a={rhs_a}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if lhs_a is not None and out_a is not None and lhs_a != out_a:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output batch dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_a={lhs_a} out_a={out_a}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_i = _known_dim(lhs_shape, 1)
+        rhs_i = _known_dim(rhs_shape, 1)
+        if lhs_i is not None and rhs_i is not None and lhs_i != rhs_i:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum contraction dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_i={lhs_i} rhs_i={rhs_i}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_j = _known_dim(lhs_shape, 2)
+        rhs_j = _known_dim(rhs_shape, 2)
+        out_j = _known_dim(out_shape, 1)
+        if lhs_j is not None and rhs_j is not None and lhs_j != rhs_j:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum shared-j dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_j={lhs_j} rhs_j={rhs_j}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if lhs_j is not None and out_j is not None and lhs_j != out_j:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output j dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_j={lhs_j} out_j={out_j}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_k = _known_dim(lhs_shape, 3)
+        out_k = _known_dim(out_shape, 2)
+        if lhs_k is not None and out_k is not None and lhs_k != out_k:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output k dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"lhs_k={lhs_k} out_k={out_k}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        rhs_h = _known_dim(rhs_shape, 3)
+        out_h = _known_dim(out_shape, 3)
+        if rhs_h is not None and out_h is not None and rhs_h != out_h:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output h dimension mismatch for equation aijk,aijh->ajkh. "
+                    f"rhs_h={rhs_h} out_h={out_h}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        return
+
     if len(lhs) != 2 or len(rhs) != 2 or len(out) != 2:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
@@ -4761,6 +4883,46 @@ def _validate_resize(node: Any, ctx: Any) -> None:
 
     has_const_param = False
     has_dynamic_sizes_param = False
+
+    def _validate_dynamic_resize_sizes_input(tensor_name: str) -> None:
+        sizes_shape = ctx.get_tensor_shape(tensor_name)
+        if sizes_shape != [1] and len(sizes_shape) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "Resize dynamic sizes input must be rank-1. "
+                    f"sizes_shape={sizes_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if len(sizes_shape) == 1:
+            sizes_len = int(sizes_shape[0])
+            if sizes_len == 1:
+                # Placeholder length from symbolic shape inference.
+                sizes_len = -1
+            if sizes_len > 0 and sizes_len not in [2, 4]:
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "Resize dynamic sizes input length must be 2 or 4. "
+                        f"sizes_shape={sizes_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        sizes_dtype = str(ctx.get_tensor_dtype(tensor_name)).upper()
+        if sizes_dtype not in {"INT32", "INT64"}:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=(
+                    "Resize dynamic sizes input must be INT32/INT64. "
+                    f"sizes_dtype={sizes_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
     if len(node.inputs) >= 4:
         tensor_name = node.inputs[3].name
         if tensor_name != "":
@@ -4770,43 +4932,7 @@ def _validate_resize(node: Any, ctx: Any) -> None:
                     has_const_param = True
             else:
                 has_dynamic_sizes_param = True
-                sizes_shape = ctx.get_tensor_shape(tensor_name)
-                if sizes_shape != [1] and len(sizes_shape) != 1:
-                    raise NodeValidationError(
-                        reason_code="unsupported_input_rank",
-                        message=(
-                            "Resize dynamic sizes input must be rank-1. "
-                            f"sizes_shape={sizes_shape}"
-                        ),
-                        node_name=node.name,
-                        node_op=node.op,
-                    )
-                if len(sizes_shape) == 1:
-                    sizes_len = int(sizes_shape[0])
-                    if sizes_len == 1:
-                        # Placeholder length from symbolic shape inference.
-                        sizes_len = -1
-                    if sizes_len > 0 and sizes_len not in [2, 4]:
-                        raise NodeValidationError(
-                            reason_code="unsupported_input_shape",
-                            message=(
-                                "Resize dynamic sizes input length must be 2 or 4. "
-                                f"sizes_shape={sizes_shape}"
-                            ),
-                            node_name=node.name,
-                            node_op=node.op,
-                        )
-                sizes_dtype = str(ctx.get_tensor_dtype(tensor_name)).upper()
-                if sizes_dtype not in {"INT32", "INT64"}:
-                    raise NodeValidationError(
-                        reason_code="unsupported_input_dtype",
-                        message=(
-                            "Resize dynamic sizes input must be INT32/INT64. "
-                            f"sizes_dtype={sizes_dtype}"
-                        ),
-                        node_name=node.name,
-                        node_op=node.op,
-                    )
+                _validate_dynamic_resize_sizes_input(tensor_name)
     if len(node.inputs) >= 3:
         tensor_name = node.inputs[2].name
         if tensor_name != "":
@@ -4814,9 +4940,17 @@ def _validate_resize(node: Any, ctx: Any) -> None:
             if int(np.asarray(arr).size) > 0:
                 has_const_param = True
     if len(node.inputs) == 2:
-        arr = _require_const_input(node, ctx, 1, "Resize scales/sizes")
-        if int(np.asarray(arr).size) > 0:
-            has_const_param = True
+        tensor_name = node.inputs[1].name
+        if tensor_name != "":
+            arr = ctx.get_constant_array(tensor_name)
+            if arr is not None:
+                if int(np.asarray(arr).size) > 0:
+                    has_const_param = True
+            else:
+                # _NodeWrap drops optional empty inputs, so
+                # Resize(x, "", "", sizes) may appear as 2-input form.
+                has_dynamic_sizes_param = True
+                _validate_dynamic_resize_sizes_input(tensor_name)
     if not has_const_param and not has_dynamic_sizes_param:
         raise NodeValidationError(
             reason_code="requires_constant_input",
