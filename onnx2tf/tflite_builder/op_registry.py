@@ -2064,6 +2064,30 @@ def _validate_fc(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+        weight_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+        if len(weight_shape) != 2:
+            raise NodeValidationError(
+                reason_code="unsupported_weight_rank",
+                message=(
+                    "Gemm weight rank must be 2. "
+                    f"weight_shape={weight_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        trans_a = int(node.attrs.get("transA", 0))
+        trans_b = int(node.attrs.get("transB", 0))
+        if trans_a not in [0, 1] or trans_b not in [0, 1]:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Gemm transA/transB must be 0 or 1 in builtin lowering. "
+                    f"transA={trans_a} transB={trans_b}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        return
     else:
         if input_rank < 2:
             raise NodeValidationError(
@@ -2080,14 +2104,6 @@ def _validate_fc(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if node.op == "Gemm":
-        if int(node.attrs.get("transA", 0)) != 0:
-            raise NodeValidationError(
-                reason_code="unsupported_attribute_value",
-                message="Gemm transA=1 is not supported.",
-                node_name=node.name,
-                node_op=node.op,
-            )
 
 
 def _validate_matmul(node: Any, ctx: Any) -> None:
@@ -3760,6 +3776,47 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         ) from ex
+
+    # Specialized builtin lowering:
+    #   abgd,gf->abdf
+    # using TRANSPOSE+RESHAPE+BATCH_MATMUL+RESHAPE.
+    if (
+        len(lhs) == 4
+        and len(rhs) == 2
+        and len(out) == 4
+        and lhs[2] == rhs[0]
+        and out[0] == lhs[0]
+        and out[1] == lhs[1]
+        and out[2] == lhs[3]
+        and out[3] == rhs[1]
+    ):
+        lhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+        rhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+        out_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+        if len(lhs_shape) != 4 or len(rhs_shape) != 2 or len(out_shape) != 4:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "Einsum equation abgd,gf->abdf requires lhs rank-4, rhs rank-2, output rank-4. "
+                    f"lhs_shape={lhs_shape} rhs_shape={rhs_shape} out_shape={out_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        lhs_g = int(lhs_shape[2])
+        rhs_g = int(rhs_shape[0])
+        if lhs_g > 0 and rhs_g > 0 and lhs_g != rhs_g:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum contraction dimension mismatch for equation abgd,gf->abdf. "
+                    f"lhs_g={lhs_g} rhs_g={rhs_g}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        return
+
     if len(lhs) != 2 or len(rhs) != 2 or len(out) != 2:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
@@ -6410,7 +6467,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Gemm": DispatchEntry(
         onnx_op="Gemm",
-        tflite_ops=["FULLY_CONNECTED"],
+        tflite_ops=["FULLY_CONNECTED", "BATCH_MATMUL", "MUL", "ADD", "CAST"],
         builder=build_fully_connected_from_gemm_or_matmul,
         validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_fc,
@@ -6489,7 +6546,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Einsum": DispatchEntry(
         onnx_op="Einsum",
-        tflite_ops=["FULLY_CONNECTED", "BATCH_MATMUL", "CAST"],
+        tflite_ops=["FULLY_CONNECTED", "BATCH_MATMUL", "CAST", "TRANSPOSE", "RESHAPE"],
         builder=build_einsum_op,
         validation=ValidationSpec(
             min_inputs=2,

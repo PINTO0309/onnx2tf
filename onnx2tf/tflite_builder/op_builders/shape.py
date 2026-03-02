@@ -2104,6 +2104,8 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         )
 
     input_rank = len(ctx.get_tensor_shape(input_name))
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_for_pad = str(input_name)
     pads_arr = None
     pads_input_name = ""
     if len(node.inputs) >= 2:
@@ -2121,8 +2123,83 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 "Pad pads length must be 2 * input_rank for flatbuffer_direct. "
                 f"op={node.name} rank={input_rank} pads_len={len(pads_flat)}"
             )
-        pads_begin = pads_flat[:input_rank]
-        pads_end = pads_flat[input_rank:]
+        pads_begin_raw = [int(v) for v in pads_flat[:input_rank]]
+        pads_end_raw = [int(v) for v in pads_flat[input_rank:]]
+
+        crop_begin = [max(-int(v), 0) for v in pads_begin_raw]
+        crop_end = [max(-int(v), 0) for v in pads_end_raw]
+        if any(int(v) > 0 for v in crop_begin + crop_end):
+            # TFLite PAD does not accept negative paddings. Emulate ONNX negative
+            # pads by pre-cropping input with STRIDED_SLICE.
+            begin_name = ctx.add_const_tensor(
+                f"{output_name}_pad_crop_begin",
+                np.asarray(crop_begin, dtype=np.int32),
+            )
+            end_values = [
+                int(np.iinfo(np.int32).max) if int(crop_end[i]) == 0 else -int(crop_end[i])
+                for i in range(input_rank)
+            ]
+            end_name = ctx.add_const_tensor(
+                f"{output_name}_pad_crop_end",
+                np.asarray(end_values, dtype=np.int32),
+            )
+            strides_name = ctx.add_const_tensor(
+                f"{output_name}_pad_crop_strides",
+                np.asarray([1 for _ in range(input_rank)], dtype=np.int32),
+            )
+            end_mask = 0
+            for axis in range(input_rank):
+                if int(crop_end[axis]) == 0:
+                    end_mask |= (1 << axis)
+
+            cropped_shape: list[int] = []
+            for axis in range(input_rank):
+                dim = int(input_shape[axis]) if axis < len(input_shape) else -1
+                if dim > 0:
+                    cropped_dim = int(dim - int(crop_begin[axis]) - int(crop_end[axis]))
+                    cropped_shape.append(int(max(cropped_dim, 0)))
+                else:
+                    cropped_shape.append(-1)
+            cropped_name = ctx.add_intermediate_tensor(
+                f"{output_name}_pad_cropped",
+                dtype=str(ctx.get_tensor_dtype(input_name)),
+                shape=cropped_shape,
+            )
+            cropped_tensor = ctx.model_ir.tensors[cropped_name]
+            input_tensor = ctx.model_ir.tensors[input_name]
+            if input_tensor.quantization is not None:
+                cropped_tensor.quantization = _clone_quantization(input_tensor.quantization)
+            if input_tensor.shape_signature is not None:
+                cropped_tensor.shape_signature = [
+                    int(v)
+                    for v in list(input_tensor.shape_signature)
+                ]
+                for axis in range(input_rank):
+                    sig_dim = int(cropped_tensor.shape_signature[axis])
+                    if sig_dim > 0:
+                        cropped_tensor.shape_signature[axis] = int(
+                            max(sig_dim - int(crop_begin[axis]) - int(crop_end[axis]), 0)
+                        )
+
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="STRIDED_SLICE",
+                    inputs=[input_for_pad, begin_name, end_name, strides_name],
+                    outputs=[cropped_name],
+                    options={
+                        "beginMask": 0,
+                        "endMask": int(end_mask),
+                        "ellipsisMask": 0,
+                        "newAxisMask": 0,
+                        "shrinkAxisMask": 0,
+                        "offset": False,
+                    },
+                )
+            )
+            input_for_pad = str(cropped_name)
+
+        pads_begin = [max(int(v), 0) for v in pads_begin_raw]
+        pads_end = [max(int(v), 0) for v in pads_end_raw]
         paddings = np.asarray(
             [[int(b), int(e)] for b, e in zip(pads_begin, pads_end)],
             dtype=np.int32,
@@ -2210,8 +2287,8 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 is_zero_padding = bool(constant_value == 0)
             use_padv2 = not is_zero_padding
             if use_padv2:
-                input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
-                input_tensor = ctx.model_ir.tensors[input_name]
+                input_dtype = str(ctx.get_tensor_dtype(input_for_pad)).upper()
+                input_tensor = ctx.model_ir.tensors[input_for_pad]
                 if input_tensor.quantization is not None:
                     raise NotImplementedError(
                         "Pad with non-zero constant value is not supported for quantized tensors in "
@@ -2229,7 +2306,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="PADV2",
-                    inputs=[input_name, pads_name, pad_constant_tensor_name],
+                    inputs=[input_for_pad, pads_name, pad_constant_tensor_name],
                     outputs=[output_name],
                 )
             )
@@ -2237,7 +2314,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="PAD",
-                    inputs=[input_name, pads_name],
+                    inputs=[input_for_pad, pads_name],
                     outputs=[output_name],
                 )
             )
@@ -2245,7 +2322,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         ctx.add_operator(
             OperatorIR(
                 op_type="MIRROR_PAD",
-                inputs=[input_name, pads_name],
+                inputs=[input_for_pad, pads_name],
                 outputs=[output_name],
                 options={"mode": "REFLECT"},
             )
