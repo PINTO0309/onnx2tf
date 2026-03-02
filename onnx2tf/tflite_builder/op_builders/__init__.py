@@ -127,6 +127,7 @@ from onnx2tf.tflite_builder.op_builders.control import (
     is_supported_loop_while_pattern,
 )
 from onnx2tf.tflite_builder.op_builders.quantized import (
+    build_conv_integer_op,
     build_dequantize_linear_op,
     build_dynamic_quantize_linear_op,
     build_qgemm_op,
@@ -250,6 +251,7 @@ __all__ = [
     "is_supported_if_sequenceconstruct_add_branch_pattern",
     "is_supported_loop_static_unroll_pattern",
     "is_supported_loop_while_pattern",
+    "build_conv_integer_op",
     "build_dequantize_linear_op",
     "build_dynamic_quantize_linear_op",
     "build_qgemm_op",

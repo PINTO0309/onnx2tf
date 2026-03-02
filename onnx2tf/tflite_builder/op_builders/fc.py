@@ -31,68 +31,353 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
                 f"op={node.name} input_shape={input_shape}"
             )
 
-    weights = ctx.get_constant_array(weight_name)
-    if weights is None:
-        raise NotImplementedError(f"FC weight must be constant. op={node.name}")
-    weights = np.asarray(weights, dtype=np.float32)
-    if weights.ndim != 2:
-        raise NotImplementedError(
-            f"FC weight rank must be 2. op={node.name} weight_shape={weights.shape}"
+    def _add_cast_if_needed(*, tensor_name: str, suffix: str, target_dtype: str) -> str:
+        src_dtype = str(ctx.get_tensor_dtype(tensor_name)).upper()
+        if src_dtype == str(target_dtype).upper():
+            return tensor_name
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{suffix}_{str(target_dtype).lower()}",
+            dtype=str(target_dtype).upper(),
+            shape=[int(v) for v in ctx.get_tensor_shape(tensor_name)],
         )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[tensor_name],
+                outputs=[cast_name],
+                options={"inDataType": src_dtype, "outDataType": str(target_dtype).upper()},
+            )
+        )
+        return cast_name
 
     if node.op == "Gemm":
         alpha = float(node.attrs.get("alpha", 1.0))
         beta = float(node.attrs.get("beta", 1.0))
         trans_a = int(node.attrs.get("transA", 0))
         trans_b = int(node.attrs.get("transB", 0))
-        if trans_a != 0:
-            raise NotImplementedError(f"Gemm transA=1 is not supported. op={node.name}")
-        if trans_b == 0:
-            fc_weights = weights.T
-        else:
-            fc_weights = weights
-        if alpha != 1.0:
-            fc_weights = fc_weights * alpha
-
-        bias_values = None
-        if len(node.inputs) >= 3:
-            bias_values = ctx.get_constant_array(node.inputs[2].name)
-        if bias_values is None:
-            bias_values = np.zeros((fc_weights.shape[0],), dtype=np.float32)
-        else:
-            bias_values = np.asarray(bias_values, dtype=np.float32).reshape(-1)
-        if beta != 1.0:
-            bias_values = bias_values * beta
     else:
-        fc_weights = weights.T
-        bias_values = np.zeros((fc_weights.shape[0],), dtype=np.float32)
+        alpha = 1.0
+        beta = 1.0
+        trans_a = 0
+        trans_b = 1
 
-    w_name = ctx.add_const_tensor(
-        f"{node.name}_fc_weights",
-        np.asarray(fc_weights, dtype=np.float32),
-    )
-    b_name = ctx.add_const_tensor(
-        f"{node.name}_fc_bias",
-        np.asarray(bias_values, dtype=np.float32),
-    )
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT32"
+    has_c_input = bool(node.op == "Gemm" and len(node.inputs) >= 3 and str(node.inputs[2].name) != "")
+    c_name = node.inputs[2].name if has_c_input else ""
+
+    weights_const = ctx.get_constant_array(weight_name)
+    use_fully_connected = bool(weights_const is not None)
+    if node.op == "Gemm":
+        # FULLY_CONNECTED path requires non-transposed A and constant/omitted bias semantics.
+        use_fully_connected = bool(use_fully_connected and trans_a == 0)
+        if has_c_input and beta != 0.0:
+            c_const = ctx.get_constant_array(c_name)
+            if c_const is None:
+                use_fully_connected = False
+            else:
+                c_units = int(np.asarray(c_const).size)
+                expected_units = int(np.asarray(weights_const).shape[0] if trans_b == 1 else np.asarray(weights_const).shape[1])
+                if c_units not in {1, expected_units}:
+                    use_fully_connected = False
+
+    if use_fully_connected:
+        weights = np.asarray(weights_const, dtype=np.float32)
+        if weights.ndim != 2:
+            raise NotImplementedError(
+                f"FC weight rank must be 2. op={node.name} weight_shape={weights.shape}"
+            )
+
+        if node.op == "Gemm":
+            if trans_b == 0:
+                fc_weights = weights.T
+            else:
+                fc_weights = weights
+            if alpha != 1.0:
+                fc_weights = fc_weights * alpha
+
+            bias_values = None
+            if has_c_input and beta != 0.0:
+                bias_values = ctx.get_constant_array(c_name)
+            if bias_values is None:
+                bias_values = np.zeros((fc_weights.shape[0],), dtype=np.float32)
+            else:
+                bias_values = np.asarray(bias_values, dtype=np.float32).reshape(-1)
+                if bias_values.size == 1 and int(fc_weights.shape[0]) > 1:
+                    bias_values = np.full((int(fc_weights.shape[0]),), float(bias_values[0]), dtype=np.float32)
+                if beta != 1.0:
+                    bias_values = bias_values * beta
+        else:
+            fc_weights = weights.T
+            bias_values = np.zeros((fc_weights.shape[0],), dtype=np.float32)
+
+        w_name = ctx.add_const_tensor(
+            f"{node.name}_fc_weights",
+            np.asarray(fc_weights, dtype=np.float32),
+        )
+        b_name = ctx.add_const_tensor(
+            f"{node.name}_fc_bias",
+            np.asarray(bias_values, dtype=np.float32),
+        )
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FULLY_CONNECTED",
+                inputs=[input_name, w_name, b_name],
+                outputs=[output_name],
+                options={
+                    "fusedActivationFunction": "NONE",
+                    "weightsFormat": "DEFAULT",
+                    "keepNumDims": bool(node.op != "Gemm" and input_rank > 2),
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+        return
+
+    # Dynamic GEMM fallback: BATCH_MATMUL (+ alpha/beta/C) so Gemm can remain builtin.
+    if node.op != "Gemm":
+        raise NotImplementedError(f"FC weight must be constant. op={node.name}")
+
+    a_compute = _add_cast_if_needed(tensor_name=input_name, suffix="gemm_a", target_dtype=compute_dtype)
+    b_compute = _add_cast_if_needed(tensor_name=weight_name, suffix="gemm_b", target_dtype=compute_dtype)
+
+    matmul_out = output_name
+    requires_post_ops = bool(abs(alpha - 1.0) > 1e-12 or (has_c_input and abs(beta) > 1e-12) or output_dtype != compute_dtype)
+    if requires_post_ops:
+        matmul_out = ctx.add_intermediate_tensor(
+            f"{output_name}_gemm_matmul",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
 
     ctx.add_operator(
         OperatorIR(
-            op_type="FULLY_CONNECTED",
-            inputs=[input_name, w_name, b_name],
-            outputs=[output_name],
+            op_type="BATCH_MATMUL",
+            inputs=[a_compute, b_compute],
+            outputs=[matmul_out],
             options={
-                "fusedActivationFunction": "NONE",
-                "weightsFormat": "DEFAULT",
-                "keepNumDims": bool(node.op != "Gemm" and input_rank > 2),
+                "adjX": bool(trans_a),
+                "adjY": bool(trans_b),
                 "asymmetricQuantizeInputs": False,
             },
         )
+    )
+
+    current_name = matmul_out
+    if abs(alpha - 1.0) > 1e-12:
+        alpha_name = ctx.add_const_tensor(
+            f"{output_name}_gemm_alpha",
+            np.asarray(alpha, dtype=np.float32),
+        )
+        scaled_name = output_name if (not has_c_input or abs(beta) <= 1e-12) and output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+            f"{output_name}_gemm_scaled",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[current_name, alpha_name],
+                outputs=[scaled_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = scaled_name
+
+    if has_c_input and abs(beta) > 1e-12:
+        c_compute = _add_cast_if_needed(tensor_name=c_name, suffix="gemm_c", target_dtype=compute_dtype)
+        c_term_name = c_compute
+        if abs(beta - 1.0) > 1e-12:
+            beta_name = ctx.add_const_tensor(
+                f"{output_name}_gemm_beta",
+                np.asarray(beta, dtype=np.float32),
+            )
+            c_scaled = ctx.add_intermediate_tensor(
+                f"{output_name}_gemm_c_scaled",
+                dtype=compute_dtype,
+                shape=[int(v) for v in ctx.get_tensor_shape(c_name)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[c_compute, beta_name],
+                    outputs=[c_scaled],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            c_term_name = c_scaled
+
+        add_out = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+            f"{output_name}_gemm_bias_added",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[current_name, c_term_name],
+                outputs=[add_out],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = add_out
+
+    if current_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[current_name],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
         )
 
 
 def build_einsum_op(node: Any, ctx: Any) -> None:
-    # _validate_einsum limits builtin lowering to rank-2 matmul-style equations.
+    equation = str(node.attrs.get("equation", "")).replace(" ", "")
+    # Specialized rank-4 contraction:
+    #   abgd,gf->abdf
+    if equation != "":
+        try:
+            lhs, rhs_out = equation.split(",", 1)
+            rhs, out = rhs_out.split("->", 1)
+        except Exception:
+            lhs, rhs, out = "", "", ""
+        if (
+            len(lhs) == 4
+            and len(rhs) == 2
+            and len(out) == 4
+            and lhs[2] == rhs[0]
+            and out[0] == lhs[0]
+            and out[1] == lhs[1]
+            and out[2] == lhs[3]
+            and out[3] == rhs[1]
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+            b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+
+            perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_perm",
+                np.asarray([0, 1, 3, 2], dtype=np.int32),
+            )
+            a_transposed_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_transposed",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[1]), int(a_shape[3]), int(a_shape[2])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[a_compute, perm_name],
+                    outputs=[a_transposed_name],
+                    options={},
+                )
+            )
+
+            flattened_rows = int(a_shape[0]) * int(a_shape[1]) * int(a_shape[3])
+            lhs_k = int(a_shape[2])
+            rhs_n = int(b_shape[1])
+
+            a2_shape_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_a2_shape",
+                np.asarray([flattened_rows, lhs_k], dtype=np.int32),
+            )
+            a2_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a2",
+                dtype=compute_dtype,
+                shape=[flattened_rows, lhs_k],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[a_transposed_name, a2_shape_name],
+                    outputs=[a2_name],
+                    options={"newShape": [flattened_rows, lhs_k]},
+                )
+            )
+
+            matmul_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_matmul",
+                dtype=compute_dtype,
+                shape=[flattened_rows, rhs_n],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a2_name, b_compute],
+                    outputs=[matmul_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            y4_shape_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_out_shape",
+                np.asarray(output_shape, dtype=np.int32),
+            )
+            y4_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[matmul_name, y4_shape_name],
+                    outputs=[y4_name],
+                    options={"newShape": [int(v) for v in output_shape]},
+                )
+            )
+
+            if y4_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y4_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+    # _validate_einsum limits remaining builtin lowering to rank-2 matmul-style equations.
     # Prefer FULLY_CONNECTED when RHS is constant, otherwise use BATCH_MATMUL.
     rhs_name = node.inputs[1].name
     if ctx.get_constant_array(rhs_name) is not None:
