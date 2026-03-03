@@ -648,6 +648,7 @@ def _build_builtin_options(
         "NEG",
         "POW",
         "SELECT",
+        "SELECT_V2",
         "WHERE",
         "RANGE",
         "RIGHT_SHIFT",

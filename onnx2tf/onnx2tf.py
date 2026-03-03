@@ -131,8 +131,10 @@ _SIZE_WITH_UNIT_PATTERN = re.compile(
 _TEMP_MICROSOFT_DOMAIN_OPS = {
     'FusedConv',
     'FusedMatMul',
+    'Gelu',
     'GroupNorm',
     'Inverse',
+    'MultiHeadAttention',
     'QGemm',
     'QLinearAdd',
     'QLinearAveragePool',

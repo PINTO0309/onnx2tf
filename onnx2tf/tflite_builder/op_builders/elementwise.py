@@ -1472,9 +1472,10 @@ def build_where_op(node: Any, ctx: Any) -> None:
         )
         return
 
+    select_op_type = "SELECT" if len(cond_shape) <= 1 else "SELECT_V2"
     ctx.add_operator(
         OperatorIR(
-            op_type="SELECT",
+            op_type=select_op_type,
             inputs=[cond_bool_name, x_name, y_name],
             outputs=[output_name],
         )

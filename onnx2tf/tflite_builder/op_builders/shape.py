@@ -1035,6 +1035,17 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                     size[axis] = -1
             strides_for_strided[axis] = int(step)
 
+    output_shape_hint = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if (
+        not bool(use_strided_slice)
+        and len(output_shape_hint) == int(rank)
+        and all(int(v) > 0 for v in output_shape_hint)
+        and all(int(step) == 1 for step in steps)
+    ):
+        # Prefer graph output metadata for static step=1 SLICE when available.
+        # This avoids propagating stale input-shape metadata into size constants.
+        size = [int(v) for v in output_shape_hint]
+
     strided_slice_options: dict[str, int | bool] = {
         "beginMask": 0,
         "endMask": 0,
@@ -3466,72 +3477,74 @@ def build_depth_to_space_op(node: Any, ctx: Any) -> None:
             )
         )
     else:
-        batch = int(nhwc_input_shape[0])
-        height = int(nhwc_input_shape[1])
-        width = int(nhwc_input_shape[2])
-        channels = int(nhwc_input_shape[3])
         block_area = int(block_size * block_size)
-        if channels % block_area != 0:
+        channels = int(nhwc_input_shape[3])
+        input_channel_signature = int(nhwc_input_signature[3]) if len(nhwc_input_signature) == 4 else int(channels)
+        channel_dim_for_crd = int(channels) if int(channels) > 0 else int(input_channel_signature)
+        if channel_dim_for_crd <= 0:
+            raise NotImplementedError(
+                "DepthToSpace CRD requires static channel dimension in flatbuffer_direct builtin lowering. "
+                f"op={node.name} channel_dim={channel_dim_for_crd}"
+            )
+        if channel_dim_for_crd % block_area != 0:
             raise NotImplementedError(
                 f"DepthToSpace CRD requires input channels divisible by blocksize^2. "
-                f"op={node.name} channels={channels} blocksize={block_size}"
+                f"op={node.name} channels={channel_dim_for_crd} blocksize={block_size}"
             )
-        out_channels = int(channels // block_area)
+        out_channels = int(channel_dim_for_crd // block_area)
 
-        reshape1_shape = [batch, height, width, out_channels, int(block_size), int(block_size)]
-        reshape1_shape_name = ctx.add_const_tensor(
-            f"{node.name}_crd_reshape1_shape",
-            np.asarray(reshape1_shape, dtype=np.int32),
+        # ONNX CRD layout can be lowered by reordering channels to DCR layout first,
+        # then applying TFLite DEPTH_TO_SPACE.
+        # CRD channel index: ((c * b) + by) * b + bx
+        # DCR channel index: ((by * b) + bx) * c + c_idx
+        gather_indices = []
+        for by in range(int(block_size)):
+            for bx in range(int(block_size)):
+                for c_idx in range(int(out_channels)):
+                    gather_indices.append(
+                        int(((int(c_idx) * int(block_size)) + int(by)) * int(block_size) + int(bx))
+                    )
+        gather_indices_name = ctx.add_const_tensor(
+            f"{node.name}_crd_to_dcr_indices",
+            np.asarray(gather_indices, dtype=np.int32),
         )
-        reshape1_out = ctx.add_intermediate_tensor(
-            f"{node.name}_crd_reshape1_out",
+        x_dcr = ctx.add_intermediate_tensor(
+            f"{node.name}_crd_input_reordered",
             dtype=ctx.get_tensor_dtype(output_name),
-            shape=reshape1_shape,
+            shape=[int(v) for v in list(nhwc_input_shape)],
         )
-        ctx.model_ir.tensors[reshape1_out].shape_signature = [int(v) for v in list(reshape1_shape)]
-        if ctx.model_ir.tensors[x_nhwc].quantization is not None:
-            ctx.model_ir.tensors[reshape1_out].quantization = _clone_quantization(
-                ctx.model_ir.tensors[x_nhwc].quantization
-            )
+        x_dcr_tensor = ctx.model_ir.tensors.get(x_dcr, None)
+        if x_dcr_tensor is not None:
+            x_dcr_tensor.shape_signature = [int(v) for v in list(nhwc_input_signature)]
+            if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+                x_dcr_tensor.quantization = _clone_quantization(
+                    ctx.model_ir.tensors[x_nhwc].quantization
+                )
         ctx.add_operator(
             OperatorIR(
-                op_type="RESHAPE",
-                inputs=[x_nhwc, reshape1_shape_name],
-                outputs=[reshape1_out],
-                options={"newShape": [int(v) for v in list(reshape1_shape)]},
+                op_type="GATHER",
+                inputs=[x_nhwc, gather_indices_name],
+                outputs=[x_dcr],
+                options={
+                    "axis": 3,
+                    "batchDims": 0,
+                },
             )
         )
 
-        transpose_out_shape = [batch, height, int(block_size), width, int(block_size), out_channels]
-        transpose_out = ctx.add_intermediate_tensor(
-            f"{node.name}_crd_transpose_out",
-            dtype=ctx.get_tensor_dtype(output_name),
-            shape=transpose_out_shape,
-        )
-        ctx.model_ir.tensors[transpose_out].shape_signature = [int(v) for v in list(transpose_out_shape)]
-        transpose_out = make_transpose(
-            ctx,
-            reshape1_out,
-            transpose_out,
-            [0, 1, 4, 2, 5, 3],
-            allow_elide_inverse_chain=False,
-        )
+        if len(nhwc_output_signature) == 4 and int(nhwc_output_signature[3]) < 0:
+            nhwc_output_signature[3] = int(out_channels)
+            y_nhwc_tensor = ctx.model_ir.tensors.get(y_nhwc, None)
+            if y_nhwc_tensor is not None:
+                y_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_output_signature)]
+                y_nhwc_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in list(nhwc_output_signature)]
 
-        reshape2_shape = [batch, int(height * block_size), int(width * block_size), out_channels]
-        reshape2_shape_name = ctx.add_const_tensor(
-            f"{node.name}_crd_reshape2_shape",
-            np.asarray(reshape2_shape, dtype=np.int32),
-        )
-        if reshape2_shape != nhwc_output_shape:
-            raise NotImplementedError(
-                f"DepthToSpace CRD shape mismatch. op={node.name} expected={nhwc_output_shape} got={reshape2_shape}"
-            )
         ctx.add_operator(
             OperatorIR(
-                op_type="RESHAPE",
-                inputs=[transpose_out, reshape2_shape_name],
+                op_type="DEPTH_TO_SPACE",
+                inputs=[x_dcr],
                 outputs=[y_nhwc],
-                options={"newShape": [int(v) for v in list(reshape2_shape)]},
+                options={"blockSize": int(block_size)},
             )
         )
         if ctx.model_ir.tensors[x_nhwc].quantization is not None:

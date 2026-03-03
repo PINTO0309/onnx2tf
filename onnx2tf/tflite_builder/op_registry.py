@@ -46,6 +46,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_fused_matmul_op,
     build_fully_connected_from_gemm_or_matmul,
     build_gru_op,
+    build_multi_head_attention_op,
     build_matmul_op,
     build_gather_op,
     build_gather_nd_op,
@@ -2186,6 +2187,105 @@ def _validate_matmul(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_multi_head_attention(node: Any, ctx: Any) -> None:
+    num_heads = int(node.attrs.get("num_heads", 0))
+    if num_heads <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MultiHeadAttention num_heads must be > 0. num_heads={num_heads}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    unidirectional = int(node.attrs.get("unidirectional", 0))
+    if unidirectional != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "MultiHeadAttention builtin lowering currently supports unidirectional=0 only. "
+                f"unidirectional={unidirectional}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    query_name = node.inputs[0].name
+    key_name = node.inputs[1].name
+    value_name = node.inputs[2].name
+    query_shape = [int(v) for v in ctx.get_tensor_shape(query_name)]
+    key_shape = [int(v) for v in ctx.get_tensor_shape(key_name)]
+    value_shape = [int(v) for v in ctx.get_tensor_shape(value_name)]
+    if len(query_shape) != 3 or len(key_shape) != 3 or len(value_shape) != 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "MultiHeadAttention builtin lowering currently supports rank-3 query/key/value only. "
+                f"query_shape={query_shape} key_shape={key_shape} value_shape={value_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    query_dtype = str(ctx.get_tensor_dtype(query_name)).upper()
+    key_dtype = str(ctx.get_tensor_dtype(key_name)).upper()
+    value_dtype = str(ctx.get_tensor_dtype(value_name)).upper()
+    if len({query_dtype, key_dtype, value_dtype}) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "MultiHeadAttention builtin lowering requires query/key/value dtypes to match. "
+                f"query_dtype={query_dtype} key_dtype={key_dtype} value_dtype={value_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if query_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "MultiHeadAttention builtin lowering supports FLOAT16/FLOAT32 only. "
+                f"dtype={query_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    query_hidden = int(query_shape[2])
+    key_hidden = int(key_shape[2])
+    value_hidden = int(value_shape[2])
+    if query_hidden <= 0 or key_hidden <= 0 or value_hidden <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MultiHeadAttention builtin lowering currently requires static positive hidden sizes. "
+                f"query_shape={query_shape} key_shape={key_shape} value_shape={value_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if query_hidden % num_heads != 0 or key_hidden % num_heads != 0 or value_hidden % num_heads != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MultiHeadAttention hidden sizes must be divisible by num_heads. "
+                f"num_heads={num_heads} query_hidden={query_hidden} "
+                f"key_hidden={key_hidden} value_hidden={value_hidden}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(query_hidden // num_heads) != int(key_hidden // num_heads):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MultiHeadAttention query/key head dimensions must match. "
+                f"query_head_dim={int(query_hidden // num_heads)} key_head_dim={int(key_hidden // num_heads)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
 def _validate_fused_matmul(node: Any, ctx: Any) -> None:
     _validate_matmul(node, ctx)
 
@@ -2969,10 +3069,10 @@ def _validate_topk(node: Any, ctx: Any) -> None:
             node_op=node.op,
         )
     sorted_attr = int(node.attrs.get("sorted", 1))
-    if sorted_attr != 1:
+    if sorted_attr not in {0, 1}:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
-            message=f"TopK sorted must be 1 in flatbuffer_direct builtin lowering. sorted={sorted_attr}",
+            message=f"TopK sorted must be 0 or 1 in flatbuffer_direct builtin lowering. sorted={sorted_attr}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -6304,7 +6404,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Where": DispatchEntry(
         onnx_op="Where",
-        tflite_ops=["CAST", "SELECT"],
+        tflite_ops=["CAST", "SELECT", "SELECT_V2"],
         builder=build_where_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_where,
@@ -6790,6 +6890,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_matmul_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_matmul,
+    ),
+    "MultiHeadAttention": DispatchEntry(
+        onnx_op="MultiHeadAttention",
+        tflite_ops=["RESHAPE", "TRANSPOSE", "BATCH_MATMUL", "MUL", "SOFTMAX", "CAST"],
+        builder=build_multi_head_attention_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_multi_head_attention,
     ),
     "FusedMatMul": DispatchEntry(
         onnx_op="FusedMatMul",

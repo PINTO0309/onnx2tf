@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
@@ -69,6 +71,342 @@ def _normalized_shape_dim(value: Optional[int], fallback: int = 1) -> int:
         return int(fallback)
     dim = int(value)
     return dim if dim > 0 else int(fallback)
+
+
+def _tensor_shape_with_signature(ctx: Any, tensor_name: str) -> List[int]:
+    shape = [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+    tensor = ctx.model_ir.tensors.get(tensor_name, None)
+    signature = (
+        [int(v) for v in list(tensor.shape_signature)]
+        if tensor is not None and tensor.shape_signature is not None
+        else [int(v) for v in shape]
+    )
+    if len(signature) != len(shape):
+        return [int(v) for v in shape]
+    return [
+        int(signature[idx]) if int(signature[idx]) < 0 else int(shape[idx])
+        for idx in range(len(shape))
+    ]
+
+
+def _add_reshape_operator(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    new_shape: List[int],
+    preserve_dynamic_shape: bool = False,
+) -> None:
+    shape_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape",
+        np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
+    )
+    options = {
+        "newShape": [int(v) for v in list(new_shape)],
+    }
+    if bool(preserve_dynamic_shape):
+        options["preserveDynamicShape"] = True
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_name],
+            outputs=[output_name],
+            options=options,
+        )
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in list(new_shape)]
+        output_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in list(new_shape)]
+
+
+def build_multi_head_attention_op(node: Any, ctx: Any) -> None:
+    original_inputs = _get_original_node_inputs(node, ctx)
+    query_name = _input_name(original_inputs, 0)
+    key_name = _input_name(original_inputs, 1)
+    value_name = _input_name(original_inputs, 2)
+    if query_name == "" or key_name == "" or value_name == "":
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering currently requires explicit query/key/value inputs. "
+            f"op={node.name}"
+        )
+    unsupported_optional_inputs = [
+        _input_name(original_inputs, idx)
+        for idx in range(3, 10)
+        if _input_name(original_inputs, idx) != ""
+    ]
+    if len(unsupported_optional_inputs) > 0:
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering currently supports 3-input form only "
+            "(query,key,value; no mask/bias/cache inputs). "
+            f"op={node.name} unsupported_optional_inputs={unsupported_optional_inputs}"
+        )
+
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(query_name)
+    ctx.ensure_tensor(key_name)
+    ctx.ensure_tensor(value_name)
+    ctx.ensure_tensor(output_name)
+
+    query_dtype = str(ctx.get_tensor_dtype(query_name)).upper()
+    key_dtype = str(ctx.get_tensor_dtype(key_name)).upper()
+    value_dtype = str(ctx.get_tensor_dtype(value_name)).upper()
+    if len({query_dtype, key_dtype, value_dtype}) != 1:
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering requires query/key/value dtypes to match. "
+            f"op={node.name} query_dtype={query_dtype} key_dtype={key_dtype} value_dtype={value_dtype}"
+        )
+    if query_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering supports FLOAT16/FLOAT32 only. "
+            f"op={node.name} dtype={query_dtype}"
+        )
+
+    query_shape_sig = _tensor_shape_with_signature(ctx, query_name)
+    key_shape_sig = _tensor_shape_with_signature(ctx, key_name)
+    value_shape_sig = _tensor_shape_with_signature(ctx, value_name)
+    if len(query_shape_sig) != 3 or len(key_shape_sig) != 3 or len(value_shape_sig) != 3:
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering currently supports rank-3 query/key/value only. "
+            f"op={node.name} query_shape={query_shape_sig} key_shape={key_shape_sig} value_shape={value_shape_sig}"
+        )
+
+    num_heads = int(node.attrs.get("num_heads", 0))
+    if num_heads <= 0:
+        raise NotImplementedError(
+            f"MultiHeadAttention num_heads must be > 0 for builtin lowering. op={node.name} num_heads={num_heads}"
+        )
+    unidirectional = int(node.attrs.get("unidirectional", 0))
+    if unidirectional != 0:
+        raise NotImplementedError(
+            f"MultiHeadAttention unidirectional=1 is not supported in builtin lowering. op={node.name}"
+        )
+
+    batch = int(query_shape_sig[0])
+    if batch <= 0:
+        batch = int(ctx.get_tensor_shape(query_name)[0])
+    if batch <= 0:
+        batch = 1
+
+    key_batch = int(key_shape_sig[0]) if int(key_shape_sig[0]) > 0 else int(ctx.get_tensor_shape(key_name)[0])
+    value_batch = int(value_shape_sig[0]) if int(value_shape_sig[0]) > 0 else int(ctx.get_tensor_shape(value_name)[0])
+    if (key_batch > 0 and key_batch != batch) or (value_batch > 0 and value_batch != batch):
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering requires matching batch dimensions. "
+            f"op={node.name} query_batch={batch} key_batch={key_batch} value_batch={value_batch}"
+        )
+
+    query_hidden = int(query_shape_sig[2]) if int(query_shape_sig[2]) > 0 else int(ctx.get_tensor_shape(query_name)[2])
+    key_hidden = int(key_shape_sig[2]) if int(key_shape_sig[2]) > 0 else int(ctx.get_tensor_shape(key_name)[2])
+    value_hidden = int(value_shape_sig[2]) if int(value_shape_sig[2]) > 0 else int(ctx.get_tensor_shape(value_name)[2])
+    if query_hidden <= 0 or key_hidden <= 0 or value_hidden <= 0:
+        raise NotImplementedError(
+            "MultiHeadAttention builtin lowering requires static positive hidden sizes. "
+            f"op={node.name} query_hidden={query_hidden} key_hidden={key_hidden} value_hidden={value_hidden}"
+        )
+    if query_hidden % int(num_heads) != 0 or key_hidden % int(num_heads) != 0 or value_hidden % int(num_heads) != 0:
+        raise NotImplementedError(
+            "MultiHeadAttention hidden sizes must be divisible by num_heads for builtin lowering. "
+            f"op={node.name} num_heads={num_heads} query_hidden={query_hidden} "
+            f"key_hidden={key_hidden} value_hidden={value_hidden}"
+        )
+    query_head_dim = int(query_hidden // int(num_heads))
+    key_head_dim = int(key_hidden // int(num_heads))
+    value_head_dim = int(value_hidden // int(num_heads))
+    if query_head_dim != key_head_dim:
+        raise NotImplementedError(
+            "MultiHeadAttention requires query/key head dimensions to match for builtin lowering. "
+            f"op={node.name} query_head_dim={query_head_dim} key_head_dim={key_head_dim}"
+        )
+
+    query_4d_name = ctx.add_intermediate_tensor(
+        f"{node.name}_query_4d",
+        dtype=query_dtype,
+        shape=[int(batch), -1, int(num_heads), int(query_head_dim)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=query_name,
+        output_name=query_4d_name,
+        new_shape=[int(batch), -1, int(num_heads), int(query_head_dim)],
+        preserve_dynamic_shape=True,
+    )
+    query_bhqd_name = ctx.add_intermediate_tensor(
+        f"{node.name}_query_bhqd",
+        dtype=query_dtype,
+        shape=[int(batch), int(num_heads), -1, int(query_head_dim)],
+    )
+    query_bhqd_name = make_transpose(
+        ctx=ctx,
+        input_name=query_4d_name,
+        output_name=query_bhqd_name,
+        perm_values=[0, 2, 1, 3],
+        allow_elide_inverse_chain=False,
+    )
+
+    key_4d_name = ctx.add_intermediate_tensor(
+        f"{node.name}_key_4d",
+        dtype=key_dtype,
+        shape=[int(batch), -1, int(num_heads), int(key_head_dim)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=key_name,
+        output_name=key_4d_name,
+        new_shape=[int(batch), -1, int(num_heads), int(key_head_dim)],
+        preserve_dynamic_shape=True,
+    )
+    key_bhdk_name = ctx.add_intermediate_tensor(
+        f"{node.name}_key_bhdk",
+        dtype=key_dtype,
+        shape=[int(batch), int(num_heads), int(key_head_dim), -1],
+    )
+    key_bhdk_name = make_transpose(
+        ctx=ctx,
+        input_name=key_4d_name,
+        output_name=key_bhdk_name,
+        perm_values=[0, 2, 3, 1],
+        allow_elide_inverse_chain=False,
+    )
+
+    value_4d_name = ctx.add_intermediate_tensor(
+        f"{node.name}_value_4d",
+        dtype=value_dtype,
+        shape=[int(batch), -1, int(num_heads), int(value_head_dim)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=value_name,
+        output_name=value_4d_name,
+        new_shape=[int(batch), -1, int(num_heads), int(value_head_dim)],
+        preserve_dynamic_shape=True,
+    )
+    value_bhkd_name = ctx.add_intermediate_tensor(
+        f"{node.name}_value_bhkd",
+        dtype=value_dtype,
+        shape=[int(batch), int(num_heads), -1, int(value_head_dim)],
+    )
+    value_bhkd_name = make_transpose(
+        ctx=ctx,
+        input_name=value_4d_name,
+        output_name=value_bhkd_name,
+        perm_values=[0, 2, 1, 3],
+        allow_elide_inverse_chain=False,
+    )
+
+    scores_name = ctx.add_intermediate_tensor(
+        f"{node.name}_scores",
+        dtype=query_dtype,
+        shape=[int(batch), int(num_heads), -1, -1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[query_bhqd_name, key_bhdk_name],
+            outputs=[scores_name],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    scale = float(node.attrs.get("scale", 0.0))
+    if not np.isfinite(scale) or scale <= 0.0:
+        scale = float(1.0 / math.sqrt(float(query_head_dim)))
+    scores_scaled_name = scores_name
+    if abs(float(scale) - 1.0) > 1e-12:
+        scale_name = ctx.add_const_tensor(
+            f"{node.name}_scale",
+            np.asarray(scale, dtype=np.float16 if query_dtype == "FLOAT16" else np.float32),
+        )
+        scores_scaled_name = ctx.add_intermediate_tensor(
+            f"{node.name}_scores_scaled",
+            dtype=query_dtype,
+            shape=[int(batch), int(num_heads), -1, -1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[scores_name, scale_name],
+                outputs=[scores_scaled_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+    probs_name = ctx.add_intermediate_tensor(
+        f"{node.name}_probs",
+        dtype=query_dtype,
+        shape=[int(batch), int(num_heads), -1, -1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SOFTMAX",
+            inputs=[scores_scaled_name],
+            outputs=[probs_name],
+            options={"beta": 1.0},
+        )
+    )
+
+    context_bhqd_name = ctx.add_intermediate_tensor(
+        f"{node.name}_context_bhqd",
+        dtype=query_dtype,
+        shape=[int(batch), int(num_heads), -1, int(value_head_dim)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[probs_name, value_bhkd_name],
+            outputs=[context_bhqd_name],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    context_bqhd_name = ctx.add_intermediate_tensor(
+        f"{node.name}_context_bqhd",
+        dtype=query_dtype,
+        shape=[int(batch), -1, int(num_heads), int(value_head_dim)],
+    )
+    context_bqhd_name = make_transpose(
+        ctx=ctx,
+        input_name=context_bhqd_name,
+        output_name=context_bqhd_name,
+        perm_values=[0, 2, 1, 3],
+        allow_elide_inverse_chain=False,
+    )
+
+    output_compute_name = output_name
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if output_dtype != query_dtype:
+        output_compute_name = ctx.add_intermediate_tensor(
+            f"{output_name}_mha_compute",
+            dtype=query_dtype,
+            shape=[int(batch), -1, int(value_hidden)],
+        )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=context_bqhd_name,
+        output_name=output_compute_name,
+        new_shape=[int(batch), -1, int(value_hidden)],
+        preserve_dynamic_shape=True,
+    )
+    if output_compute_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[output_compute_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": query_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
 
 
 def build_lstm_op(node: Any, ctx: Any) -> None:

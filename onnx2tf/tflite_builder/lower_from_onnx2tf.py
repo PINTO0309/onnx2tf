@@ -3036,11 +3036,17 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     begin_vals=begin_vals,
                     size_vals=size_vals,
                 )
-                changed |= _update_tensor_shape(outputs[0], out_shape, out_signature)
+                out_shape_is_fully_known_positive = _is_fully_known_positive_shape(out_shape)
+                if out_shape_is_fully_known_positive:
+                    changed |= _update_tensor_shape(outputs[0], out_shape, out_signature)
                 # Keep runtime-driven SLICE semantics when input dimensions are dynamic.
-                # Rewriting `size=-1` with placeholder static dims (e.g. 1) can collapse
-                # dynamic axes and change model outputs.
-                if not has_dynamic_input_dim and not bool(op.options.get("preserveDynamicShape", False)):
+                # Also avoid mutating begin/size when inferred output dims include 0 because
+                # stale static metadata can collapse valid slicing ranges into empty outputs.
+                if (
+                    out_shape_is_fully_known_positive
+                    and not has_dynamic_input_dim
+                    and not bool(op.options.get("preserveDynamicShape", False))
+                ):
                     changed |= _write_const_ints_to_tensor(begin_tensor, resolved_begin)
                     changed |= _write_const_ints_to_tensor(size_tensor, resolved_size)
                 continue
@@ -16521,12 +16527,39 @@ def _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir: ModelIR)
             ):
                 continue
 
-            # post perm is inverse of pre perm, so remap slice params from NCHW to NHWC.
-            new_begin = [int(begin_vals[int(axis)]) for axis in perm_nchw_to_nhwc]
-            new_size = [int(size_vals[int(axis)]) for axis in perm_nchw_to_nhwc]
+            pre_input_shape = [int(v) for v in list(pre_input_tensor.shape)]
+            post_out_shape = [int(v) for v in list(post_out_tensor.shape)]
+            begin_vals_i = [int(v) for v in list(begin_vals)]
+            size_vals_i = [int(v) for v in list(size_vals)]
 
-            _write_const_ints_to_tensor(model_ir.tensors.get(begin_name, None), new_begin)
-            _write_const_ints_to_tensor(model_ir.tensors.get(size_name, None), new_size)
+            # Select remapped params only when they reproduce the expected NHWC post shape.
+            # This prevents double-remap corruption when constants were already converted.
+            as_is_shape, _, _ = _infer_slice_output_shape_and_resolved_params(
+                input_shape=pre_input_shape,
+                begin_vals=begin_vals_i,
+                size_vals=size_vals_i,
+            )
+            remapped_begin = [int(begin_vals_i[int(axis)]) for axis in perm_nchw_to_nhwc]
+            remapped_size = [int(size_vals_i[int(axis)]) for axis in perm_nchw_to_nhwc]
+            remapped_shape, _, _ = _infer_slice_output_shape_and_resolved_params(
+                input_shape=pre_input_shape,
+                begin_vals=remapped_begin,
+                size_vals=remapped_size,
+            )
+
+            selected_begin: Optional[List[int]] = None
+            selected_size: Optional[List[int]] = None
+            if as_is_shape is not None and [int(v) for v in list(as_is_shape)] == post_out_shape:
+                selected_begin = begin_vals_i
+                selected_size = size_vals_i
+            elif remapped_shape is not None and [int(v) for v in list(remapped_shape)] == post_out_shape:
+                selected_begin = remapped_begin
+                selected_size = remapped_size
+            else:
+                continue
+
+            _write_const_ints_to_tensor(model_ir.tensors.get(begin_name, None), selected_begin)
+            _write_const_ints_to_tensor(model_ir.tensors.get(size_name, None), selected_size)
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=slice_op,
@@ -48725,11 +48758,8 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
     - NCHW -> NHWC with input shape [N,1,H,W]
     - NHWC -> NCHW with input shape [N,1,1,C]
     - NCHW -> NHWC with input shape [N,C,1,1]
-    - Any rank-N permutation where the relative order of non-singleton input
-      axes is preserved in the permutation (e.g. [0,2,1,3] with input
-      [N,1,W,C]).
-
-    In these cases, moved axes are singleton and the transpose is an exact reshape.
+    In these rank-4 layout cases, moved axes are singleton and the transpose
+    is an exact reshape.
     """
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
@@ -48875,6 +48905,11 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         input_shape = [int(v) for v in list(input_tensor.shape)]
         output_shape = [int(v) for v in list(output_tensor.shape)]
         rank = len(input_shape)
+        # This pass is intended only for NHWC<->NCHW style rank-4 layout bridges.
+        # Rank-3 permutations (e.g. [0,2,1]) can be axis-semantic transforms and
+        # rewriting them to RESHAPE may break downstream ops (e.g. LogSoftmax/Add).
+        if rank != 4:
+            continue
         input_signature = (
             [int(v) for v in list(input_tensor.shape_signature)]
             if input_tensor.shape_signature is not None
@@ -48899,7 +48934,7 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
             continue
 
         canonical_singleton_safe = False
-        if rank == 4 and perm == perm_nhwc_to_nchw:
+        if perm == perm_nhwc_to_nchw:
             channel_singleton = int(input_shape[3]) == 1 and int(output_shape[1]) == 1
             spatial_singleton = (
                 int(input_shape[1]) == 1
@@ -48908,7 +48943,7 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
                 and int(output_shape[3]) == 1
             )
             canonical_singleton_safe = bool(channel_singleton or spatial_singleton)
-        elif rank == 4 and perm == perm_nchw_to_nhwc:
+        elif perm == perm_nchw_to_nhwc:
             channel_singleton = int(input_shape[1]) == 1 and int(output_shape[3]) == 1
             spatial_singleton = (
                 int(input_shape[2]) == 1

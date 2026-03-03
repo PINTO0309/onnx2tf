@@ -6,6 +6,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
 from onnx2tf.tflite_builder.op_builders.shared import _clone_quantization, make_transpose
+from onnx2tf.utils.logging import warn
 
 
 _DTYPE_TO_NP = {
@@ -2179,10 +2180,15 @@ def build_topk_op(node: Any, ctx: Any) -> None:
     input_rank = int(len(input_shape))
     axis = _normalize_axis_for_rank(int(node.attrs.get("axis", -1)), input_rank)
     largest = bool(int(node.attrs.get("largest", 1)))
-    sorted_values = bool(int(node.attrs.get("sorted", 1)))
-    if not sorted_values:
-        raise NotImplementedError(
-            f"TopK sorted=0 is not supported in flatbuffer_direct. op={node.name}"
+    sorted_attr = int(node.attrs.get("sorted", 1))
+    # ONNX TopK(sorted=0) means output order is unspecified.
+    # TFLite TOPK_V2 always emits sorted output, which still satisfies
+    # the relaxed ONNX(sorted=0) requirement.
+    if sorted_attr == 0:
+        warn(
+            "TopK(sorted=0) lowered to TFLite TOPK_V2 always returns descending-sorted output. "
+            "Index order will not exactly match ONNX reference. "
+            f"node={node.name}",
         )
 
     values_output_shape = [int(v) for v in ctx.get_tensor_shape(values_output_name)]
@@ -2755,20 +2761,26 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
     if len(data_shape) != len(indices_shape):
         raise NotImplementedError(
             "GatherElements requires data and indices with the same rank in flatbuffer_direct. "
             f"op={node.name} data_shape={data_shape} indices_shape={indices_shape}"
         )
-    if indices_shape != output_shape:
+    if len(indices_shape) != len(output_shape):
         raise NotImplementedError(
-            "GatherElements requires output shape equal to indices shape in flatbuffer_direct. "
+            "GatherElements requires output rank equal to indices rank in flatbuffer_direct. "
             f"op={node.name} indices_shape={indices_shape} output_shape={output_shape}"
         )
-    if any(int(v) <= 0 for v in output_shape):
+    if any(int(v) <= 0 for v in data_shape):
         raise NotImplementedError(
-            "GatherElements requires fully static positive output shape in flatbuffer_direct. "
-            f"op={node.name} output_shape={output_shape}"
+            "GatherElements requires fully static positive data shape in flatbuffer_direct. "
+            f"op={node.name} data_shape={data_shape}"
         )
 
     rank = len(data_shape)
@@ -2800,31 +2812,64 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    axis_coord_shape = [int(v) for v in output_shape] + [1]
+    axis_coord_signature = [int(v) for v in output_signature] + [1]
+    axis_coord_shape = [int(v) if int(v) > 0 else 1 for v in list(axis_coord_signature)]
     axis_coord_name = ctx.add_intermediate_tensor(
         f"{output_name}_gather_elements_axis_coord",
         dtype="INT32",
         shape=axis_coord_shape,
     )
-    axis_coord_shape_const = ctx.add_const_tensor(
-        f"{output_name}_gather_elements_axis_coord_shape",
-        np.asarray(axis_coord_shape, dtype=np.int32),
+    axis_coord_tensor = ctx.model_ir.tensors.get(axis_coord_name, None)
+    if axis_coord_tensor is not None:
+        axis_coord_tensor.shape_signature = [int(v) for v in axis_coord_signature]
+    expand_axis_const = ctx.add_const_tensor(
+        f"{output_name}_gather_elements_axis_coord_expand_axis",
+        np.asarray(-1, dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="RESHAPE",
-            inputs=[indices_i32_name, axis_coord_shape_const],
+            op_type="EXPAND_DIMS",
+            inputs=[indices_i32_name, expand_axis_const],
             outputs=[axis_coord_name],
-            options={"newShape": [int(v) for v in axis_coord_shape]},
         )
     )
 
-    grid = np.indices(output_shape, dtype=np.int32)
+    axis_is_dynamic = int(output_signature[axis]) < 0
+    static_grid_shape = [int(v) for v in output_shape]
+    if axis_is_dynamic:
+        static_grid_shape[axis] = 1
+    grid = np.indices(static_grid_shape, dtype=np.int32)
     coord_tensors: list[str] = []
     for dim in range(rank):
         if dim == axis:
             coord_tensors.append(axis_coord_name)
             continue
+        if axis_is_dynamic:
+            dim_signature = int(output_signature[dim]) if dim < len(output_signature) else int(output_shape[dim])
+            dim_shape = int(output_shape[dim])
+            if dim_signature == 1 or dim_shape == 1:
+                coord_zero_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_gather_elements_coord_{dim}_zeros",
+                    dtype="INT32",
+                    shape=[int(v) for v in axis_coord_shape],
+                )
+                coord_zero_tensor = ctx.model_ir.tensors.get(coord_zero_name, None)
+                if coord_zero_tensor is not None:
+                    coord_zero_tensor.shape_signature = [int(v) for v in axis_coord_signature]
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SUB",
+                        inputs=[axis_coord_name, axis_coord_name],
+                        outputs=[coord_zero_name],
+                        options={"fusedActivationFunction": "NONE"},
+                    )
+                )
+                coord_tensors.append(coord_zero_name)
+                continue
+            raise NotImplementedError(
+                "GatherElements with dynamic gather-axis currently supports only non-axis dimensions with size=1. "
+                f"op={node.name} axis={axis} dim={dim} output_shape={output_shape} output_signature={output_signature}"
+            )
         coord_const = ctx.add_const_tensor(
             f"{output_name}_gather_elements_coord_{dim}",
             np.expand_dims(grid[dim], axis=-1),

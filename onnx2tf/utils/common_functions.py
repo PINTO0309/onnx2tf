@@ -4277,7 +4277,7 @@ def dummy_onnx_inference(
         new_onnx_graph.metadata_props.extend(metadata_props)
     # gs.py export may drop non-default node domains.
     # Re-supplement selected contrib ops for ORT compatibility.
-    ms_domain_rewrite_targets = {'FusedConv', 'FusedMatMul', 'GroupNorm', 'Inverse', 'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearLeakyRelu', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
+    ms_domain_rewrite_targets = {'FusedConv', 'FusedMatMul', 'Gelu', 'GroupNorm', 'Inverse', 'MultiHeadAttention', 'QGemm', 'QLinearAdd', 'QLinearAveragePool', 'QLinearConcat', 'QLinearGlobalAveragePool', 'QLinearLeakyRelu', 'QLinearMul', 'QLinearSoftmax', 'QLinearSigmoid'}
     rewritten_ms_domains = False
     for node in new_onnx_graph.graph.node:
         if node.op_type in ms_domain_rewrite_targets and node.domain in ['', 'ai.onnx']:
