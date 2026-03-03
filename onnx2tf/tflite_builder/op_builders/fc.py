@@ -247,6 +247,119 @@ def build_einsum_op(node: Any, ctx: Any) -> None:
             lhs, rhs, out = "", "", ""
         if (
             len(lhs) == 4
+            and len(rhs) == 4
+            and len(out) == 4
+            and lhs[0] == rhs[0]
+            and lhs[1] == rhs[1]
+            and lhs[2] == rhs[2]
+            and out[0] == lhs[0]
+            and out[1] == lhs[2]
+            and out[2] == lhs[3]
+            and out[3] == rhs[3]
+            and lhs[1] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+            b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+
+            a_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_a_perm",
+                np.asarray([0, 2, 3, 1], dtype=np.int32),
+            )
+            a_transposed_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_transposed",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[2]), int(a_shape[3]), int(a_shape[1])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[a_compute, a_perm_name],
+                    outputs=[a_transposed_name],
+                    options={},
+                )
+            )
+
+            b_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_b_perm",
+                np.asarray([0, 2, 1, 3], dtype=np.int32),
+            )
+            b_transposed_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_b_transposed",
+                dtype=compute_dtype,
+                shape=[int(b_shape[0]), int(b_shape[2]), int(b_shape[1]), int(b_shape[3])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[b_compute, b_perm_name],
+                    outputs=[b_transposed_name],
+                    options={},
+                )
+            )
+
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_transposed_name, b_transposed_name],
+                    outputs=[y_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        if (
+            len(lhs) == 4
             and len(rhs) == 2
             and len(out) == 4
             and lhs[2] == rhs[0]
@@ -431,6 +544,93 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
                 options={"inDataType": b_dtype, "outDataType": compute_dtype},
             )
         )
+
+    a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+    b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+    if len(a_shape) >= 2 and len(b_shape) == 1:
+        b_tensor = ctx.model_ir.tensors.get(b_name, None)
+        b_signature = (
+            [int(v) for v in list(b_tensor.shape_signature)]
+            if b_tensor is not None and b_tensor.shape_signature is not None
+            else [int(v) for v in list(b_shape)]
+        )
+        k_dim = int(b_signature[0]) if len(b_signature) > 0 else int(b_shape[0])
+        b_matrix_new_shape = [int(k_dim) if int(k_dim) > 0 else -1, 1]
+        b_matrix_shape_name = ctx.add_const_tensor(
+            f"{output_name}_matmul_b_vector_shape",
+            np.asarray(b_matrix_new_shape, dtype=np.int32),
+        )
+        b_matrix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_b_vector_matrix",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in b_matrix_new_shape],
+        )
+        b_matrix_tensor = ctx.model_ir.tensors.get(b_matrix_name, None)
+        if b_matrix_tensor is not None:
+            b_matrix_tensor.shape_signature = [int(v) for v in b_matrix_new_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[b_compute, b_matrix_shape_name],
+                outputs=[b_matrix_name],
+                options={"newShape": [int(v) for v in b_matrix_new_shape]},
+            )
+        )
+
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor is not None and output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_shape)]
+        )
+        matmul_vec_shape = [int(v) for v in list(output_shape)] + [1]
+        matmul_vec_signature = [int(v) for v in list(output_signature)] + [1]
+        matmul_vec_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_vec_out",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in matmul_vec_shape],
+        )
+        matmul_vec_tensor = ctx.model_ir.tensors.get(matmul_vec_name, None)
+        if matmul_vec_tensor is not None:
+            matmul_vec_tensor.shape_signature = [int(v) for v in matmul_vec_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="BATCH_MATMUL",
+                inputs=[a_compute, b_matrix_name],
+                outputs=[matmul_vec_name],
+                options={
+                    "adjX": False,
+                    "adjY": False,
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+
+        squeeze_out = output_name
+        if output_dtype != compute_dtype:
+            squeeze_out = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_vec_squeezed",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[matmul_vec_name],
+                outputs=[squeeze_out],
+                options={"squeezeDims": [int(len(matmul_vec_shape) - 1)]},
+            )
+        )
+        if squeeze_out != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[squeeze_out],
+                    outputs=[output_name],
+                    options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
 
     matmul_out = output_name
     if output_dtype != compute_dtype:

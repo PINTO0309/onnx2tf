@@ -6,6 +6,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
 from onnx2tf.tflite_builder.op_builders.shared import _clone_quantization, make_transpose
+from onnx2tf.utils.logging import warn
 
 
 _DTYPE_TO_NP = {
@@ -78,17 +79,30 @@ def _add_reshape_operator(
     input_name: str,
     output_name: str,
     new_shape: list[int],
+    preserve_dynamic_shape: bool = False,
 ) -> None:
     shape_name = ctx.add_const_tensor(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
+    options = {
+        "newShape": [int(v) for v in list(new_shape)],
+    }
+    if bool(preserve_dynamic_shape):
+        options["preserveDynamicShape"] = True
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            target_signature = [int(v) for v in list(new_shape)]
+            output_tensor.shape_signature = [int(v) for v in target_signature]
+            output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in target_signature
+            ]
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, shape_name],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in list(new_shape)]},
+            options=options,
         )
     )
 
@@ -186,6 +200,11 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             expected_rank = len(existing_output_signature)
             scalar_output_rank = int(input_rank) - 1
             scalarize_single_index = expected_rank == scalar_output_rank
+        if scalarize_single_index and int(input_rank) == 1:
+            # The IR represents rank-0 tensors as shape [1]. For rank-1 params,
+            # scalarizing indices would produce runtime scalar Gather output and
+            # can break downstream rank-1 CONCAT size assembly chains.
+            scalarize_single_index = False
         if scalarize_single_index:
             scalar_value = np.asarray(indices_const_arr.reshape(-1)[0], dtype=indices_const_arr.dtype)
             scalarized_indices_name = ctx.add_const_tensor(
@@ -256,15 +275,35 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
             f"op={node.name} batch_dims={batch_dims}"
         )
 
+    params_shape = [int(v) for v in ctx.get_tensor_shape(params_name)]
+    params_tensor = ctx.model_ir.tensors.get(params_name, None)
+    params_signature = (
+        [int(v) for v in list(params_tensor.shape_signature)]
+        if params_tensor is not None and params_tensor.shape_signature is not None
+        else [int(v) for v in params_shape]
+    )
+    indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
+    indices_tensor = ctx.model_ir.tensors.get(indices_name, None)
+    indices_signature = (
+        [int(v) for v in list(indices_tensor.shape_signature)]
+        if indices_tensor is not None and indices_tensor.shape_signature is not None
+        else [int(v) for v in indices_shape]
+    )
+
     indices_for_gather_nd = indices_name
     indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
     if indices_dtype != "INT32":
-        indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
         indices_for_gather_nd = ctx.add_intermediate_tensor(
             f"{output_name}_gather_nd_indices_i32",
             dtype="INT32",
             shape=indices_shape,
         )
+        cast_output_tensor = ctx.model_ir.tensors.get(indices_for_gather_nd, None)
+        if cast_output_tensor is not None:
+            cast_output_tensor.shape_signature = [int(v) for v in indices_signature]
+            cast_output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in indices_signature
+            ]
         ctx.add_operator(
             OperatorIR(
                 op_type="CAST",
@@ -276,6 +315,47 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    inferred_output_signature: Optional[list[int]] = None
+    if len(indices_signature) >= 1:
+        gather_dims = int(indices_shape[-1]) if len(indices_shape) > 0 else -1
+        if len(indices_signature) > 0 and int(indices_signature[-1]) > 0:
+            gather_dims = int(indices_signature[-1])
+        if gather_dims > 0 and gather_dims <= len(params_signature):
+            inferred_output_signature = (
+                [int(v) for v in indices_signature[:-1]]
+                + [int(v) for v in params_signature[gather_dims:]]
+            )
+    if inferred_output_signature is None:
+        inferred_output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_tensor.shape)]
+        )
+    if len(inferred_output_signature) == 0:
+        inferred_output_signature = [1]
+    existing_output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else None
+    )
+    final_output_signature = [int(v) for v in inferred_output_signature]
+    if (
+        existing_output_signature is not None
+        and len(existing_output_signature) == len(inferred_output_signature)
+    ):
+        final_output_signature = [
+            int(existing_dim) if int(existing_dim) < 0 else int(inferred_dim)
+            for existing_dim, inferred_dim in zip(
+                existing_output_signature,
+                inferred_output_signature,
+            )
+        ]
+    output_tensor.shape_signature = [int(v) for v in final_output_signature]
+    output_tensor.shape = [
+        int(v) if int(v) >= 0 else 1 for v in final_output_signature
+    ]
 
     ctx.add_operator(
         OperatorIR(
@@ -1283,12 +1363,14 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         input_name=x_coords_2d_name,
         output_name=x_coords_3d_name,
         new_shape=[-1, 1, int(pooled_w)],
+        preserve_dynamic_shape=True,
     )
     _add_reshape_operator(
         ctx=ctx,
         input_name=y_coords_2d_name,
         output_name=y_coords_3d_name,
         new_shape=[-1, int(pooled_h), 1],
+        preserve_dynamic_shape=True,
     )
 
     tile_x_name = ctx.add_const_tensor(
@@ -1388,6 +1470,7 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         input_name=padded_input_name,
         output_name=flattened_input_name,
         new_shape=[-1, int(channels), int((in_h + 2) * (in_w + 2))],
+        preserve_dynamic_shape=True,
     )
 
     neg_one_name = ctx.add_const_tensor(
@@ -1783,6 +1866,7 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
             input_name=weight_name,
             output_name=expanded_name,
             new_shape=[-1, 1, int(pooled_h), int(pooled_w)],
+            preserve_dynamic_shape=True,
         )
         return expanded_name
 
@@ -2096,10 +2180,15 @@ def build_topk_op(node: Any, ctx: Any) -> None:
     input_rank = int(len(input_shape))
     axis = _normalize_axis_for_rank(int(node.attrs.get("axis", -1)), input_rank)
     largest = bool(int(node.attrs.get("largest", 1)))
-    sorted_values = bool(int(node.attrs.get("sorted", 1)))
-    if not sorted_values:
-        raise NotImplementedError(
-            f"TopK sorted=0 is not supported in flatbuffer_direct. op={node.name}"
+    sorted_attr = int(node.attrs.get("sorted", 1))
+    # ONNX TopK(sorted=0) means output order is unspecified.
+    # TFLite TOPK_V2 always emits sorted output, which still satisfies
+    # the relaxed ONNX(sorted=0) requirement.
+    if sorted_attr == 0:
+        warn(
+            "TopK(sorted=0) lowered to TFLite TOPK_V2 always returns descending-sorted output. "
+            "Index order will not exactly match ONNX reference. "
+            f"node={node.name}",
         )
 
     values_output_shape = [int(v) for v in ctx.get_tensor_shape(values_output_name)]
@@ -2672,20 +2761,26 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
     if len(data_shape) != len(indices_shape):
         raise NotImplementedError(
             "GatherElements requires data and indices with the same rank in flatbuffer_direct. "
             f"op={node.name} data_shape={data_shape} indices_shape={indices_shape}"
         )
-    if indices_shape != output_shape:
+    if len(indices_shape) != len(output_shape):
         raise NotImplementedError(
-            "GatherElements requires output shape equal to indices shape in flatbuffer_direct. "
+            "GatherElements requires output rank equal to indices rank in flatbuffer_direct. "
             f"op={node.name} indices_shape={indices_shape} output_shape={output_shape}"
         )
-    if any(int(v) <= 0 for v in output_shape):
+    if any(int(v) <= 0 for v in data_shape):
         raise NotImplementedError(
-            "GatherElements requires fully static positive output shape in flatbuffer_direct. "
-            f"op={node.name} output_shape={output_shape}"
+            "GatherElements requires fully static positive data shape in flatbuffer_direct. "
+            f"op={node.name} data_shape={data_shape}"
         )
 
     rank = len(data_shape)
@@ -2717,31 +2812,64 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    axis_coord_shape = [int(v) for v in output_shape] + [1]
+    axis_coord_signature = [int(v) for v in output_signature] + [1]
+    axis_coord_shape = [int(v) if int(v) > 0 else 1 for v in list(axis_coord_signature)]
     axis_coord_name = ctx.add_intermediate_tensor(
         f"{output_name}_gather_elements_axis_coord",
         dtype="INT32",
         shape=axis_coord_shape,
     )
-    axis_coord_shape_const = ctx.add_const_tensor(
-        f"{output_name}_gather_elements_axis_coord_shape",
-        np.asarray(axis_coord_shape, dtype=np.int32),
+    axis_coord_tensor = ctx.model_ir.tensors.get(axis_coord_name, None)
+    if axis_coord_tensor is not None:
+        axis_coord_tensor.shape_signature = [int(v) for v in axis_coord_signature]
+    expand_axis_const = ctx.add_const_tensor(
+        f"{output_name}_gather_elements_axis_coord_expand_axis",
+        np.asarray(-1, dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="RESHAPE",
-            inputs=[indices_i32_name, axis_coord_shape_const],
+            op_type="EXPAND_DIMS",
+            inputs=[indices_i32_name, expand_axis_const],
             outputs=[axis_coord_name],
-            options={"newShape": [int(v) for v in axis_coord_shape]},
         )
     )
 
-    grid = np.indices(output_shape, dtype=np.int32)
+    axis_is_dynamic = int(output_signature[axis]) < 0
+    static_grid_shape = [int(v) for v in output_shape]
+    if axis_is_dynamic:
+        static_grid_shape[axis] = 1
+    grid = np.indices(static_grid_shape, dtype=np.int32)
     coord_tensors: list[str] = []
     for dim in range(rank):
         if dim == axis:
             coord_tensors.append(axis_coord_name)
             continue
+        if axis_is_dynamic:
+            dim_signature = int(output_signature[dim]) if dim < len(output_signature) else int(output_shape[dim])
+            dim_shape = int(output_shape[dim])
+            if dim_signature == 1 or dim_shape == 1:
+                coord_zero_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_gather_elements_coord_{dim}_zeros",
+                    dtype="INT32",
+                    shape=[int(v) for v in axis_coord_shape],
+                )
+                coord_zero_tensor = ctx.model_ir.tensors.get(coord_zero_name, None)
+                if coord_zero_tensor is not None:
+                    coord_zero_tensor.shape_signature = [int(v) for v in axis_coord_signature]
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SUB",
+                        inputs=[axis_coord_name, axis_coord_name],
+                        outputs=[coord_zero_name],
+                        options={"fusedActivationFunction": "NONE"},
+                    )
+                )
+                coord_tensors.append(coord_zero_name)
+                continue
+            raise NotImplementedError(
+                "GatherElements with dynamic gather-axis currently supports only non-axis dimensions with size=1. "
+                f"op={node.name} axis={axis} dim={dim} output_shape={output_shape} output_signature={output_signature}"
+            )
         coord_const = ctx.add_const_tensor(
             f"{output_name}_gather_elements_coord_{dim}",
             np.expand_dims(grid[dim], axis=-1),

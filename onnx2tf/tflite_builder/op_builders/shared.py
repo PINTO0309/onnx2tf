@@ -142,6 +142,257 @@ def resolve_padding(node: Any) -> str:
     )
 
 
+def _is_valid_perm(perm_values: List[int], rank: int) -> bool:
+    perm = [int(v) for v in list(perm_values)]
+    if len(perm) != int(rank):
+        return False
+    return sorted(perm) == [int(i) for i in range(int(rank))]
+
+
+def _decompose_transpose_over_rank6(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    perm_values: List[int],
+) -> Optional[str]:
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    input_rank = int(len(input_shape))
+    target_rank = int(
+        max(
+            2,
+            min(
+                6,
+                int(getattr(ctx, "number_of_dimensions_after_flextranspose_compression", 6)),
+            ),
+        )
+    )
+    if input_rank <= int(target_rank):
+        return None
+    if not _is_valid_perm(perm_values, input_rank):
+        return None
+    if any(int(v) <= 0 for v in input_shape):
+        return None
+
+    num_dims_to_compress = int(input_rank - int(target_rank))
+    sorted_minimum_idxs = np.argsort(np.asarray(input_shape, dtype=np.int64))[
+        :num_dims_to_compress
+    ].tolist()
+    if len(sorted_minimum_idxs) != num_dims_to_compress:
+        return None
+
+    target_minimum_dims = [int(input_shape[int(idx)]) for idx in sorted_minimum_idxs]
+    if any(int(v) <= 0 for v in target_minimum_dims):
+        return None
+
+    removed_split_perm = [int(dim) for dim in perm_values if int(dim) not in sorted_minimum_idxs]
+    sorted_removed_split_perm = sorted(removed_split_perm)
+    removed_splited_transpose_perm = [
+        int(sorted_removed_split_perm.index(int(idx)))
+        for idx in removed_split_perm
+    ]
+    target_sorted_minimum_idxs = [
+        int([int(v) for v in perm_values].index(int(idx)))
+        for idx in sorted_minimum_idxs
+    ]
+
+    rank_tag = f"rank{int(target_rank)}"
+    split_tensors = [str(input_name)]
+    split_axes = [int(v) for v in list(sorted_minimum_idxs)]
+    split_step = 0
+    while split_step < len(split_axes):
+        axis = int(split_axes[split_step])
+        next_split_tensors: List[str] = []
+        for tensor_idx, split_tensor_name in enumerate(split_tensors):
+            split_tensor_shape = [int(v) for v in list(ctx.get_tensor_shape(split_tensor_name))]
+            axis_dim = int(split_tensor_shape[axis])
+            if axis_dim <= 0:
+                return None
+            split_tensor_ir = ctx.model_ir.tensors.get(split_tensor_name, None)
+            split_tensor_signature = (
+                list(split_tensor_ir.shape_signature)
+                if split_tensor_ir is not None and split_tensor_ir.shape_signature is not None
+                else list(split_tensor_shape)
+            )
+            for gather_index in range(axis_dim):
+                gather_index_name = ctx.add_const_tensor(
+                    f"{output_name}_{rank_tag}_split_axis{axis}_idx{gather_index}",
+                    np.asarray(int(gather_index), dtype=np.int32),
+                )
+                gather_index_ir = ctx.model_ir.tensors.get(gather_index_name, None)
+                if gather_index_ir is not None:
+                    gather_index_ir.shape = []
+                    gather_index_ir.shape_signature = []
+                gathered_shape = [int(v) for i, v in enumerate(split_tensor_shape) if int(i) != int(axis)]
+                gathered_signature = [
+                    int(v) for i, v in enumerate(split_tensor_signature) if int(i) != int(axis)
+                ]
+                gathered_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{rank_tag}_split_{split_step}_{tensor_idx}_{gather_index}",
+                    dtype=ctx.get_tensor_dtype(split_tensor_name),
+                    shape=list(gathered_shape),
+                )
+                gathered_ir = ctx.model_ir.tensors.get(gathered_name, None)
+                if gathered_ir is not None:
+                    gathered_ir.shape_signature = [int(v) for v in list(gathered_signature)]
+                    if split_tensor_ir is not None:
+                        gathered_ir.quantization = _clone_quantization(split_tensor_ir.quantization)
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="GATHER",
+                        inputs=[split_tensor_name, gather_index_name],
+                        outputs=[gathered_name],
+                        options={"axis": int(axis), "batchDims": 0},
+                    )
+                )
+                next_split_tensors.append(str(gathered_name))
+        split_tensors = next_split_tensors
+        split_step += 1
+        if split_step >= len(split_axes):
+            break
+        current_axis = int(axis)
+        split_axes = [
+            int(v) if int(v) <= int(current_axis) else int(v) - 1
+            for v in split_axes
+        ]
+
+    transposed_tensors: List[str] = []
+    for idx, split_tensor_name in enumerate(split_tensors):
+        split_tensor_shape = [int(v) for v in list(ctx.get_tensor_shape(split_tensor_name))]
+        transposed_shape = [
+            int(split_tensor_shape[int(axis)])
+            for axis in removed_splited_transpose_perm
+        ]
+        transposed_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{rank_tag}_transposed_{idx}",
+            dtype=ctx.get_tensor_dtype(split_tensor_name),
+            shape=list(transposed_shape),
+        )
+        transposed_name = make_transpose(
+            ctx=ctx,
+            input_name=split_tensor_name,
+            output_name=transposed_name,
+            perm_values=[int(v) for v in list(removed_splited_transpose_perm)],
+            allow_elide_inverse_chain=False,
+        )
+        transposed_tensors.append(str(transposed_name))
+
+    expanded_tensors = list(transposed_tensors)
+    for expand_axis in sorted([int(v) for v in list(target_sorted_minimum_idxs)]):
+        axis_name = ctx.add_const_tensor(
+            f"{output_name}_{rank_tag}_expand_axis_{expand_axis}",
+            np.asarray([int(expand_axis)], dtype=np.int32),
+        )
+        next_expanded: List[str] = []
+        for idx, tensor_name in enumerate(expanded_tensors):
+            tensor_shape = [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+            expanded_shape = (
+                [int(v) for v in tensor_shape[: int(expand_axis)]]
+                + [1]
+                + [int(v) for v in tensor_shape[int(expand_axis):]]
+            )
+            expanded_name = ctx.add_intermediate_tensor(
+                f"{output_name}_{rank_tag}_expanded_{expand_axis}_{idx}",
+                dtype=ctx.get_tensor_dtype(tensor_name),
+                shape=list(expanded_shape),
+            )
+            tensor_ir = ctx.model_ir.tensors.get(tensor_name, None)
+            expanded_ir = ctx.model_ir.tensors.get(expanded_name, None)
+            if tensor_ir is not None and expanded_ir is not None:
+                tensor_signature = (
+                    list(tensor_ir.shape_signature)
+                    if tensor_ir.shape_signature is not None
+                    else list(tensor_shape)
+                )
+                expanded_ir.shape_signature = (
+                    [int(v) for v in tensor_signature[: int(expand_axis)]]
+                    + [1]
+                    + [int(v) for v in tensor_signature[int(expand_axis):]]
+                )
+                expanded_ir.quantization = _clone_quantization(tensor_ir.quantization)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="EXPAND_DIMS",
+                    inputs=[tensor_name, axis_name],
+                    outputs=[expanded_name],
+                )
+            )
+            next_expanded.append(str(expanded_name))
+        expanded_tensors = next_expanded
+
+    grouped_tensors = list(expanded_tensors)
+    concat_axes = list(reversed([int(v) for v in list(target_sorted_minimum_idxs)]))
+    grouping_dims = list(reversed([int(v) for v in list(target_minimum_dims)]))
+    for stage_idx, (concat_axis, target_concat_dim) in enumerate(zip(concat_axes, grouping_dims)):
+        if int(target_concat_dim) <= 0:
+            return None
+        next_grouped: List[str] = []
+        for group_idx in range(0, len(grouped_tensors), int(target_concat_dim)):
+            chunk = grouped_tensors[group_idx: group_idx + int(target_concat_dim)]
+            if len(chunk) == 0:
+                continue
+            if len(chunk) == 1:
+                next_grouped.append(str(chunk[0]))
+                continue
+            concat_out = f"{output_name}_{rank_tag}_concat_{stage_idx}_{group_idx // int(target_concat_dim)}"
+            if stage_idx == int(len(concat_axes) - 1) and len(grouped_tensors) == len(chunk):
+                concat_out = output_name
+            concat_shape = [int(v) for v in list(ctx.get_tensor_shape(chunk[0]))]
+            concat_shape[int(concat_axis)] = int(
+                sum(int(ctx.get_tensor_shape(name)[int(concat_axis)]) for name in chunk)
+            )
+            if concat_out != output_name:
+                ctx.add_intermediate_tensor(
+                    concat_out,
+                    dtype=ctx.get_tensor_dtype(chunk[0]),
+                    shape=list(concat_shape),
+                )
+                concat_out_ir = ctx.model_ir.tensors.get(concat_out, None)
+                chunk_ir = ctx.model_ir.tensors.get(chunk[0], None)
+                if concat_out_ir is not None and chunk_ir is not None:
+                    chunk_signature = (
+                        list(chunk_ir.shape_signature)
+                        if chunk_ir.shape_signature is not None
+                        else [int(v) for v in list(ctx.get_tensor_shape(chunk[0]))]
+                    )
+                    concat_signature = [int(v) for v in list(chunk_signature)]
+                    if 0 <= int(concat_axis) < len(concat_signature):
+                        concat_signature[int(concat_axis)] = int(
+                            sum(int(ctx.get_tensor_shape(name)[int(concat_axis)]) for name in chunk)
+                        )
+                    concat_out_ir.shape_signature = [int(v) for v in concat_signature]
+                    concat_out_ir.quantization = _clone_quantization(chunk_ir.quantization)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=[str(v) for v in chunk],
+                    outputs=[concat_out],
+                    options={"axis": int(concat_axis), "fusedActivationFunction": "NONE"},
+                )
+            )
+            next_grouped.append(str(concat_out))
+        grouped_tensors = next_grouped
+
+    if len(grouped_tensors) != 1:
+        return None
+    final_name = str(grouped_tensors[0])
+    if final_name != output_name:
+        out_shape = [int(v) for v in list(ctx.get_tensor_shape(final_name))]
+        out_shape_name = ctx.add_const_tensor(
+            f"{output_name}_{rank_tag}_identity_shape",
+            np.asarray(out_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[final_name, out_shape_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in out_shape]},
+            )
+        )
+    return output_name
+
+
 def make_transpose(
     ctx: Any,
     input_name: str,
@@ -149,6 +400,7 @@ def make_transpose(
     perm_values: List[int],
     allow_elide_inverse_chain: bool = False,
 ) -> str:
+    perm = [int(v) for v in list(perm_values)]
     if allow_elide_inverse_chain:
         producer_idx = None
         producer_op = None
@@ -181,9 +433,50 @@ def make_transpose(
                         del ctx.model_ir.operators[int(producer_idx)]
                     return prev_input_name
 
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    target_rank = int(
+        max(
+            2,
+            min(
+                6,
+                int(getattr(ctx, "number_of_dimensions_after_flextranspose_compression", 6)),
+            ),
+        )
+    )
+    if (
+        len(input_shape) > int(target_rank)
+        and _is_valid_perm(perm, len(input_shape))
+        and perm != [int(v) for v in range(len(input_shape))]
+    ):
+        decomposed_output = _decompose_transpose_over_rank6(
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            perm_values=perm,
+        )
+        if decomposed_output is not None:
+            input_tensor = ctx.model_ir.tensors.get(input_name, None)
+            output_tensor = ctx.model_ir.tensors.get(output_name, None)
+            if input_tensor is not None and output_tensor is not None:
+                if len(input_tensor.shape) == len(perm):
+                    output_tensor.shape = [int(input_tensor.shape[int(axis)]) for axis in perm]
+                input_signature = (
+                    list(input_tensor.shape_signature)
+                    if input_tensor.shape_signature is not None
+                    else list(input_tensor.shape)
+                )
+                if len(input_signature) == len(perm):
+                    output_tensor.shape_signature = [int(input_signature[int(axis)]) for axis in perm]
+                output_tensor.quantization = _clone_quantization(input_tensor.quantization)
+                output_tensor.quantization = _remap_quantized_dimension_for_transpose(
+                    output_tensor.quantization,
+                    perm,
+                )
+            return str(decomposed_output)
+
     perm_name = ctx.add_const_tensor(
         f"{output_name}_perm",
-        np.asarray(perm_values, dtype=np.int32),
+        np.asarray(perm, dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
@@ -195,7 +488,6 @@ def make_transpose(
     input_tensor = ctx.model_ir.tensors.get(input_name, None)
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     if input_tensor is not None and output_tensor is not None:
-        perm = [int(v) for v in perm_values]
         if len(input_tensor.shape) == len(perm):
             output_tensor.shape = [int(input_tensor.shape[int(axis)]) for axis in perm]
         input_signature = (

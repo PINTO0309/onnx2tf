@@ -9,6 +9,36 @@ from onnx import numpy_helper
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
+_IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF = [
+    "ReduceMax",
+    "Cast",
+    "Equal",
+    "Unsqueeze",
+    "Add",
+    "Mul",
+    "Unsqueeze",
+    "Add",
+    "Unsqueeze",
+    "NonMaxSuppression",
+    "Gather",
+    "If",
+]
+
+_IF_NMS_GUARD_ELSE_OPS_SIMPLE = [
+    "ReduceMax",
+    "Cast",
+    "Unsqueeze",
+    "Add",
+    "Mul",
+    "Unsqueeze",
+    "Add",
+    "Unsqueeze",
+    "NonMaxSuppression",
+    "Gather",
+    "Squeeze",
+]
+
+
 def is_supported_if_nms_guard_pattern(node: Any) -> bool:
     then_graph = node.attrs.get("then_branch", None)
     else_graph = node.attrs.get("else_branch", None)
@@ -20,23 +50,12 @@ def is_supported_if_nms_guard_pattern(node: Any) -> bool:
         return False
     if len(then_graph.node) != 0:
         return False
-    expected_else_ops = [
-        "ReduceMax",
-        "Cast",
-        "Equal",
-        "Unsqueeze",
-        "Add",
-        "Mul",
-        "Unsqueeze",
-        "Add",
-        "Unsqueeze",
-        "NonMaxSuppression",
-        "Gather",
-        "If",
-    ]
     else_ops = [str(n.op_type) for n in else_graph.node]
-    if else_ops != expected_else_ops:
+    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
+        return True
+    if else_ops != _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
         return False
+
     nested_if = else_graph.node[-1]
     nested_attrs = {a.name: a for a in nested_if.attribute}
     if "then_branch" not in nested_attrs or "else_branch" not in nested_attrs:
@@ -709,6 +728,57 @@ def _lower_graph_nodes(
                 out_name = str(wrapped_output.name)
                 ctx.ensure_tensor(out_name, dtype="INT64")
                 ctx.model_ir.tensors[out_name].dtype = "INT64"
+        if op_type == "Squeeze" and len(graph_node.input) >= 1 and len(graph_node.output) == 1:
+            squeeze_input_name = remap_in.get(
+                str(graph_node.input[0]),
+                str(graph_node.input[0]),
+            )
+            squeeze_output_name = remap_out.get(
+                str(graph_node.output[0]),
+                str(graph_node.output[0]),
+            )
+            if squeeze_input_name != "" and squeeze_output_name != "":
+                axes: List[int] = []
+                if len(graph_node.input) >= 2:
+                    axes_name = remap_in.get(
+                        str(graph_node.input[1]),
+                        str(graph_node.input[1]),
+                    )
+                    axes_value = ctx.get_constant_array(axes_name)
+                    if axes_value is not None:
+                        axes = [int(v) for v in np.asarray(axes_value).reshape(-1)]
+                if len(axes) == 0:
+                    for attr in graph_node.attribute:
+                        if str(attr.name) == "axes":
+                            axes = [int(v) for v in list(attr.ints)]
+                            break
+                squeeze_input_shape = [int(v) for v in ctx.get_tensor_shape(squeeze_input_name)]
+                if int(len(squeeze_input_shape)) == 1 and axes == [1]:
+                    # Branch-local shape metadata may collapse [K,1] to rank-1.
+                    # Fall back to a rank-preserving alias instead of rejecting axis=1.
+                    ctx.ensure_tensor(
+                        squeeze_output_name,
+                        dtype=str(ctx.get_tensor_dtype(squeeze_input_name)).upper(),
+                        shape=[-1],
+                    )
+                    squeeze_output_tensor = ctx.model_ir.tensors.get(squeeze_output_name, None)
+                    if squeeze_output_tensor is not None:
+                        squeeze_output_tensor.dtype = str(ctx.get_tensor_dtype(squeeze_input_name)).upper()
+                        squeeze_output_tensor.shape = [-1]
+                        squeeze_output_tensor.shape_signature = [-1]
+                    reshape_shape_name = ctx.add_const_tensor(
+                        f"{squeeze_output_name}_if_branch_squeeze_shape",
+                        np.asarray([-1], dtype=np.int32),
+                    )
+                    ctx.add_operator(
+                        OperatorIR(
+                            op_type="RESHAPE",
+                            inputs=[squeeze_input_name, reshape_shape_name],
+                            outputs=[squeeze_output_name],
+                            options={"newShape": [-1]},
+                        )
+                    )
+                    continue
         dispatch_node(wrapped, ctx)
 
 
@@ -1293,10 +1363,22 @@ def build_if_op(node: Any, ctx: Any) -> None:
     _ensure_graph_initializers(then_graph, ctx)
     _ensure_graph_initializers(else_graph, ctx)
 
+    else_ops = [str(n.op_type) for n in else_graph.node]
+    if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
+        unsqueeze_scores_idx = 3
+        nms_idx = 9
+    elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
+        unsqueeze_scores_idx = 2
+        nms_idx = 8
+    else:
+        raise NotImplementedError(
+            f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
+        )
+
     reduce_max_node = else_graph.node[0]
     cast_node = else_graph.node[1]
-    unsqueeze_scores_node = else_graph.node[3]
-    nms_node = else_graph.node[9]
+    unsqueeze_scores_node = else_graph.node[unsqueeze_scores_idx]
+    nms_node = else_graph.node[nms_idx]
     if (
         str(reduce_max_node.op_type) != "ReduceMax"
         or str(cast_node.op_type) != "Cast"

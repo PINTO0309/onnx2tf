@@ -147,6 +147,398 @@ def _parse_slice_indices(
     return [int(v) for v in values]
 
 
+def _get_slice_rank_limit(ctx: Any) -> int:
+    return int(
+        max(
+            1,
+            min(
+                5,
+                int(
+                    getattr(
+                        ctx,
+                        "number_of_dimensions_after_flexstridedslice_compression",
+                        5,
+                    )
+                ),
+            ),
+        )
+    )
+
+
+def _remap_axis_mask(mask: int, remaining_axes: list[int]) -> int:
+    remapped = 0
+    mask_i = int(mask)
+    for new_axis, old_axis in enumerate(remaining_axes):
+        if ((mask_i >> int(old_axis)) & 1) != 0:
+            remapped |= (1 << int(new_axis))
+    return int(remapped)
+
+
+def _emit_slice_or_stridedslice(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    use_strided_slice: bool,
+    begin: list[int],
+    size: list[int],
+    end_for_strided: list[int],
+    strides_for_strided: list[int],
+    strided_slice_options: dict[str, int | bool],
+    name_prefix: str,
+) -> None:
+    if use_strided_slice:
+        begin_name = ctx.add_const_tensor(
+            f"{name_prefix}_stridedslice_begin",
+            np.asarray(begin, dtype=np.int32),
+        )
+        end_name = ctx.add_const_tensor(
+            f"{name_prefix}_stridedslice_end",
+            np.asarray(end_for_strided, dtype=np.int32),
+        )
+        strides_name = ctx.add_const_tensor(
+            f"{name_prefix}_stridedslice_strides",
+            np.asarray(strides_for_strided, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=[input_name, begin_name, end_name, strides_name],
+                outputs=[output_name],
+                options={
+                    "beginMask": int(strided_slice_options.get("beginMask", 0)),
+                    "endMask": int(strided_slice_options.get("endMask", 0)),
+                    "ellipsisMask": int(strided_slice_options.get("ellipsisMask", 0)),
+                    "newAxisMask": int(strided_slice_options.get("newAxisMask", 0)),
+                    "shrinkAxisMask": int(strided_slice_options.get("shrinkAxisMask", 0)),
+                    "offset": bool(strided_slice_options.get("offset", False)),
+                },
+            )
+        )
+        return
+
+    begin_name = ctx.add_const_tensor(
+        f"{name_prefix}_slice_begin",
+        np.asarray(begin, dtype=np.int32),
+    )
+    size_name = ctx.add_const_tensor(
+        f"{name_prefix}_slice_size",
+        np.asarray(size, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[input_name, begin_name, size_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def _decompose_high_rank_slice_like(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    preferred_slice_axes: list[int],
+    use_strided_slice: bool,
+    begin: list[int],
+    size: list[int],
+    end_for_strided: list[int],
+    strides_for_strided: list[int],
+    strided_slice_options: dict[str, int | bool],
+) -> bool:
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    input_rank = len(input_shape)
+    target_rank = _get_slice_rank_limit(ctx)
+    if input_rank <= int(target_rank):
+        return False
+    if any(int(v) <= 0 for v in input_shape):
+        return False
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_shape = (
+        [int(v) for v in list(output_tensor.shape)]
+        if output_tensor is not None
+        else []
+    )
+    if len(output_shape) != input_rank:
+        return False
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+
+    begin_mask = int(strided_slice_options.get("beginMask", 0))
+    end_mask = int(strided_slice_options.get("endMask", 0))
+    avoid_axes = set(int(v) for v in list(preferred_slice_axes))
+    required_compress = int(input_rank - int(target_rank))
+
+    def _is_passthrough_axis(axis: int) -> bool:
+        dim = int(input_shape[axis])
+        if not use_strided_slice:
+            return int(begin[axis]) == 0 and int(size[axis]) == int(dim)
+        begin_ok = (((begin_mask >> int(axis)) & 1) != 0) or int(begin[axis]) == 0
+        end_ok = (((end_mask >> int(axis)) & 1) != 0) or int(end_for_strided[axis]) == int(dim)
+        return begin_ok and end_ok and int(strides_for_strided[axis]) == 1
+
+    candidate_axes = [
+        int(axis)
+        for axis in range(input_rank)
+        if axis not in avoid_axes and _is_passthrough_axis(axis)
+    ]
+    if len(candidate_axes) < required_compress:
+        candidate_axes = [
+            int(axis)
+            for axis in range(input_rank)
+            if _is_passthrough_axis(axis)
+        ]
+    if len(candidate_axes) < required_compress:
+        return False
+
+    candidate_axes = sorted(
+        [int(v) for v in list(candidate_axes)],
+        key=lambda axis: (
+            0 if int(input_shape[axis]) == 1 else 1,
+            int(input_shape[axis]),
+            int(axis),
+        ),
+    )
+    split_axes = sorted([int(v) for v in candidate_axes[:required_compress]])
+    split_dims = [int(input_shape[axis]) for axis in split_axes]
+    remaining_axes = [int(axis) for axis in range(input_rank) if axis not in set(split_axes)]
+    if len(remaining_axes) != target_rank:
+        return False
+
+    reduced_begin = [int(begin[axis]) for axis in remaining_axes]
+    reduced_size = [int(size[axis]) for axis in remaining_axes]
+    reduced_end = [int(end_for_strided[axis]) for axis in remaining_axes]
+    reduced_strides = [int(strides_for_strided[axis]) for axis in remaining_axes]
+    reduced_options = dict(strided_slice_options)
+    reduced_options["beginMask"] = int(_remap_axis_mask(begin_mask, remaining_axes))
+    reduced_options["endMask"] = int(_remap_axis_mask(end_mask, remaining_axes))
+    reduced_options["ellipsisMask"] = 0
+    reduced_options["newAxisMask"] = 0
+    reduced_options["shrinkAxisMask"] = 0
+    reduced_options["offset"] = bool(strided_slice_options.get("offset", False))
+    reduced_out_shape = [int(output_shape[axis]) for axis in remaining_axes]
+    reduced_out_sig = [int(output_signature[axis]) for axis in remaining_axes]
+    rank_tag = f"rank{int(target_rank)}"
+
+    split_tensors: list[str] = [str(input_name)]
+    work_axes = [int(v) for v in split_axes]
+    split_step = 0
+    while split_step < len(work_axes):
+        axis = int(work_axes[split_step])
+        next_split_tensors: list[str] = []
+        for tensor_idx, split_tensor_name in enumerate(split_tensors):
+            split_tensor_shape = [int(v) for v in list(ctx.get_tensor_shape(split_tensor_name))]
+            axis_dim = int(split_tensor_shape[axis])
+            if axis_dim <= 0:
+                return False
+            split_tensor_ir = ctx.model_ir.tensors.get(split_tensor_name, None)
+            split_tensor_sig = (
+                [int(v) for v in list(split_tensor_ir.shape_signature)]
+                if split_tensor_ir is not None and split_tensor_ir.shape_signature is not None
+                else [int(v) for v in list(split_tensor_shape)]
+            )
+            for gather_index in range(axis_dim):
+                gather_index_name = ctx.add_const_tensor(
+                    f"{output_name}_{rank_tag}_slice_split_axis{axis}_idx{gather_index}",
+                    np.asarray(int(gather_index), dtype=np.int32),
+                )
+                gather_index_ir = ctx.model_ir.tensors.get(gather_index_name, None)
+                if gather_index_ir is not None:
+                    gather_index_ir.shape = []
+                    gather_index_ir.shape_signature = []
+                gathered_shape = [
+                    int(v) for i, v in enumerate(split_tensor_shape) if int(i) != int(axis)
+                ]
+                gathered_sig = [
+                    int(v) for i, v in enumerate(split_tensor_sig) if int(i) != int(axis)
+                ]
+                gathered_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{rank_tag}_slice_split_{split_step}_{tensor_idx}_{gather_index}",
+                    dtype=ctx.get_tensor_dtype(split_tensor_name),
+                    shape=list(gathered_shape),
+                )
+                gathered_ir = ctx.model_ir.tensors.get(gathered_name, None)
+                if gathered_ir is not None:
+                    gathered_ir.shape_signature = [int(v) for v in list(gathered_sig)]
+                    if split_tensor_ir is not None:
+                        gathered_ir.quantization = _clone_quantization(split_tensor_ir.quantization)
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="GATHER",
+                        inputs=[split_tensor_name, gather_index_name],
+                        outputs=[gathered_name],
+                        options={"axis": int(axis), "batchDims": 0},
+                    )
+                )
+                next_split_tensors.append(str(gathered_name))
+        split_tensors = next_split_tensors
+        split_step += 1
+        if split_step >= len(work_axes):
+            break
+        current_axis = int(axis)
+        work_axes = [
+            int(v) if int(v) <= int(current_axis) else int(v) - 1
+            for v in work_axes
+        ]
+
+    sliced_tensors: list[str] = []
+    for idx, split_tensor_name in enumerate(split_tensors):
+        sliced_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{rank_tag}_slice_core_{idx}",
+            dtype=ctx.get_tensor_dtype(split_tensor_name),
+            shape=list(reduced_out_shape),
+        )
+        sliced_ir = ctx.model_ir.tensors.get(sliced_name, None)
+        if sliced_ir is not None:
+            sliced_ir.shape_signature = [int(v) for v in list(reduced_out_sig)]
+            split_ir = ctx.model_ir.tensors.get(split_tensor_name, None)
+            if split_ir is not None:
+                sliced_ir.quantization = _clone_quantization(split_ir.quantization)
+        _emit_slice_or_stridedslice(
+            ctx=ctx,
+            input_name=split_tensor_name,
+            output_name=sliced_name,
+            use_strided_slice=bool(use_strided_slice),
+            begin=[int(v) for v in list(reduced_begin)],
+            size=[int(v) for v in list(reduced_size)],
+            end_for_strided=[int(v) for v in list(reduced_end)],
+            strides_for_strided=[int(v) for v in list(reduced_strides)],
+            strided_slice_options=dict(reduced_options),
+            name_prefix=f"{output_name}_{rank_tag}_slice_core_{idx}",
+        )
+        sliced_tensors.append(str(sliced_name))
+
+    expanded_tensors = list(sliced_tensors)
+    for expand_axis in sorted([int(v) for v in list(split_axes)]):
+        axis_name = ctx.add_const_tensor(
+            f"{output_name}_{rank_tag}_slice_expand_axis_{expand_axis}",
+            np.asarray([int(expand_axis)], dtype=np.int32),
+        )
+        next_expanded: list[str] = []
+        for idx, tensor_name in enumerate(expanded_tensors):
+            tensor_shape = [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+            expanded_shape = (
+                [int(v) for v in tensor_shape[: int(expand_axis)]]
+                + [1]
+                + [int(v) for v in tensor_shape[int(expand_axis):]]
+            )
+            expanded_name = ctx.add_intermediate_tensor(
+                f"{output_name}_{rank_tag}_slice_expanded_{expand_axis}_{idx}",
+                dtype=ctx.get_tensor_dtype(tensor_name),
+                shape=list(expanded_shape),
+            )
+            tensor_ir = ctx.model_ir.tensors.get(tensor_name, None)
+            expanded_ir = ctx.model_ir.tensors.get(expanded_name, None)
+            if tensor_ir is not None and expanded_ir is not None:
+                tensor_sig = (
+                    [int(v) for v in list(tensor_ir.shape_signature)]
+                    if tensor_ir.shape_signature is not None
+                    else [int(v) for v in list(tensor_shape)]
+                )
+                expanded_ir.shape_signature = (
+                    [int(v) for v in tensor_sig[: int(expand_axis)]]
+                    + [1]
+                    + [int(v) for v in tensor_sig[int(expand_axis):]]
+                )
+                expanded_ir.quantization = _clone_quantization(tensor_ir.quantization)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="EXPAND_DIMS",
+                    inputs=[tensor_name, axis_name],
+                    outputs=[expanded_name],
+                )
+            )
+            next_expanded.append(str(expanded_name))
+        expanded_tensors = next_expanded
+
+    grouped_tensors = list(expanded_tensors)
+    concat_axes = list(reversed([int(v) for v in list(split_axes)]))
+    grouping_dims = list(reversed([int(v) for v in list(split_dims)]))
+    for stage_idx, (concat_axis, target_concat_dim) in enumerate(zip(concat_axes, grouping_dims)):
+        if int(target_concat_dim) <= 0:
+            return False
+        next_grouped: list[str] = []
+        for group_idx in range(0, len(grouped_tensors), int(target_concat_dim)):
+            chunk = grouped_tensors[group_idx: group_idx + int(target_concat_dim)]
+            if len(chunk) == 0:
+                continue
+            if len(chunk) == 1:
+                next_grouped.append(str(chunk[0]))
+                continue
+            concat_out = (
+                output_name
+                if stage_idx == int(len(concat_axes) - 1) and len(grouped_tensors) == len(chunk)
+                else f"{output_name}_{rank_tag}_slice_concat_{stage_idx}_{group_idx // int(target_concat_dim)}"
+            )
+            concat_shape = [int(v) for v in list(ctx.get_tensor_shape(chunk[0]))]
+            concat_shape[int(concat_axis)] = int(
+                sum(int(ctx.get_tensor_shape(name)[int(concat_axis)]) for name in chunk)
+            )
+            if concat_out != output_name:
+                ctx.add_intermediate_tensor(
+                    concat_out,
+                    dtype=ctx.get_tensor_dtype(chunk[0]),
+                    shape=list(concat_shape),
+                )
+                concat_out_ir = ctx.model_ir.tensors.get(concat_out, None)
+                chunk_ir = ctx.model_ir.tensors.get(chunk[0], None)
+                if concat_out_ir is not None and chunk_ir is not None:
+                    chunk_sig = (
+                        [int(v) for v in list(chunk_ir.shape_signature)]
+                        if chunk_ir.shape_signature is not None
+                        else [int(v) for v in list(ctx.get_tensor_shape(chunk[0]))]
+                    )
+                    concat_sig = [int(v) for v in list(chunk_sig)]
+                    concat_sig[int(concat_axis)] = int(
+                        sum(int(ctx.get_tensor_shape(name)[int(concat_axis)]) for name in chunk)
+                    )
+                    concat_out_ir.shape_signature = [int(v) for v in list(concat_sig)]
+                    concat_out_ir.quantization = _clone_quantization(chunk_ir.quantization)
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=[str(v) for v in chunk],
+                    outputs=[concat_out],
+                    options={"axis": int(concat_axis), "fusedActivationFunction": "NONE"},
+                )
+            )
+            next_grouped.append(str(concat_out))
+        grouped_tensors = next_grouped
+
+    if len(grouped_tensors) != 1:
+        return False
+    final_name = str(grouped_tensors[0])
+    if final_name != str(output_name):
+        final_shape = [int(v) for v in list(ctx.get_tensor_shape(final_name))]
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{output_name}_{rank_tag}_slice_identity_shape",
+            np.asarray(final_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[final_name, reshape_shape_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in final_shape]},
+            )
+        )
+        final_tensor = ctx.model_ir.tensors.get(final_name, None)
+        output_tensor_final = ctx.model_ir.tensors.get(output_name, None)
+        if final_tensor is not None and output_tensor_final is not None:
+            output_tensor_final.shape = [int(v) for v in list(final_shape)]
+            if final_tensor.shape_signature is not None:
+                output_tensor_final.shape_signature = [
+                    int(v) for v in list(final_tensor.shape_signature)
+                ]
+            output_tensor_final.quantization = _clone_quantization(final_tensor.quantization)
+    return True
+
+
 def build_slice_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -158,13 +550,24 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    starts = _parse_slice_indices(
-        node=node,
-        ctx=ctx,
-        input_index=1,
-        attr_name="starts",
-        label="starts",
-    )
+    dynamic_start_input_name = ""
+    starts: list[int] = []
+    if (
+        len(node.inputs) > 1
+        and str(node.inputs[1].name) != ""
+        and ctx.get_constant_array(node.inputs[1].name) is None
+        and "starts" not in node.attrs
+    ):
+        dynamic_start_input_name = str(node.inputs[1].name)
+    else:
+        starts = _parse_slice_indices(
+            node=node,
+            ctx=ctx,
+            input_index=1,
+            attr_name="starts",
+            label="starts",
+        )
+
     dynamic_end_input_name = ""
     ends: list[int] = []
     if (
@@ -174,7 +577,6 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         and "ends" not in node.attrs
     ):
         dynamic_end_input_name = str(node.inputs[2].name)
-        ends = [0 for _ in range(len(starts))]
     else:
         ends = _parse_slice_indices(
             node=node,
@@ -183,7 +585,7 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             attr_name="ends",
             label="ends",
         )
-    if len(starts) != len(ends):
+    if dynamic_end_input_name == "" and len(starts) != len(ends):
         raise NotImplementedError(
             f"Slice starts and ends length mismatch. op={node.name} "
             f"starts_len={len(starts)} ends_len={len(ends)}"
@@ -197,12 +599,17 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         else list(input_shape)
     )
     rank = len(input_shape)
+    default_slice_len = int(
+        len(starts)
+        if len(starts) > 0
+        else (len(ends) if len(ends) > 0 else 1)
+    )
     axes = _parse_slice_axes_or_steps(
         node=node,
         ctx=ctx,
         input_index=3,
         attr_name="axes",
-        default_values=[int(v) for v in range(len(starts))],
+        default_values=[int(v) for v in range(default_slice_len)],
         label="axes",
     )
     steps = _parse_slice_axes_or_steps(
@@ -210,10 +617,10 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         ctx=ctx,
         input_index=4,
         attr_name="steps",
-        default_values=[1 for _ in range(len(starts))],
+        default_values=[1 for _ in range(len(axes))],
         label="steps",
     )
-    if len(axes) != len(starts) or len(steps) != len(starts):
+    if len(steps) != len(axes):
         raise NotImplementedError(
             f"Slice starts/axes/steps length mismatch. op={node.name} "
             f"starts_len={len(starts)} axes_len={len(axes)} steps_len={len(steps)}"
@@ -222,6 +629,187 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         _normalize_axis(axis_raw, rank, op_name=node.name)
         for axis_raw in axes
     ]
+
+    if dynamic_start_input_name == "" and len(normalized_axes) != len(starts):
+        raise NotImplementedError(
+            f"Slice starts/axes length mismatch. op={node.name} "
+            f"starts_len={len(starts)} axes_len={len(normalized_axes)}"
+        )
+    if dynamic_end_input_name == "" and len(normalized_axes) != len(ends):
+        raise NotImplementedError(
+            f"Slice ends/axes length mismatch. op={node.name} "
+            f"ends_len={len(ends)} axes_len={len(normalized_axes)}"
+        )
+
+    if dynamic_start_input_name != "" or (
+        dynamic_end_input_name != "" and len(normalized_axes) == 1
+    ):
+        if not (
+            len(normalized_axes) == 1
+            and len(steps) == 1
+            and int(steps[0]) > 0
+            and (
+                dynamic_start_input_name != ""
+                or (len(starts) == 1 and int(starts[0]) >= 0)
+            )
+        ):
+            raise NotImplementedError(
+                "Slice with dynamic starts/ends currently supports only "
+                "single-axis positive-step slicing in flatbuffer_direct. "
+                f"op={node.name} starts={starts} ends={ends} axes={axes} steps={steps}"
+            )
+
+        axis = int(normalized_axes[0])
+        step = int(steps[0])
+        int32_max = int(np.iinfo(np.int32).max)
+
+        def _prepare_dynamic_len1_i32(dynamic_name: str, suffix: str) -> str:
+            dynamic_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_name)]
+            if len(dynamic_shape) != 1 or (int(dynamic_shape[0]) > 0 and int(dynamic_shape[0]) != 1):
+                raise NotImplementedError(
+                    "Slice dynamic starts/ends must be rank-1 length-1 "
+                    f"for builtin lowering. op={node.name} tensor={dynamic_name} shape={dynamic_shape}"
+                )
+            dynamic_dtype = str(ctx.get_tensor_dtype(dynamic_name)).upper()
+            out_name = dynamic_name
+            if dynamic_dtype != "INT32":
+                out_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_stridedslice_{suffix}_i32",
+                    dtype="INT32",
+                    shape=[1],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[dynamic_name],
+                        outputs=[out_name],
+                        options={
+                            "inDataType": dynamic_dtype,
+                            "outDataType": "INT32",
+                        },
+                    )
+                )
+            return out_name
+
+        def _compose_rank_vector_with_dynamic_axis(
+            *,
+            dynamic_len1_name: str,
+            axis_index: int,
+            fill_value: int,
+            suffix: str,
+        ) -> str:
+            parts: list[str] = []
+            if axis_index > 0:
+                prefix_name = ctx.add_const_tensor(
+                    f"{output_name}_stridedslice_{suffix}_prefix",
+                    np.asarray([int(fill_value) for _ in range(axis_index)], dtype=np.int32),
+                )
+                parts.append(prefix_name)
+            parts.append(dynamic_len1_name)
+            if axis_index + 1 < rank:
+                suffix_name = ctx.add_const_tensor(
+                    f"{output_name}_stridedslice_{suffix}_suffix",
+                    np.asarray(
+                        [int(fill_value) for _ in range(rank - axis_index - 1)],
+                        dtype=np.int32,
+                    ),
+                )
+                parts.append(suffix_name)
+            if len(parts) == 1:
+                return parts[0]
+            vector_name = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_{suffix}_full",
+                dtype="INT32",
+                shape=[int(rank)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=parts,
+                    outputs=[vector_name],
+                    options={"axis": 0, "fusedActivationFunction": "NONE"},
+                )
+            )
+            return vector_name
+
+        if dynamic_start_input_name != "":
+            begin_name = _prepare_dynamic_len1_i32(
+                dynamic_name=dynamic_start_input_name,
+                suffix="begin",
+            )
+            begin_name = _compose_rank_vector_with_dynamic_axis(
+                dynamic_len1_name=begin_name,
+                axis_index=axis,
+                fill_value=0,
+                suffix="begin",
+            )
+        else:
+            begin_vec = [0 for _ in range(rank)]
+            start_const = int(starts[0])
+            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
+            if start_const < 0:
+                if known_axis_dim > 0:
+                    start_const += int(known_axis_dim)
+                else:
+                    raise NotImplementedError(
+                        "Slice negative constant start with dynamic shape is not supported "
+                        f"in this dynamic starts/ends path. op={node.name} start={starts[0]}"
+                    )
+            begin_vec[axis] = int(start_const)
+            begin_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_begin",
+                np.asarray(begin_vec, dtype=np.int32),
+            )
+
+        if dynamic_end_input_name != "":
+            end_name = _prepare_dynamic_len1_i32(
+                dynamic_name=dynamic_end_input_name,
+                suffix="end",
+            )
+            end_name = _compose_rank_vector_with_dynamic_axis(
+                dynamic_len1_name=end_name,
+                axis_index=axis,
+                fill_value=int32_max,
+                suffix="end",
+            )
+        else:
+            end_vec = [int32_max for _ in range(rank)]
+            end_const = int(ends[0])
+            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
+            if end_const < 0 and known_axis_dim > 0:
+                end_const += int(known_axis_dim)
+            end_vec[axis] = int(end_const)
+            end_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_end",
+                np.asarray(end_vec, dtype=np.int32),
+            )
+
+        strides = [1 for _ in range(rank)]
+        strides[axis] = int(step)
+        strides_name = ctx.add_const_tensor(
+            f"{output_name}_stridedslice_strides",
+            np.asarray(strides, dtype=np.int32),
+        )
+        end_mask = 0
+        for axis_idx in range(rank):
+            if int(axis_idx) != int(axis):
+                end_mask |= (1 << int(axis_idx))
+        ctx.add_operator(
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=[input_name, begin_name, end_name, strides_name],
+                outputs=[output_name],
+                options={
+                    "beginMask": 0,
+                    "endMask": int(end_mask),
+                    "ellipsisMask": 0,
+                    "newAxisMask": 0,
+                    "shrinkAxisMask": 0,
+                    "offset": False,
+                },
+            )
+        )
+        return
 
     if dynamic_end_input_name != "":
         dynamic_prefix_len = len(starts)
@@ -447,50 +1035,51 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                     size[axis] = -1
             strides_for_strided[axis] = int(step)
 
-    if use_strided_slice:
-        begin_name = ctx.add_const_tensor(
-            f"{output_name}_stridedslice_begin",
-            np.asarray(begin, dtype=np.int32),
-        )
-        end_name = ctx.add_const_tensor(
-            f"{output_name}_stridedslice_end",
-            np.asarray(end_for_strided, dtype=np.int32),
-        )
-        strides_name = ctx.add_const_tensor(
-            f"{output_name}_stridedslice_strides",
-            np.asarray(strides_for_strided, dtype=np.int32),
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="STRIDED_SLICE",
-                inputs=[input_name, begin_name, end_name, strides_name],
-                outputs=[output_name],
-                options={
-                    "beginMask": 0,
-                    "endMask": 0,
-                    "ellipsisMask": 0,
-                    "newAxisMask": 0,
-                    "shrinkAxisMask": 0,
-                    "offset": False,
-                },
-            )
-        )
-    else:
-        begin_name = ctx.add_const_tensor(
-            f"{output_name}_slice_begin",
-            np.asarray(begin, dtype=np.int32),
-        )
-        size_name = ctx.add_const_tensor(
-            f"{output_name}_slice_size",
-            np.asarray(size, dtype=np.int32),
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SLICE",
-                inputs=[input_name, begin_name, size_name],
-                outputs=[output_name],
-            )
-        )
+    output_shape_hint = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if (
+        not bool(use_strided_slice)
+        and len(output_shape_hint) == int(rank)
+        and all(int(v) > 0 for v in output_shape_hint)
+        and all(int(step) == 1 for step in steps)
+    ):
+        # Prefer graph output metadata for static step=1 SLICE when available.
+        # This avoids propagating stale input-shape metadata into size constants.
+        size = [int(v) for v in output_shape_hint]
+
+    strided_slice_options: dict[str, int | bool] = {
+        "beginMask": 0,
+        "endMask": 0,
+        "ellipsisMask": 0,
+        "newAxisMask": 0,
+        "shrinkAxisMask": 0,
+        "offset": False,
+    }
+    if _decompose_high_rank_slice_like(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+        preferred_slice_axes=[int(v) for v in list(normalized_axes)],
+        use_strided_slice=bool(use_strided_slice),
+        begin=[int(v) for v in list(begin)],
+        size=[int(v) for v in list(size)],
+        end_for_strided=[int(v) for v in list(end_for_strided)],
+        strides_for_strided=[int(v) for v in list(strides_for_strided)],
+        strided_slice_options=dict(strided_slice_options),
+    ):
+        return
+
+    _emit_slice_or_stridedslice(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+        use_strided_slice=bool(use_strided_slice),
+        begin=[int(v) for v in list(begin)],
+        size=[int(v) for v in list(size)],
+        end_for_strided=[int(v) for v in list(end_for_strided)],
+        strides_for_strided=[int(v) for v in list(strides_for_strided)],
+        strided_slice_options=dict(strided_slice_options),
+        name_prefix=output_name,
+    )
 
 
 def _parse_split_sizes(
@@ -886,17 +1475,11 @@ def build_transpose_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"Transpose permutation must be resolvable for flatbuffer_direct. op={node.name}"
         )
-    perm_const = ctx.add_const_tensor(
-        f"{output_name}_transpose_perm",
-        np.asarray(perm, dtype=np.int32).reshape(-1),
-    )
-
-    ctx.add_operator(
-        OperatorIR(
-            op_type="TRANSPOSE",
-            inputs=[input_name, perm_const],
-            outputs=[output_name],
-        )
+    make_transpose(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+        perm_values=[int(v) for v in np.asarray(perm, dtype=np.int32).reshape(-1).tolist()],
     )
 
 
@@ -2894,72 +3477,74 @@ def build_depth_to_space_op(node: Any, ctx: Any) -> None:
             )
         )
     else:
-        batch = int(nhwc_input_shape[0])
-        height = int(nhwc_input_shape[1])
-        width = int(nhwc_input_shape[2])
-        channels = int(nhwc_input_shape[3])
         block_area = int(block_size * block_size)
-        if channels % block_area != 0:
+        channels = int(nhwc_input_shape[3])
+        input_channel_signature = int(nhwc_input_signature[3]) if len(nhwc_input_signature) == 4 else int(channels)
+        channel_dim_for_crd = int(channels) if int(channels) > 0 else int(input_channel_signature)
+        if channel_dim_for_crd <= 0:
+            raise NotImplementedError(
+                "DepthToSpace CRD requires static channel dimension in flatbuffer_direct builtin lowering. "
+                f"op={node.name} channel_dim={channel_dim_for_crd}"
+            )
+        if channel_dim_for_crd % block_area != 0:
             raise NotImplementedError(
                 f"DepthToSpace CRD requires input channels divisible by blocksize^2. "
-                f"op={node.name} channels={channels} blocksize={block_size}"
+                f"op={node.name} channels={channel_dim_for_crd} blocksize={block_size}"
             )
-        out_channels = int(channels // block_area)
+        out_channels = int(channel_dim_for_crd // block_area)
 
-        reshape1_shape = [batch, height, width, out_channels, int(block_size), int(block_size)]
-        reshape1_shape_name = ctx.add_const_tensor(
-            f"{node.name}_crd_reshape1_shape",
-            np.asarray(reshape1_shape, dtype=np.int32),
+        # ONNX CRD layout can be lowered by reordering channels to DCR layout first,
+        # then applying TFLite DEPTH_TO_SPACE.
+        # CRD channel index: ((c * b) + by) * b + bx
+        # DCR channel index: ((by * b) + bx) * c + c_idx
+        gather_indices = []
+        for by in range(int(block_size)):
+            for bx in range(int(block_size)):
+                for c_idx in range(int(out_channels)):
+                    gather_indices.append(
+                        int(((int(c_idx) * int(block_size)) + int(by)) * int(block_size) + int(bx))
+                    )
+        gather_indices_name = ctx.add_const_tensor(
+            f"{node.name}_crd_to_dcr_indices",
+            np.asarray(gather_indices, dtype=np.int32),
         )
-        reshape1_out = ctx.add_intermediate_tensor(
-            f"{node.name}_crd_reshape1_out",
+        x_dcr = ctx.add_intermediate_tensor(
+            f"{node.name}_crd_input_reordered",
             dtype=ctx.get_tensor_dtype(output_name),
-            shape=reshape1_shape,
+            shape=[int(v) for v in list(nhwc_input_shape)],
         )
-        ctx.model_ir.tensors[reshape1_out].shape_signature = [int(v) for v in list(reshape1_shape)]
-        if ctx.model_ir.tensors[x_nhwc].quantization is not None:
-            ctx.model_ir.tensors[reshape1_out].quantization = _clone_quantization(
-                ctx.model_ir.tensors[x_nhwc].quantization
-            )
+        x_dcr_tensor = ctx.model_ir.tensors.get(x_dcr, None)
+        if x_dcr_tensor is not None:
+            x_dcr_tensor.shape_signature = [int(v) for v in list(nhwc_input_signature)]
+            if ctx.model_ir.tensors[x_nhwc].quantization is not None:
+                x_dcr_tensor.quantization = _clone_quantization(
+                    ctx.model_ir.tensors[x_nhwc].quantization
+                )
         ctx.add_operator(
             OperatorIR(
-                op_type="RESHAPE",
-                inputs=[x_nhwc, reshape1_shape_name],
-                outputs=[reshape1_out],
-                options={"newShape": [int(v) for v in list(reshape1_shape)]},
+                op_type="GATHER",
+                inputs=[x_nhwc, gather_indices_name],
+                outputs=[x_dcr],
+                options={
+                    "axis": 3,
+                    "batchDims": 0,
+                },
             )
         )
 
-        transpose_out_shape = [batch, height, int(block_size), width, int(block_size), out_channels]
-        transpose_out = ctx.add_intermediate_tensor(
-            f"{node.name}_crd_transpose_out",
-            dtype=ctx.get_tensor_dtype(output_name),
-            shape=transpose_out_shape,
-        )
-        ctx.model_ir.tensors[transpose_out].shape_signature = [int(v) for v in list(transpose_out_shape)]
-        transpose_out = make_transpose(
-            ctx,
-            reshape1_out,
-            transpose_out,
-            [0, 1, 4, 2, 5, 3],
-            allow_elide_inverse_chain=False,
-        )
+        if len(nhwc_output_signature) == 4 and int(nhwc_output_signature[3]) < 0:
+            nhwc_output_signature[3] = int(out_channels)
+            y_nhwc_tensor = ctx.model_ir.tensors.get(y_nhwc, None)
+            if y_nhwc_tensor is not None:
+                y_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_output_signature)]
+                y_nhwc_tensor.shape = [int(v) if int(v) >= 0 else 1 for v in list(nhwc_output_signature)]
 
-        reshape2_shape = [batch, int(height * block_size), int(width * block_size), out_channels]
-        reshape2_shape_name = ctx.add_const_tensor(
-            f"{node.name}_crd_reshape2_shape",
-            np.asarray(reshape2_shape, dtype=np.int32),
-        )
-        if reshape2_shape != nhwc_output_shape:
-            raise NotImplementedError(
-                f"DepthToSpace CRD shape mismatch. op={node.name} expected={nhwc_output_shape} got={reshape2_shape}"
-            )
         ctx.add_operator(
             OperatorIR(
-                op_type="RESHAPE",
-                inputs=[transpose_out, reshape2_shape_name],
+                op_type="DEPTH_TO_SPACE",
+                inputs=[x_dcr],
                 outputs=[y_nhwc],
-                options={"newShape": [int(v) for v in list(reshape2_shape)]},
+                options={"blockSize": int(block_size)},
             )
         )
         if ctx.model_ir.tensors[x_nhwc].quantization is not None:
@@ -3023,6 +3608,17 @@ def _clone_quantization(quantization: Any) -> Any:
     return copy.deepcopy(quantization)
 
 
+def _get_original_node_input_names(node: Any, ctx: Any) -> list[str]:
+    onnx_model = getattr(ctx, "onnx_model", None)
+    if onnx_model is None or getattr(onnx_model, "graph", None) is None:
+        return [str(v.name) for v in node.inputs]
+    for graph_node in onnx_model.graph.node:
+        graph_node_name = str(graph_node.name) if str(graph_node.name) != "" else str(graph_node.op_type)
+        if graph_node_name == str(node.name) and str(graph_node.op_type) == str(node.op):
+            return [str(v) for v in graph_node.input]
+    return [str(v.name) for v in node.inputs]
+
+
 def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tuple[int, int]:
     def _resolve_from_sizes(arr: np.ndarray) -> tuple[int, int]:
         values = np.asarray(arr).reshape(-1).astype(np.int64)
@@ -3050,14 +3646,16 @@ def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tu
             f"Resize scales must have at least 2 values. op={node.name} scales_shape={list(values.shape)}"
         )
 
-    if len(node.inputs) >= 4:
-        sizes_name = node.inputs[3].name
+    original_inputs = _get_original_node_input_names(node, ctx)
+
+    if len(original_inputs) >= 4:
+        sizes_name = str(original_inputs[3])
         if sizes_name != "":
             sizes = ctx.get_constant_array(sizes_name)
             if sizes is not None and int(np.asarray(sizes).size) >= 2:
                 return _resolve_from_sizes(np.asarray(sizes))
-    if len(node.inputs) >= 3:
-        scales_name = node.inputs[2].name
+    if len(original_inputs) >= 3:
+        scales_name = str(original_inputs[2])
         if scales_name != "":
             scales = ctx.get_constant_array(scales_name)
             if scales is not None and int(np.asarray(scales).size) >= 2:
@@ -3065,8 +3663,8 @@ def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tu
                 if np.issubdtype(arr.dtype, np.integer):
                     return _resolve_from_sizes(arr)
                 return _resolve_from_scales(arr)
-    if len(node.inputs) == 2:
-        param_name = node.inputs[1].name
+    if len(original_inputs) == 2:
+        param_name = str(original_inputs[1])
         if param_name != "":
             param = ctx.get_constant_array(param_name)
             if param is not None and int(np.asarray(param).size) >= 2:
@@ -3080,9 +3678,14 @@ def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tu
 
 
 def _build_resize_dynamic_size_input(node: Any, ctx: Any) -> str | None:
-    if len(node.inputs) < 4:
-        return None
-    sizes_name = node.inputs[3].name
+    original_inputs = _get_original_node_input_names(node, ctx)
+    sizes_name = ""
+    if len(original_inputs) >= 4:
+        sizes_name = str(original_inputs[3])
+    elif len(original_inputs) == 2:
+        # _NodeWrap drops empty optional inputs, so
+        # Resize(x, "", "", sizes) may appear as 2-input form.
+        sizes_name = str(original_inputs[1])
     if sizes_name == "":
         return None
     sizes_const = ctx.get_constant_array(sizes_name)
@@ -3213,8 +3816,10 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
     onnx_sizes_hw: list[int] | None = None
     onnx_scales_hw: list[float] | None = None
 
-    if len(node.inputs) >= 4:
-        sizes_name = node.inputs[3].name
+    original_inputs = _get_original_node_input_names(node, ctx)
+
+    if len(original_inputs) >= 4:
+        sizes_name = str(original_inputs[3])
         if sizes_name != "":
             sizes = ctx.get_constant_array(sizes_name)
             if sizes is not None and int(np.asarray(sizes).size) >= 2:
@@ -3224,8 +3829,8 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
                 elif values.size == 2:
                     onnx_sizes_hw = [int(values[0]), int(values[1])]
 
-    if len(node.inputs) >= 3:
-        scales_name = node.inputs[2].name
+    if len(original_inputs) >= 3:
+        scales_name = str(original_inputs[2])
         if scales_name != "":
             scales = ctx.get_constant_array(scales_name)
             if scales is not None and int(np.asarray(scales).size) >= 2:
@@ -3234,6 +3839,24 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
                     onnx_scales_hw = [float(values[-2]), float(values[-1])]
                 elif values.size == 2:
                     onnx_scales_hw = [float(values[0]), float(values[1])]
+    elif len(original_inputs) == 2:
+        param_name = str(original_inputs[1])
+        if param_name != "":
+            param = ctx.get_constant_array(param_name)
+            if param is not None and int(np.asarray(param).size) >= 2:
+                values = np.asarray(param).reshape(-1)
+                if np.issubdtype(values.dtype, np.integer):
+                    v = values.astype(np.int64)
+                    if v.size >= 4:
+                        onnx_sizes_hw = [int(v[-2]), int(v[-1])]
+                    elif v.size == 2:
+                        onnx_sizes_hw = [int(v[0]), int(v[1])]
+                else:
+                    v = values.astype(np.float32)
+                    if v.size >= 4:
+                        onnx_scales_hw = [float(v[-2]), float(v[-1])]
+                    elif v.size == 2:
+                        onnx_scales_hw = [float(v[0]), float(v[1])]
 
     return onnx_sizes_hw, onnx_scales_hw
 
@@ -3369,17 +3992,28 @@ def _add_reshape_operator(
     input_name: str,
     output_name: str,
     new_shape: list[int],
+    preserve_dynamic_shape: bool = False,
 ) -> None:
     shape_const = ctx.add_const_tensor(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
+    options = {"newShape": [int(v) for v in list(new_shape)]}
+    if bool(preserve_dynamic_shape):
+        options["preserveDynamicShape"] = True
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            target_signature = [int(v) for v in list(new_shape)]
+            output_tensor.shape_signature = [int(v) for v in target_signature]
+            output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in target_signature
+            ]
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, shape_const],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in list(new_shape)]},
+            options=options,
         )
     )
 
@@ -3773,13 +4407,10 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         ctx=ctx,
         input_name=image_padded_name,
         output_name=image_flat_name,
-        new_shape=[int(n), int(c), int((h + 2) * (w + 2))],
+        new_shape=[-1, int(c), int((h + 2) * (w + 2))],
+        preserve_dynamic_shape=True,
     )
 
-    slice_size_const = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_slice_size",
-        np.asarray([int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1], dtype=np.int32),
-    )
     grid_x_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_grid_x",
         dtype=compute_dtype,
@@ -3790,26 +4421,34 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         dtype=compute_dtype,
         shape=[int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1],
     )
-    grid_x_begin = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_x_begin",
-        np.asarray([0, 0, 0, 0], dtype=np.int32),
+    grid_x_index = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_x_index",
+        np.asarray([0], dtype=np.int32),
     )
-    grid_y_begin = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_y_begin",
-        np.asarray([0, 0, 0, 1], dtype=np.int32),
+    grid_y_index = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_y_index",
+        np.asarray([1], dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="SLICE",
-            inputs=[grid_compute_name, grid_x_begin, slice_size_const],
+            op_type="GATHER",
+            inputs=[grid_compute_name, grid_x_index],
             outputs=[grid_x_name],
+            options={
+                "axis": 3,
+                "batchDims": 0,
+            },
         )
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="SLICE",
-            inputs=[grid_compute_name, grid_y_begin, slice_size_const],
+            op_type="GATHER",
+            inputs=[grid_compute_name, grid_y_index],
             outputs=[grid_y_name],
+            options={
+                "axis": 3,
+                "batchDims": 0,
+            },
         )
     )
 
@@ -4218,12 +4857,18 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             f"Resize supports only rank-4 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
         )
     has_dynamic_sizes_input = False
-    if len(node.inputs) >= 4 and node.inputs[3].name != "":
-        sizes_const = ctx.get_constant_array(node.inputs[3].name)
-        has_dynamic_sizes_input = (
-            sizes_const is None
-            or int(np.asarray(sizes_const).size) == 0
-        )
+    original_inputs = _get_original_node_input_names(node, ctx)
+    dynamic_sizes_name = ""
+    if len(original_inputs) >= 4 and str(original_inputs[3]) != "":
+        dynamic_sizes_name = str(original_inputs[3])
+    elif len(original_inputs) == 2 and str(original_inputs[1]) != "":
+        # _NodeWrap may compact Resize(x, "", "", sizes) into 2 inputs.
+        dynamic_sizes_name = str(original_inputs[1])
+    if dynamic_sizes_name != "":
+        sizes_const = ctx.get_constant_array(dynamic_sizes_name)
+        if sizes_const is None or int(np.asarray(sizes_const).size) == 0:
+            sizes_dtype = str(ctx.get_tensor_dtype(dynamic_sizes_name)).upper()
+            has_dynamic_sizes_input = sizes_dtype in {"INT32", "INT64"}
     if len(output_shape) != 4 or output_shape == [1]:
         if has_dynamic_sizes_input:
             output_shape = [int(input_shape[0]), int(input_shape[1]), 1, 1]

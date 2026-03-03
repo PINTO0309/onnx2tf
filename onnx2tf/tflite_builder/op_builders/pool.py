@@ -210,6 +210,8 @@ def _resolve_avg_pool_padding_and_explicit_pads(
     input_shape_nchw: List[int],
     kernel: List[int],
     strides: List[int],
+    dilations: List[int],
+    ceil_mode: int,
 ) -> Tuple[str, Optional[List[int]], List[int]]:
     auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
     raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
@@ -254,6 +256,23 @@ def _resolve_avg_pool_padding_and_explicit_pads(
         raise NotImplementedError(
             f"AveragePool auto_pad attribute is invalid for flatbuffer_direct. op={node.name} auto_pad={auto_pad}"
         )
+    if int(ceil_mode) == 1:
+        explicit_pads = list(pads)
+        extra_h, extra_w = _calc_extra_padding_with_ceil_2d(
+            input_h=input_h,
+            input_w=input_w,
+            kernel_h=kernel_h,
+            kernel_w=kernel_w,
+            pads=explicit_pads,
+            dilations=dilations,
+            strides=strides,
+        )
+        explicit_pads[2] = int(explicit_pads[2]) + int(extra_h)
+        explicit_pads[3] = int(explicit_pads[3]) + int(extra_w)
+        if any(int(v) != 0 for v in explicit_pads):
+            return "VALID", list(explicit_pads), list(explicit_pads)
+        return "VALID", None, list(explicit_pads)
+
     same_upper_pads = _calc_same_pads_2d(
         input_h=input_h,
         input_w=input_w,
@@ -357,9 +376,9 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             ceil_mode=ceil_mode,
         )
     else:
-        if ceil_mode != 0:
+        if ceil_mode not in [0, 1]:
             raise NotImplementedError(
-                f"ceil_mode is not supported for {node.op} in flatbuffer_direct. op={node.name}"
+                f"AveragePool ceil_mode must be 0 or 1 for flatbuffer_direct. op={node.name} ceil_mode={ceil_mode}"
             )
         average_count_include_pad = int(node.attrs.get("count_include_pad", 0))
         if average_count_include_pad not in [0, 1]:
@@ -372,6 +391,8 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             input_shape_nchw=[int(v) for v in input_shape],
             kernel=kernel,
             strides=strides,
+            dilations=dilations,
+            ceil_mode=ceil_mode,
         )
         average_needs_exclude_pad_correction = (
             int(average_count_include_pad) == 0
