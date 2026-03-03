@@ -277,6 +277,8 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
 ### [WIP・experimental] `flatbuffer_direct` execution path
 
+<img width="1829" height="1023" alt="image" src="https://github.com/user-attachments/assets/646cb504-d63f-4811-9f34-3cefa5eafedf" />
+
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
 
 1. ONNX graph preprocessing (`tflite_builder.preprocess`) and direct lowering (`lower_onnx_to_ir`)
