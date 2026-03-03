@@ -1011,16 +1011,34 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             node_op=node.op,
         )
 
-    starts_values = _extract_slice_indices(
-        node=node,
-        ctx=ctx,
-        input_index=1,
-        attr_name="starts",
-        label="slice starts",
-    )
-    ends_values: List[int]
+    dynamic_start_name = ""
+    if (
+        len(node.inputs) > 1
+        and str(node.inputs[1].name) != ""
+        and ctx.get_constant_array(node.inputs[1].name) is None
+        and "starts" not in node.attrs
+    ):
+        dynamic_start_name = str(node.inputs[1].name)
+    starts_values: List[int] = []
+    if dynamic_start_name == "":
+        starts_values = _extract_slice_indices(
+            node=node,
+            ctx=ctx,
+            input_index=1,
+            attr_name="starts",
+            label="slice starts",
+        )
+
     dynamic_end_name = ""
-    try:
+    if (
+        len(node.inputs) > 2
+        and str(node.inputs[2].name) != ""
+        and ctx.get_constant_array(node.inputs[2].name) is None
+        and "ends" not in node.attrs
+    ):
+        dynamic_end_name = str(node.inputs[2].name)
+    ends_values: List[int] = []
+    if dynamic_end_name == "":
         ends_values = _extract_slice_indices(
             node=node,
             ctx=ctx,
@@ -1028,42 +1046,22 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             attr_name="ends",
             label="slice ends",
         )
-    except NodeValidationError as exc:
-        can_use_dynamic_end = (
-            len(node.inputs) > 2
-            and str(node.inputs[2].name) != ""
-            and ctx.get_constant_array(node.inputs[2].name) is None
-            and "ends" not in node.attrs
-            and exc.reason_code in {
-                "requires_constant_input",
-                "missing_required_attribute",
-            }
-        )
-        if not can_use_dynamic_end:
-            raise
-        dynamic_end_name = str(node.inputs[2].name)
-        ends_values = [0 for _ in range(len(starts_values))]
-    if len(starts_values) != len(ends_values):
-        raise NodeValidationError(
-            reason_code="invalid_input_shape",
-            message=(
-                f"Slice starts/ends length mismatch. "
-                f"starts_len={len(starts_values)} ends_len={len(ends_values)}"
-            ),
-            node_name=node.name,
-            node_op=node.op,
-        )
 
     rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    default_axis_len = int(
+        len(starts_values)
+        if len(starts_values) > 0
+        else (len(ends_values) if len(ends_values) > 0 else 1)
+    )
     axes = _extract_axes(
         node=node,
         ctx=ctx,
         input_index=3,
         attr_name="axes",
-        default_if_missing=[int(v) for v in range(len(starts_values))],
+        default_if_missing=[int(v) for v in range(default_axis_len)],
     )
     normalized_axes = _normalize_axes_for_rank(axes=axes, rank=rank, node=node)
-    if len(normalized_axes) != len(starts_values):
+    if dynamic_start_name == "" and len(normalized_axes) != len(starts_values):
         raise NodeValidationError(
             reason_code="invalid_input_shape",
             message=(
@@ -1082,18 +1080,18 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         if isinstance(attr_steps, (list, tuple, np.ndarray)):
             steps = [int(v) for v in np.asarray(attr_steps).reshape(-1).tolist()]
         elif attr_steps is None:
-            steps = [1 for _ in range(len(starts_values))]
+            steps = [1 for _ in range(len(normalized_axes))]
         else:
             steps = [int(attr_steps)]
     else:
-        steps = [1 for _ in range(len(starts_values))]
+        steps = [1 for _ in range(len(normalized_axes))]
 
-    if len(steps) != len(starts_values):
+    if len(steps) != len(normalized_axes):
         raise NodeValidationError(
             reason_code="invalid_input_shape",
             message=(
                 f"Slice starts/steps length mismatch. "
-                f"starts_len={len(starts_values)} steps_len={len(steps)}"
+                f"axes_len={len(normalized_axes)} steps_len={len(steps)}"
             ),
             node_name=node.name,
             node_op=node.op,
@@ -1105,6 +1103,69 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
+
+    if dynamic_end_name == "" and len(starts_values) != len(ends_values):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                f"Slice starts/ends length mismatch. "
+                f"starts_len={len(starts_values)} ends_len={len(ends_values)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if dynamic_start_name != "" or (dynamic_end_name != "" and len(normalized_axes) == 1):
+        is_single_axis_dynamic = (
+            len(normalized_axes) == 1
+            and len(steps) == 1
+            and int(steps[0]) > 0
+            and (
+                dynamic_start_name != ""
+                or (len(starts_values) == 1 and int(starts_values[0]) >= 0)
+            )
+        )
+        if not is_single_axis_dynamic:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Slice dynamic starts/ends lowering supports single-axis slicing "
+                    "with positive step only. "
+                    f"rank={rank} starts={starts_values} ends={ends_values} "
+                    f"axes={normalized_axes} steps={steps}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if dynamic_start_name != "":
+            dynamic_start_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_start_name)]
+            dynamic_start_len = int(dynamic_start_shape[0]) if len(dynamic_start_shape) == 1 else -1
+            if not (len(dynamic_start_shape) == 1 and (dynamic_start_len <= 0 or dynamic_start_len == 1)):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "Slice dynamic starts must be rank-1 length-1 (or unknown length) "
+                        "for builtin lowering. "
+                        f"shape={dynamic_start_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        if dynamic_end_name != "":
+            dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_name)]
+            dynamic_end_len = int(dynamic_end_shape[0]) if len(dynamic_end_shape) == 1 else -1
+            if not (len(dynamic_end_shape) == 1 and (dynamic_end_len <= 0 or dynamic_end_len == 1)):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "Slice dynamic ends must be rank-1 length-1 (or unknown length) "
+                        "for builtin lowering. "
+                        f"shape={dynamic_end_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        return
 
     if dynamic_end_name != "":
         dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_name)]
@@ -1123,7 +1184,7 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             and len(starts_values) == len(steps)
             and len(starts_values) <= rank
             and dynamic_end_len_ok
-            and axes_are_prefix
+            and (axes_are_prefix or len(normalized_axes) == 1)
             and starts_non_negative
             and steps_positive
         )
@@ -1131,8 +1192,8 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",
                 message=(
-                    "Slice dynamic-end lowering supports prefix-axis slicing only "
-                    "(axes=[0..k-1], start>=0, step>0). "
+                    "Slice dynamic-end lowering supports prefix-axis slicing "
+                    "or single-axis slicing (start>=0, step>0). "
                     f"rank={rank} dynamic_end_shape={dynamic_end_shape} "
                     f"starts={starts_values} axes={normalized_axes} steps={steps}"
                 ),
@@ -2110,10 +2171,16 @@ def _validate_fc(node: Any, ctx: Any) -> None:
 def _validate_matmul(node: Any, ctx: Any) -> None:
     a_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
     b_rank = len(ctx.get_tensor_shape(node.inputs[1].name))
-    if a_rank < 2 or b_rank < 2:
+    is_standard_matmul = a_rank >= 2 and b_rank >= 2
+    is_vector_rhs_matmul = a_rank >= 2 and b_rank == 1
+    if not (is_standard_matmul or is_vector_rhs_matmul):
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
-            message=f"MatMul input rank must be >= 2. a_rank={a_rank} b_rank={b_rank}",
+            message=(
+                "MatMul input ranks must be (a_rank>=2,b_rank>=2) "
+                "or vector-rhs form (a_rank>=2,b_rank=1). "
+                f"a_rank={a_rank} b_rank={b_rank}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )

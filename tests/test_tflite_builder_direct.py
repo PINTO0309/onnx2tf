@@ -2483,6 +2483,69 @@ def _make_matmul_rank4_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_matmul_vector_rhs_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    w = numpy_helper.from_array(
+        np.asarray([1.0, 0.5, -0.5, 2.0, -1.0], dtype=np.float32),
+        name="matmul_vec_w",
+    )
+    node = helper.make_node("MatMul", ["x", "matmul_vec_w"], ["y"], name="MatMulVectorRhsNode")
+    graph = helper.make_graph([node], "matmul_vector_rhs_graph", [x], [y], initializer=[w])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_slice_dynamic_start_end_single_axis_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 8, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4, 4])
+    gather_index = numpy_helper.from_array(np.asarray(1, dtype=np.int64), name="slice_dyn_single_gather_index")
+    unsq_axes = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="slice_dyn_single_unsq_axes")
+    slice_axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_dyn_single_axes")
+    two = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="slice_dyn_single_two")
+    nodes = [
+        helper.make_node("Shape", ["x"], ["shape"], name="SliceDynSingleShape"),
+        helper.make_node(
+            "Gather",
+            ["shape", "slice_dyn_single_gather_index"],
+            ["axis_dim"],
+            name="SliceDynSingleGatherAxis1",
+            axis=0,
+        ),
+        helper.make_node(
+            "Unsqueeze",
+            ["axis_dim", "slice_dyn_single_unsq_axes"],
+            ["axis_dim_vec"],
+            name="SliceDynSingleUnsqueezeAxisDim",
+        ),
+        helper.make_node(
+            "Div",
+            ["axis_dim_vec", "slice_dyn_single_two"],
+            ["start"],
+            name="SliceDynSingleStart",
+        ),
+        helper.make_node(
+            "Mul",
+            ["start", "slice_dyn_single_two"],
+            ["end"],
+            name="SliceDynSingleEnd",
+        ),
+        helper.make_node(
+            "Slice",
+            ["x", "start", "end", "slice_dyn_single_axes"],
+            ["y"],
+            name="SliceDynSingleNode",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "slice_dynamic_start_end_single_axis_graph",
+        [x],
+        [y],
+        initializer=[gather_index, unsq_axes, slice_axes, two],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_space_to_depth_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
@@ -8620,7 +8683,11 @@ def test_flatbuffer_direct_legacy_slice_attr_lowering() -> None:
         allow_custom_ops=False,
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("SLICE") == 2
+    # Legacy Slice pair may be preserved as 2x SLICE or canonically folded into 1x SPLIT.
+    assert (
+        (op_types.count("SLICE") == 2 and op_types.count("SPLIT") == 0)
+        or (op_types.count("SLICE") == 0 and op_types.count("SPLIT") == 1)
+    )
     assert op_types.count("CONCATENATION") == 1
     assert op_types.count("CUSTOM") == 0
 
@@ -8642,6 +8709,28 @@ def test_flatbuffer_direct_slice_dynamic_end_prefix_rank2_lowering() -> None:
     end_name = str(ss.inputs[2])
     end_tensor = model_ir.tensors[end_name]
     assert str(end_tensor.dtype).upper() == "INT32"
+    assert end_tensor.data is None
+
+
+def test_flatbuffer_direct_slice_dynamic_start_end_single_axis_lowering() -> None:
+    model = _make_slice_dynamic_start_end_single_axis_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="slice_dynamic_start_end_single_axis_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("STRIDED_SLICE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    ss = next(op for op in model_ir.operators if str(op.op_type) == "STRIDED_SLICE")
+    begin_tensor = model_ir.tensors[str(ss.inputs[1])]
+    end_tensor = model_ir.tensors[str(ss.inputs[2])]
+    assert str(begin_tensor.dtype).upper() == "INT32"
+    assert str(end_tensor.dtype).upper() == "INT32"
+    assert begin_tensor.data is None
     assert end_tensor.data is None
 
 
@@ -8985,6 +9074,26 @@ def test_flatbuffer_direct_matmul_rank4_elides_boundary_input_transpose() -> Non
     assert list(bmm_op.inputs) == ["x0", "x1"]
     assert list(model_ir.tensors["x0"].shape) == [1, 3, 8, 8]
     assert list(model_ir.tensors["x1"].shape) == [1, 3, 8, 8]
+
+
+def test_flatbuffer_direct_matmul_vector_rhs_lowering() -> None:
+    model = _make_matmul_vector_rhs_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="matmul_vector_rhs_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("BATCH_MATMUL") == 1
+    assert op_types.count("RESHAPE") >= 1
+    assert op_types.count("SQUEEZE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    y_tensor = model_ir.tensors["y"]
+    assert list(y_tensor.shape) == [2, 3, 4]
 
 
 def test_flatbuffer_direct_reduce_l2_avoids_redundant_shape_reshape_identity() -> None:
@@ -23229,7 +23338,9 @@ def test_flatbuffer_direct_transpose_qlinear_global_average_pool_bridge_optimiza
             producer = op
             break
     assert producer is not None
-    assert str(producer.op_type) == "TRANSPOSE"
+    # Terminal layout restore may be represented as TRANSPOSE or equivalent RESHAPE
+    # when singleton dimensions make permutation a no-op.
+    assert str(producer.op_type) in {"TRANSPOSE", "RESHAPE"}
 
 
 def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:

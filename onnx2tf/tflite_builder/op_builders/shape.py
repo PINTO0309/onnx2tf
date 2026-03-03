@@ -550,13 +550,24 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         dst_tensor_name=output_name,
     )
 
-    starts = _parse_slice_indices(
-        node=node,
-        ctx=ctx,
-        input_index=1,
-        attr_name="starts",
-        label="starts",
-    )
+    dynamic_start_input_name = ""
+    starts: list[int] = []
+    if (
+        len(node.inputs) > 1
+        and str(node.inputs[1].name) != ""
+        and ctx.get_constant_array(node.inputs[1].name) is None
+        and "starts" not in node.attrs
+    ):
+        dynamic_start_input_name = str(node.inputs[1].name)
+    else:
+        starts = _parse_slice_indices(
+            node=node,
+            ctx=ctx,
+            input_index=1,
+            attr_name="starts",
+            label="starts",
+        )
+
     dynamic_end_input_name = ""
     ends: list[int] = []
     if (
@@ -566,7 +577,6 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         and "ends" not in node.attrs
     ):
         dynamic_end_input_name = str(node.inputs[2].name)
-        ends = [0 for _ in range(len(starts))]
     else:
         ends = _parse_slice_indices(
             node=node,
@@ -575,7 +585,7 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             attr_name="ends",
             label="ends",
         )
-    if len(starts) != len(ends):
+    if dynamic_end_input_name == "" and len(starts) != len(ends):
         raise NotImplementedError(
             f"Slice starts and ends length mismatch. op={node.name} "
             f"starts_len={len(starts)} ends_len={len(ends)}"
@@ -589,12 +599,17 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         else list(input_shape)
     )
     rank = len(input_shape)
+    default_slice_len = int(
+        len(starts)
+        if len(starts) > 0
+        else (len(ends) if len(ends) > 0 else 1)
+    )
     axes = _parse_slice_axes_or_steps(
         node=node,
         ctx=ctx,
         input_index=3,
         attr_name="axes",
-        default_values=[int(v) for v in range(len(starts))],
+        default_values=[int(v) for v in range(default_slice_len)],
         label="axes",
     )
     steps = _parse_slice_axes_or_steps(
@@ -602,10 +617,10 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         ctx=ctx,
         input_index=4,
         attr_name="steps",
-        default_values=[1 for _ in range(len(starts))],
+        default_values=[1 for _ in range(len(axes))],
         label="steps",
     )
-    if len(axes) != len(starts) or len(steps) != len(starts):
+    if len(steps) != len(axes):
         raise NotImplementedError(
             f"Slice starts/axes/steps length mismatch. op={node.name} "
             f"starts_len={len(starts)} axes_len={len(axes)} steps_len={len(steps)}"
@@ -614,6 +629,187 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         _normalize_axis(axis_raw, rank, op_name=node.name)
         for axis_raw in axes
     ]
+
+    if dynamic_start_input_name == "" and len(normalized_axes) != len(starts):
+        raise NotImplementedError(
+            f"Slice starts/axes length mismatch. op={node.name} "
+            f"starts_len={len(starts)} axes_len={len(normalized_axes)}"
+        )
+    if dynamic_end_input_name == "" and len(normalized_axes) != len(ends):
+        raise NotImplementedError(
+            f"Slice ends/axes length mismatch. op={node.name} "
+            f"ends_len={len(ends)} axes_len={len(normalized_axes)}"
+        )
+
+    if dynamic_start_input_name != "" or (
+        dynamic_end_input_name != "" and len(normalized_axes) == 1
+    ):
+        if not (
+            len(normalized_axes) == 1
+            and len(steps) == 1
+            and int(steps[0]) > 0
+            and (
+                dynamic_start_input_name != ""
+                or (len(starts) == 1 and int(starts[0]) >= 0)
+            )
+        ):
+            raise NotImplementedError(
+                "Slice with dynamic starts/ends currently supports only "
+                "single-axis positive-step slicing in flatbuffer_direct. "
+                f"op={node.name} starts={starts} ends={ends} axes={axes} steps={steps}"
+            )
+
+        axis = int(normalized_axes[0])
+        step = int(steps[0])
+        int32_max = int(np.iinfo(np.int32).max)
+
+        def _prepare_dynamic_len1_i32(dynamic_name: str, suffix: str) -> str:
+            dynamic_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_name)]
+            if len(dynamic_shape) != 1 or (int(dynamic_shape[0]) > 0 and int(dynamic_shape[0]) != 1):
+                raise NotImplementedError(
+                    "Slice dynamic starts/ends must be rank-1 length-1 "
+                    f"for builtin lowering. op={node.name} tensor={dynamic_name} shape={dynamic_shape}"
+                )
+            dynamic_dtype = str(ctx.get_tensor_dtype(dynamic_name)).upper()
+            out_name = dynamic_name
+            if dynamic_dtype != "INT32":
+                out_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_stridedslice_{suffix}_i32",
+                    dtype="INT32",
+                    shape=[1],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[dynamic_name],
+                        outputs=[out_name],
+                        options={
+                            "inDataType": dynamic_dtype,
+                            "outDataType": "INT32",
+                        },
+                    )
+                )
+            return out_name
+
+        def _compose_rank_vector_with_dynamic_axis(
+            *,
+            dynamic_len1_name: str,
+            axis_index: int,
+            fill_value: int,
+            suffix: str,
+        ) -> str:
+            parts: list[str] = []
+            if axis_index > 0:
+                prefix_name = ctx.add_const_tensor(
+                    f"{output_name}_stridedslice_{suffix}_prefix",
+                    np.asarray([int(fill_value) for _ in range(axis_index)], dtype=np.int32),
+                )
+                parts.append(prefix_name)
+            parts.append(dynamic_len1_name)
+            if axis_index + 1 < rank:
+                suffix_name = ctx.add_const_tensor(
+                    f"{output_name}_stridedslice_{suffix}_suffix",
+                    np.asarray(
+                        [int(fill_value) for _ in range(rank - axis_index - 1)],
+                        dtype=np.int32,
+                    ),
+                )
+                parts.append(suffix_name)
+            if len(parts) == 1:
+                return parts[0]
+            vector_name = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_{suffix}_full",
+                dtype="INT32",
+                shape=[int(rank)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=parts,
+                    outputs=[vector_name],
+                    options={"axis": 0, "fusedActivationFunction": "NONE"},
+                )
+            )
+            return vector_name
+
+        if dynamic_start_input_name != "":
+            begin_name = _prepare_dynamic_len1_i32(
+                dynamic_name=dynamic_start_input_name,
+                suffix="begin",
+            )
+            begin_name = _compose_rank_vector_with_dynamic_axis(
+                dynamic_len1_name=begin_name,
+                axis_index=axis,
+                fill_value=0,
+                suffix="begin",
+            )
+        else:
+            begin_vec = [0 for _ in range(rank)]
+            start_const = int(starts[0])
+            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
+            if start_const < 0:
+                if known_axis_dim > 0:
+                    start_const += int(known_axis_dim)
+                else:
+                    raise NotImplementedError(
+                        "Slice negative constant start with dynamic shape is not supported "
+                        f"in this dynamic starts/ends path. op={node.name} start={starts[0]}"
+                    )
+            begin_vec[axis] = int(start_const)
+            begin_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_begin",
+                np.asarray(begin_vec, dtype=np.int32),
+            )
+
+        if dynamic_end_input_name != "":
+            end_name = _prepare_dynamic_len1_i32(
+                dynamic_name=dynamic_end_input_name,
+                suffix="end",
+            )
+            end_name = _compose_rank_vector_with_dynamic_axis(
+                dynamic_len1_name=end_name,
+                axis_index=axis,
+                fill_value=int32_max,
+                suffix="end",
+            )
+        else:
+            end_vec = [int32_max for _ in range(rank)]
+            end_const = int(ends[0])
+            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
+            if end_const < 0 and known_axis_dim > 0:
+                end_const += int(known_axis_dim)
+            end_vec[axis] = int(end_const)
+            end_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_end",
+                np.asarray(end_vec, dtype=np.int32),
+            )
+
+        strides = [1 for _ in range(rank)]
+        strides[axis] = int(step)
+        strides_name = ctx.add_const_tensor(
+            f"{output_name}_stridedslice_strides",
+            np.asarray(strides, dtype=np.int32),
+        )
+        end_mask = 0
+        for axis_idx in range(rank):
+            if int(axis_idx) != int(axis):
+                end_mask |= (1 << int(axis_idx))
+        ctx.add_operator(
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=[input_name, begin_name, end_name, strides_name],
+                outputs=[output_name],
+                options={
+                    "beginMask": 0,
+                    "endMask": int(end_mask),
+                    "ellipsisMask": 0,
+                    "newAxisMask": 0,
+                    "shrinkAxisMask": 0,
+                    "offset": False,
+                },
+            )
+        )
+        return
 
     if dynamic_end_input_name != "":
         dynamic_prefix_len = len(starts)

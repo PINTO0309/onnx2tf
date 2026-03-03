@@ -545,6 +545,93 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
             )
         )
 
+    a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+    b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+    if len(a_shape) >= 2 and len(b_shape) == 1:
+        b_tensor = ctx.model_ir.tensors.get(b_name, None)
+        b_signature = (
+            [int(v) for v in list(b_tensor.shape_signature)]
+            if b_tensor is not None and b_tensor.shape_signature is not None
+            else [int(v) for v in list(b_shape)]
+        )
+        k_dim = int(b_signature[0]) if len(b_signature) > 0 else int(b_shape[0])
+        b_matrix_new_shape = [int(k_dim) if int(k_dim) > 0 else -1, 1]
+        b_matrix_shape_name = ctx.add_const_tensor(
+            f"{output_name}_matmul_b_vector_shape",
+            np.asarray(b_matrix_new_shape, dtype=np.int32),
+        )
+        b_matrix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_b_vector_matrix",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in b_matrix_new_shape],
+        )
+        b_matrix_tensor = ctx.model_ir.tensors.get(b_matrix_name, None)
+        if b_matrix_tensor is not None:
+            b_matrix_tensor.shape_signature = [int(v) for v in b_matrix_new_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[b_compute, b_matrix_shape_name],
+                outputs=[b_matrix_name],
+                options={"newShape": [int(v) for v in b_matrix_new_shape]},
+            )
+        )
+
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor is not None and output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_shape)]
+        )
+        matmul_vec_shape = [int(v) for v in list(output_shape)] + [1]
+        matmul_vec_signature = [int(v) for v in list(output_signature)] + [1]
+        matmul_vec_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_vec_out",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in matmul_vec_shape],
+        )
+        matmul_vec_tensor = ctx.model_ir.tensors.get(matmul_vec_name, None)
+        if matmul_vec_tensor is not None:
+            matmul_vec_tensor.shape_signature = [int(v) for v in matmul_vec_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="BATCH_MATMUL",
+                inputs=[a_compute, b_matrix_name],
+                outputs=[matmul_vec_name],
+                options={
+                    "adjX": False,
+                    "adjY": False,
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+
+        squeeze_out = output_name
+        if output_dtype != compute_dtype:
+            squeeze_out = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_vec_squeezed",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[matmul_vec_name],
+                outputs=[squeeze_out],
+                options={"squeezeDims": [int(len(matmul_vec_shape) - 1)]},
+            )
+        )
+        if squeeze_out != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[squeeze_out],
+                    outputs=[output_name],
+                    options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
+
     matmul_out = output_name
     if output_dtype != compute_dtype:
         matmul_out = ctx.add_intermediate_tensor(
