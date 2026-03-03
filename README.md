@@ -271,11 +271,11 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
   </div></details>
 
+### [WIP・experimental] `flatbuffer_direct` execution path
+
 > [!WARNING]
 > `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
-
-### [WIP・experimental] `flatbuffer_direct` execution path
 
 <img width="1829" height="1023" alt="image" src="https://github.com/user-attachments/assets/646cb504-d63f-4811-9f34-3cefa5eafedf" />
 
