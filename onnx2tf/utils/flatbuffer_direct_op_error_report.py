@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -20,10 +21,12 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
     _dequantize_tflite_output,
+    _generate_seeded_input,
     _is_integer_or_bool_dtype,
     _normalize_tensor_name,
     _quantize_for_tflite_input,
 )
+from onnx2tf.utils.tempdir_cleanup import make_managed_tempdir
 from onnx2tf.utils.common_functions import dummy_onnx_inference
 
 
@@ -404,6 +407,8 @@ def _build_tflite_base_detail_map(
 ) -> Dict[str, Dict[str, Any]]:
     base_map: Dict[str, Dict[str, Any]] = {}
     for detail in details:
+        if not isinstance(detail, dict):
+            continue
         detail_name = str(detail.get("name", ""))
         if not detail_name:
             continue
@@ -416,7 +421,11 @@ def _build_tflite_base_detail_map(
 def _build_tflite_exact_detail_map(
     details: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
-    return {str(detail.get("name", "")): detail for detail in details if str(detail.get("name", "")) != ""}
+    return {
+        str(detail.get("name", "")): detail
+        for detail in details
+        if isinstance(detail, dict) and str(detail.get("name", "")) != ""
+    }
 
 
 def _default_tensor_correspondence_report_path(onnx_path: str, output_dir: str) -> str:
@@ -431,6 +440,8 @@ def _load_correspondence_map(
         return {}, {}
     with open(report_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
+    if not isinstance(payload, dict):
+        return {}, {}
     records = payload.get("records", [])
     if not isinstance(records, list):
         return {}, {}
@@ -470,23 +481,77 @@ def _get_onnx_eval_outputs(
     *,
     onnx_graph: onnx.ModelProto,
     target_output_names: List[str],
-) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    # Keep integer/bool inputs deterministic and in-range friendly for index ops
-    # (e.g. Gather/GatherND) during dummy inference.
-    safe_value_hints: List[str] = []
-    for input_name, input_dtype, _ in _collect_onnx_input_specs(onnx_graph):
-        if np.issubdtype(np.dtype(input_dtype), np.integer) or np.issubdtype(
-            np.dtype(input_dtype), np.bool_
-        ):
-            safe_value_hints.append(f"{input_name}:0")
+    enable_ort_output_memmap: bool = True,
+    ort_output_memmap_dir: Optional[str] = None,
+    custom_input_op_name_np_data_path: Optional[List[List[str]]] = None,
+    seed: int = 0,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[str]]:
+    generated_input_dir: Optional[str] = None
+    generated_custom_inputs: Optional[List[List[str]]] = None
+    if not custom_input_op_name_np_data_path:
+        input_specs = _collect_onnx_input_specs(onnx_graph)
+        rng = np.random.default_rng(seed=int(seed))
+        generated_input_dir = make_managed_tempdir(
+            prefix="onnx2tf_operr_in_",
+            stale_prefixes=["onnx2tf_operr_in_"],
+        )
+        generated_custom_inputs = []
+        for input_idx, (input_name, input_dtype, input_shape) in enumerate(input_specs):
+            sample = _generate_seeded_input(
+                shape=input_shape,
+                np_dtype=input_dtype,
+                rng=rng,
+            )
+            file_name = (
+                f"seeded_{input_idx:04d}_{_normalize_tensor_name(input_name)}.npy"
+            )
+            file_path = os.path.join(generated_input_dir, file_name)
+            np.save(file_path, np.asarray(sample))
+            generated_custom_inputs.append([str(input_name), str(file_path)])
+
+    effective_custom_inputs = (
+        generated_custom_inputs
+        if generated_custom_inputs is not None
+        else custom_input_op_name_np_data_path
+    )
 
     onnx_input_datas_for_validation: Dict[str, np.ndarray] = {}
-    outputs = dummy_onnx_inference(
-        onnx_graph=onnx_graph,
-        output_names=target_output_names,
-        input_datas_for_validation=onnx_input_datas_for_validation,
-        value_hints=safe_value_hints if len(safe_value_hints) > 0 else None,
-    )
+    memmap_paths_for_cleanup: List[str] = []
+    try:
+        outputs = dummy_onnx_inference(
+            onnx_graph=onnx_graph,
+            output_names=target_output_names,
+            custom_input_op_name_np_data_path=effective_custom_inputs,
+            input_datas_for_validation=onnx_input_datas_for_validation,
+            enable_ort_output_memmap=bool(enable_ort_output_memmap),
+            ort_output_memmap_dir=ort_output_memmap_dir,
+            ort_output_memmap_paths_for_cleanup=memmap_paths_for_cleanup,
+        )
+    except Exception as ex:
+        ex_str = str(ex)
+        if (
+            bool(enable_ort_output_memmap)
+            and "onnxruntime output memmap requires static output shapes" in ex_str
+        ):
+            print(
+                "[op-error] onnxruntime output memmap was disabled for ONNX dummy inference "
+                "because dynamic output shapes were detected. Falling back to in-memory outputs."
+            )
+            outputs = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=target_output_names,
+                custom_input_op_name_np_data_path=effective_custom_inputs,
+                input_datas_for_validation=onnx_input_datas_for_validation,
+                enable_ort_output_memmap=False,
+                ort_output_memmap_dir=None,
+                ort_output_memmap_paths_for_cleanup=None,
+            )
+        else:
+            raise
+    finally:
+        if generated_input_dir is not None:
+            shutil.rmtree(generated_input_dir, ignore_errors=True)
+
     if len(outputs) != len(target_output_names):
         raise RuntimeError(
             "dummy_onnx_inference output count mismatch. "
@@ -496,7 +561,7 @@ def _get_onnx_eval_outputs(
         output_name: np.asarray(output_value)
         for output_name, output_value in zip(target_output_names, outputs)
     }
-    return onnx_outputs, onnx_input_datas_for_validation
+    return onnx_outputs, onnx_input_datas_for_validation, memmap_paths_for_cleanup
 
 
 def _invoke_tflite_with_onnx_inputs(
@@ -701,6 +766,10 @@ def generate_op_error_report(
     top: int = 30,
     rtol: float = 0.0,
     atol: float = 1.0e-4,
+    onnxruntime_output_memmap: bool = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
+    custom_input_op_name_np_data_path: Optional[List[List[str]]] = None,
+    seed: int = 0,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     if not os.path.exists(onnx_path):
@@ -766,115 +835,128 @@ def generate_op_error_report(
             "No common intermediate tensor names between ONNX and TFLite were found."
         )
 
-    onnx_outputs, onnx_input_datas_for_validation = _get_onnx_eval_outputs(
-        onnx_graph=onnx_graph,
-        target_output_names=target_output_names,
-    )
-    _invoke_tflite_with_onnx_inputs(
-        onnx_graph=onnx_graph,
-        interpreter=interpreter,
-        onnx_input_datas_for_validation=onnx_input_datas_for_validation,
-    )
-
+    memmap_paths_for_cleanup: List[str] = []
     records: List[Dict[str, Any]] = []
-    for tensor_name in onnx_tensor_names:
-        meta = onnx_output_meta[tensor_name]
-        mapped_tflite_name = correspondence_map.get(tensor_name, "")
-        detail = None
-        mapping_source = "name_match"
-        if mapped_tflite_name != "":
-            detail = tflite_exact_detail_map.get(mapped_tflite_name, None)
+    try:
+        onnx_outputs, onnx_input_datas_for_validation, memmap_paths_for_cleanup = _get_onnx_eval_outputs(
+            onnx_graph=onnx_graph,
+            target_output_names=target_output_names,
+            enable_ort_output_memmap=bool(onnxruntime_output_memmap),
+            ort_output_memmap_dir=onnxruntime_output_memmap_dir,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            seed=int(seed),
+        )
+        _invoke_tflite_with_onnx_inputs(
+            onnx_graph=onnx_graph,
+            interpreter=interpreter,
+            onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+        )
+
+        for tensor_name in onnx_tensor_names:
+            meta = onnx_output_meta[tensor_name]
+            mapped_tflite_name = correspondence_map.get(tensor_name, "")
+            detail = None
+            mapping_source = "name_match"
+            if mapped_tflite_name != "":
+                detail = tflite_exact_detail_map.get(mapped_tflite_name, None)
+                if detail is None:
+                    detail = tflite_base_detail_map.get(
+                        _normalize_tensor_name(mapped_tflite_name),
+                        None,
+                    )
+                if detail is not None:
+                    mapping_source = "tensor_correspondence_report"
             if detail is None:
-                detail = tflite_base_detail_map.get(
-                    _normalize_tensor_name(mapped_tflite_name),
-                    None,
-                )
-            if detail is not None:
-                mapping_source = "tensor_correspondence_report"
-        if detail is None:
-            base_name = _normalize_tensor_name(tensor_name)
-            detail = tflite_base_detail_map.get(base_name)
-        record: Dict[str, Any] = {
-            "identifier": int(meta["identifier"]),
-            "onnx_op_name": str(meta["onnx_op_name"]),
-            "onnx_op_type": str(meta["onnx_op_type"]),
-            "tensor_name": tensor_name,
-            "tflite_tensor_name": str(detail["name"]) if detail is not None else "",
-            "mapped_tflite_tensor_name": mapped_tflite_name,
-            "mapping_source": mapping_source if detail is not None else "",
-            "status": "skipped",
-            "reason": "",
-            "onnx_shape": (
-                list(np.asarray(onnx_outputs[tensor_name]).shape)
-                if tensor_name in onnx_outputs
-                else None
-            ),
-            "tflite_shape_raw": None,
-            "onnx_dtype": (
-                str(np.asarray(onnx_outputs[tensor_name]).dtype)
-                if tensor_name in onnx_outputs
-                else ""
-            ),
-            "tflite_dtype_raw": "",
-            "allclose": None,
-            "alignment_mode": "",
-            "alignment_perm": [],
-            "max_abs": None,
-            "mean_abs": None,
-            "rmse": None,
-            "cosine_similarity": None,
-        }
-
-        if tensor_name not in inferable_output_name_set:
-            record["reason"] = "onnx_output_not_inferable"
-            records.append(record)
-            continue
-
-        if detail is None:
-            record["reason"] = "no_matching_tflite_tensor"
-            records.append(record)
-            continue
-
-        try:
-            tflite_raw = np.asarray(interpreter.get_tensor(detail["index"]))
-        except Exception as ex:
-            record["reason"] = f"tflite_get_tensor_failed: {ex}"
-            records.append(record)
-            continue
-
-        record["tflite_shape_raw"] = list(tflite_raw.shape)
-        record["tflite_dtype_raw"] = str(tflite_raw.dtype)
-
-        try:
-            resolved_name_for_layout = (
-                mapped_tflite_name
-                if mapped_tflite_name != ""
-                else str(detail.get("name", ""))
-            )
-            compare_result = _compare_tensor_pair(
-                onnx_tensor_name=tensor_name,
-                onnx_tensor=np.asarray(onnx_outputs[tensor_name]),
-                onnx_quant_param_map=onnx_quant_param_map,
-                tflite_tensor_raw=tflite_raw,
-                tflite_detail=detail,
-                rtol=float(rtol),
-                atol=float(atol),
-                assume_channel_last_layout=bool(
-                    correspondence_channel_last_hint_map.get(tensor_name, False)
-                    or _is_channel_last_layout_name(resolved_name_for_layout)
+                base_name = _normalize_tensor_name(tensor_name)
+                detail = tflite_base_detail_map.get(base_name)
+            record: Dict[str, Any] = {
+                "identifier": int(meta["identifier"]),
+                "onnx_op_name": str(meta["onnx_op_name"]),
+                "onnx_op_type": str(meta["onnx_op_type"]),
+                "tensor_name": tensor_name,
+                "tflite_tensor_name": str(detail["name"]) if detail is not None else "",
+                "mapped_tflite_tensor_name": mapped_tflite_name,
+                "mapping_source": mapping_source if detail is not None else "",
+                "status": "skipped",
+                "reason": "",
+                "onnx_shape": (
+                    list(np.asarray(onnx_outputs[tensor_name]).shape)
+                    if tensor_name in onnx_outputs
+                    else None
                 ),
-            )
-        except Exception as ex:
-            record["reason"] = f"compare_failed: {ex}"
-            records.append(record)
-            continue
+                "tflite_shape_raw": None,
+                "onnx_dtype": (
+                    str(np.asarray(onnx_outputs[tensor_name]).dtype)
+                    if tensor_name in onnx_outputs
+                    else ""
+                ),
+                "tflite_dtype_raw": "",
+                "allclose": None,
+                "alignment_mode": "",
+                "alignment_perm": [],
+                "max_abs": None,
+                "mean_abs": None,
+                "rmse": None,
+                "cosine_similarity": None,
+            }
 
-        record.update(compare_result)
-        if bool(compare_result.get("layout_hint_applied", False)):
-            compared_shape = compare_result.get("onnx_shape_for_compare", None)
-            if isinstance(compared_shape, list) and len(compared_shape) > 0:
-                record["onnx_shape"] = compared_shape
-        records.append(record)
+            if tensor_name not in inferable_output_name_set:
+                record["reason"] = "onnx_output_not_inferable"
+                records.append(record)
+                continue
+
+            if detail is None:
+                record["reason"] = "no_matching_tflite_tensor"
+                records.append(record)
+                continue
+
+            try:
+                tflite_raw = np.asarray(interpreter.get_tensor(detail["index"]))
+            except Exception as ex:
+                record["reason"] = f"tflite_get_tensor_failed: {ex}"
+                records.append(record)
+                continue
+
+            record["tflite_shape_raw"] = list(tflite_raw.shape)
+            record["tflite_dtype_raw"] = str(tflite_raw.dtype)
+
+            try:
+                resolved_name_for_layout = (
+                    mapped_tflite_name
+                    if mapped_tflite_name != ""
+                    else str(detail.get("name", ""))
+                )
+                compare_result = _compare_tensor_pair(
+                    onnx_tensor_name=tensor_name,
+                    onnx_tensor=np.asarray(onnx_outputs[tensor_name]),
+                    onnx_quant_param_map=onnx_quant_param_map,
+                    tflite_tensor_raw=tflite_raw,
+                    tflite_detail=detail,
+                    rtol=float(rtol),
+                    atol=float(atol),
+                    assume_channel_last_layout=bool(
+                        correspondence_channel_last_hint_map.get(tensor_name, False)
+                        or _is_channel_last_layout_name(resolved_name_for_layout)
+                    ),
+                )
+            except Exception as ex:
+                record["reason"] = f"compare_failed: {ex}"
+                records.append(record)
+                continue
+
+            record.update(compare_result)
+            if bool(compare_result.get("layout_hint_applied", False)):
+                compared_shape = compare_result.get("onnx_shape_for_compare", None)
+                if isinstance(compared_shape, list) and len(compared_shape) > 0:
+                    record["onnx_shape"] = compared_shape
+            records.append(record)
+    finally:
+        for path in memmap_paths_for_cleanup:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
     compared = [r for r in records if r["status"] == "compared"]
     skipped = [r for r in records if r["status"] != "compared"]
@@ -988,6 +1070,42 @@ def main() -> None:
     )
     parser.add_argument("--rtol", type=float, default=0.0, help="allclose rtol.")
     parser.add_argument("--atol", type=float, default=1.0e-4, help="allclose atol.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for generated random inputs when custom inputs are not provided.",
+    )
+    parser.add_argument(
+        "--custom_input_op_name_np_data_path",
+        action="append",
+        nargs=2,
+        metavar=("INPUT_NAME", "NUMPY_FILE_PATH"),
+        default=None,
+        help=(
+            "Custom input data for ONNX dummy inference. "
+            "Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--disable_onnxruntime_output_memmap",
+        dest="disable_onnxruntime_output_memmap",
+        action="store_true",
+        help=(
+            "Disable onnxruntime output memmap fallback. "
+            "By default, memmap is enabled."
+        ),
+    )
+    parser.set_defaults(disable_onnxruntime_output_memmap=False)
+    parser.add_argument(
+        "--onnxruntime_output_memmap_dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory for memmap files used by onnxruntime output memmap. "
+            "If omitted, a temporary directory is used."
+        ),
+    )
     args = parser.parse_args()
 
     generate_op_error_report(
@@ -1000,6 +1118,10 @@ def main() -> None:
         top=int(args.top),
         rtol=float(args.rtol),
         atol=float(args.atol),
+        onnxruntime_output_memmap=not bool(args.disable_onnxruntime_output_memmap),
+        onnxruntime_output_memmap_dir=args.onnxruntime_output_memmap_dir,
+        custom_input_op_name_np_data_path=args.custom_input_op_name_np_data_path,
+        seed=int(args.seed),
         verbose=True,
     )
 

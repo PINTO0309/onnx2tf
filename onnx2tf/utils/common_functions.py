@@ -8,7 +8,6 @@ import copy
 import json
 import psutil
 import random
-import atexit
 import tempfile
 import shutil
 random.seed(0)
@@ -34,6 +33,9 @@ try:
 except Exception as ex:
     pass
 from onnx2tf.utils.logging import *
+from onnx2tf.utils.tempdir_cleanup import (
+    make_managed_tempdir,
+)
 from typing import Any, List, Optional, Union, Tuple, Dict
 from functools import wraps
 from collections import namedtuple
@@ -4034,6 +4036,7 @@ def dummy_onnx_inference(
     disable_strict_mode: bool = False,
     enable_ort_output_memmap: bool = False,
     ort_output_memmap_dir: Optional[str] = None,
+    ort_output_memmap_paths_for_cleanup: Optional[List[str]] = None,
     shape_hints: Optional[List[str]] = None,
     value_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
@@ -4066,12 +4069,15 @@ def dummy_onnx_inference(
         True to disable strict inference mode, False to enable it.
 
     enable_ort_output_memmap: bool
-        True to use onnxruntime IOBinding with np.memmap for outputs when
-        output tensors are too large for available RAM.
+        True to always use onnxruntime IOBinding with np.memmap for outputs.
 
     ort_output_memmap_dir: Optional[str]
         Directory to store memmap files. If not specified, a temporary
         directory is created and removed on exit.
+
+    ort_output_memmap_paths_for_cleanup: Optional[List[str]]
+        Optional list to collect generated memmap file paths for explicit
+        cleanup by the caller after outputs are consumed.
 
     value_hints: Optional[List[str]]
         Value hints for dummy inference input tensors.
@@ -4380,7 +4386,11 @@ def dummy_onnx_inference(
             numpy_file_path = str(param[1])
             custom_input_data: np.ndarray = np.load(numpy_file_path)
             # NHWC -> NCHW
-            input_op_info: Dict = tf_layers_dict.get(input_op_name, None)
+            input_op_info: Dict = (
+                tf_layers_dict.get(input_op_name, None)
+                if isinstance(tf_layers_dict, dict)
+                else None
+            )
             if input_op_info is not None:
                 ncw_nchw_ncdhw_perm: List = input_op_info.get('ncw_nchw_ncdhw_perm', None)
                 if ncw_nchw_ncdhw_perm is not None:
@@ -4471,10 +4481,10 @@ def dummy_onnx_inference(
             # Total bytes
             total_output_size += op_output_size * dtype_sizes.get(gs_graph_output.dtype, 4)
 
-    # When exact inference mode is enabled and the total size of the tensor of inference results exceeds approximately 80% of available RAM
+    # Keep the threshold check only for the non-memmap path.
     mem_available = psutil.virtual_memory().available * 0.80 // 1024 // 1024 //1024
     total_output_size_gb = (total_output_size // 1024 // 1024 //1024)
-    use_memmap_outputs = enable_ort_output_memmap and total_output_size_gb > mem_available
+    use_memmap_outputs = bool(enable_ort_output_memmap)
     if (not disable_strict_mode and total_output_size_gb > mem_available and not use_memmap_outputs):
         if tmp_onnx_path:
             os.remove(tmp_onnx_path)
@@ -4499,10 +4509,11 @@ def dummy_onnx_inference(
             output_shapes.append([int(s) for s in shape])
 
         memmap_dir = ort_output_memmap_dir
-        cleanup_memmap_dir = False
         if memmap_dir is None:
-            memmap_dir = tempfile.mkdtemp(prefix='onnx2tf_ort_mm_')
-            cleanup_memmap_dir = True
+            memmap_dir = make_managed_tempdir(
+                prefix='onnx2tf_ort_mm_',
+                stale_prefixes=['onnx2tf_ort_mm_'],
+            )
         os.makedirs(memmap_dir, exist_ok=True)
 
         try:
@@ -4518,9 +4529,6 @@ def dummy_onnx_inference(
                     os.remove(tmp_onnx_path)
                     os.remove(tmp_onnx_external_weights_path)
                 raise
-
-        if cleanup_memmap_dir:
-            atexit.register(shutil.rmtree, memmap_dir, ignore_errors=True)
 
         info(
             f'onnxruntime output memmap enabled. ' +
@@ -4546,6 +4554,8 @@ def dummy_onnx_inference(
         for idx, (output_name, output_shape) in enumerate(zip(output_names_order, output_shapes)):
             safe_output_name = re.sub(r'[^0-9A-Za-z._-]+', '_', output_name)
             memmap_path = os.path.join(memmap_dir, f'ort_output_{idx}_{safe_output_name}.mmap')
+            if ort_output_memmap_paths_for_cleanup is not None:
+                ort_output_memmap_paths_for_cleanup.append(memmap_path)
             output_dtype = gs_graph.outputs[idx].dtype
             if output_dtype is None:
                 output_dtype = inferred_output_dtype_by_name.get(output_name, np.float32)
@@ -4966,7 +4976,6 @@ def onnx_tf_tensor_validation(
     }
 
     for names_pair, (onnx_tensor, tf_tensor) in output_pairs.items():
-
         onnx_tensor_shape = onnx_tensor.shape
         max_abs_err = ONNX_INF_INDEX_VALUE
         """

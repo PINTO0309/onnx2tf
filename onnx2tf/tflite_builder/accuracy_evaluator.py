@@ -4,15 +4,228 @@ import itertools
 import json
 import os
 import queue as queue_module
+import re
 import time
 import traceback
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import onnx
+from onnx2tf.utils.tempdir_cleanup import (
+    cleanup_managed_tempdir,
+    make_managed_tempdir,
+)
 
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter as LiteRTInterpreter
+
+
+def _sanitize_tensor_name_for_path(name: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z._-]+", "_", str(name))
+    if safe == "":
+        return "tensor"
+    return safe
+
+
+def _write_named_arrays_to_memmap_files(
+    *,
+    arrays: Dict[str, np.ndarray],
+    memmap_dir: str,
+    file_prefix: str,
+) -> Dict[str, Dict[str, Any]]:
+    os.makedirs(memmap_dir, exist_ok=True)
+    manifest: Dict[str, Dict[str, Any]] = {}
+    for idx, (name, value) in enumerate(arrays.items()):
+        array = np.asarray(value)
+        safe_name = _sanitize_tensor_name_for_path(name)
+        output_path = os.path.join(
+            memmap_dir,
+            f"{file_prefix}_{idx}_{safe_name}.npy",
+        )
+        mm = np.lib.format.open_memmap(
+            output_path,
+            mode="w+",
+            dtype=array.dtype,
+            shape=array.shape,
+        )
+        mm[...] = array
+        mm.flush()
+        manifest[str(name)] = {
+            "path": output_path,
+            "shape": [int(v) for v in array.shape],
+            "dtype": str(array.dtype),
+        }
+    return manifest
+
+
+def _load_named_arrays_from_memmap_manifest(
+    *,
+    manifest: Dict[str, Dict[str, Any]],
+) -> Dict[str, np.ndarray]:
+    arrays: Dict[str, np.ndarray] = {}
+    for name, meta in manifest.items():
+        path = str(meta.get("path", ""))
+        if path == "":
+            raise RuntimeError(
+                "Missing memmap path in worker output manifest. "
+                f"name={name}"
+            )
+        arrays[str(name)] = np.load(path, mmap_mode="r")
+    return arrays
+
+
+def _cleanup_memmap_manifest(
+    manifest: Optional[Dict[str, Dict[str, Any]]],
+) -> None:
+    if not isinstance(manifest, dict):
+        return
+    for meta in manifest.values():
+        if not isinstance(meta, dict):
+            continue
+        path = str(meta.get("path", ""))
+        if path != "" and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+
+def _load_onnx_inputs_from_payload(
+    payload: Dict[str, Any],
+) -> Dict[str, np.ndarray]:
+    manifest_raw = payload.get("onnx_inputs_memmap_manifest", None)
+    if isinstance(manifest_raw, dict):
+        manifest = {
+            str(k): v
+            for k, v in manifest_raw.items()
+        }
+        return _load_named_arrays_from_memmap_manifest(
+            manifest=manifest,
+        )
+    raw_inputs = payload.get("onnx_inputs", {})
+    return {
+        str(name): np.asarray(value)
+        for name, value in raw_inputs.items()
+    }
+
+
+def _estimate_onnx_graph_output_bytes(
+    *,
+    onnx_graph: onnx.ModelProto,
+    onnx_output_names: Sequence[str],
+) -> int:
+    if onnx_graph is None or onnx_graph.graph is None:
+        return 0
+    value_info_map = {str(v.name): v for v in onnx_graph.graph.value_info}
+    for graph_output in onnx_graph.graph.output:
+        value_info_map[str(graph_output.name)] = graph_output
+    type_size_map = {
+        np.dtype("float16"): 2,
+        np.dtype("float32"): 4,
+        np.dtype("float64"): 8,
+        np.dtype("uint8"): 1,
+        np.dtype("uint16"): 2,
+        np.dtype("uint32"): 4,
+        np.dtype("uint64"): 8,
+        np.dtype("int8"): 1,
+        np.dtype("int16"): 2,
+        np.dtype("int32"): 4,
+        np.dtype("int64"): 8,
+        np.dtype("bool_"): 1,
+    }
+    total_bytes = 0
+    for output_name in onnx_output_names:
+        value_info = value_info_map.get(str(output_name), None)
+        if value_info is None:
+            continue
+        tensor_type = value_info.type.tensor_type
+        try:
+            np_dtype = np.dtype(
+                onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type)
+            )
+        except Exception:
+            np_dtype = np.dtype("float32")
+        numel = 1
+        for dim in tensor_type.shape.dim:
+            if dim.HasField("dim_value") and int(dim.dim_value) > 0:
+                numel *= int(dim.dim_value)
+            else:
+                numel *= 1
+        total_bytes += int(numel) * int(type_size_map.get(np_dtype, 4))
+    return int(total_bytes)
+
+
+def _resolve_eval_memmap_config(
+    *,
+    onnx_graph: onnx.ModelProto,
+    onnx_output_names: Sequence[str],
+    onnxruntime_output_memmap: bool,
+    onnxruntime_output_memmap_dir: Optional[str],
+) -> Tuple[bool, Optional[str]]:
+    if not bool(onnxruntime_output_memmap):
+        return False, None
+
+    estimated_output_bytes = _estimate_onnx_graph_output_bytes(
+        onnx_graph=onnx_graph,
+        onnx_output_names=onnx_output_names,
+    )
+
+    memmap_dir = onnxruntime_output_memmap_dir
+    cleanup_dir = False
+    if memmap_dir is None or str(memmap_dir).strip() == "":
+        memmap_dir = make_managed_tempdir(
+            prefix="onnx2tf_eval_mm_",
+            stale_prefixes=["onnx2tf_eval_mm_", "onnx2tf_eval_in_mm_"],
+        )
+        cleanup_dir = True
+    os.makedirs(memmap_dir, exist_ok=True)
+
+    try:
+        if estimated_output_bytes > 0:
+            try:
+                import psutil
+                # ONNX and TFLite worker outputs are persisted independently.
+                required_bytes = int(estimated_output_bytes) * 2
+                disk_free = int(psutil.disk_usage(memmap_dir).free)
+                if required_bytes > disk_free:
+                    if cleanup_dir:
+                        cleanup_managed_tempdir(str(memmap_dir))
+                    raise RuntimeError(
+                        "Not enough disk space for evaluation memmap outputs. "
+                        f"required={required_bytes} free={disk_free} dir={memmap_dir}"
+                    )
+            except ImportError:
+                pass
+    except Exception:
+        if cleanup_dir:
+            cleanup_managed_tempdir(str(memmap_dir))
+        raise
+    return True, memmap_dir
+
+
+def _resolve_eval_input_memmap_dir(
+    *,
+    onnxruntime_output_memmap: bool,
+    onnxruntime_output_memmap_dir: Optional[str],
+    fallback_dir: Optional[str] = None,
+) -> Optional[str]:
+    if not bool(onnxruntime_output_memmap):
+        return None
+    if fallback_dir is not None and str(fallback_dir).strip() != "":
+        os.makedirs(fallback_dir, exist_ok=True)
+        return str(fallback_dir)
+    if (
+        onnxruntime_output_memmap_dir is not None
+        and str(onnxruntime_output_memmap_dir).strip() != ""
+    ):
+        os.makedirs(onnxruntime_output_memmap_dir, exist_ok=True)
+        return str(onnxruntime_output_memmap_dir)
+
+    memmap_dir = make_managed_tempdir(
+        prefix="onnx2tf_eval_in_mm_",
+        stale_prefixes=["onnx2tf_eval_mm_", "onnx2tf_eval_in_mm_"],
+    )
+    return memmap_dir
 
 
 def _normalize_tensor_name(name: str) -> str:
@@ -629,6 +842,8 @@ def evaluate_onnx_tflite_outputs(
     compare_mode: str = "auto",
     fail_on_threshold: bool = False,
     metric_thresholds: Optional[Dict[str, float]] = None,
+    onnxruntime_output_memmap: bool = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     import onnxruntime as ort
 
@@ -901,10 +1116,7 @@ def _onnx_inference_worker(
 
         onnx_graph = onnx.load_from_string(payload["onnx_graph_serialized"])
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
-        onnx_inputs = {
-            str(name): np.asarray(value)
-            for name, value in payload["onnx_inputs"].items()
-        }
+        onnx_inputs = _load_onnx_inputs_from_payload(payload)
         try:
             onnx_session = ort.InferenceSession(
                 onnx_graph.SerializeToString(),
@@ -922,6 +1134,26 @@ def _onnx_inference_worker(
                 providers=["CPUExecutionProvider"],
             )
         onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
+        use_memmap_outputs = bool(payload.get("use_memmap_outputs", False))
+        if use_memmap_outputs:
+            memmap_dir = str(payload.get("memmap_dir", ""))
+            file_prefix = str(payload.get("memmap_file_prefix", "onnx_out"))
+            named_outputs = {
+                name: np.asarray(value)
+                for name, value in zip(onnx_output_names, onnx_outputs)
+            }
+            manifest = _write_named_arrays_to_memmap_files(
+                arrays=named_outputs,
+                memmap_dir=memmap_dir,
+                file_prefix=file_prefix,
+            )
+            result_queue.put(
+                {
+                    "ok": True,
+                    "onnx_outputs_memmap_manifest": manifest,
+                }
+            )
+            return
         result_queue.put(
             {
                 "ok": True,
@@ -948,10 +1180,7 @@ def _tflite_inference_worker(
     try:
         onnx_input_names = [str(v) for v in payload["onnx_input_names"]]
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
-        onnx_inputs = {
-            str(name): np.asarray(value)
-            for name, value in payload["onnx_inputs"].items()
-        }
+        onnx_inputs = _load_onnx_inputs_from_payload(payload)
         compare_mode = str(payload["compare_mode"])
 
         interpreter = _create_tflite_interpreter(
@@ -996,6 +1225,24 @@ def _tflite_inference_worker(
             _is_integer_or_bool_dtype(np.dtype(detail["dtype"]))
             for detail in tflite_output_details
         )
+        use_memmap_outputs = bool(payload.get("use_memmap_outputs", False))
+        if use_memmap_outputs:
+            memmap_dir = str(payload.get("memmap_dir", ""))
+            file_prefix = str(payload.get("memmap_file_prefix", "tflite_out"))
+            manifest = _write_named_arrays_to_memmap_files(
+                arrays=outputs,
+                memmap_dir=memmap_dir,
+                file_prefix=file_prefix,
+            )
+            result_queue.put(
+                {
+                    "ok": True,
+                    "tflite_outputs_memmap_manifest": manifest,
+                    "tflite_output_name_map": output_name_map,
+                    "has_quantized_outputs": bool(has_quantized_outputs),
+                }
+            )
+            return
         result_queue.put(
             {
                 "ok": True,
@@ -1105,6 +1352,8 @@ def evaluate_onnx_tflite_outputs_isolated(
     fail_on_threshold: bool = False,
     metric_thresholds: Optional[Dict[str, float]] = None,
     timeout_sec: int = 600,
+    onnxruntime_output_memmap: bool = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
@@ -1123,6 +1372,18 @@ def evaluate_onnx_tflite_outputs_isolated(
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
     onnx_graph_serialized = onnx_graph.SerializeToString()
+    use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
+        onnx_graph=onnx_graph,
+        onnx_output_names=onnx_output_names,
+        onnxruntime_output_memmap=bool(onnxruntime_output_memmap),
+        onnxruntime_output_memmap_dir=onnxruntime_output_memmap_dir,
+    )
+    worker_input_memmap_dir = _resolve_eval_input_memmap_dir(
+        onnxruntime_output_memmap=bool(onnxruntime_output_memmap),
+        onnxruntime_output_memmap_dir=onnxruntime_output_memmap_dir,
+        fallback_dir=worker_output_memmap_dir,
+    )
+    use_worker_input_memmap = bool(worker_input_memmap_dir is not None)
 
     runtime_compare_mode = str(compare_mode).lower()
     if runtime_compare_mode == "auto":
@@ -1182,98 +1443,148 @@ def evaluate_onnx_tflite_outputs_isolated(
                 )
             onnx_inputs[input_name] = sample
 
-        onnx_result = _run_worker_in_subprocess(
-            worker=_onnx_inference_worker,
-            payload={
-                "onnx_graph_serialized": onnx_graph_serialized,
-                "onnx_output_names": onnx_output_names,
-                "onnx_inputs": onnx_inputs,
-            },
-            timeout_sec=per_worker_timeout,
-        )
-        tflite_result = _run_worker_in_subprocess(
-            worker=_tflite_inference_worker,
-            payload={
-                "tflite_path": str(tflite_path),
-                "onnx_input_names": onnx_input_names,
-                "onnx_output_names": onnx_output_names,
-                "onnx_inputs": onnx_inputs,
-                "compare_mode": runtime_compare_mode,
-            },
-            timeout_sec=per_worker_timeout,
-        )
-        onnx_outputs_by_name = {
-            str(k): np.asarray(v)
-            for k, v in onnx_result["onnx_outputs"].items()
-        }
-        tflite_outputs_by_name = {
-            str(k): np.asarray(v)
-            for k, v in tflite_result["tflite_outputs"].items()
-        }
-
-        if sample_index == 0:
-            has_quantized_outputs = bool(tflite_result.get("has_quantized_outputs", False))
-            resolved_compare_mode = _resolve_compare_mode(
-                compare_mode,
-                has_quantized_outputs=has_quantized_outputs,
-            )
-            resolved_thresholds = _resolve_metric_thresholds(
-                metric_thresholds=metric_thresholds,
-                use_quant_defaults=has_quantized_outputs,
-            )
-            tflite_output_name_map = {
-                str(k): str(v)
-                for k, v in tflite_result.get("tflite_output_name_map", {}).items()
-            }
-
-        for output_name in onnx_output_names:
-            onnx_output = np.asarray(onnx_outputs_by_name[output_name])
-            tflite_output = np.asarray(tflite_outputs_by_name[output_name])
-            try:
-                tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
-                    onnx_output=onnx_output,
-                    tflite_output=tflite_output,
-                    rtol=rtol,
-                    atol=atol,
+        onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+        onnx_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+        tflite_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+        try:
+            worker_input_payload: Dict[str, Any]
+            if bool(use_worker_input_memmap):
+                if worker_input_memmap_dir is None:
+                    raise RuntimeError("Evaluation input memmap directory is unavailable.")
+                onnx_input_manifest = _write_named_arrays_to_memmap_files(
+                    arrays=onnx_inputs,
+                    memmap_dir=worker_input_memmap_dir,
+                    file_prefix=f"input_sample{sample_index}",
                 )
-            except ValueError as ex:
-                raise ValueError(
-                    "Evaluation output shape mismatch. "
-                    f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
-                    f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
-                    f"reason={ex}"
-                ) from ex
+                worker_input_payload = {
+                    "onnx_inputs_memmap_manifest": onnx_input_manifest,
+                }
+            else:
+                worker_input_payload = {
+                    "onnx_inputs": onnx_inputs,
+                }
 
-            layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
-            per_output_layout_alignment[output_name][align_mode] = (
-                int(per_output_layout_alignment[output_name][align_mode]) + 1
+            onnx_result = _run_worker_in_subprocess(
+                worker=_onnx_inference_worker,
+                payload={
+                    "onnx_graph_serialized": onnx_graph_serialized,
+                    "onnx_output_names": onnx_output_names,
+                    **worker_input_payload,
+                    "use_memmap_outputs": bool(use_worker_output_memmap),
+                    "memmap_dir": worker_output_memmap_dir,
+                    "memmap_file_prefix": f"onnx_sample{sample_index}",
+                },
+                timeout_sec=per_worker_timeout,
             )
-            if align_perm is not None:
-                perm_key = ",".join(str(int(v)) for v in align_perm)
-                per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
-                    int(
-                        per_output_layout_alignment[output_name]["permutation_counts"].get(
-                            perm_key, 0
-                        )
+            tflite_result = _run_worker_in_subprocess(
+                worker=_tflite_inference_worker,
+                payload={
+                    "tflite_path": str(tflite_path),
+                    "onnx_input_names": onnx_input_names,
+                    "onnx_output_names": onnx_output_names,
+                    **worker_input_payload,
+                    "compare_mode": runtime_compare_mode,
+                    "use_memmap_outputs": bool(use_worker_output_memmap),
+                    "memmap_dir": worker_output_memmap_dir,
+                    "memmap_file_prefix": f"tflite_sample{sample_index}",
+                },
+                timeout_sec=per_worker_timeout,
+            )
+
+            if bool(use_worker_output_memmap):
+                onnx_manifest = {
+                    str(k): v
+                    for k, v in onnx_result["onnx_outputs_memmap_manifest"].items()
+                }
+                tflite_manifest = {
+                    str(k): v
+                    for k, v in tflite_result["tflite_outputs_memmap_manifest"].items()
+                }
+                onnx_outputs_by_name = _load_named_arrays_from_memmap_manifest(
+                    manifest=onnx_manifest,
+                )
+                tflite_outputs_by_name = _load_named_arrays_from_memmap_manifest(
+                    manifest=tflite_manifest,
+                )
+            else:
+                onnx_outputs_by_name = {
+                    str(k): np.asarray(v)
+                    for k, v in onnx_result["onnx_outputs"].items()
+                }
+                tflite_outputs_by_name = {
+                    str(k): np.asarray(v)
+                    for k, v in tflite_result["tflite_outputs"].items()
+                }
+
+            if sample_index == 0:
+                has_quantized_outputs = bool(tflite_result.get("has_quantized_outputs", False))
+                resolved_compare_mode = _resolve_compare_mode(
+                    compare_mode,
+                    has_quantized_outputs=has_quantized_outputs,
+                )
+                resolved_thresholds = _resolve_metric_thresholds(
+                    metric_thresholds=metric_thresholds,
+                    use_quant_defaults=has_quantized_outputs,
+                )
+                tflite_output_name_map = {
+                    str(k): str(v)
+                    for k, v in tflite_result.get("tflite_output_name_map", {}).items()
+                }
+
+            for output_name in onnx_output_names:
+                onnx_output = np.asarray(onnx_outputs_by_name[output_name])
+                tflite_output = np.asarray(tflite_outputs_by_name[output_name])
+                try:
+                    tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
+                        onnx_output=onnx_output,
+                        tflite_output=tflite_output,
+                        rtol=rtol,
+                        atol=atol,
                     )
-                    + 1
-                )
+                except ValueError as ex:
+                    raise ValueError(
+                        "Evaluation output shape mismatch. "
+                        f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
+                        f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
+                        f"reason={ex}"
+                    ) from ex
 
-            total_metrics.update(onnx_output, tflite_output)
-            per_output_metrics[output_name].update(onnx_output, tflite_output)
-            is_allclose = bool(
-                np.allclose(
-                    onnx_output,
-                    tflite_output,
-                    rtol=rtol,
-                    atol=atol,
-                    equal_nan=True,
+                layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
+                per_output_layout_alignment[output_name][align_mode] = (
+                    int(per_output_layout_alignment[output_name][align_mode]) + 1
                 )
-            )
-            allclose_total += 1
-            allclose_matched += int(is_allclose)
-            per_output_allclose[output_name]["total"] += 1
-            per_output_allclose[output_name]["matched"] += int(is_allclose)
+                if align_perm is not None:
+                    perm_key = ",".join(str(int(v)) for v in align_perm)
+                    per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
+                        int(
+                            per_output_layout_alignment[output_name]["permutation_counts"].get(
+                                perm_key, 0
+                            )
+                        )
+                                + 1
+                        )
+
+                total_metrics.update(onnx_output, tflite_output)
+                per_output_metrics[output_name].update(onnx_output, tflite_output)
+                is_allclose = bool(
+                    np.allclose(
+                        onnx_output,
+                        tflite_output,
+                        rtol=rtol,
+                        atol=atol,
+                        equal_nan=True,
+                    )
+                )
+                allclose_total += 1
+                allclose_matched += int(is_allclose)
+                per_output_allclose[output_name]["total"] += 1
+                per_output_allclose[output_name]["matched"] += int(is_allclose)
+        finally:
+            if bool(use_worker_output_memmap):
+                _cleanup_memmap_manifest(onnx_manifest)
+                _cleanup_memmap_manifest(tflite_manifest)
+            if bool(use_worker_input_memmap):
+                _cleanup_memmap_manifest(onnx_input_manifest)
 
     os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
     overall_metrics = total_metrics.to_dict()

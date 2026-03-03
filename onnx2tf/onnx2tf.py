@@ -24,6 +24,7 @@ warnings.simplefilter(action='ignore', category=Warning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 import subprocess
+import time
 import random
 random.seed(0)
 import numpy as np
@@ -1348,9 +1349,8 @@ def convert(
         and accuracy errors are more likely to occur. Strict mode is enabled by default.
 
     onnxruntime_output_memmap: Optional[bool]
-        Use onnxruntime IOBinding with np.memmap for dummy inference outputs when\n
-        the estimated output tensor size exceeds available RAM. This avoids OOM\n
-        but increases disk I/O and may slow down validation.
+        Use onnxruntime IOBinding with np.memmap for dummy inference outputs.\n
+        This reduces peak RAM at the cost of disk I/O and slower validation.
 
     onnxruntime_output_memmap_dir: Optional[str]
         Directory for memmap files used by onnxruntime_output_memmap.\n
@@ -1822,6 +1822,8 @@ def convert(
                 'atol': eval_atol,
                 'compare_mode': eval_compare_mode,
                 'fail_on_threshold': eval_fail_on_threshold_local,
+                'onnxruntime_output_memmap': onnxruntime_output_memmap,
+                'onnxruntime_output_memmap_dir': onnxruntime_output_memmap_dir,
             }
             if not eval_in_process:
                 eval_kwargs['timeout_sec'] = int(eval_timeout_sec)
@@ -1905,20 +1907,6 @@ def convert(
             return
 
         op_error_report_module = 'onnx2tf.utils.flatbuffer_direct_op_error_report'
-        op_error_report_timeout_sec = 180
-        op_error_report_timeout_env = str(
-            os.environ.get('ONNX2TF_OP_ERROR_REPORT_TIMEOUT_SEC', '')
-        ).strip()
-        if op_error_report_timeout_env != '':
-            try:
-                parsed_op_error_timeout = int(op_error_report_timeout_env)
-                if parsed_op_error_timeout > 0:
-                    op_error_report_timeout_sec = int(parsed_op_error_timeout)
-            except Exception:
-                warn(
-                    'Invalid ONNX2TF_OP_ERROR_REPORT_TIMEOUT_SEC value was ignored. '
-                    f'value={op_error_report_timeout_env}'
-                )
 
         temp_onnx_path = None
         report_onnx_path = None
@@ -1981,7 +1969,36 @@ def convert(
                 '0.0',
                 '--atol',
                 '1e-4',
+                '--seed',
+                '0',
             ]
+            if custom_input_op_name_np_data_path is not None:
+                for param in custom_input_op_name_np_data_path:
+                    if not isinstance(param, (list, tuple)) or len(param) < 2:
+                        continue
+                    input_name = str(param[0])
+                    numpy_file_path = str(param[1])
+                    if input_name == '' or numpy_file_path == '':
+                        continue
+                    command.extend(
+                        [
+                            '--custom_input_op_name_np_data_path',
+                            input_name,
+                            numpy_file_path,
+                        ]
+                    )
+            if not bool(onnxruntime_output_memmap):
+                command.append('--disable_onnxruntime_output_memmap')
+            if (
+                onnxruntime_output_memmap_dir is not None
+                and str(onnxruntime_output_memmap_dir).strip() != ''
+            ):
+                command.extend(
+                    [
+                        '--onnxruntime_output_memmap_dir',
+                        str(onnxruntime_output_memmap_dir),
+                    ]
+                )
             if (
                 tensor_correspondence_report_path is not None
                 and str(tensor_correspondence_report_path).strip() != ''
@@ -1993,17 +2010,66 @@ def convert(
                     ]
                 )
 
-            completed = subprocess.run(
+            spinner_interval_sec = 0.2
+            spinner_interval_env = str(
+                os.environ.get('ONNX2TF_OP_ERROR_REPORT_SPINNER_SEC', '')
+            ).strip()
+            if spinner_interval_env != '':
+                try:
+                    parsed_spinner_interval = float(spinner_interval_env)
+                    if parsed_spinner_interval > 0:
+                        spinner_interval_sec = float(parsed_spinner_interval)
+                except Exception:
+                    warn(
+                        'Invalid ONNX2TF_OP_ERROR_REPORT_SPINNER_SEC value was ignored. '
+                        f'value={spinner_interval_env}'
+                    )
+
+            started_at = time.monotonic()
+            spinner_frames = ['|', '/', '-', '\\']
+            spinner_index = 0
+            use_spinner = bool(getattr(sys.stdout, 'isatty', lambda: False)())
+            process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=False,
-                timeout=op_error_report_timeout_sec,
             )
-            return_code = int(completed.returncode)
-            helper_stdout = str(completed.stdout or '').strip()
-            helper_stderr = str(completed.stderr or '').strip()
+            if use_spinner:
+                sys.stdout.write(
+                    '\rOP error report generation in progress... [|] elapsed=0s'
+                )
+                sys.stdout.flush()
+            while True:
+                try:
+                    process.wait(timeout=float(spinner_interval_sec))
+                    break
+                except subprocess.TimeoutExpired:
+                    if use_spinner:
+                        elapsed_sec = int(max(0.0, time.monotonic() - started_at))
+                        spinner_frame = spinner_frames[
+                            spinner_index % len(spinner_frames)
+                        ]
+                        spinner_index += 1
+                        sys.stdout.write(
+                            '\r'
+                            'OP error report generation in progress... '
+                            f'[{spinner_frame}] elapsed={elapsed_sec}s'
+                        )
+                        sys.stdout.flush()
+            if use_spinner:
+                elapsed_sec = int(max(0.0, time.monotonic() - started_at))
+                sys.stdout.write(
+                    '\r'
+                    'OP error report generation in progress... '
+                    f'[done] elapsed={elapsed_sec}s\n'
+                )
+                sys.stdout.flush()
+
+            helper_stdout_raw, helper_stderr_raw = process.communicate()
+            return_code = int(process.returncode)
+            helper_stdout = str(helper_stdout_raw or '').strip()
+            helper_stderr = str(helper_stderr_raw or '').strip()
             helper_message = helper_stderr if helper_stderr != '' else helper_stdout
 
             if return_code != 0:
@@ -2040,7 +2106,7 @@ def convert(
                     report_payload = json.load(f)
             except Exception:
                 report_payload = {}
-            summary = report_payload.get('summary', {})
+            summary: Dict = report_payload.get('summary', {})
             info(
                 Color.GREEN(
                     'OP error report output complete! '
@@ -2057,10 +2123,6 @@ def convert(
                     'OP error CSV output complete! '
                     f'({output_csv_path})'
                 )
-            )
-        except subprocess.TimeoutExpired:
-            warn(
-                'OP error report generation was skipped because helper process timed out.'
             )
         except Exception as ex:
             ex_str = str(ex)
@@ -6152,9 +6214,9 @@ def main():
         help=\
             'Disable onnxruntime output memmap. \n' +
             'By default, onnx2tf uses onnxruntime IOBinding with np.memmap for dummy inference \n' +
-            'outputs only when the estimated output tensor size exceeds available RAM. \n' +
+            'outputs. \n' +
             'Use this flag to force the standard in-memory output path instead. \n' +
-            'Default: disabled (memmap enabled when needed).'
+            'Default: disabled (memmap enabled).'
     )
     parser.set_defaults(disable_onnxruntime_output_memmap=False)
     parser.add_argument(

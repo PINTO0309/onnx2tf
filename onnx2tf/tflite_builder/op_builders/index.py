@@ -78,17 +78,30 @@ def _add_reshape_operator(
     input_name: str,
     output_name: str,
     new_shape: list[int],
+    preserve_dynamic_shape: bool = False,
 ) -> None:
     shape_name = ctx.add_const_tensor(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
+    options = {
+        "newShape": [int(v) for v in list(new_shape)],
+    }
+    if bool(preserve_dynamic_shape):
+        options["preserveDynamicShape"] = True
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            target_signature = [int(v) for v in list(new_shape)]
+            output_tensor.shape_signature = [int(v) for v in target_signature]
+            output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in target_signature
+            ]
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, shape_name],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in list(new_shape)]},
+            options=options,
         )
     )
 
@@ -261,15 +274,35 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
             f"op={node.name} batch_dims={batch_dims}"
         )
 
+    params_shape = [int(v) for v in ctx.get_tensor_shape(params_name)]
+    params_tensor = ctx.model_ir.tensors.get(params_name, None)
+    params_signature = (
+        [int(v) for v in list(params_tensor.shape_signature)]
+        if params_tensor is not None and params_tensor.shape_signature is not None
+        else [int(v) for v in params_shape]
+    )
+    indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
+    indices_tensor = ctx.model_ir.tensors.get(indices_name, None)
+    indices_signature = (
+        [int(v) for v in list(indices_tensor.shape_signature)]
+        if indices_tensor is not None and indices_tensor.shape_signature is not None
+        else [int(v) for v in indices_shape]
+    )
+
     indices_for_gather_nd = indices_name
     indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
     if indices_dtype != "INT32":
-        indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
         indices_for_gather_nd = ctx.add_intermediate_tensor(
             f"{output_name}_gather_nd_indices_i32",
             dtype="INT32",
             shape=indices_shape,
         )
+        cast_output_tensor = ctx.model_ir.tensors.get(indices_for_gather_nd, None)
+        if cast_output_tensor is not None:
+            cast_output_tensor.shape_signature = [int(v) for v in indices_signature]
+            cast_output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in indices_signature
+            ]
         ctx.add_operator(
             OperatorIR(
                 op_type="CAST",
@@ -281,6 +314,47 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    inferred_output_signature: Optional[list[int]] = None
+    if len(indices_signature) >= 1:
+        gather_dims = int(indices_shape[-1]) if len(indices_shape) > 0 else -1
+        if len(indices_signature) > 0 and int(indices_signature[-1]) > 0:
+            gather_dims = int(indices_signature[-1])
+        if gather_dims > 0 and gather_dims <= len(params_signature):
+            inferred_output_signature = (
+                [int(v) for v in indices_signature[:-1]]
+                + [int(v) for v in params_signature[gather_dims:]]
+            )
+    if inferred_output_signature is None:
+        inferred_output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_tensor.shape)]
+        )
+    if len(inferred_output_signature) == 0:
+        inferred_output_signature = [1]
+    existing_output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else None
+    )
+    final_output_signature = [int(v) for v in inferred_output_signature]
+    if (
+        existing_output_signature is not None
+        and len(existing_output_signature) == len(inferred_output_signature)
+    ):
+        final_output_signature = [
+            int(existing_dim) if int(existing_dim) < 0 else int(inferred_dim)
+            for existing_dim, inferred_dim in zip(
+                existing_output_signature,
+                inferred_output_signature,
+            )
+        ]
+    output_tensor.shape_signature = [int(v) for v in final_output_signature]
+    output_tensor.shape = [
+        int(v) if int(v) >= 0 else 1 for v in final_output_signature
+    ]
 
     ctx.add_operator(
         OperatorIR(
@@ -1288,12 +1362,14 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         input_name=x_coords_2d_name,
         output_name=x_coords_3d_name,
         new_shape=[-1, 1, int(pooled_w)],
+        preserve_dynamic_shape=True,
     )
     _add_reshape_operator(
         ctx=ctx,
         input_name=y_coords_2d_name,
         output_name=y_coords_3d_name,
         new_shape=[-1, int(pooled_h), 1],
+        preserve_dynamic_shape=True,
     )
 
     tile_x_name = ctx.add_const_tensor(
@@ -1393,6 +1469,7 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         input_name=padded_input_name,
         output_name=flattened_input_name,
         new_shape=[-1, int(channels), int((in_h + 2) * (in_w + 2))],
+        preserve_dynamic_shape=True,
     )
 
     neg_one_name = ctx.add_const_tensor(
@@ -1788,6 +1865,7 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
             input_name=weight_name,
             output_name=expanded_name,
             new_shape=[-1, 1, int(pooled_h), int(pooled_w)],
+            preserve_dynamic_shape=True,
         )
         return expanded_name
 

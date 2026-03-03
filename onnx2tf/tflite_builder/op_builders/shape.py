@@ -3979,17 +3979,28 @@ def _add_reshape_operator(
     input_name: str,
     output_name: str,
     new_shape: list[int],
+    preserve_dynamic_shape: bool = False,
 ) -> None:
     shape_const = ctx.add_const_tensor(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
+    options = {"newShape": [int(v) for v in list(new_shape)]}
+    if bool(preserve_dynamic_shape):
+        options["preserveDynamicShape"] = True
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            target_signature = [int(v) for v in list(new_shape)]
+            output_tensor.shape_signature = [int(v) for v in target_signature]
+            output_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in target_signature
+            ]
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, shape_const],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in list(new_shape)]},
+            options=options,
         )
     )
 
@@ -4383,13 +4394,10 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         ctx=ctx,
         input_name=image_padded_name,
         output_name=image_flat_name,
-        new_shape=[int(n), int(c), int((h + 2) * (w + 2))],
+        new_shape=[-1, int(c), int((h + 2) * (w + 2))],
+        preserve_dynamic_shape=True,
     )
 
-    slice_size_const = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_slice_size",
-        np.asarray([int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1], dtype=np.int32),
-    )
     grid_x_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_grid_x",
         dtype=compute_dtype,
@@ -4400,26 +4408,34 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         dtype=compute_dtype,
         shape=[int(grid_shape[0]), int(grid_shape[1]), int(grid_shape[2]), 1],
     )
-    grid_x_begin = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_x_begin",
-        np.asarray([0, 0, 0, 0], dtype=np.int32),
+    grid_x_index = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_x_index",
+        np.asarray([0], dtype=np.int32),
     )
-    grid_y_begin = ctx.add_const_tensor(
-        f"{output_name}_gridsample_grid_y_begin",
-        np.asarray([0, 0, 0, 1], dtype=np.int32),
+    grid_y_index = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_y_index",
+        np.asarray([1], dtype=np.int32),
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="SLICE",
-            inputs=[grid_compute_name, grid_x_begin, slice_size_const],
+            op_type="GATHER",
+            inputs=[grid_compute_name, grid_x_index],
             outputs=[grid_x_name],
+            options={
+                "axis": 3,
+                "batchDims": 0,
+            },
         )
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="SLICE",
-            inputs=[grid_compute_name, grid_y_begin, slice_size_const],
+            op_type="GATHER",
+            inputs=[grid_compute_name, grid_y_index],
             outputs=[grid_y_name],
+            options={
+                "axis": 3,
+                "batchDims": 0,
+            },
         )
     )
 
