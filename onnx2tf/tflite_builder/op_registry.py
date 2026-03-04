@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
+import onnx
 
 from onnx2tf.tflite_builder.op_builders import (
     build_abs_op,
@@ -106,6 +107,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_rnn_op,
     build_selu_op,
     build_shape_op,
+    build_size_op,
     build_sinh_op,
     build_slice_op,
     build_split_op,
@@ -124,6 +126,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_unsqueeze_op,
     build_where_op,
     is_supported_if_axis0_add_branch_pattern,
+    is_supported_if_generic_branch_mux_pattern,
     is_supported_if_nested_reducemin_add_branch_pattern,
     is_supported_if_nms_guard_pattern,
     is_supported_if_sequenceconstruct_add_branch_pattern,
@@ -354,10 +357,19 @@ def _get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
     onnx_model = getattr(ctx, "onnx_model", None)
     if onnx_model is None:
         return [str(v.name) for v in node.inputs]
-    for graph_node in onnx_model.graph.node:
-        graph_node_name = str(graph_node.name) if str(graph_node.name) != "" else str(graph_node.op_type)
-        if graph_node_name == str(node.name) and str(graph_node.op_type) == str(node.op):
-            return [str(v) for v in graph_node.input]
+    stack = [onnx_model.graph]
+    while len(stack) > 0:
+        graph = stack.pop()
+        for graph_node in graph.node:
+            graph_node_name = str(graph_node.name) if str(graph_node.name) != "" else str(graph_node.op_type)
+            if graph_node_name == str(node.name) and str(graph_node.op_type) == str(node.op):
+                return [str(v) for v in graph_node.input]
+            for attr in graph_node.attribute:
+                if attr.type == onnx.AttributeProto.GRAPH:
+                    stack.append(attr.g)
+                elif attr.type == onnx.AttributeProto.GRAPHS:
+                    for subgraph in attr.graphs:
+                        stack.append(subgraph)
     return [str(v.name) for v in node.inputs]
 
 
@@ -553,46 +565,52 @@ def _validate_lstm(node: Any, ctx: Any) -> None:
     if initial_h_name != "":
         initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
         initial_c_shape = [int(v) for v in ctx.get_tensor_shape(initial_c_name)]
-        if len(initial_h_shape) != 3 or len(initial_c_shape) != 3:
-            raise NodeValidationError(
-                reason_code="unsupported_input_shape",
-                message=(
-                    "LSTM initial_h and initial_c must be rank-3 with shape "
-                    "[num_directions, batch, hidden]. "
-                    f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-                ),
-                node_name=node.name,
-                node_op=node.op,
-            )
-        if (
-            int(initial_h_shape[0]) > 0 and int(initial_h_shape[0]) != expected_num_directions
-        ) or (
-            int(initial_c_shape[0]) > 0 and int(initial_c_shape[0]) != expected_num_directions
-        ):
-            raise NodeValidationError(
-                reason_code="unsupported_input_shape",
-                message=(
-                    "LSTM initial_h and initial_c first dimension must match num_directions. "
-                    f"direction={direction} expected_num_directions={expected_num_directions} "
-                    f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-                ),
-                node_name=node.name,
-                node_op=node.op,
-            )
-        if (
-            int(initial_h_shape[2]) > 0 and int(initial_h_shape[2]) != hidden_size
-        ) or (
-            int(initial_c_shape[2]) > 0 and int(initial_c_shape[2]) != hidden_size
-        ):
-            raise NodeValidationError(
-                reason_code="unsupported_input_shape",
-                message=(
-                    "LSTM initial_h and initial_c hidden dimension must match hidden_size. "
-                    f"hidden_size={hidden_size} initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-                ),
-                node_name=node.name,
-                node_op=node.op,
-            )
+        if len(initial_h_shape) == 3 and len(initial_c_shape) == 3:
+            initial_h_sig = [int(v) for v in list(initial_h_shape)]
+            initial_c_sig = [int(v) for v in list(initial_c_shape)]
+            initial_h_tensor = ctx.model_ir.tensors.get(initial_h_name, None)
+            initial_c_tensor = ctx.model_ir.tensors.get(initial_c_name, None)
+            if (
+                initial_h_tensor is not None
+                and initial_h_tensor.shape_signature is not None
+                and len(initial_h_tensor.shape_signature) == 3
+            ):
+                initial_h_sig = [int(v) for v in list(initial_h_tensor.shape_signature)]
+            if (
+                initial_c_tensor is not None
+                and initial_c_tensor.shape_signature is not None
+                and len(initial_c_tensor.shape_signature) == 3
+            ):
+                initial_c_sig = [int(v) for v in list(initial_c_tensor.shape_signature)]
+            if (
+                int(initial_h_sig[0]) > 0 and int(initial_h_sig[0]) != expected_num_directions
+            ) or (
+                int(initial_c_sig[0]) > 0 and int(initial_c_sig[0]) != expected_num_directions
+            ):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "LSTM initial_h and initial_c first dimension must match num_directions. "
+                        f"direction={direction} expected_num_directions={expected_num_directions} "
+                        f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            if (
+                int(initial_h_sig[2]) > 0 and int(initial_h_sig[2]) != hidden_size
+            ) or (
+                int(initial_c_sig[2]) > 0 and int(initial_c_sig[2]) != hidden_size
+            ):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "LSTM initial_h and initial_c hidden dimension must match hidden_size. "
+                        f"hidden_size={hidden_size} initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
 
 def _validate_rnn(node: Any, ctx: Any) -> None:
     direction = str(node.attrs.get("direction", "forward")).lower()
@@ -1151,7 +1169,11 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             node_op=node.op,
         )
 
-    if dynamic_end_name == "" and len(starts_values) != len(ends_values):
+    if (
+        dynamic_start_name == ""
+        and dynamic_end_name == ""
+        and len(starts_values) != len(ends_values)
+    ):
         raise NodeValidationError(
             reason_code="invalid_input_shape",
             message=(
@@ -2928,17 +2950,10 @@ def _normalize_axes_for_rank(
 
 
 def _validate_reduce(node: Any, ctx: Any) -> None:
-    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
-    axes = _extract_axes(
-        node=node,
-        ctx=ctx,
-        input_index=1,
-        attr_name="axes",
-        default_if_missing=[int(v) for v in range(input_rank)],
-    )
-    if len(axes) == 0 and int(node.attrs.get("noop_with_empty_axes", 0)) == 1:
-        return
-    _normalize_axes_for_rank(axes=axes, rank=input_rank, node=node)
+    _ = (node, ctx)
+    # Builder-side reduce rank/axis resolution handles dynamic/placeholder ranks
+    # more robustly than pre-validation in control-flow-heavy graphs.
+    return
 
 
 def _validate_cumsum(node: Any, ctx: Any) -> None:
@@ -3471,10 +3486,33 @@ def _validate_non_max_suppression(node: Any, ctx: Any) -> None:
 
 
 def _validate_gather_elements(node: Any, ctx: Any) -> None:
+    def _rank_is_unknown_placeholder(tensor_name: str, shape: List[int]) -> bool:
+        raw_shape = None
+        if hasattr(ctx, "shape_map"):
+            raw_shape = ctx.shape_map.get(str(tensor_name), None)
+        if isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) > 0:
+            # Rank is known even when dimensions are symbolic/unknown.
+            return False
+        return bool(
+            len(shape) == 1
+            and _is_unknown_rank_placeholder_tensor(ctx, tensor_name)
+        )
+
+    data_name = node.inputs[0].name
+    indices_name = node.inputs[1].name
+    output_name = node.outputs[0].name
     data_shape = ctx.get_tensor_shape(node.inputs[0].name)
     indices_shape = ctx.get_tensor_shape(node.inputs[1].name)
     output_shape = ctx.get_tensor_shape(node.outputs[0].name)
-    if len(data_shape) != len(indices_shape):
+    data_rank_unknown = _rank_is_unknown_placeholder(data_name, data_shape)
+    indices_rank_unknown = _rank_is_unknown_placeholder(indices_name, indices_shape)
+    output_rank_unknown = _rank_is_unknown_placeholder(output_name, output_shape)
+
+    if (
+        len(data_shape) != len(indices_shape)
+        and not data_rank_unknown
+        and not indices_rank_unknown
+    ):
         raise NodeValidationError(
             reason_code="invalid_input_shape",
             message=(
@@ -3484,7 +3522,11 @@ def _validate_gather_elements(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if len(indices_shape) != len(output_shape):
+    if (
+        len(indices_shape) != len(output_shape)
+        and not indices_rank_unknown
+        and not output_rank_unknown
+    ):
         raise NodeValidationError(
             reason_code="invalid_output_shape",
             message=(
@@ -3494,7 +3536,16 @@ def _validate_gather_elements(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    rank = len(data_shape)
+    rank_candidates: List[int] = []
+    if not data_rank_unknown:
+        rank_candidates.append(len(data_shape))
+    if not indices_rank_unknown:
+        rank_candidates.append(len(indices_shape))
+    if not output_rank_unknown:
+        rank_candidates.append(len(output_shape))
+    if len(rank_candidates) == 0:
+        return
+    rank = int(rank_candidates[0])
     axis = int(node.attrs.get("axis", 0))
     if axis < 0:
         axis += rank
@@ -6152,6 +6203,7 @@ def _validate_if(node: Any, ctx: Any) -> None:
         or is_supported_if_axis0_add_branch_pattern(node)
         or is_supported_if_sequenceconstruct_add_branch_pattern(node)
         or is_supported_if_nested_reducemin_add_branch_pattern(node)
+        or is_supported_if_generic_branch_mux_pattern(node, ctx)
     ):
         raise NodeValidationError(
             reason_code="unsupported_control_flow_pattern",
@@ -6161,7 +6213,9 @@ def _validate_if(node: Any, ctx: Any) -> None:
                 "axis0 Add-branch pattern (single Add in each branch), "
                 "or SequenceConstruct Add-branch pattern "
                 "(branch-local Constant/Add + terminal SequenceConstruct), "
-                "or nested ReduceMin/Add pattern (else-branch ReduceMin/Greater + nested Add/Add If)."
+                "or nested ReduceMin/Add pattern (else-branch ReduceMin/Greater + nested Add/Add If), "
+                "or generic branch-mux pattern (no branch inputs, safe branch-op subset, "
+                "and matching then/else outputs)."
             ),
             node_name=node.name,
             node_op=node.op,
@@ -7105,6 +7159,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_shape,
     ),
+    "Size": DispatchEntry(
+        onnx_op="Size",
+        tflite_ops=["SHAPE", "REDUCE_PROD", "CAST"],
+        builder=build_size_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    ),
     "Range": DispatchEntry(
         onnx_op="Range",
         tflite_ops=["CAST", "SQUEEZE", "RANGE"],
@@ -7189,9 +7249,11 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "GATHER",
             "SHAPE",
             "SUB",
+            "SELECT",
+            "SELECT_V2",
         ],
         builder=build_if_op,
-        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=None),
         extra_validator=_validate_if,
     ),
     "Loop": DispatchEntry(

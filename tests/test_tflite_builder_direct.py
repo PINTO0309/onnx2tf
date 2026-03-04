@@ -2755,6 +2755,53 @@ def _make_slice_dynamic_start_end_single_axis_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_slice_dynamic_start_const_end_single_axis_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 8, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4, 4])
+    gather_index = numpy_helper.from_array(np.asarray(1, dtype=np.int64), name="slice_dyn_start_gather_index")
+    unsq_axes = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="slice_dyn_start_unsq_axes")
+    slice_axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_dyn_start_axes")
+    two = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="slice_dyn_start_two")
+    end = numpy_helper.from_array(np.asarray([2147483647], dtype=np.int64), name="slice_dyn_start_end")
+    steps = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_dyn_start_steps")
+    nodes = [
+        helper.make_node("Shape", ["x"], ["shape"], name="SliceDynStartShape"),
+        helper.make_node(
+            "Gather",
+            ["shape", "slice_dyn_start_gather_index"],
+            ["axis_dim"],
+            name="SliceDynStartGatherAxis1",
+            axis=0,
+        ),
+        helper.make_node(
+            "Unsqueeze",
+            ["axis_dim", "slice_dyn_start_unsq_axes"],
+            ["axis_dim_vec"],
+            name="SliceDynStartUnsqueezeAxisDim",
+        ),
+        helper.make_node(
+            "Div",
+            ["axis_dim_vec", "slice_dyn_start_two"],
+            ["start"],
+            name="SliceDynStart",
+        ),
+        helper.make_node(
+            "Slice",
+            ["x", "start", "slice_dyn_start_end", "slice_dyn_start_axes", "slice_dyn_start_steps"],
+            ["y"],
+            name="SliceDynStartConstEndNode",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "slice_dynamic_start_const_end_single_axis_graph",
+        [x],
+        [y],
+        initializer=[gather_index, unsq_axes, slice_axes, two, end, steps],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_space_to_depth_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
@@ -3724,6 +3771,26 @@ def _make_gather_elements_model() -> onnx.ModelProto:
         helper.make_node("GatherElements", ["x", "idx"], ["y"], name="GatherElementsNode", axis=1),
     ]
     graph = helper.make_graph(nodes, "gather_elements_graph", [x], [y], [idx])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gather_elements_unknown_data_rank_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])
+    idx = numpy_helper.from_array(
+        np.asarray([[0, 1, 2, 3]], dtype=np.int64),
+        name="idx",
+    )
+    nodes = [
+        helper.make_node("GatherElements", ["x", "idx"], ["y"], name="GatherElementsDyn_Node", axis=1),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "gather_elements_unknown_data_rank_graph",
+        [x],
+        [y],
+        [idx],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -4739,6 +4806,21 @@ def _make_unsqueeze_axes_2_3_model() -> onnx.ModelProto:
     graph = helper.make_graph(
         [node],
         "unsqueeze_axes_2_3_graph",
+        [x],
+        [y],
+        initializer=[axes],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_unsqueeze_unknown_rank_axis1_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1])
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="unsq_unknown_axis1")
+    node = helper.make_node("Unsqueeze", ["x", "unsq_unknown_axis1"], ["y"], name="UnsqueezeUnknownAxis1Node")
+    graph = helper.make_graph(
+        [node],
+        "unsqueeze_unknown_rank_axis1_graph",
         [x],
         [y],
         initializer=[axes],
@@ -8973,6 +9055,20 @@ def test_flatbuffer_direct_unsqueeze_axes_2_3_lowering() -> None:
     assert list(y_prod.options.get("newShape", [])) == [1, 3, 1, 1]
 
 
+def test_flatbuffer_direct_unsqueeze_unknown_rank_axis1_lowering() -> None:
+    model = _make_unsqueeze_unknown_rank_axis1_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="unsqueeze_unknown_rank_axis1_lowering_test",
+        allow_custom_ops=False,
+    )
+    y_prod = next(op for op in model_ir.operators if str(op.outputs[0]) == "y")
+    assert str(y_prod.op_type) == "RESHAPE"
+    assert list(model_ir.tensors["y"].shape) == [1, 1]
+
+
 def test_flatbuffer_direct_min_topk_dynamic_k_lowering() -> None:
     model = _make_min_topk_dynamic_k_model()
     register_default_preprocess_rules()
@@ -9299,6 +9395,28 @@ def test_flatbuffer_direct_slice_dynamic_start_end_single_axis_lowering() -> Non
     assert str(end_tensor.dtype).upper() == "INT32"
     assert begin_tensor.data is None
     assert end_tensor.data is None
+
+
+def test_flatbuffer_direct_slice_dynamic_start_const_end_single_axis_lowering() -> None:
+    model = _make_slice_dynamic_start_const_end_single_axis_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="slice_dynamic_start_const_end_single_axis_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("STRIDED_SLICE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    ss = next(op for op in model_ir.operators if str(op.op_type) == "STRIDED_SLICE")
+    begin_tensor = model_ir.tensors[str(ss.inputs[1])]
+    end_tensor = model_ir.tensors[str(ss.inputs[2])]
+    assert str(begin_tensor.dtype).upper() == "INT32"
+    assert str(end_tensor.dtype).upper() == "INT32"
+    assert begin_tensor.data is None
+    assert end_tensor.data is not None
 
 
 def test_flatbuffer_direct_expand_dynamic_shape_uses_fill() -> None:
@@ -24699,6 +24817,21 @@ def test_flatbuffer_direct_rtpo_gathernd_applies_to_gather_elements_generated_pa
         assert not both_const
 
 
+def test_flatbuffer_direct_gather_elements_allows_unknown_data_rank_placeholder() -> None:
+    model = _make_gather_elements_unknown_data_rank_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_elements_unknown_data_rank_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "GATHER_ND" in op_types
+    y_tensor = model_ir.tensors.get("y")
+    assert y_tensor is not None
+    assert list(y_tensor.shape) == [1, 4]
+
+
 def test_flatbuffer_direct_transpose_dequantize_transpose_optimization_fanout_safe() -> None:
     model = _make_transpose_dequantize_transpose_with_fanout_model()
     register_default_preprocess_rules()
@@ -29495,6 +29628,244 @@ def _make_if_p3_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
 
 
+def _make_if_multi_output_nested_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("if_mo_x", TensorProto.FLOAT, [2, 2])
+    y = helper.make_tensor_value_info("if_mo_y", TensorProto.FLOAT, [2, 2])
+    out0 = helper.make_tensor_value_info("if_mo_out0", TensorProto.FLOAT, [2, 2])
+    out1 = helper.make_tensor_value_info("if_mo_out1", TensorProto.FLOAT, [2, 2])
+
+    top_cond = helper.make_node("Greater", ["if_mo_sum_x", "if_mo_sum_y"], ["if_mo_cond"], name="IfMoTopCond")
+
+    then_then_c0 = numpy_helper.from_array(np.asarray(1.0, dtype=np.float32), name="if_mo_then_then_c0")
+    then_then_c1 = numpy_helper.from_array(np.asarray(2.0, dtype=np.float32), name="if_mo_then_then_c1")
+    then_else_c0 = numpy_helper.from_array(np.asarray(3.0, dtype=np.float32), name="if_mo_then_else_c0")
+    then_else_c1 = numpy_helper.from_array(np.asarray(4.0, dtype=np.float32), name="if_mo_then_else_c1")
+    then_inner_then_graph = helper.make_graph(
+        [
+            helper.make_node("Add", ["if_mo_x", "if_mo_then_then_c0"], ["if_mo_then_inner_then_o0"], name="IfMoThenInnerThenAdd0"),
+            helper.make_node("Add", ["if_mo_y", "if_mo_then_then_c1"], ["if_mo_then_inner_then_o1"], name="IfMoThenInnerThenAdd1"),
+        ],
+        "if_mo_then_inner_then",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_then_inner_then_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_then_inner_then_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+        initializer=[then_then_c0, then_then_c1],
+    )
+    then_inner_else_graph = helper.make_graph(
+        [
+            helper.make_node("Add", ["if_mo_y", "if_mo_then_else_c0"], ["if_mo_then_inner_else_o0"], name="IfMoThenInnerElseAdd0"),
+            helper.make_node("Add", ["if_mo_x", "if_mo_then_else_c1"], ["if_mo_then_inner_else_o1"], name="IfMoThenInnerElseAdd1"),
+        ],
+        "if_mo_then_inner_else",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_then_inner_else_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_then_inner_else_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+        initializer=[then_else_c0, then_else_c1],
+    )
+    then_graph = helper.make_graph(
+        [
+            helper.make_node("ReduceSum", ["if_mo_x"], ["if_mo_then_sum_x"], name="IfMoThenSumX", keepdims=0),
+            helper.make_node("ReduceSum", ["if_mo_y"], ["if_mo_then_sum_y"], name="IfMoThenSumY", keepdims=0),
+            helper.make_node("Greater", ["if_mo_then_sum_x", "if_mo_then_sum_y"], ["if_mo_then_cond"], name="IfMoThenCond"),
+            helper.make_node(
+                "If",
+                ["if_mo_then_cond"],
+                ["if_mo_then_o0", "if_mo_then_o1"],
+                name="IfMoThenInnerIf",
+                then_branch=then_inner_then_graph,
+                else_branch=then_inner_else_graph,
+            ),
+        ],
+        "if_mo_top_then",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_then_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_then_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+    )
+
+    else_then_c0 = numpy_helper.from_array(np.asarray(5.0, dtype=np.float32), name="if_mo_else_then_c0")
+    else_then_c1 = numpy_helper.from_array(np.asarray(6.0, dtype=np.float32), name="if_mo_else_then_c1")
+    else_else_c0 = numpy_helper.from_array(np.asarray(7.0, dtype=np.float32), name="if_mo_else_else_c0")
+    else_else_c1 = numpy_helper.from_array(np.asarray(8.0, dtype=np.float32), name="if_mo_else_else_c1")
+    else_inner_then_graph = helper.make_graph(
+        [
+            helper.make_node("Add", ["if_mo_x", "if_mo_else_then_c0"], ["if_mo_else_inner_then_o0"], name="IfMoElseInnerThenAdd0"),
+            helper.make_node("Add", ["if_mo_y", "if_mo_else_then_c1"], ["if_mo_else_inner_then_o1"], name="IfMoElseInnerThenAdd1"),
+        ],
+        "if_mo_else_inner_then",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_else_inner_then_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_else_inner_then_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+        initializer=[else_then_c0, else_then_c1],
+    )
+    else_inner_else_graph = helper.make_graph(
+        [
+            helper.make_node("Add", ["if_mo_y", "if_mo_else_else_c0"], ["if_mo_else_inner_else_o0"], name="IfMoElseInnerElseAdd0"),
+            helper.make_node("Add", ["if_mo_x", "if_mo_else_else_c1"], ["if_mo_else_inner_else_o1"], name="IfMoElseInnerElseAdd1"),
+        ],
+        "if_mo_else_inner_else",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_else_inner_else_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_else_inner_else_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+        initializer=[else_else_c0, else_else_c1],
+    )
+    else_graph = helper.make_graph(
+        [
+            helper.make_node("ReduceSum", ["if_mo_x"], ["if_mo_else_sum_x"], name="IfMoElseSumX", keepdims=0),
+            helper.make_node("ReduceSum", ["if_mo_y"], ["if_mo_else_sum_y"], name="IfMoElseSumY", keepdims=0),
+            helper.make_node("Less", ["if_mo_else_sum_x", "if_mo_else_sum_y"], ["if_mo_else_cond"], name="IfMoElseCond"),
+            helper.make_node(
+                "If",
+                ["if_mo_else_cond"],
+                ["if_mo_else_o0", "if_mo_else_o1"],
+                name="IfMoElseInnerIf",
+                then_branch=else_inner_then_graph,
+                else_branch=else_inner_else_graph,
+            ),
+        ],
+        "if_mo_top_else",
+        [],
+        [
+            helper.make_tensor_value_info("if_mo_else_o0", TensorProto.FLOAT, [2, 2]),
+            helper.make_tensor_value_info("if_mo_else_o1", TensorProto.FLOAT, [2, 2]),
+        ],
+    )
+
+    nodes = [
+        helper.make_node("ReduceSum", ["if_mo_x"], ["if_mo_sum_x"], name="IfMoTopSumX", keepdims=0),
+        helper.make_node("ReduceSum", ["if_mo_y"], ["if_mo_sum_y"], name="IfMoTopSumY", keepdims=0),
+        top_cond,
+        helper.make_node(
+            "If",
+            ["if_mo_cond"],
+            ["if_mo_out0", "if_mo_out1"],
+            name="IfMoTopIf",
+            then_branch=then_graph,
+            else_branch=else_graph,
+        ),
+    ]
+    graph = helper.make_graph(nodes, "if_mo_graph", [x, y], [out0, out1])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_size_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("size_x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("size_y", TensorProto.INT64, [])
+    node = helper.make_node("Size", ["size_x"], ["size_y"], name="SizeNode")
+    graph = helper.make_graph([node], "size_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_if_branch_lstm_optional_input_model() -> onnx.ModelProto:
+    cond = helper.make_tensor_value_info("if_lstm_cond", TensorProto.BOOL, [])
+    x = helper.make_tensor_value_info("if_lstm_x", TensorProto.FLOAT, [3, 1, 2])
+    h = helper.make_tensor_value_info("if_lstm_h", TensorProto.FLOAT, [1, 1, 2])
+    c = helper.make_tensor_value_info("if_lstm_c", TensorProto.FLOAT, [1, 1, 2])
+    y = helper.make_tensor_value_info("if_lstm_out", TensorProto.FLOAT, [1, 1, 2])
+
+    W = numpy_helper.from_array(
+        np.asarray(
+            [
+                [
+                    [0.20, -0.10],
+                    [0.05, 0.15],
+                    [0.30, -0.25],
+                    [0.10, 0.12],
+                    [-0.18, 0.08],
+                    [0.11, -0.09],
+                    [0.04, 0.07],
+                    [-0.06, 0.03],
+                ]
+            ],
+            dtype=np.float32,
+        ),
+        name="if_lstm_W",
+    )
+    R = numpy_helper.from_array(
+        np.asarray(
+            [
+                [
+                    [0.05, -0.02],
+                    [0.03, 0.01],
+                    [0.02, -0.04],
+                    [0.01, 0.03],
+                    [-0.02, 0.02],
+                    [0.04, -0.01],
+                    [0.03, 0.02],
+                    [-0.01, 0.01],
+                ]
+            ],
+            dtype=np.float32,
+        ),
+        name="if_lstm_R",
+    )
+    B = numpy_helper.from_array(
+        np.asarray(
+            [[0.01, -0.02, 0.03, 0.01, -0.01, 0.00, 0.02, -0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
+            dtype=np.float32,
+        ),
+        name="if_lstm_B",
+    )
+
+    then_nodes = [
+        helper.make_node(
+            "LSTM",
+            ["if_lstm_x", "if_lstm_W", "if_lstm_R", "if_lstm_B", "", "if_lstm_h", "if_lstm_c"],
+            ["if_lstm_then_y", "if_lstm_then_h", "if_lstm_then_c"],
+            name="IfBranchLSTM",
+            hidden_size=2,
+            direction="forward",
+        ),
+    ]
+    then_graph = helper.make_graph(
+        then_nodes,
+        "if_lstm_then_graph",
+        [],
+        [helper.make_tensor_value_info("if_lstm_then_h", TensorProto.FLOAT, [1, 1, 2])],
+    )
+
+    else_nodes = [
+        helper.make_node(
+            "Identity",
+            ["if_lstm_h"],
+            ["if_lstm_else_h"],
+            name="IfBranchElseIdentity",
+        ),
+    ]
+    else_graph = helper.make_graph(
+        else_nodes,
+        "if_lstm_else_graph",
+        [],
+        [helper.make_tensor_value_info("if_lstm_else_h", TensorProto.FLOAT, [1, 1, 2])],
+    )
+
+    if_node = helper.make_node(
+        "If",
+        ["if_lstm_cond"],
+        ["if_lstm_out"],
+        name="IfBranchTop",
+        then_branch=then_graph,
+        else_branch=else_graph,
+    )
+    graph = helper.make_graph(
+        [if_node],
+        "if_lstm_graph",
+        [cond, x, h, c],
+        [y],
+        initializer=[W, R, B],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def test_flatbuffer_direct_if_p1_lowers_to_builtin_ops_without_custom() -> None:
     model_ir = lower_onnx_to_ir(
         _make_if_p1_model(),
@@ -29539,6 +29910,48 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     out_tensor = model_ir.tensors["If_p3_output"]
     assert out_tensor.shape_signature is not None
     assert int(out_tensor.shape_signature[0]) == 100
+
+
+def test_flatbuffer_direct_if_multi_output_nested_lowers_to_builtin_ops_without_custom() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_if_multi_output_nested_model(),
+        output_file_name="if_multi_output_nested_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert any(op in op_types for op in {"SELECT", "SELECT_V2"})
+    assert "if_mo_out0" in model_ir.tensors
+    assert "if_mo_out1" in model_ir.tensors
+
+
+def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_without_custom() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_if_branch_lstm_optional_input_model(),
+        output_file_name="if_branch_lstm_optional_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "UNIDIRECTIONAL_SEQUENCE_LSTM" in op_types
+    assert any(op in op_types for op in {"SELECT", "SELECT_V2", "MUL"})
+    out_tensor = model_ir.tensors["if_lstm_out"]
+    assert out_tensor.shape_signature is not None
+    assert len(out_tensor.shape_signature) == 3
+    assert int(out_tensor.shape_signature[0]) == 1
+    assert int(out_tensor.shape_signature[1]) == 1
+    assert int(out_tensor.shape_signature[2]) == 2
+
+
+def test_flatbuffer_direct_size_lowers_to_builtin_ops_without_custom() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_size_model(),
+        output_file_name="size_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "SHAPE" in op_types
+    assert "REDUCE_PROD" in op_types
+    out_tensor = model_ir.tensors["size_y"]
+    assert list(out_tensor.shape) in ([], [1])
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -29612,6 +30025,34 @@ def test_flatbuffer_direct_if_p3_op_coverage_reports_builtin_if() -> None:
         assert os.path.isfile(tflite_path)
 
         report_path = os.path.join(out_dir, "if_p3_11_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        if_reports = [
+            node
+            for node in report["graph_node_reports"]
+            if str(node.get("onnx_op", "")) == "If"
+        ]
+        assert len(if_reports) >= 1
+        assert all(str(node.get("dispatch_mode", "")) == "builtin" for node in if_reports)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_if_multi_output_nested_op_coverage_reports_builtin_if() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_if_multi_output_nested_model()
+        model_path = _save_model(tmpdir, "if_multi_output_nested_13", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path=model_path,
+            output_dir=out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        assert os.path.isfile(tflite_path)
+
+        report_path = os.path.join(out_dir, "if_multi_output_nested_13_op_coverage_report.json")
         assert os.path.isfile(report_path)
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)

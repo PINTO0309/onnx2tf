@@ -498,31 +498,43 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         ctx.ensure_tensor(initial_c_name)
         initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
         initial_c_shape = [int(v) for v in ctx.get_tensor_shape(initial_c_name)]
-        if len(initial_h_shape) != 3 or len(initial_c_shape) != 3:
-            raise NotImplementedError(
-                "LSTM initial_h/initial_c must be rank-3. "
-                f"op={node.name} initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-            )
-        if (
-            int(initial_h_shape[0]) > 0 and int(initial_h_shape[0]) != expected_num_directions
-        ) or (
-            int(initial_c_shape[0]) > 0 and int(initial_c_shape[0]) != expected_num_directions
-        ):
-            raise NotImplementedError(
-                "LSTM initial_h/initial_c first dim must match num_directions. "
-                f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
-                f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-            )
-        if (
-            int(initial_h_shape[2]) > 0 and int(initial_h_shape[2]) != hidden_size
-        ) or (
-            int(initial_c_shape[2]) > 0 and int(initial_c_shape[2]) != hidden_size
-        ):
-            raise NotImplementedError(
-                "LSTM initial_h/initial_c hidden dim must match hidden_size. "
-                f"op={node.name} hidden_size={hidden_size} "
-                f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
-            )
+        if len(initial_h_shape) == 3 and len(initial_c_shape) == 3:
+            initial_h_sig = [int(v) for v in list(initial_h_shape)]
+            initial_c_sig = [int(v) for v in list(initial_c_shape)]
+            initial_h_tensor = ctx.model_ir.tensors.get(initial_h_name, None)
+            initial_c_tensor = ctx.model_ir.tensors.get(initial_c_name, None)
+            if (
+                initial_h_tensor is not None
+                and initial_h_tensor.shape_signature is not None
+                and len(initial_h_tensor.shape_signature) == 3
+            ):
+                initial_h_sig = [int(v) for v in list(initial_h_tensor.shape_signature)]
+            if (
+                initial_c_tensor is not None
+                and initial_c_tensor.shape_signature is not None
+                and len(initial_c_tensor.shape_signature) == 3
+            ):
+                initial_c_sig = [int(v) for v in list(initial_c_tensor.shape_signature)]
+            if (
+                int(initial_h_sig[0]) > 0 and int(initial_h_sig[0]) != expected_num_directions
+            ) or (
+                int(initial_c_sig[0]) > 0 and int(initial_c_sig[0]) != expected_num_directions
+            ):
+                raise NotImplementedError(
+                    "LSTM initial_h/initial_c first dim must match num_directions. "
+                    f"op={node.name} direction={direction} expected_num_directions={expected_num_directions} "
+                    f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+                )
+            if (
+                int(initial_h_sig[2]) > 0 and int(initial_h_sig[2]) != hidden_size
+            ) or (
+                int(initial_c_sig[2]) > 0 and int(initial_c_sig[2]) != hidden_size
+            ):
+                raise NotImplementedError(
+                    "LSTM initial_h/initial_c hidden dim must match hidden_size. "
+                    f"op={node.name} hidden_size={hidden_size} "
+                    f"initial_h_shape={initial_h_shape} initial_c_shape={initial_c_shape}"
+                )
 
     fw_w_i, fw_w_f, fw_w_c, fw_w_o = _split_onnx_lstm_gates(
         np.asarray(W[0], dtype=np.float32),
@@ -567,9 +579,35 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         slice_input_name = state_input_name
         state_shape = [int(v) for v in ctx.get_tensor_shape(state_input_name)]
         if len(state_shape) != 3:
-            raise NotImplementedError(
-                f"LSTM {state_tag} must be rank-3. op={node.name} shape={state_shape}"
+            reshaped_state_name = ctx.add_intermediate_tensor(
+                f"{node.name}_{state_tag}_dir{dir_index}_reshape3d",
+                dtype="FLOAT32",
+                shape=[int(expected_num_directions), int(batch_dim), int(hidden_size)],
             )
+            reshape_shape_name = _add_const(
+                f"{state_tag}_dir{dir_index}_reshape3d_shape",
+                np.asarray(
+                    [int(expected_num_directions), int(batch_dim), int(hidden_size)],
+                    dtype=np.int32,
+                ),
+                dtype=np.int32,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[state_input_name, reshape_shape_name],
+                    outputs=[reshaped_state_name],
+                    options={
+                        "newShape": [
+                            int(expected_num_directions),
+                            int(batch_dim),
+                            int(hidden_size),
+                        ]
+                    },
+                )
+            )
+            slice_input_name = reshaped_state_name
+            state_shape = [int(expected_num_directions), int(batch_dim), int(hidden_size)]
         if not (expected_num_directions == 1 and int(state_shape[0]) == 1):
             slice_input_name = ctx.add_intermediate_tensor(
                 f"{node.name}_{state_tag}_dir{dir_index}_slice",
