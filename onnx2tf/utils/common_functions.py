@@ -4037,6 +4037,7 @@ def dummy_onnx_inference(
     enable_ort_output_memmap: bool = False,
     ort_output_memmap_dir: Optional[str] = None,
     ort_output_memmap_paths_for_cleanup: Optional[List[str]] = None,
+    ort_disable_graph_optimization: bool = False,
     shape_hints: Optional[List[str]] = None,
     value_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
@@ -4078,6 +4079,10 @@ def dummy_onnx_inference(
     ort_output_memmap_paths_for_cleanup: Optional[List[str]]
         Optional list to collect generated memmap file paths for explicit
         cleanup by the caller after outputs are consumed.
+
+    ort_disable_graph_optimization: bool
+        True to disable ONNX Runtime graph optimization for compatibility
+        fallback (e.g., conv auto_pad + dilation runtime issues).
 
     value_hints: Optional[List[str]]
         Value hints for dummy inference input tensors.
@@ -4302,6 +4307,11 @@ def dummy_onnx_inference(
         serialized_graph = tmp_onnx_path
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
+    if bool(ort_disable_graph_optimization):
+        try:
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+        except Exception:
+            pass
 
     if use_cuda:
         if check_cuda_enabled():

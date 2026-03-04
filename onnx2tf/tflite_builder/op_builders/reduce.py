@@ -7,6 +7,25 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import OperatorIR
 
 
+def _is_unresolved_placeholder_shape(shape: List[int], signature: List[int] | None) -> bool:
+    if len(shape) == 0 or not all(int(v) == 1 for v in shape):
+        return False
+    if signature is None:
+        return len(shape) == 1
+    if len(signature) != len(shape):
+        return False
+    if any(int(v) < 0 for v in signature):
+        return True
+    if len(shape) == 1 and int(signature[0]) == 1:
+        return True
+    return False
+
+
+def _materialize_tensor_shape_from_signature(tensor: Any, *, signature: List[int]) -> None:
+    tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(signature)]
+    tensor.shape_signature = [int(v) if int(v) > 0 else -1 for v in list(signature)]
+
+
 def _normalize_axes(axes: List[int], rank: int, node_name: str) -> List[int]:
     normalized: List[int] = []
     for axis in axes:
@@ -148,10 +167,41 @@ def build_global_average_pool_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
 
     input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+    if len(input_shape) < 3:
+        if len(input_signature) >= 3:
+            _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+        elif _is_unresolved_placeholder_shape(input_shape, input_signature):
+            _materialize_tensor_shape_from_signature(
+                input_tensor,
+                signature=[-1, -1, -1, -1],
+            )
+            input_shape = [int(v) for v in list(input_tensor.shape)]
     if len(input_shape) < 3:
         raise NotImplementedError(
             f"GlobalAveragePool requires rank>=3. op={node.name} input_shape={input_shape}"
         )
+    if len(output_shape) != len(input_shape):
+        if len(output_signature) == len(input_shape):
+            _materialize_tensor_shape_from_signature(output_tensor, signature=output_signature)
+        else:
+            inferred_output_signature = [int(v) for v in list(input_signature)]
+            for axis in range(2, len(inferred_output_signature)):
+                inferred_output_signature[axis] = 1
+            _materialize_tensor_shape_from_signature(output_tensor, signature=inferred_output_signature)
 
     spatial_axes = [int(v) for v in range(2, len(input_shape))]
     axes_const = ctx.add_const_tensor(

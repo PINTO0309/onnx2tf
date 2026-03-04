@@ -1095,6 +1095,33 @@ def _make_fused_conv_tanh_chain_unknown_intermediate_model() -> onnx.ModelProto:
     )
 
 
+def _make_fused_conv_unknown_rank_io_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, None)
+    w = numpy_helper.from_array(np.ones((4, 3, 3, 3), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="B")
+    node = helper.make_node(
+        "FusedConv",
+        ["x", "W", "B"],
+        ["y"],
+        name="FusedConvUnknownRankIONode",
+        domain="com.microsoft",
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+        dilations=[1, 1],
+        group=1,
+        activation="Relu",
+    )
+    graph = helper.make_graph([node], "fused_conv_unknown_rank_io_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 2),
+        ],
+    )
+
+
 def _make_conv1d_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 8])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 8])
@@ -1404,6 +1431,40 @@ def _make_gemm_dynamic_weight_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_maxpool1d_indices_kernel2_pad1_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 14])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 8])
+    idx = helper.make_tensor_value_info("idx", TensorProto.INT64, [1, 1, 8])
+    node = helper.make_node(
+        "MaxPool",
+        ["x"],
+        ["y", "idx"],
+        name="MaxPool1DIndicesKernel2Pad1Node",
+        kernel_shape=[2],
+        strides=[2],
+        pads=[1, 1],
+        ceil_mode=0,
+    )
+    graph = helper.make_graph([node], "maxpool1d_indices_k2_p1_graph", [x], [y, idx])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_maxpool1d_indices_kernel1_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 32, 51])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 32, 51])
+    idx = helper.make_tensor_value_info("idx", TensorProto.INT64, [1, 32, 51])
+    node = helper.make_node(
+        "MaxPool",
+        ["x"],
+        ["y", "idx"],
+        name="MaxPool1DIndicesKernel1Node",
+        kernel_shape=[1],
+        strides=[1],
+    )
+    graph = helper.make_graph([node], "maxpool1d_indices_k1_graph", [x], [y, idx])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_einsum_abgd_gf_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 1, 4, 3])
     w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 5])
@@ -1431,6 +1492,82 @@ def _make_einsum_aijk_aijh_model() -> onnx.ModelProto:
         equation="aijk,aijh->ajkh",
     )
     graph = helper.make_graph([node], "einsum_aijk_aijh_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_nlhd_nhdv_nlh_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 5, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    s = helper.make_tensor_value_info("s", TensorProto.FLOAT, [1, 5, 2])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 5, 2, 4])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y", "s"],
+        ["z"],
+        name="EinsumNLHDNHDVNLHNode",
+        equation="nlhd,nhdv,nlh->nlhv",
+    )
+    graph = helper.make_graph([node], "einsum_nlhd_nhdv_nlh_graph", [x, y, s], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_bhid_bhjd_bhij_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 6, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 7, 8])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 4, 6, 7])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumBHIDBHJDBHIJNode",
+        equation="bhid,bhjd->bhij",
+    )
+    graph = helper.make_graph([node], "einsum_bhid_bhjd_bhij_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_bhij_bhjd_bhid_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 6, 7])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 7, 8])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 4, 6, 8])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumBHIJBHJDBHIDNode",
+        equation="bhij,bhjd->bhid",
+    )
+    graph = helper.make_graph([node], "einsum_bhij_bhjd_bhid_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_bhji_bhjd_bhid_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 7, 6])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 7, 8])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 4, 6, 8])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumBHJIBHJDBHIDNode",
+        equation="bhji,bhjd->bhid",
+    )
+    graph = helper.make_graph([node], "einsum_bhji_bhjd_bhid_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_bmd_bnd_bmn_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 9, 16])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 11, 16])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 9, 11])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumBMDBNDBMNNode",
+        equation="bmd,bnd->bmn",
+    )
+    graph = helper.make_graph([node], "einsum_bmd_bnd_bmn_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -4318,6 +4455,38 @@ def _make_space_to_depth_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_space_to_depth_chain_conv_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2, 2])
+    shape1 = numpy_helper.from_array(np.array([1, 2, 2, 2, 2, 2], dtype=np.int64), name="shape1")
+    shape2 = numpy_helper.from_array(np.array([1, 8, 2, 2], dtype=np.int64), name="shape2")
+    w = numpy_helper.from_array(
+        np.arange(3 * 8, dtype=np.float32).reshape(3, 8, 1, 1) * 0.01,
+        name="conv_w",
+    )
+    b = numpy_helper.from_array(np.array([0.1, -0.2, 0.3], dtype=np.float32), name="conv_b")
+    n0 = helper.make_node("Reshape", ["x", "shape1"], ["r1"], name="ReshapeNode0")
+    n1 = helper.make_node("Transpose", ["r1"], ["t1"], name="TransposeNode", perm=[0, 1, 3, 5, 2, 4])
+    n2 = helper.make_node("Reshape", ["t1", "shape2"], ["s2d_like"], name="ReshapeNode1")
+    n3 = helper.make_node(
+        "Conv",
+        ["s2d_like", "conv_w", "conv_b"],
+        ["y"],
+        name="ConvNode",
+        kernel_shape=[1, 1],
+        pads=[0, 0, 0, 0],
+        strides=[1, 1],
+    )
+    graph = helper.make_graph(
+        [n0, n1, n2, n3],
+        "space_to_depth_chain_conv_graph",
+        [x],
+        [y],
+        initializer=[shape1, shape2, w, b],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_transpose_attr_only_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
@@ -4951,6 +5120,38 @@ def test_flatbuffer_direct_gemm_dynamic_weight_lowering_uses_batch_matmul() -> N
     assert "FULLY_CONNECTED" not in op_types
 
 
+def test_flatbuffer_direct_maxpool1d_indices_kernel2_pad1_lowering_uses_builtin_ops() -> None:
+    model = _make_maxpool1d_indices_kernel2_pad1_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="maxpool1d_indices_k2_p1_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "MAX_POOL_2D" in op_types
+    assert "ARG_MAX" in op_types
+    assert "SQUEEZE" in op_types
+
+
+def test_flatbuffer_direct_maxpool1d_indices_kernel1_lowering_uses_builtin_ops() -> None:
+    model = _make_maxpool1d_indices_kernel1_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="maxpool1d_indices_k1_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "MAX_POOL_2D" in op_types
+    assert "ARG_MAX" in op_types
+    assert "SQUEEZE" in op_types
+
+
 def test_flatbuffer_direct_einsum_abgd_gf_lowering_uses_builtin_ops() -> None:
     model = _make_einsum_abgd_gf_model()
     register_default_preprocess_rules()
@@ -4980,6 +5181,80 @@ def test_flatbuffer_direct_einsum_aijk_aijh_lowering_uses_builtin_ops() -> None:
     assert "CUSTOM" not in op_types
     assert "BATCH_MATMUL" in op_types
     assert "TRANSPOSE" in op_types
+
+
+def test_flatbuffer_direct_einsum_nlhd_nhdv_nlh_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_nlhd_nhdv_nlh_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_nlhd_nhdv_nlh_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
+    assert "TRANSPOSE" in op_types
+    assert "EXPAND_DIMS" in op_types
+    assert "MUL" in op_types
+
+
+def test_flatbuffer_direct_einsum_bhid_bhjd_bhij_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_bhid_bhjd_bhij_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_bhid_bhjd_bhij_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
+
+
+def test_flatbuffer_direct_einsum_bhij_bhjd_bhid_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_bhij_bhjd_bhid_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_bhij_bhjd_bhid_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
+
+
+def test_flatbuffer_direct_einsum_bhji_bhjd_bhid_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_bhji_bhjd_bhid_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_bhji_bhjd_bhid_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
+    assert "TRANSPOSE" in op_types
+
+
+def test_flatbuffer_direct_einsum_bmd_bnd_bmn_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_bmd_bnd_bmn_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_bmd_bnd_bmn_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -22504,6 +22779,40 @@ def test_flatbuffer_direct_fused_conv_tanh_keeps_explicit_tanh_ops() -> None:
     assert all(str(op.options.get("fusedActivationFunction", "NONE")).upper() == "NONE" for op in conv_ops)
 
 
+def test_flatbuffer_direct_fused_conv_unknown_rank_io_materializes_rank4_shapes() -> None:
+    model = _make_fused_conv_unknown_rank_io_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="fused_conv_unknown_rank_io_test",
+        allow_custom_ops=False,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("CUSTOM") == 0
+    assert op_types.count("CONV_2D") == 1
+    conv_op = next(op for op in model_ir.operators if str(op.op_type) == "CONV_2D")
+    assert str(conv_op.options.get("fusedActivationFunction", "NONE")).upper() in {"NONE", "RELU"}
+    if str(conv_op.options.get("fusedActivationFunction", "NONE")).upper() == "NONE":
+        assert op_types.count("RELU") == 1
+
+    input_tensor = model_ir.tensors.get("x")
+    output_tensor = model_ir.tensors.get("y")
+    assert input_tensor is not None
+    assert output_tensor is not None
+    assert len(list(input_tensor.shape)) == 4
+    assert len(list(output_tensor.shape)) == 4
+    assert input_tensor.shape_signature is not None
+    assert output_tensor.shape_signature is not None
+    assert len(list(input_tensor.shape_signature)) == 4
+    assert len(list(output_tensor.shape_signature)) == 4
+    assert int(input_tensor.shape_signature[1]) == 3
+    output_sig = [int(v) for v in list(output_tensor.shape_signature)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    assert 4 in output_sig or 4 in output_shape
+
+
 def test_flatbuffer_direct_serialize_model_prunes_dead_ops() -> None:
     model_ir = ModelIR(name="serialize_prune_test")
     model_ir.inputs = ["x"]
@@ -27066,6 +27375,20 @@ def test_flatbuffer_direct_prelu_emits_builtin_prelu() -> None:
         tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
         op_names = _collect_builtin_op_names(tflite_path)
         assert "PRELU" in op_names
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_space_to_depth_gather_bridge_avoids_transpose_sandwich() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_space_to_depth_chain_conv_model()
+        model_path = _save_model(tmpdir, "space_to_depth_chain_conv", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+        op_names = _collect_builtin_op_names(tflite_path)
+        assert "SPACE_TO_DEPTH" in op_names
+        assert "GATHER" in op_names
+        for i in range(len(op_names) - 2):
+            assert op_names[i : i + 3] != ["TRANSPOSE", "GATHER", "TRANSPOSE"]
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")

@@ -473,6 +473,7 @@ def _fuse_space_to_depth_chain(
                 "reason_code=space_to_depth_spatial_mismatch "
                 f"shape1={shape1} shape2={shape2}"
             )
+        in_channels = int(shape1[1])
 
         for intermediate in [str(n0.output[0]), str(n1.output[0])]:
             if intermediate in graph_outputs or int(consumer_counts.get(intermediate, 0)) > 1:
@@ -482,16 +483,59 @@ def _fuse_space_to_depth_chain(
                     f"tensor={intermediate}"
                 )
 
+        # This reshape-transpose-reshape pattern corresponds to CRD-style channel
+        # ordering. ONNX SpaceToDepth is DCR, so for C>1 we append a channel
+        # gather to convert DCR output channels into the original CRD order.
+        s2d_output_name = str(n2.output[0]) if in_channels == 1 else _next_name(
+            used_names,
+            f"{str(n2.output[0])}_s2d_dcr",
+        )
         fused_nodes.append(
             _make_node(
                 used_names=used_names,
                 op_type="SpaceToDepth",
                 inputs=[str(n0.input[0])],
-                outputs=[str(n2.output[0])],
+                outputs=[s2d_output_name],
                 name_base=n2.name or "space_to_depth_fused",
                 attrs={"blocksize": int(block_size), "mode": "DCR"},
             )
         )
+        if in_channels > 1:
+            indices_name = _next_name(
+                used_names,
+                f"{str(n2.output[0])}_dcr_to_crd_indices",
+            )
+            indices_tensor = helper.make_tensor(
+                name=_next_name(used_names, f"{indices_name}_tensor"),
+                data_type=onnx.TensorProto.INT64,
+                dims=[int(in_channels * block_size * block_size)],
+                vals=[
+                    int(((by * block_size) + bx) * in_channels + c_idx)
+                    for c_idx in range(int(in_channels))
+                    for by in range(int(block_size))
+                    for bx in range(int(block_size))
+                ],
+            )
+            fused_nodes.append(
+                _make_node(
+                    used_names=used_names,
+                    op_type="Constant",
+                    inputs=[],
+                    outputs=[indices_name],
+                    name_base=n2.name or "space_to_depth_indices",
+                    attrs={"value": indices_tensor},
+                )
+            )
+            fused_nodes.append(
+                _make_node(
+                    used_names=used_names,
+                    op_type="Gather",
+                    inputs=[s2d_output_name, indices_name],
+                    outputs=[str(n2.output[0])],
+                    name_base=n2.name or "space_to_depth_reorder",
+                    attrs={"axis": 1},
+                )
+            )
         rewritten += 1
         i += 3
     return fused_nodes, matched, rewritten

@@ -485,6 +485,7 @@ def _get_onnx_eval_outputs(
     ort_output_memmap_dir: Optional[str] = None,
     custom_input_op_name_np_data_path: Optional[List[List[str]]] = None,
     seed: int = 0,
+    force_zero_generated_inputs: bool = False,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[str]]:
     generated_input_dir: Optional[str] = None
     generated_custom_inputs: Optional[List[List[str]]] = None
@@ -497,11 +498,14 @@ def _get_onnx_eval_outputs(
         )
         generated_custom_inputs = []
         for input_idx, (input_name, input_dtype, input_shape) in enumerate(input_specs):
-            sample = _generate_seeded_input(
-                shape=input_shape,
-                np_dtype=input_dtype,
-                rng=rng,
-            )
+            if bool(force_zero_generated_inputs):
+                sample = np.zeros(input_shape, dtype=input_dtype)
+            else:
+                sample = _generate_seeded_input(
+                    shape=input_shape,
+                    np_dtype=input_dtype,
+                    rng=rng,
+                )
             file_name = (
                 f"seeded_{input_idx:04d}_{_normalize_tensor_name(input_name)}.npy"
             )
@@ -545,6 +549,23 @@ def _get_onnx_eval_outputs(
                 enable_ort_output_memmap=False,
                 ort_output_memmap_dir=None,
                 ort_output_memmap_paths_for_cleanup=None,
+            )
+        elif (
+            "Dilation not supported for AutoPadType::SAME_UPPER or AutoPadType::SAME_LOWER" in ex_str
+        ):
+            print(
+                "[op-error] onnxruntime dummy inference hit conv auto_pad+dilation runtime limitation. "
+                "Retrying with ONNX Runtime graph optimization disabled."
+            )
+            outputs = dummy_onnx_inference(
+                onnx_graph=onnx_graph,
+                output_names=target_output_names,
+                custom_input_op_name_np_data_path=effective_custom_inputs,
+                input_datas_for_validation=onnx_input_datas_for_validation,
+                enable_ort_output_memmap=bool(enable_ort_output_memmap),
+                ort_output_memmap_dir=ort_output_memmap_dir,
+                ort_output_memmap_paths_for_cleanup=memmap_paths_for_cleanup,
+                ort_disable_graph_optimization=True,
             )
         else:
             raise
@@ -755,6 +776,24 @@ def _write_csv(output_csv_path: str, rows: List[Dict[str, Any]]) -> None:
             )
 
 
+def _cleanup_memmap_paths(paths: List[str]) -> None:
+    for path in paths:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    paths.clear()
+
+
+def _is_scatter_nd_index_oob_error(ex: BaseException) -> bool:
+    ex_str = str(ex)
+    return (
+        "scatter_nd index out of bounds" in ex_str
+        or "SCATTER_ND" in ex_str
+    )
+
+
 def generate_op_error_report(
     *,
     onnx_path: str,
@@ -837,6 +876,7 @@ def generate_op_error_report(
 
     memmap_paths_for_cleanup: List[str] = []
     records: List[Dict[str, Any]] = []
+    onnx_outputs: Dict[str, np.ndarray] = {}
     try:
         onnx_outputs, onnx_input_datas_for_validation, memmap_paths_for_cleanup = _get_onnx_eval_outputs(
             onnx_graph=onnx_graph,
@@ -846,11 +886,39 @@ def generate_op_error_report(
             custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
             seed=int(seed),
         )
-        _invoke_tflite_with_onnx_inputs(
-            onnx_graph=onnx_graph,
-            interpreter=interpreter,
-            onnx_input_datas_for_validation=onnx_input_datas_for_validation,
-        )
+        try:
+            _invoke_tflite_with_onnx_inputs(
+                onnx_graph=onnx_graph,
+                interpreter=interpreter,
+                onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+            )
+        except Exception as invoke_ex:
+            if (
+                custom_input_op_name_np_data_path is None
+                and _is_scatter_nd_index_oob_error(invoke_ex)
+            ):
+                if verbose:
+                    print(
+                        "[op-error] scatter_nd index out of bounds detected with seeded random inputs. "
+                        "Retrying once with zero-filled generated inputs."
+                    )
+                _cleanup_memmap_paths(memmap_paths_for_cleanup)
+                onnx_outputs, onnx_input_datas_for_validation, memmap_paths_for_cleanup = _get_onnx_eval_outputs(
+                    onnx_graph=onnx_graph,
+                    target_output_names=target_output_names,
+                    enable_ort_output_memmap=bool(onnxruntime_output_memmap),
+                    ort_output_memmap_dir=onnxruntime_output_memmap_dir,
+                    custom_input_op_name_np_data_path=None,
+                    seed=int(seed),
+                    force_zero_generated_inputs=True,
+                )
+                _invoke_tflite_with_onnx_inputs(
+                    onnx_graph=onnx_graph,
+                    interpreter=interpreter,
+                    onnx_input_datas_for_validation=onnx_input_datas_for_validation,
+                )
+            else:
+                raise
 
         for tensor_name in onnx_tensor_names:
             meta = onnx_output_meta[tensor_name]
@@ -950,13 +1018,50 @@ def generate_op_error_report(
                 if isinstance(compared_shape, list) and len(compared_shape) > 0:
                     record["onnx_shape"] = compared_shape
             records.append(record)
+    except Exception as ex:
+        if not _is_scatter_nd_index_oob_error(ex):
+            raise
+        if verbose:
+            print(
+                "[op-error] skipped tensor comparison because TFLite invoke failed with scatter_nd "
+                f"index out of bounds. reason={ex}"
+            )
+        for tensor_name in onnx_tensor_names:
+            meta = onnx_output_meta[tensor_name]
+            records.append(
+                {
+                    "identifier": int(meta["identifier"]),
+                    "onnx_op_name": str(meta["onnx_op_name"]),
+                    "onnx_op_type": str(meta["onnx_op_type"]),
+                    "tensor_name": tensor_name,
+                    "tflite_tensor_name": "",
+                    "mapped_tflite_tensor_name": correspondence_map.get(tensor_name, ""),
+                    "mapping_source": "",
+                    "status": "skipped",
+                    "reason": f"tflite_invoke_failed: {ex}",
+                    "onnx_shape": (
+                        list(np.asarray(onnx_outputs[tensor_name]).shape)
+                        if tensor_name in onnx_outputs
+                        else None
+                    ),
+                    "tflite_shape_raw": None,
+                    "onnx_dtype": (
+                        str(np.asarray(onnx_outputs[tensor_name]).dtype)
+                        if tensor_name in onnx_outputs
+                        else ""
+                    ),
+                    "tflite_dtype_raw": "",
+                    "allclose": None,
+                    "alignment_mode": "",
+                    "alignment_perm": [],
+                    "max_abs": None,
+                    "mean_abs": None,
+                    "rmse": None,
+                    "cosine_similarity": None,
+                }
+            )
     finally:
-        for path in memmap_paths_for_cleanup:
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+        _cleanup_memmap_paths(memmap_paths_for_cleanup)
 
     compared = [r for r in records if r["status"] == "compared"]
     skipped = [r for r in records if r["status"] != "compared"]

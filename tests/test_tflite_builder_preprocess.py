@@ -127,19 +127,24 @@ def _make_interleaved_gelu_chain_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
-def _make_space_to_depth_chain_model(*, with_fanout_conflict: bool = False) -> onnx.ModelProto:
-    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
-    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 2, 2])
+def _make_space_to_depth_chain_model(
+    *,
+    channels: int = 1,
+    with_fanout_conflict: bool = False,
+) -> onnx.ModelProto:
+    out_channels = int(channels) * 4
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, int(channels), 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, int(out_channels), 2, 2])
     extras = []
     outputs = [y]
-    shape1 = helper.make_tensor("shape1", TensorProto.INT64, [6], [1, 2, 2, 2, 2, 2])
-    shape2 = helper.make_tensor("shape2", TensorProto.INT64, [4], [1, 8, 2, 2])
+    shape1 = helper.make_tensor("shape1", TensorProto.INT64, [6], [1, int(channels), 2, 2, 2, 2])
+    shape2 = helper.make_tensor("shape2", TensorProto.INT64, [4], [1, int(out_channels), 2, 2])
     n0 = helper.make_node("Reshape", ["x", "shape1"], ["r1"], name="ReshapeNode0")
     n1 = helper.make_node("Transpose", ["r1"], ["t1"], name="TransposeNode", perm=[0, 1, 3, 5, 2, 4])
     n2 = helper.make_node("Reshape", ["t1", "shape2"], ["y"], name="ReshapeNode1")
     nodes = [n0, n1, n2]
     if with_fanout_conflict:
-        z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 2, 2, 2, 2, 2])
+        z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, int(channels), 2, 2, 2, 2])
         extras.append(z)
         outputs.append(z)
         nodes.append(helper.make_node("Identity", ["t1"], ["z"], name="IdentityConflict"))
@@ -379,7 +384,7 @@ def test_preprocess_default_rules_keep_fused_gelu_chain() -> None:
 def test_pattern_fusion_wave2_rewrites_space_to_depth_chain() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
-    model = _make_space_to_depth_chain_model()
+    model = _make_space_to_depth_chain_model(channels=1)
     preprocessed, report = run_preprocess_pipeline(
         onnx_graph=model,
         enabled_rule_ids=[PATTERN_FUSION_WAVE2_RULE_ID],
@@ -392,10 +397,26 @@ def test_pattern_fusion_wave2_rewrites_space_to_depth_chain() -> None:
     assert int(attrs["blocksize"].i) == 2
 
 
+def test_pattern_fusion_wave2_rewrites_multichannel_space_to_depth_chain() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    model = _make_space_to_depth_chain_model(channels=2)
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[PATTERN_FUSION_WAVE2_RULE_ID],
+    )
+    assert report["summary"]["changed_rule_count"] == 1
+    ops = [str(node.op_type) for node in preprocessed.graph.node]
+    assert ops == ["SpaceToDepth", "Constant", "Gather"]
+    gather_node = preprocessed.graph.node[2]
+    attrs = {str(a.name): a for a in gather_node.attribute}
+    assert int(attrs["axis"].i) == 1
+
+
 def test_pattern_fusion_wave2_invalid_rewrite_raises_reason_code() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
-    model = _make_space_to_depth_chain_model(with_fanout_conflict=True)
+    model = _make_space_to_depth_chain_model(channels=1, with_fanout_conflict=True)
     with pytest.raises(ValueError, match="reason_code=space_to_depth_fanout_conflict"):
         run_preprocess_pipeline(
             onnx_graph=model,
