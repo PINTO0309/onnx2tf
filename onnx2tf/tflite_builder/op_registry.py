@@ -1926,10 +1926,20 @@ def _validate_conv_transpose(node: Any, ctx: Any) -> None:
             node_op=node.op,
         )
     group = int(node.attrs.get("group", 1))
-    if group != 1:
+    if group <= 0:
         raise NodeValidationError(
             reason_code="unsupported_grouped_convolution",
-            message=f"ConvTranspose currently supports group=1 only. group={group}",
+            message=f"ConvTranspose group must be positive. group={group}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(weights.ndim) == 4 and int(weights.shape[0]) % int(group) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_grouped_convolution",
+            message=(
+                "ConvTranspose2D weights/input channels must be divisible by group. "
+                f"weight_shape={list(weights.shape)} group={group}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
@@ -1991,10 +2001,21 @@ def _validate_conv_transpose(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
-        if dilations != [1, 1]:
+        if len(dilations) == 0:
+            dilations = [1, 1]
+        elif len(dilations) == 1:
+            dilations = [int(dilations[0]), int(dilations[0])]
+        elif len(dilations) != 2:
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",
-                message=f"ConvTranspose dilations must be [1,1]. dilations={dilations}",
+                message=f"ConvTranspose dilations must have length 2. dilations={dilations}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if any(int(v) <= 0 for v in dilations):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"ConvTranspose dilations must be positive. dilations={dilations}",
                 node_name=node.name,
                 node_op=node.op,
             )
@@ -2027,6 +2048,13 @@ def _validate_conv_transpose(node: Any, ctx: Any) -> None:
                 node_op=node.op,
             )
     else:
+        if int(group) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=f"ConvTranspose3D currently supports group=1 only. group={group}",
+                node_name=node.name,
+                node_op=node.op,
+            )
         dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1, 1]))]
         output_padding = [int(v) for v in list(node.attrs.get("output_padding", []))]
         strides = [int(v) for v in list(node.attrs.get("strides", [1, 1, 1]))]
@@ -2295,12 +2323,24 @@ def _validate_matmul(node: Any, ctx: Any) -> None:
     b_rank = len(ctx.get_tensor_shape(node.inputs[1].name))
     is_standard_matmul = a_rank >= 2 and b_rank >= 2
     is_vector_rhs_matmul = a_rank >= 2 and b_rank == 1
-    if not (is_standard_matmul or is_vector_rhs_matmul):
+    is_vector_lhs_matmul = a_rank == 1 and b_rank >= 2
+    is_vector_dot = a_rank == 1 and b_rank == 1
+    is_scalar_multiply = a_rank == 0 or b_rank == 0
+    if not (
+        is_standard_matmul
+        or is_vector_rhs_matmul
+        or is_vector_lhs_matmul
+        or is_vector_dot
+        or is_scalar_multiply
+    ):
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
             message=(
                 "MatMul input ranks must be (a_rank>=2,b_rank>=2) "
-                "or vector-rhs form (a_rank>=2,b_rank=1). "
+                "or vector-rhs form (a_rank>=2,b_rank=1) "
+                "or vector-lhs form (a_rank=1,b_rank>=2) "
+                "or vector-dot form (a_rank=1,b_rank=1) "
+                "or scalar multiply form (a_rank=0 or b_rank=0). "
                 f"a_rank={a_rank} b_rank={b_rank}"
             ),
             node_name=node.name,
@@ -4078,6 +4118,89 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
     lhs = input_terms[0]
     rhs = input_terms[1]
 
+    def _validate_generic_two_input_einsum() -> bool:
+        if len(input_terms) != 2:
+            return False
+        if out == "":
+            return False
+        if len(lhs) == 2 and len(rhs) == 2 and len(out) == 2:
+            # Keep existing rank-2 matmul/fc validation path.
+            return False
+        if len(set(lhs)) != len(lhs) or len(set(rhs)) != len(rhs) or len(set(out)) != len(out):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Einsum generic builtin lowering does not support repeated labels "
+                    f"within one term. equation={equation}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        lhs_set = set(lhs)
+        rhs_set = set(rhs)
+        out_set = set(out)
+        if not out_set.issubset(lhs_set.union(rhs_set)):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Einsum output labels must be present in inputs for builtin lowering. "
+                    f"equation={equation}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+        rhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+        out_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+        if len(lhs_shape) != len(lhs) or len(rhs_shape) != len(rhs) or len(out_shape) != len(out):
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "Einsum generic builtin lowering requires rank to match equation term length. "
+                    f"equation={equation} lhs_shape={lhs_shape} rhs_shape={rhs_shape} out_shape={out_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        label_dims: Dict[str, int] = {}
+
+        def _record_dim(label: str, dim: int, kind: str) -> None:
+            if int(dim) <= 0:
+                return
+            prev = label_dims.get(label, None)
+            if prev is not None and int(prev) != int(dim):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "Einsum label dimension mismatch for generic builtin lowering. "
+                        f"equation={equation} label={label} prev={prev} current={dim} source={kind}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+            label_dims[label] = int(dim)
+
+        for axis, label in enumerate(lhs):
+            _record_dim(str(label), int(lhs_shape[axis]), "lhs")
+        for axis, label in enumerate(rhs):
+            _record_dim(str(label), int(rhs_shape[axis]), "rhs")
+        for axis, label in enumerate(out):
+            out_dim = int(out_shape[axis])
+            known_dim = label_dims.get(str(label), None)
+            if known_dim is not None and out_dim > 0 and int(known_dim) != int(out_dim):
+                raise NodeValidationError(
+                    reason_code="unsupported_output_shape",
+                    message=(
+                        "Einsum output label dimension mismatch for generic builtin lowering. "
+                        f"equation={equation} label={label} expected={known_dim} got={out_dim}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        return True
+
     # Specialized builtin lowering:
     #   nlhd,nhdv,nlh->nlhv
     # using TRANSPOSE+BATCH_MATMUL+TRANSPOSE+EXPAND_DIMS+MUL.
@@ -4366,6 +4489,115 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
             )
         return
 
+    # Specialized builtin lowering:
+    #   bchw,bnc->bnhw
+    # using TRANSPOSE+RESHAPE+TRANSPOSE+BATCH_MATMUL+RESHAPE+TRANSPOSE.
+    if (
+        len(lhs) == 4
+        and len(rhs) == 3
+        and len(out) == 4
+        and lhs[0] == rhs[0] == out[0]
+        and lhs[1] == rhs[2]
+        and rhs[1] == out[1]
+        and lhs[2] == out[2]
+        and lhs[3] == out[3]
+        and lhs[1] not in out
+    ):
+        lhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+        rhs_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
+        out_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+        if len(lhs_shape) != 4 or len(rhs_shape) != 3 or len(out_shape) != 4:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "Einsum equation bchw,bnc->bnhw requires lhs rank-4, rhs rank-3, output rank-4. "
+                    f"lhs_shape={lhs_shape} rhs_shape={rhs_shape} out_shape={out_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        def _known_dim(shape: List[int], axis: int) -> Optional[int]:
+            dim = int(shape[axis])
+            return dim if dim > 0 else None
+
+        lhs_b = _known_dim(lhs_shape, 0)
+        rhs_b = _known_dim(rhs_shape, 0)
+        out_b = _known_dim(out_shape, 0)
+        if lhs_b is not None and rhs_b is not None and lhs_b != rhs_b:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum batch dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"lhs_b={lhs_b} rhs_b={rhs_b}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if lhs_b is not None and out_b is not None and lhs_b != out_b:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output batch dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"lhs_b={lhs_b} out_b={out_b}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_c = _known_dim(lhs_shape, 1)
+        rhs_c = _known_dim(rhs_shape, 2)
+        if lhs_c is not None and rhs_c is not None and lhs_c != rhs_c:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Einsum contraction dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"lhs_c={lhs_c} rhs_c={rhs_c}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        rhs_n = _known_dim(rhs_shape, 1)
+        out_n = _known_dim(out_shape, 1)
+        if rhs_n is not None and out_n is not None and rhs_n != out_n:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output n dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"rhs_n={rhs_n} out_n={out_n}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_h = _known_dim(lhs_shape, 2)
+        out_h = _known_dim(out_shape, 2)
+        if lhs_h is not None and out_h is not None and lhs_h != out_h:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output h dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"lhs_h={lhs_h} out_h={out_h}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+        lhs_w = _known_dim(lhs_shape, 3)
+        out_w = _known_dim(out_shape, 3)
+        if lhs_w is not None and out_w is not None and lhs_w != out_w:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=(
+                    "Einsum output w dimension mismatch for equation bchw,bnc->bnhw. "
+                    f"lhs_w={lhs_w} out_w={out_w}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        return
+
     if (
         len(lhs) == 4
         and len(rhs) == 2
@@ -4523,6 +4755,9 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+        return
+
+    if _validate_generic_two_input_einsum():
         return
 
     if len(lhs) != 2 or len(rhs) != 2 or len(out) != 2:
@@ -7311,8 +7546,8 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             min_outputs=1,
             max_outputs=1,
             required_attrs=["kernel_shape"],
-            input_rank={0: [4]},
-            output_rank={0: [1, 4]},
+            input_rank={0: [3, 4, 5]},
+            output_rank={0: [1, 3, 4, 5]},
         ),
         extra_validator=_validate_pool,
     ),
@@ -7326,8 +7561,8 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             min_outputs=1,
             max_outputs=2,
             required_attrs=["kernel_shape"],
-            input_rank={0: [3, 4]},
-            output_rank={0: [1, 3, 4], 1: [1, 3, 4]},
+            input_rank={0: [3, 4, 5]},
+            output_rank={0: [1, 3, 4, 5], 1: [1, 3, 4, 5]},
         ),
         extra_validator=_validate_pool,
     ),
@@ -7340,7 +7575,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "MatMul": DispatchEntry(
         onnx_op="MatMul",
-        tflite_ops=["BATCH_MATMUL"],
+        tflite_ops=["BATCH_MATMUL", "RESHAPE", "SQUEEZE", "CAST"],
         builder=build_matmul_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_matmul,

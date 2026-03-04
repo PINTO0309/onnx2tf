@@ -2127,9 +2127,14 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         )
 
     group = int(node.attrs.get("group", 1))
-    if group != 1:
+    if int(group) <= 0:
         raise NotImplementedError(
-            f"ConvTranspose currently supports group=1 only. op={node.name} group={group}"
+            f"ConvTranspose group must be positive. op={node.name} group={group}"
+        )
+    if int(weights.shape[0]) % int(group) != 0:
+        raise NotImplementedError(
+            "ConvTranspose weights/input channels must be divisible by group. "
+            f"op={node.name} weight_shape={list(weights.shape)} group={group}"
         )
     strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
     if len(strides) == 0:
@@ -2141,9 +2146,17 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             f"ConvTranspose strides must have length 2 in flatbuffer_direct. op={node.name} strides={strides}"
         )
     dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
-    if dilations != [1, 1]:
+    if len(dilations) == 0:
+        dilations = [1, 1]
+    elif len(dilations) == 1:
+        dilations = [int(dilations[0]), int(dilations[0])]
+    elif len(dilations) != 2:
         raise NotImplementedError(
-            f"ConvTranspose dilations must be [1,1] in flatbuffer_direct. op={node.name} dilations={dilations}"
+            f"ConvTranspose dilations must have length 2 in flatbuffer_direct. op={node.name} dilations={dilations}"
+        )
+    if any(int(v) <= 0 for v in dilations):
+        raise NotImplementedError(
+            f"ConvTranspose dilations must be positive in flatbuffer_direct. op={node.name} dilations={dilations}"
         )
     output_padding = [int(v) for v in list(node.attrs.get("output_padding", []))]
     if len(output_padding) == 0:
@@ -2183,6 +2196,12 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"ConvTranspose requires static positive output shape in flatbuffer_direct. op={node.name} output_shape={output_shape}"
         )
+    out_channels_total = int(weights.shape[1]) * int(group)
+    if int(output_shape[1]) > 0 and int(output_shape[1]) != int(out_channels_total):
+        raise NotImplementedError(
+            "ConvTranspose output channels are inconsistent with weights/group. "
+            f"op={node.name} output_shape={output_shape} weight_shape={list(weights.shape)} group={group}"
+        )
 
     if len(original_output_signature) != 4:
         output_signature = [int(output_shape[0]), int(output_shape[1]), -1, -1]
@@ -2196,11 +2215,25 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
 
     # ONNX ConvTranspose weights are [C_in, C_out/group, kH, kW].
     # TFLite TRANSPOSE_CONV expects [C_out, kH, kW, C_in].
-    w_deconv = np.transpose(weights, (1, 2, 3, 0)).astype(np.float32)
-    w_name = ctx.add_const_tensor(
-        f"{node.name}_transpose_conv_filter",
-        w_deconv,
-    )
+    weights_effective = np.asarray(weights, dtype=np.float32)
+    if list(dilations) != [1, 1]:
+        k_h = int(weights_effective.shape[2])
+        k_w = int(weights_effective.shape[3])
+        dil_h = int(dilations[0])
+        dil_w = int(dilations[1])
+        eff_k_h = int((k_h - 1) * dil_h + 1)
+        eff_k_w = int((k_w - 1) * dil_w + 1)
+        expanded = np.zeros(
+            (
+                int(weights_effective.shape[0]),
+                int(weights_effective.shape[1]),
+                int(eff_k_h),
+                int(eff_k_w),
+            ),
+            dtype=np.float32,
+        )
+        expanded[:, :, ::int(dil_h), ::int(dil_w)] = weights_effective
+        weights_effective = expanded
 
     nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
     nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]
@@ -2242,6 +2275,11 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         len(original_output_signature) != 4
         or any(int(v) <= 0 for v in list(original_output_signature))
     )
+    if int(group) != 1 and bool(use_dynamic_output_shape):
+        raise NotImplementedError(
+            "Grouped ConvTranspose requires static output shape in flatbuffer_direct. "
+            f"op={node.name} output_signature={original_output_signature} group={group}"
+        )
     if use_dynamic_output_shape and needs_spatial_crop:
         pads_are_symmetric = (
             int(pad_top) == int(pad_bottom)
@@ -2443,15 +2481,115 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         dtype=ctx.get_tensor_dtype(output_name),
         shape=nhwc_transpose_conv_output_shape,
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="TRANSPOSE_CONV",
-            inputs=[out_shape_name, w_name, x_nhwc],
-            outputs=[y_nhwc],
+    if int(group) == 1:
+        w_deconv = np.transpose(weights_effective, (1, 2, 3, 0)).astype(np.float32)
+        w_name = ctx.add_const_tensor(
+            f"{node.name}_transpose_conv_filter",
+            w_deconv,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TRANSPOSE_CONV",
+                inputs=[out_shape_name, w_name, x_nhwc],
+                outputs=[y_nhwc],
                 options={
                     "padding": _resolve_conv_transpose_padding(node),
                     "strideH": int(strides[0]),
                     "strideW": int(strides[1]),
+                },
+            )
+        )
+    else:
+        in_channels_per_group = int(weights_effective.shape[0]) // int(group)
+        out_channels_per_group = int(weights_effective.shape[1])
+        if (
+            int(in_channels_per_group) <= 0
+            or int(out_channels_per_group) <= 0
+            or int(nhwc_output_shape[3]) % int(group) != 0
+        ):
+            raise NotImplementedError(
+                "Grouped ConvTranspose channels are invalid for split lowering. "
+                f"op={node.name} group={group} "
+                f"weights_shape={list(weights_effective.shape)} nhwc_output_shape={nhwc_output_shape}"
+            )
+        split_axis_name = ctx.add_const_tensor(
+            f"{node.name}_transpose_conv_group_split_axis",
+            np.asarray(3, dtype=np.int32),
+        )
+        split_outputs: list[str] = []
+        for group_idx in range(int(group)):
+            split_out_name = ctx.add_intermediate_tensor(
+                f"{node.name}_group{group_idx}_input_nhwc",
+                dtype=ctx.get_tensor_dtype(output_name),
+                shape=[
+                    int(nhwc_input_shape[0]),
+                    int(nhwc_input_shape[1]),
+                    int(nhwc_input_shape[2]),
+                    int(in_channels_per_group),
+                ],
+            )
+            split_outputs.append(split_out_name)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SPLIT",
+                inputs=[split_axis_name, x_nhwc],
+                outputs=split_outputs,
+                options={"numSplits": int(group)},
+            )
+        )
+        group_outputs: list[str] = []
+        for group_idx in range(int(group)):
+            cin_begin = int(group_idx) * int(in_channels_per_group)
+            cin_end = int(cin_begin + in_channels_per_group)
+            w_group = weights_effective[cin_begin:cin_end, :, :, :]
+            w_group_tfl = np.transpose(w_group, (1, 2, 3, 0)).astype(np.float32)
+            w_group_name = ctx.add_const_tensor(
+                f"{node.name}_group{group_idx}_transpose_conv_filter",
+                w_group_tfl,
+            )
+            out_shape_group_name = ctx.add_const_tensor(
+                f"{node.name}_group{group_idx}_transpose_conv_output_shape",
+                np.asarray(
+                    [
+                        int(nhwc_transpose_conv_output_shape[0]),
+                        int(nhwc_transpose_conv_output_shape[1]),
+                        int(nhwc_transpose_conv_output_shape[2]),
+                        int(out_channels_per_group),
+                    ],
+                    dtype=np.int32,
+                ),
+            )
+            y_group_name = ctx.add_intermediate_tensor(
+                f"{node.name}_group{group_idx}_output_nhwc",
+                dtype=ctx.get_tensor_dtype(output_name),
+                shape=[
+                    int(nhwc_transpose_conv_output_shape[0]),
+                    int(nhwc_transpose_conv_output_shape[1]),
+                    int(nhwc_transpose_conv_output_shape[2]),
+                    int(out_channels_per_group),
+                ],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE_CONV",
+                    inputs=[out_shape_group_name, w_group_name, split_outputs[group_idx]],
+                    outputs=[y_group_name],
+                    options={
+                        "padding": _resolve_conv_transpose_padding(node),
+                        "strideH": int(strides[0]),
+                        "strideW": int(strides[1]),
+                    },
+                )
+            )
+            group_outputs.append(y_group_name)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=group_outputs,
+                outputs=[y_nhwc],
+                options={
+                    "axis": 3,
+                    "fusedActivationFunction": "NONE",
                 },
             )
         )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -490,7 +491,12 @@ def _sanitize_input_name_for_filename(input_name: str) -> str:
     sanitized = re.sub(r"[^0-9A-Za-z._-]", "_", sanitized)
     sanitized = re.sub(r"_+", "_", sanitized).strip("._")
     if sanitized == "":
-        return "input"
+        sanitized = "input"
+    max_len = 180
+    if len(sanitized) > max_len:
+        digest = hashlib.sha1(str(input_name).encode("utf-8")).hexdigest()[:16]
+        keep = max(1, max_len - len(digest) - 1)
+        sanitized = f"{sanitized[:keep].rstrip('._')}_{digest}"
     return sanitized
 
 

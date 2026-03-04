@@ -41,7 +41,13 @@ def _normalize_axes(axes: List[int], rank: int, node_name: str) -> List[int]:
     return normalized
 
 
-def _resolve_reduce_axes(node: Any, ctx: Any, input_rank: int) -> List[int]:
+def _resolve_reduce_axes(
+    node: Any,
+    ctx: Any,
+    input_rank: int,
+    *,
+    preserve_raw_axes: bool = False,
+) -> List[int]:
     axes: List[int]
     if len(node.inputs) >= 2:
         axes_arr = ctx.get_constant_array(node.inputs[1].name)
@@ -63,7 +69,83 @@ def _resolve_reduce_axes(node: Any, ctx: Any, input_rank: int) -> List[int]:
         if int(node.attrs.get("noop_with_empty_axes", 0)) == 1:
             return []
         axes = [int(v) for v in range(input_rank)]
+    if preserve_raw_axes:
+        # Keep raw ONNX axes when rank metadata is unreliable. TFLite accepts
+        # negative axes for MEAN/REDUCE ops, and preserving -1 avoids
+        # accidental remap to axis=0 from temporary rank-1 placeholders.
+        deduped: List[int] = []
+        for axis in axes:
+            value = int(axis)
+            if value not in deduped:
+                deduped.append(value)
+        return deduped
     return _normalize_axes(axes, input_rank, node.name)
+
+
+def _resolve_reduce_input_rank(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    input_shape: List[int],
+    output_shape: List[int],
+) -> int:
+    """Resolve robust input rank for Reduce* ops.
+
+    Some dynamic paths temporarily collapse input tensor metadata to rank-1
+    placeholder shape (e.g. [1]) even though shape_signature keeps true rank.
+    Using that collapsed rank incorrectly normalizes negative axes.
+    """
+    base_rank = int(len(input_shape))
+    if base_rank > 1:
+        return int(base_rank)
+
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else None
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else None
+    )
+
+    candidate_ranks = [int(base_rank)]
+    # Prefer ONNX node rank metadata when available. This is often stable even
+    # when intermediate IR tensors are temporarily materialized as rank-1
+    # placeholders during lowering.
+    try:
+        node_input_shape = getattr(node.inputs[0], "shape", None) if len(node.inputs) > 0 else None
+        if node_input_shape is not None:
+            candidate_ranks.append(int(len(list(node_input_shape))))
+    except Exception:
+        pass
+    try:
+        node_output_shape = getattr(node.outputs[0], "shape", None) if len(node.outputs) > 0 else None
+        if node_output_shape is not None:
+            candidate_ranks.append(int(len(list(node_output_shape))))
+    except Exception:
+        pass
+    if input_signature is not None:
+        candidate_ranks.append(int(len(input_signature)))
+    if bool(int(node.attrs.get("keepdims", 1))):
+        candidate_ranks.append(int(len(output_shape)))
+        if output_signature is not None:
+            candidate_ranks.append(int(len(output_signature)))
+
+    resolved_rank = int(max(candidate_ranks))
+    if resolved_rank <= 0:
+        return int(base_rank)
+
+    if _is_unresolved_placeholder_shape(input_shape, input_signature):
+        return int(resolved_rank)
+    if int(base_rank) == 1 and int(resolved_rank) > 1:
+        return int(resolved_rank)
+    return int(base_rank)
 
 
 def _resolve_cumsum_axis(node: Any, ctx: Any, input_rank: int) -> int:
@@ -129,7 +211,33 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     output_shape = ctx.get_tensor_shape(output_name)
-    axes = _resolve_reduce_axes(node, ctx, len(input_shape))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else None
+    )
+    input_rank = _resolve_reduce_input_rank(
+        node=node,
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+        input_shape=[int(v) for v in list(input_shape)],
+        output_shape=[int(v) for v in list(output_shape)],
+    )
+    rank_unreliable = bool(
+        int(len(input_shape)) <= 1
+        and _is_unresolved_placeholder_shape(
+            [int(v) for v in list(input_shape)],
+            input_signature,
+        )
+    )
+    axes = _resolve_reduce_axes(
+        node,
+        ctx,
+        input_rank,
+        preserve_raw_axes=rank_unreliable,
+    )
     if len(axes) == 0 and int(node.attrs.get("noop_with_empty_axes", 0)) == 1:
         shape_const = ctx.add_const_tensor(
             f"{output_name}_reduce_noop_shape",

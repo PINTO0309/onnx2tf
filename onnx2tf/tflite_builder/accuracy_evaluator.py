@@ -5,6 +5,7 @@ import json
 import os
 import queue as queue_module
 import re
+import hashlib
 import time
 import traceback
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
@@ -22,9 +23,31 @@ if TYPE_CHECKING:
 
 def _sanitize_tensor_name_for_path(name: str) -> str:
     safe = re.sub(r"[^0-9A-Za-z._-]+", "_", str(name))
+    safe = re.sub(r"_+", "_", safe).strip("._")
     if safe == "":
         return "tensor"
     return safe
+
+
+def _make_safe_memmap_filename(
+    *,
+    file_prefix: str,
+    index: int,
+    tensor_name: str,
+    suffix: str = ".npy",
+    max_stem_len: int = 220,
+) -> str:
+    safe_name = _sanitize_tensor_name_for_path(tensor_name)
+    stem = f"{file_prefix}_{int(index)}_{safe_name}"
+    if len(stem) <= int(max_stem_len):
+        return f"{stem}{suffix}"
+    digest = hashlib.sha1(str(tensor_name).encode("utf-8")).hexdigest()[:16]
+    reserved = len(f"{file_prefix}_{int(index)}__{digest}")
+    available = max(1, int(max_stem_len) - int(reserved))
+    shortened = safe_name[:available].rstrip("._")
+    if shortened == "":
+        shortened = "tensor"
+    return f"{file_prefix}_{int(index)}_{shortened}_{digest}{suffix}"
 
 
 def _write_named_arrays_to_memmap_files(
@@ -37,10 +60,13 @@ def _write_named_arrays_to_memmap_files(
     manifest: Dict[str, Dict[str, Any]] = {}
     for idx, (name, value) in enumerate(arrays.items()):
         array = np.asarray(value)
-        safe_name = _sanitize_tensor_name_for_path(name)
         output_path = os.path.join(
             memmap_dir,
-            f"{file_prefix}_{idx}_{safe_name}.npy",
+            _make_safe_memmap_filename(
+                file_prefix=str(file_prefix),
+                index=int(idx),
+                tensor_name=str(name),
+            ),
         )
         mm = np.lib.format.open_memmap(
             output_path,

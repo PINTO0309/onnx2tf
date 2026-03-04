@@ -3,6 +3,7 @@ import ast
 import os
 import io
 import re
+import hashlib
 import sys
 import copy
 import json
@@ -4025,6 +4026,34 @@ def stridedslice_with_flexing_deterrence(
     return tensor_after_stridedslice
 
 
+def _make_safe_ort_memmap_filename(
+    *,
+    output_index: int,
+    output_name: str,
+    suffix: str = ".mmap",
+    max_stem_len: int = 220,
+) -> str:
+    """Return a memmap filename stem that stays safely below NAME_MAX.
+
+    Linux typically limits one path component to 255 bytes. ONNX tensor names
+    can be very long, so we sanitize and truncate with a stable hash suffix.
+    """
+    sanitized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(output_name))
+    sanitized = re.sub(r"_+", "_", sanitized).strip("._")
+    if sanitized == "":
+        sanitized = "output"
+    stem = f"ort_output_{int(output_index)}_{sanitized}"
+    if len(stem) <= int(max_stem_len):
+        return f"{stem}{suffix}"
+    digest = hashlib.sha1(str(output_name).encode("utf-8")).hexdigest()[:16]
+    reserved = len(f"ort_output_{int(output_index)}__{digest}")
+    available = max(1, int(max_stem_len) - int(reserved))
+    shortened = sanitized[:available].rstrip("._")
+    if shortened == "":
+        shortened = "output"
+    return f"ort_output_{int(output_index)}_{shortened}_{digest}{suffix}"
+
+
 def dummy_onnx_inference(
     *,
     onnx_graph: onnx.ModelProto,
@@ -4562,8 +4591,11 @@ def dummy_onnx_inference(
 
         memmap_outputs = {}
         for idx, (output_name, output_shape) in enumerate(zip(output_names_order, output_shapes)):
-            safe_output_name = re.sub(r'[^0-9A-Za-z._-]+', '_', output_name)
-            memmap_path = os.path.join(memmap_dir, f'ort_output_{idx}_{safe_output_name}.mmap')
+            memmap_file_name = _make_safe_ort_memmap_filename(
+                output_index=idx,
+                output_name=output_name,
+            )
+            memmap_path = os.path.join(memmap_dir, memmap_file_name)
             if ort_output_memmap_paths_for_cleanup is not None:
                 ort_output_memmap_paths_for_cleanup.append(memmap_path)
             output_dtype = gs_graph.outputs[idx].dtype
