@@ -61,6 +61,25 @@ def _numpy_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
     )
 
 
+def _prefer_int32_index_output_dtype(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    requested_dtype: str,
+) -> str:
+    dtype = str(requested_dtype).upper()
+    if dtype == "INT32":
+        return "INT32"
+    if dtype == "INT64":
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.dtype = "INT32"
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(tensor_name)] = "INT32"
+        return "INT32"
+    return dtype
+
+
 def _normalize_axis(axis: int, rank: int, *, op_name: str) -> int:
     normalized = int(axis)
     if normalized < 0:
@@ -1373,6 +1392,151 @@ def _resolve_reshape_shape_with_static_dims(
     return resolved_shape
 
 
+def _rewrite_dynamic_reshape_shape_allowzero_copy_dim0(
+    *,
+    ctx: Any,
+    input_name: str,
+    shape_input_name: str,
+    output_name: str,
+) -> str:
+    """
+    ONNX Reshape with allowzero=0 treats 0 in shape tensor as "copy from input".
+    TFLite RESHAPE does not support that semantic, so rewrite leading dim0 at runtime:
+      shape[0] = (shape[0] == 0) ? SHAPE(input)[0] : shape[0]
+    """
+    shape_input_shape = [int(v) for v in ctx.get_tensor_shape(shape_input_name)]
+    if len(shape_input_shape) != 1:
+        return shape_input_name
+
+    first_begin_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_dim0_begin",
+        np.asarray([0], dtype=np.int32),
+    )
+    first_size_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_dim0_size",
+        np.asarray([1], dtype=np.int32),
+    )
+    shape_dim0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_shape_dim0",
+        dtype="INT32",
+        shape=[1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[shape_input_name, first_begin_name, first_size_name],
+            outputs=[shape_dim0_name],
+        )
+    )
+
+    input_shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_input_shape",
+        dtype="INT32",
+        shape=[max(int(len(ctx.get_tensor_shape(input_name))), 1)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[input_shape_name],
+            options={"outType": "INT32"},
+        )
+    )
+    input_dim0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_input_dim0",
+        dtype="INT32",
+        shape=[1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[input_shape_name, first_begin_name, first_size_name],
+            outputs=[input_dim0_name],
+        )
+    )
+
+    zero_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_dim0_zero",
+        np.asarray([0], dtype=np.int32),
+    )
+    dim0_is_zero_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_shape_dim0_is_zero",
+        dtype="BOOL",
+        shape=[1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="EQUAL",
+            inputs=[shape_dim0_name, zero_name],
+            outputs=[dim0_is_zero_name],
+            options={},
+        )
+    )
+
+    fixed_dim0_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_shape_dim0_fixed",
+        dtype="INT32",
+        shape=[1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT",
+            inputs=[dim0_is_zero_name, input_dim0_name, shape_dim0_name],
+            outputs=[fixed_dim0_name],
+            options={},
+        )
+    )
+
+    tail_begin_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_tail_begin",
+        np.asarray([1], dtype=np.int32),
+    )
+    tail_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_shape_tail",
+        dtype="INT32",
+        shape=[1],
+    )
+    # Keep shape tail dynamic: shape[1:] works for both known and unknown length vectors.
+    tail_end_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_tail_end",
+        np.asarray([0], dtype=np.int32),
+    )
+    tail_stride_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape_tail_stride",
+        np.asarray([1], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="STRIDED_SLICE",
+            inputs=[shape_input_name, tail_begin_name, tail_end_name, tail_stride_name],
+            outputs=[tail_name],
+            options={
+                "beginMask": 0,
+                "endMask": 1,
+                "ellipsisMask": 0,
+                "newAxisMask": 0,
+                "shrinkAxisMask": 0,
+                "offset": False,
+            },
+        )
+    )
+
+    fixed_shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_shape_fixed",
+        dtype="INT32",
+        shape=[1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=[fixed_dim0_name, tail_name],
+            outputs=[fixed_shape_name],
+            options={"axis": 0, "fusedActivationFunction": "NONE"},
+        )
+    )
+    return fixed_shape_name
+
+
 def build_reshape_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     shape_name = node.inputs[1].name
@@ -1446,6 +1610,18 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
                         },
                     )
                 )
+            if not bool(allowzero):
+                reshape_shape_input_name = _rewrite_dynamic_reshape_shape_allowzero_copy_dim0(
+                    ctx=ctx,
+                    input_name=input_name,
+                    shape_input_name=reshape_shape_input_name,
+                    output_name=output_name,
+                )
+            shape_vector_shape = [int(v) for v in ctx.get_tensor_shape(reshape_shape_input_name)]
+            if len(shape_vector_shape) == 1 and int(shape_vector_shape[0]) > 0:
+                output_rank = int(shape_vector_shape[0])
+                output_tensor.shape = [1 for _ in range(output_rank)]
+                output_tensor.shape_signature = [-1 for _ in range(output_rank)]
             # Dynamic shape input drives runtime reshape dimensions. Keep options empty
             # to avoid static-shape rewrite passes from clobbering this tensor.
             new_shape = []
@@ -2096,7 +2272,11 @@ def build_range_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(delta_name)
     ctx.ensure_tensor(output_name)
 
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
+    )
     if output_dtype not in {
         "INT8", "INT16", "INT32", "INT64",
         "UINT8", "UINT16", "UINT32", "UINT64",
@@ -2304,7 +2484,13 @@ def build_shape_op(node: Any, ctx: Any) -> None:
 
     input_rank = len(ctx.get_tensor_shape(input_name))
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
-    shape_output_dtype = output_dtype if output_dtype in {"INT32", "INT64"} else "INT32"
+    shape_output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=output_dtype,
+    )
+    if shape_output_dtype not in {"INT32", "INT64"}:
+        shape_output_dtype = "INT32"
 
     start = int(node.attrs.get("start", 0))
     end = int(node.attrs.get("end", input_rank))
@@ -2430,7 +2616,11 @@ def build_cast_op(node: Any, ctx: Any) -> None:
     )
 
     input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
@@ -4321,6 +4511,8 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         else "FLOAT16"
     )
     compute_np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
+    replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
+    rtpo_gather = "gather" in set(replace_to_pseudo_operators or set())
 
     def _add_float_const(base_name: str, value: float) -> str:
         return ctx.add_const_tensor(
@@ -4372,22 +4564,158 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         _add_binary_op("ADD", mul_name, x_idx, linear_name)
         return linear_name
 
+    def _build_gather_rtpo(
+        *,
+        linear_idx_name: str,
+        params_name: str,
+        gathered_name: str,
+        tag: str,
+        spatial_shape: List[int],
+        flattened_axis_size: int,
+    ) -> None:
+        if not bool(rtpo_gather):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_name, linear_idx_name],
+                    outputs=[gathered_name],
+                    options={
+                        "axis": 2,
+                        "batchDims": 1,
+                    },
+                )
+            )
+            return
+
+        batch_size = int(n)
+        channels = int(c)
+        spatial_dims = [int(v) for v in list(spatial_shape)]
+        if (
+            int(batch_size) <= 0
+            or int(channels) <= 0
+            or int(flattened_axis_size) <= 0
+            or any(int(v) <= 0 for v in spatial_dims)
+        ):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_name, linear_idx_name],
+                    outputs=[gathered_name],
+                    options={
+                        "axis": 2,
+                        "batchDims": 1,
+                    },
+                )
+            )
+            return
+
+        indices_shape = [int(batch_size)] + [int(v) for v in spatial_dims]
+        offsets_shape = [int(batch_size)] + [1] * len(spatial_dims)
+        batch_offsets = (
+            np.arange(int(batch_size), dtype=np.int32).reshape(offsets_shape)
+            * np.asarray(int(flattened_axis_size), dtype=np.int32)
+        )
+        offsets_name = ctx.add_const_tensor(
+            f"{output_name}_gridsample_{tag}_gather_offsets",
+            batch_offsets,
+        )
+        global_idx_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_global_idx",
+            dtype="INT32",
+            shape=indices_shape,
+        )
+        _add_binary_op("ADD", linear_idx_name, offsets_name, global_idx_name)
+
+        flat_index_count = int(np.prod(np.asarray(indices_shape, dtype=np.int64)))
+        global_idx_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_global_idx_flat",
+            dtype="INT32",
+            shape=[int(flat_index_count)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=global_idx_name,
+            output_name=global_idx_flat_name,
+            new_shape=[int(flat_index_count)],
+            preserve_dynamic_shape=True,
+        )
+
+        params_nlc_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_params_nlc",
+            dtype=compute_dtype,
+            shape=[int(batch_size), int(flattened_axis_size), int(channels)],
+        )
+        params_nlc_name = make_transpose(
+            ctx=ctx,
+            input_name=params_name,
+            output_name=params_nlc_name,
+            perm_values=[0, 2, 1],
+            allow_elide_inverse_chain=True,
+        )
+        params_linear_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_params_linear",
+            dtype=compute_dtype,
+            shape=[int(batch_size) * int(flattened_axis_size), int(channels)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=params_nlc_name,
+            output_name=params_linear_name,
+            new_shape=[int(batch_size) * int(flattened_axis_size), int(channels)],
+            preserve_dynamic_shape=True,
+        )
+
+        gathered_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_flat",
+            dtype=compute_dtype,
+            shape=[int(flat_index_count), int(channels)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[params_linear_name, global_idx_flat_name],
+                outputs=[gathered_flat_name],
+                options={
+                    "axis": 0,
+                    "batchDims": 0,
+                },
+            )
+        )
+
+        gathered_nspatialc_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_nspatialc",
+            dtype=compute_dtype,
+            shape=[int(batch_size)] + [int(v) for v in spatial_dims] + [int(channels)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=gathered_flat_name,
+            output_name=gathered_nspatialc_name,
+            new_shape=[int(batch_size)] + [int(v) for v in spatial_dims] + [int(channels)],
+            preserve_dynamic_shape=True,
+        )
+        gather_perm = [0, len(spatial_dims) + 1] + [idx + 1 for idx in range(len(spatial_dims))]
+        make_transpose(
+            ctx=ctx,
+            input_name=gathered_nspatialc_name,
+            output_name=gathered_name,
+            perm_values=[int(v) for v in gather_perm],
+            allow_elide_inverse_chain=True,
+        )
+
     def _build_gather(linear_idx_name: str, tag: str, params_name: str) -> str:
         gathered_name = ctx.add_intermediate_tensor(
             f"{output_name}_gridsample_{tag}_gather",
             dtype=compute_dtype,
             shape=[int(n), int(c), int(out_h), int(out_w)],
         )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="GATHER",
-                inputs=[params_name, linear_idx_name],
-                outputs=[gathered_name],
-                options={
-                    "axis": 2,
-                    "batchDims": 1,
-                },
-            )
+        _build_gather_rtpo(
+            linear_idx_name=linear_idx_name,
+            params_name=params_name,
+            gathered_name=gathered_name,
+            tag=tag,
+            spatial_shape=[int(out_h), int(out_w)],
+            flattened_axis_size=int((w + 2) * (h + 2)),
         )
         return gathered_name
 
@@ -4479,16 +4807,13 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
                 dtype=compute_dtype,
                 shape=[int(n), int(c), int(out_d), int(out_h), int(out_w)],
             )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="GATHER",
-                    inputs=[params_name, linear_idx_name],
-                    outputs=[gathered_name],
-                    options={
-                        "axis": 2,
-                        "batchDims": 1,
-                    },
-                )
+            _build_gather_rtpo(
+                linear_idx_name=linear_idx_name,
+                params_name=params_name,
+                gathered_name=gathered_name,
+                tag=tag,
+                spatial_shape=[int(out_d), int(out_h), int(out_w)],
+                flattened_axis_size=int((d + 2) * (h + 2) * (w + 2)),
             )
             return gathered_name
 

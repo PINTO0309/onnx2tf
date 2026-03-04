@@ -178,14 +178,14 @@ def _build_gather_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tupl
 
 def _build_argmax_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["ArgMaxOptionsT"]()
-    output_type = str(op.options.get("outputType", "INT64")).upper()
+    output_type = str(op.options.get("outputType", "INT32")).upper()
     options.outputType = _enum(schema_tflite, "TensorType", output_type)
     return _enum(schema_tflite, "BuiltinOptions", "ArgMaxOptions"), options
 
 
 def _build_argmin_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["ArgMinOptionsT"]()
-    output_type = str(op.options.get("outputType", "INT64")).upper()
+    output_type = str(op.options.get("outputType", "INT32")).upper()
     options.outputType = _enum(schema_tflite, "TensorType", output_type)
     return _enum(schema_tflite, "BuiltinOptions", "ArgMinOptions"), options
 

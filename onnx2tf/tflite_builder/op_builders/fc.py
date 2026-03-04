@@ -1,11 +1,313 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Dict, List
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+
+
+def _einsum_has_duplicate_labels(term: str) -> bool:
+    return len(term) != len(set(term))
+
+
+def _prod(values: List[int]) -> int:
+    result = 1
+    for value in values:
+        result *= int(value)
+    return int(result)
+
+
+def _try_build_generic_two_input_einsum(
+    node: Any,
+    ctx: Any,
+    lhs: str,
+    rhs: str,
+    out: str,
+) -> bool:
+    if out == "":
+        return False
+    if _einsum_has_duplicate_labels(lhs) or _einsum_has_duplicate_labels(rhs) or _einsum_has_duplicate_labels(out):
+        return False
+
+    # Keep the existing rank-2 matmul/fully-connected path for performance.
+    if len(lhs) == 2 and len(rhs) == 2 and len(out) == 2:
+        return False
+
+    out_set = set(out)
+    lhs_set = set(lhs)
+    rhs_set = set(rhs)
+    if not out_set.issubset(lhs_set.union(rhs_set)):
+        return False
+
+    a_name = node.inputs[0].name
+    b_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(a_name)
+    ctx.ensure_tensor(b_name)
+    ctx.ensure_tensor(output_name)
+
+    a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+    b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if len(a_shape) != len(lhs) or len(b_shape) != len(rhs) or len(output_shape) != len(out):
+        return False
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT32"
+
+    def _cast_to_compute(src_name: str, suffix: str) -> str:
+        src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+        if src_dtype == compute_dtype:
+            return src_name
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{suffix}_f32",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[src_name],
+                outputs=[cast_name],
+                options={"inDataType": src_dtype, "outDataType": compute_dtype},
+            )
+        )
+        return cast_name
+
+    def _reduce_labels(
+        src_name: str,
+        src_labels: List[str],
+        reduce_labels: List[str],
+        suffix: str,
+    ) -> tuple[str, List[str], List[int]]:
+        src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
+        if len(reduce_labels) == 0:
+            return src_name, list(src_labels), src_shape
+        axes = [int(idx) for idx, label in enumerate(src_labels) if label in set(reduce_labels)]
+        if len(axes) == 0:
+            return src_name, list(src_labels), src_shape
+        dst_labels = [label for idx, label in enumerate(src_labels) if int(idx) not in set(axes)]
+        dst_shape = [int(dim) for idx, dim in enumerate(src_shape) if int(idx) not in set(axes)]
+        if len(dst_shape) == 0:
+            dst_shape = [1]
+        axes_name = ctx.add_const_tensor(
+            f"{output_name}_{suffix}_axes",
+            np.asarray(axes, dtype=np.int32),
+        )
+        dst_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{suffix}",
+            dtype=compute_dtype,
+            shape=dst_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUM",
+                inputs=[src_name, axes_name],
+                outputs=[dst_name],
+                options={"keepDims": False},
+            )
+        )
+        return dst_name, dst_labels, dst_shape
+
+    def _transpose_to_labels(
+        src_name: str,
+        src_labels: List[str],
+        dst_labels: List[str],
+        suffix: str,
+    ) -> tuple[str, List[str], List[int]]:
+        src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
+        if src_labels == dst_labels:
+            return src_name, list(src_labels), src_shape
+        if len(src_labels) == 0 and len(dst_labels) == 0:
+            return src_name, [], src_shape
+        if set(src_labels) != set(dst_labels):
+            return src_name, list(src_labels), src_shape
+        perm = [int(src_labels.index(label)) for label in dst_labels]
+        if len(perm) <= 1:
+            return src_name, list(src_labels), src_shape
+        perm_name = ctx.add_const_tensor(
+            f"{output_name}_{suffix}_perm",
+            np.asarray(perm, dtype=np.int32),
+        )
+        dst_shape = [int(src_shape[idx]) for idx in perm]
+        dst_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{suffix}",
+            dtype=compute_dtype,
+            shape=dst_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[src_name, perm_name],
+                outputs=[dst_name],
+                options={},
+            )
+        )
+        return dst_name, list(dst_labels), dst_shape
+
+    def _reshape_tensor(src_name: str, dst_shape: List[int], suffix: str) -> str:
+        shape = [int(v) for v in dst_shape] if len(dst_shape) > 0 else [1]
+        shape_name = ctx.add_const_tensor(
+            f"{output_name}_{suffix}_shape",
+            np.asarray(shape, dtype=np.int32),
+        )
+        dst_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{suffix}",
+            dtype=compute_dtype,
+            shape=shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[src_name, shape_name],
+                outputs=[dst_name],
+                options={"newShape": [int(v) for v in shape]},
+            )
+        )
+        return dst_name
+
+    a_cur = _cast_to_compute(a_name, "einsum_a")
+    b_cur = _cast_to_compute(b_name, "einsum_b")
+    a_labels = [str(v) for v in lhs]
+    b_labels = [str(v) for v in rhs]
+
+    # First reduce labels that exist only in one operand and are absent from output.
+    a_unique_reduce = [label for label in a_labels if label not in set(b_labels) and label not in out_set]
+    b_unique_reduce = [label for label in b_labels if label not in set(a_labels) and label not in out_set]
+    a_cur, a_labels, _ = _reduce_labels(a_cur, a_labels, a_unique_reduce, "einsum_a_reduce")
+    b_cur, b_labels, _ = _reduce_labels(b_cur, b_labels, b_unique_reduce, "einsum_b_reduce")
+
+    shared = set(a_labels).intersection(set(b_labels))
+    contract_labels = [label for label in a_labels if label in shared and label not in out_set]
+    batch_labels = [label for label in out if label in shared]
+    lhs_free_labels = [label for label in a_labels if label not in shared]
+    rhs_free_labels = [label for label in b_labels if label not in shared]
+
+    if any(label not in out_set for label in lhs_free_labels):
+        return False
+    if any(label not in out_set for label in rhs_free_labels):
+        return False
+
+    expected_out_labels = set(batch_labels + lhs_free_labels + rhs_free_labels)
+    if expected_out_labels != out_set:
+        return False
+
+    target_a_labels = batch_labels + lhs_free_labels + contract_labels
+    target_b_labels = batch_labels + contract_labels + rhs_free_labels
+    a_cur, a_labels, _ = _transpose_to_labels(a_cur, a_labels, target_a_labels, "einsum_a_perm")
+    b_cur, b_labels, _ = _transpose_to_labels(b_cur, b_labels, target_b_labels, "einsum_b_perm")
+    if a_labels != target_a_labels or b_labels != target_b_labels:
+        return False
+
+    a_shape = [int(v) for v in ctx.get_tensor_shape(a_cur)]
+    b_shape = [int(v) for v in ctx.get_tensor_shape(b_cur)]
+    if not (len(a_labels) == len(a_shape) or (len(a_labels) == 0 and a_shape == [1])):
+        return False
+    if not (len(b_labels) == len(b_shape) or (len(b_labels) == 0 and b_shape == [1])):
+        return False
+
+    a_dims_by_label: Dict[str, int] = {}
+    for idx, label in enumerate(a_labels):
+        a_dims_by_label[label] = int(a_shape[idx])
+    b_dims_by_label: Dict[str, int] = {}
+    for idx, label in enumerate(b_labels):
+        b_dims_by_label[label] = int(b_shape[idx])
+
+    for label in shared:
+        if int(a_dims_by_label.get(label, 1)) != int(b_dims_by_label.get(label, 1)):
+            return False
+
+    batch_dims = [int(a_dims_by_label[label]) for label in batch_labels]
+    lhs_free_dims = [int(a_dims_by_label[label]) for label in lhs_free_labels]
+    contract_dims = [int(a_dims_by_label[label]) for label in contract_labels]
+    rhs_free_dims = [int(b_dims_by_label[label]) for label in rhs_free_labels]
+
+    m_dim = int(_prod(lhs_free_dims) if len(lhs_free_dims) > 0 else 1)
+    k_dim = int(_prod(contract_dims) if len(contract_dims) > 0 else 1)
+    n_dim = int(_prod(rhs_free_dims) if len(rhs_free_dims) > 0 else 1)
+
+    a_mat_shape = [int(v) for v in batch_dims] + [m_dim, k_dim]
+    b_mat_shape = [int(v) for v in batch_dims] + [k_dim, n_dim]
+    a_mat = _reshape_tensor(a_cur, a_mat_shape, "einsum_a_mat")
+    b_mat = _reshape_tensor(b_cur, b_mat_shape, "einsum_b_mat")
+
+    bmm_shape = [int(v) for v in batch_dims] + [m_dim, n_dim]
+    bmm_name = ctx.add_intermediate_tensor(
+        f"{output_name}_einsum_bmm",
+        dtype=compute_dtype,
+        shape=bmm_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[a_mat, b_mat],
+            outputs=[bmm_name],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    pre_out_labels = batch_labels + lhs_free_labels + rhs_free_labels
+    pre_out_shape = [int(v) for v in batch_dims + lhs_free_dims + rhs_free_dims]
+    if len(pre_out_shape) == 0:
+        pre_out_shape = [1]
+    pre_out_name = _reshape_tensor(bmm_name, pre_out_shape, "einsum_pre_out")
+
+    if pre_out_labels != [str(v) for v in out]:
+        if set(pre_out_labels) != out_set:
+            return False
+        perm = [int(pre_out_labels.index(label)) for label in out]
+        perm_name = ctx.add_const_tensor(
+            f"{output_name}_einsum_out_perm",
+            np.asarray(perm, dtype=np.int32),
+        )
+        y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+            f"{output_name}_einsum_out_f32",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[pre_out_name, perm_name],
+                outputs=[y_name],
+                options={},
+            )
+        )
+    else:
+        y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+            f"{output_name}_einsum_out_f32",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        out_shape_name = ctx.add_const_tensor(
+            f"{output_name}_einsum_out_shape",
+            np.asarray(output_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[pre_out_name, out_shape_name],
+                outputs=[y_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+
+    if y_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[y_name],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
+        )
+    return True
 
 
 def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
@@ -718,6 +1020,189 @@ def build_einsum_op(node: Any, ctx: Any) -> None:
 
         if (
             len(lhs) == 4
+            and len(rhs) == 3
+            and len(out) == 4
+            and lhs[0] == rhs[0] == out[0]
+            and lhs[1] == rhs[2]
+            and rhs[1] == out[1]
+            and lhs[2] == out[2]
+            and lhs[3] == out[3]
+            and lhs[1] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+            b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+
+            # bchw -> bhwc
+            a_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_a_perm",
+                np.asarray([0, 2, 3, 1], dtype=np.int32),
+            )
+            a_bhwc_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_bhwc",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[2]), int(a_shape[3]), int(a_shape[1])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[a_compute, a_perm_name],
+                    outputs=[a_bhwc_name],
+                    options={},
+                )
+            )
+
+            # [b,h,w,c] -> [b,h*w,c]
+            a_bhwc_3d_shape = [
+                int(a_shape[0]),
+                int(a_shape[2]) * int(a_shape[3]),
+                int(a_shape[1]),
+            ]
+            a_reshape_shape_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_a_reshape_shape",
+                np.asarray(a_bhwc_3d_shape, dtype=np.int32),
+            )
+            a_bhwc_3d_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_bhwc_3d",
+                dtype=compute_dtype,
+                shape=a_bhwc_3d_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[a_bhwc_name, a_reshape_shape_name],
+                    outputs=[a_bhwc_3d_name],
+                    options={"newShape": [int(v) for v in a_bhwc_3d_shape]},
+                )
+            )
+
+            # bnc -> bcn
+            b_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_b_perm",
+                np.asarray([0, 2, 1], dtype=np.int32),
+            )
+            b_bcn_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_b_bcn",
+                dtype=compute_dtype,
+                shape=[int(b_shape[0]), int(b_shape[2]), int(b_shape[1])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[b_compute, b_perm_name],
+                    outputs=[b_bcn_name],
+                    options={},
+                )
+            )
+
+            # [b,h*w,c] @ [b,c,n] -> [b,h*w,n]
+            bmm_out_shape = [int(a_shape[0]), int(a_shape[2]) * int(a_shape[3]), int(b_shape[1])]
+            bmm_out_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_bmm",
+                dtype=compute_dtype,
+                shape=bmm_out_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_bhwc_3d_name, b_bcn_name],
+                    outputs=[bmm_out_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            # [b,h*w,n] -> [b,h,w,n]
+            bhwn_shape = [
+                int(output_shape[0]),
+                int(output_shape[2]),
+                int(output_shape[3]),
+                int(output_shape[1]),
+            ]
+            bhwn_shape_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_bhwn_shape",
+                np.asarray(bhwn_shape, dtype=np.int32),
+            )
+            bhwn_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_bhwn",
+                dtype=compute_dtype,
+                shape=bhwn_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[bmm_out_name, bhwn_shape_name],
+                    outputs=[bhwn_name],
+                    options={"newShape": [int(v) for v in bhwn_shape]},
+                )
+            )
+
+            # bhwn -> bnhw
+            out_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_out_perm",
+                np.asarray([0, 3, 1, 2], dtype=np.int32),
+            )
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[bhwn_name, out_perm_name],
+                    outputs=[y_name],
+                    options={},
+                )
+            )
+
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        if (
+            len(lhs) == 4
             and len(rhs) == 4
             and len(out) == 4
             and lhs[0] == rhs[0]
@@ -961,6 +1446,15 @@ def build_einsum_op(node: Any, ctx: Any) -> None:
                 )
             return
 
+        if _try_build_generic_two_input_einsum(
+            node=node,
+            ctx=ctx,
+            lhs=str(lhs),
+            rhs=str(rhs),
+            out=str(out),
+        ):
+            return
+
     # _validate_einsum limits remaining builtin lowering to rank-2 matmul-style equations.
     # Prefer FULLY_CONNECTED when RHS is constant, otherwise use BATCH_MATMUL.
     rhs_name = node.inputs[1].name
@@ -1018,14 +1512,417 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
 
     a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
     b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
-    if len(a_shape) >= 2 and len(b_shape) == 1:
-        b_tensor = ctx.model_ir.tensors.get(b_name, None)
-        b_signature = (
-            [int(v) for v in list(b_tensor.shape_signature)]
-            if b_tensor is not None and b_tensor.shape_signature is not None
-            else [int(v) for v in list(b_shape)]
+    a_tensor = ctx.model_ir.tensors.get(a_name, None)
+    b_tensor = ctx.model_ir.tensors.get(b_name, None)
+
+    a_signature = (
+        [int(v) for v in list(a_tensor.shape_signature)]
+        if a_tensor is not None and a_tensor.shape_signature is not None
+        else [int(v) for v in list(a_shape)]
+    )
+    b_signature = (
+        [int(v) for v in list(b_tensor.shape_signature)]
+        if b_tensor is not None and b_tensor.shape_signature is not None
+        else [int(v) for v in list(b_shape)]
+    )
+
+    def _materialize_shape_from_signature(shape_signature: List[int]) -> List[int]:
+        return [int(v) if int(v) > 0 else 1 for v in list(shape_signature)]
+
+    def _update_output_tensor_shape(shape_signature: List[int]) -> List[int]:
+        runtime_shape = _materialize_shape_from_signature(shape_signature)
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in list(runtime_shape)]
+            output_tensor.shape_signature = [int(v) for v in list(shape_signature)]
+        return runtime_shape
+
+    def _is_unresolved_rank1_placeholder(shape: List[int], signature: List[int]) -> bool:
+        return (
+            len(shape) == 1
+            and len(signature) == 1
+            and int(shape[0]) == 1
+            and int(signature[0]) < 0
         )
-        k_dim = int(b_signature[0]) if len(b_signature) > 0 else int(b_shape[0])
+    if len(a_shape) == 0 or len(b_shape) == 0:
+        a_const = ctx.get_constant_array(a_name)
+        b_const = ctx.get_constant_array(b_name)
+        a_is_const_scalar = bool(a_const is not None and np.asarray(a_const).ndim == 0)
+        b_is_const_scalar = bool(b_const is not None and np.asarray(b_const).ndim == 0)
+        # Metadata can incorrectly collapse dynamic MatMul inputs to scalar.
+        # Use MUL shortcut only for true constant scalar-scalar cases.
+        if a_is_const_scalar and b_is_const_scalar:
+            mul_out = output_name
+            if output_dtype != compute_dtype:
+                mul_out = ctx.add_intermediate_tensor(
+                    f"{output_name}_matmul_scalar_mul",
+                    dtype=compute_dtype,
+                    shape=output_shape,
+                )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[a_compute, b_compute],
+                    outputs=[mul_out],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            if mul_out != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[mul_out],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+    if (
+        len(a_shape) == 1
+        and len(b_shape) == 1
+        and not _is_unresolved_rank1_placeholder(a_shape, a_signature)
+        and not _is_unresolved_rank1_placeholder(b_shape, b_signature)
+    ):
+        output_shape_signature = [1]
+        output_shape = _update_output_tensor_shape(output_shape_signature)
+        # Keep low-rank dot-product reshapes resilient to downstream shape rewrites.
+        a_k_dim = int(a_shape[0]) if len(a_shape) > 0 and int(a_shape[0]) > 0 else -1
+        b_k_dim = int(b_shape[0]) if len(b_shape) > 0 and int(b_shape[0]) > 0 else -1
+        a_matrix_new_shape = [1, int(a_k_dim) if int(a_k_dim) > 0 else -1]
+        b_matrix_new_shape = [int(b_k_dim) if int(b_k_dim) > 0 else -1, 1]
+        a_matrix_shape_name = ctx.add_const_tensor(
+            f"{output_name}_matmul_a_dot_shape",
+            np.asarray(a_matrix_new_shape, dtype=np.int32),
+        )
+        b_matrix_shape_name = ctx.add_const_tensor(
+            f"{output_name}_matmul_b_dot_shape",
+            np.asarray(b_matrix_new_shape, dtype=np.int32),
+        )
+        a_matrix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_a_dot_matrix",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in a_matrix_new_shape],
+        )
+        b_matrix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_b_dot_matrix",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in b_matrix_new_shape],
+        )
+        a_matrix_tensor = ctx.model_ir.tensors.get(a_matrix_name, None)
+        b_matrix_tensor = ctx.model_ir.tensors.get(b_matrix_name, None)
+        if a_matrix_tensor is not None:
+            a_matrix_tensor.shape_signature = [int(v) for v in a_matrix_new_shape]
+        if b_matrix_tensor is not None:
+            b_matrix_tensor.shape_signature = [int(v) for v in b_matrix_new_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[a_compute, a_matrix_shape_name],
+                outputs=[a_matrix_name],
+                options={
+                    "newShape": [int(v) for v in a_matrix_new_shape],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[b_compute, b_matrix_shape_name],
+                outputs=[b_matrix_name],
+                options={
+                    "newShape": [int(v) for v in b_matrix_new_shape],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+
+        dot_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_dot_out",
+            dtype=compute_dtype,
+            shape=[1, 1],
+        )
+        dot_tensor = ctx.model_ir.tensors.get(dot_name, None)
+        if dot_tensor is not None:
+            dot_tensor.shape_signature = [1, 1]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="BATCH_MATMUL",
+                inputs=[a_matrix_name, b_matrix_name],
+                outputs=[dot_name],
+                options={
+                    "adjX": False,
+                    "adjY": False,
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+
+        squeeze_out = output_name
+        if output_dtype != compute_dtype:
+            squeeze_out = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_dot_squeezed",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[dot_name],
+                outputs=[squeeze_out],
+                options={"squeezeDims": [0, 1]},
+            )
+        )
+        if squeeze_out != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[squeeze_out],
+                    outputs=[output_name],
+                    options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
+
+    if len(a_shape) == 1 and len(b_shape) >= 2:
+        if _is_unresolved_rank1_placeholder(a_shape, a_signature) and len(b_shape) == 2:
+            k_dim = int(b_shape[0]) if int(b_shape[0]) > 0 else (
+                int(b_signature[0]) if len(b_signature) > 0 and int(b_signature[0]) > 0 else -1
+            )
+            n_dim = int(b_shape[1]) if int(b_shape[1]) > 0 else 1
+            n_sig = int(b_signature[1]) if len(b_signature) > 1 and int(b_signature[1]) > 0 else int(n_dim)
+
+            a_matrix_new_shape = [1, -1, int(k_dim) if int(k_dim) > 0 else -1]
+            a_matrix_shape_name = ctx.add_const_tensor(
+                f"{output_name}_matmul_a_unknown_shape",
+                np.asarray(a_matrix_new_shape, dtype=np.int32),
+            )
+            a_matrix_name = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_a_unknown_matrix",
+                dtype=compute_dtype,
+                shape=[int(v) if int(v) > 0 else 1 for v in a_matrix_new_shape],
+            )
+            a_matrix_tensor = ctx.model_ir.tensors.get(a_matrix_name, None)
+            if a_matrix_tensor is not None:
+                a_matrix_tensor.shape_signature = [int(v) for v in a_matrix_new_shape]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[a_compute, a_matrix_shape_name],
+                    outputs=[a_matrix_name],
+                    options={
+                        "newShape": [int(v) for v in a_matrix_new_shape],
+                        "preserveDynamicShape": True,
+                    },
+                )
+            )
+
+            output_shape_signature = [1, -1, int(n_sig)]
+            output_shape = _update_output_tensor_shape(output_shape_signature)
+            matmul_out_name = output_name
+            if output_dtype != compute_dtype:
+                matmul_out_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_matmul_unknown_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in list(output_shape)],
+                )
+                matmul_out_tensor = ctx.model_ir.tensors.get(matmul_out_name, None)
+                if matmul_out_tensor is not None:
+                    matmul_out_tensor.shape_signature = [int(v) for v in list(output_shape_signature)]
+
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_matrix_name, b_compute],
+                    outputs=[matmul_out_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            if matmul_out_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[matmul_out_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        # Some ONNX exports carry broken scalar metadata for MatMul despite a
+        # 2D constant RHS (KxN). In this ambiguous case, treat LHS as a
+        # flattened batch of K-vectors to preserve accumulation dimension K
+        # even when runtime batch becomes zero.
+        if (
+            len(b_shape) == 2
+            and len(output_shape) == 1
+            and int(output_shape[0]) != int(b_shape[-1])
+            and int(b_shape[0]) > 0
+        ):
+            k_dim = int(b_shape[0])
+            n_dim = int(b_shape[1]) if int(b_shape[1]) > 0 else 1
+            n_sig = int(b_signature[1]) if int(b_signature[1]) > 0 else int(n_dim)
+
+            a_matrix_new_shape = [-1, int(k_dim)]
+            a_matrix_shape_name = ctx.add_const_tensor(
+                f"{output_name}_matmul_a_flattened_shape",
+                np.asarray(a_matrix_new_shape, dtype=np.int32),
+            )
+            a_matrix_name = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_a_flattened",
+                dtype=compute_dtype,
+                shape=[1, int(k_dim)],
+            )
+            a_matrix_tensor = ctx.model_ir.tensors.get(a_matrix_name, None)
+            if a_matrix_tensor is not None:
+                a_matrix_tensor.shape_signature = [int(v) for v in a_matrix_new_shape]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[a_compute, a_matrix_shape_name],
+                    outputs=[a_matrix_name],
+                    options={
+                        "newShape": [int(v) for v in a_matrix_new_shape],
+                        "preserveDynamicShape": True,
+                    },
+                )
+            )
+
+            output_shape_signature = [-1, int(n_sig)]
+            output_shape = _update_output_tensor_shape(output_shape_signature)
+            matmul_out_name = output_name
+            if output_dtype != compute_dtype:
+                matmul_out_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_matmul_flattened_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in list(output_shape)],
+                )
+                matmul_out_tensor = ctx.model_ir.tensors.get(matmul_out_name, None)
+                if matmul_out_tensor is not None:
+                    matmul_out_tensor.shape_signature = [int(v) for v in list(output_shape_signature)]
+
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_matrix_name, b_compute],
+                    outputs=[matmul_out_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            if matmul_out_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[matmul_out_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        batch_shape = [int(v) for v in list(b_shape[:-2])]
+        batch_signature = [int(v) for v in list(b_signature[:-2])]
+        n_dim = int(b_shape[-1]) if int(b_shape[-1]) > 0 else 1
+        n_sig = int(b_signature[-1]) if int(b_signature[-1]) > 0 else -1
+        output_shape_signature = [int(v) for v in list(batch_signature)] + [int(n_sig)]
+        output_shape = _update_output_tensor_shape(output_shape_signature)
+
+        # Keep vector-lhs reshape robust even when optimizer mutates upstream static shapes.
+        a_k_dim = int(a_shape[0]) if len(a_shape) > 0 and int(a_shape[0]) > 0 else -1
+        a_matrix_new_shape = [1 for _ in range(len(b_shape) - 1)] + [
+            int(a_k_dim) if int(a_k_dim) > 0 else -1
+        ]
+        a_matrix_shape_name = ctx.add_const_tensor(
+            f"{output_name}_matmul_a_vector_shape",
+            np.asarray(a_matrix_new_shape, dtype=np.int32),
+        )
+        a_matrix_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_a_vector_matrix",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in a_matrix_new_shape],
+        )
+        a_matrix_tensor = ctx.model_ir.tensors.get(a_matrix_name, None)
+        if a_matrix_tensor is not None:
+            a_matrix_tensor.shape_signature = [int(v) for v in a_matrix_new_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[a_compute, a_matrix_shape_name],
+                outputs=[a_matrix_name],
+                options={
+                    "newShape": [int(v) for v in a_matrix_new_shape],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+
+        squeeze_axis = int(len(batch_shape))
+        matmul_vec_signature = [int(v) for v in list(batch_signature)] + [1, int(n_sig)]
+        matmul_vec_shape = _materialize_shape_from_signature(matmul_vec_signature)
+        matmul_vec_name = ctx.add_intermediate_tensor(
+            f"{output_name}_matmul_vec_lhs_out",
+            dtype=compute_dtype,
+            shape=[int(v) for v in list(matmul_vec_shape)],
+        )
+        matmul_vec_tensor = ctx.model_ir.tensors.get(matmul_vec_name, None)
+        if matmul_vec_tensor is not None:
+            matmul_vec_tensor.shape_signature = [int(v) for v in matmul_vec_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="BATCH_MATMUL",
+                inputs=[a_matrix_name, b_compute],
+                outputs=[matmul_vec_name],
+                options={
+                    "adjX": False,
+                    "adjY": False,
+                    "asymmetricQuantizeInputs": False,
+                },
+            )
+        )
+
+        squeeze_out = output_name
+        if output_dtype != compute_dtype:
+            squeeze_out = ctx.add_intermediate_tensor(
+                f"{output_name}_matmul_vec_lhs_squeezed",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[matmul_vec_name],
+                outputs=[squeeze_out],
+                options={"squeezeDims": [int(squeeze_axis)]},
+            )
+        )
+        if squeeze_out != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[squeeze_out],
+                    outputs=[output_name],
+                    options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
+
+    if len(a_shape) >= 2 and len(b_shape) == 1:
+        output_shape_signature = [int(v) for v in list(a_signature[:-1])]
+        output_shape = _update_output_tensor_shape(output_shape_signature)
+        k_dim = int(b_shape[0]) if len(b_shape) > 0 and int(b_shape[0]) > 0 else (
+            int(b_signature[0]) if len(b_signature) > 0 else -1
+        )
         b_matrix_new_shape = [int(k_dim) if int(k_dim) > 0 else -1, 1]
         b_matrix_shape_name = ctx.add_const_tensor(
             f"{output_name}_matmul_b_vector_shape",
@@ -1048,18 +1945,12 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
             )
         )
 
-        output_tensor = ctx.model_ir.tensors.get(output_name, None)
-        output_signature = (
-            [int(v) for v in list(output_tensor.shape_signature)]
-            if output_tensor is not None and output_tensor.shape_signature is not None
-            else [int(v) for v in list(output_shape)]
-        )
-        matmul_vec_shape = [int(v) for v in list(output_shape)] + [1]
-        matmul_vec_signature = [int(v) for v in list(output_signature)] + [1]
+        matmul_vec_signature = [int(v) for v in list(output_shape_signature)] + [1]
+        matmul_vec_shape = _materialize_shape_from_signature(matmul_vec_signature)
         matmul_vec_name = ctx.add_intermediate_tensor(
             f"{output_name}_matmul_vec_out",
             dtype=compute_dtype,
-            shape=[int(v) if int(v) > 0 else 1 for v in matmul_vec_shape],
+            shape=[int(v) for v in list(matmul_vec_shape)],
         )
         matmul_vec_tensor = ctx.model_ir.tensors.get(matmul_vec_name, None)
         if matmul_vec_tensor is not None:

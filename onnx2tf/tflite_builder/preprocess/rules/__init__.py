@@ -26,6 +26,8 @@ from onnx2tf.tflite_builder.preprocess.rules.cleanup_unused_initializers import 
 )
 from onnx2tf.tflite_builder.preprocess.rules.pseudo_ops import (
     PSEUDO_OPS_WAVE1_RULE_ID,
+    configure_pseudo_ops_wave1_targets,
+    get_supported_pseudo_ops_wave1_aliases,
     register_pseudo_ops_wave1_rule,
 )
 
@@ -55,5 +57,7 @@ __all__ = [
     "register_normalize_attrs_rule",
     "register_pattern_fusion_wave2_rule",
     "register_quant_chain_fusion_wave3_rule",
+    "configure_pseudo_ops_wave1_targets",
+    "get_supported_pseudo_ops_wave1_aliases",
     "register_pseudo_ops_wave1_rule",
 ]
