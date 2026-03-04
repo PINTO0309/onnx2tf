@@ -397,6 +397,46 @@ def _extract_sample_from_custom(
     return sample.astype(np_dtype, copy=False)
 
 
+def _is_scatter_nd_index_oob_error(ex: BaseException) -> bool:
+    ex_str = str(ex)
+    return (
+        "scatter_nd index out of bounds" in ex_str
+        or "SCATTER_ND" in ex_str
+    )
+
+
+def _build_eval_inputs_for_sample(
+    *,
+    input_specs: Sequence[Tuple[str, np.dtype, Tuple[int, ...]]],
+    custom_inputs: Dict[str, np.ndarray],
+    sample_index: int,
+    rng: np.random.Generator,
+    force_zero_generated_inputs: bool = False,
+) -> Dict[str, np.ndarray]:
+    onnx_inputs: Dict[str, np.ndarray] = {}
+    for input_name, input_dtype, input_shape in input_specs:
+        custom_data = custom_inputs.get(input_name)
+        if custom_data is None:
+            custom_data = custom_inputs.get(_normalize_tensor_name(input_name))
+        if custom_data is not None:
+            sample = _extract_sample_from_custom(
+                data=custom_data,
+                sample_index=sample_index,
+                expected_shape=input_shape,
+                np_dtype=input_dtype,
+            )
+        elif bool(force_zero_generated_inputs):
+            sample = np.zeros(input_shape, dtype=input_dtype)
+        else:
+            sample = _generate_seeded_input(
+                shape=input_shape,
+                np_dtype=input_dtype,
+                rng=rng,
+            )
+        onnx_inputs[input_name] = sample
+    return onnx_inputs
+
+
 def _build_tflite_detail_map(
     *,
     onnx_names: Sequence[str],
@@ -935,97 +975,99 @@ def evaluate_onnx_tflite_outputs(
     }
 
     for sample_index in range(int(num_samples)):
-        onnx_inputs: Dict[str, np.ndarray] = {}
-        for input_name, input_dtype, input_shape in input_specs:
-            custom_data = custom_inputs.get(input_name)
-            if custom_data is None:
-                custom_data = custom_inputs.get(_normalize_tensor_name(input_name))
-            if custom_data is not None:
-                sample = _extract_sample_from_custom(
-                    data=custom_data,
-                    sample_index=sample_index,
-                    expected_shape=input_shape,
-                    np_dtype=input_dtype,
-                )
-            else:
-                sample = _generate_seeded_input(
-                    shape=input_shape,
-                    np_dtype=input_dtype,
-                    rng=rng,
-                )
-            onnx_inputs[input_name] = sample
-
-        onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
-        onnx_outputs_by_name = {
-            output_name: output_value
-            for output_name, output_value in zip(onnx_output_names, onnx_outputs)
-        }
-
-        for input_name in onnx_input_names:
-            detail = tflite_input_map[input_name]
-            adapted_input = _adapt_input_layout_for_tflite_input(
-                onnx_inputs[input_name],
-                detail,
+        force_zero_generated_inputs = False
+        while True:
+            onnx_inputs = _build_eval_inputs_for_sample(
+                input_specs=input_specs,
+                custom_inputs=custom_inputs,
+                sample_index=int(sample_index),
+                rng=rng,
+                force_zero_generated_inputs=bool(force_zero_generated_inputs),
             )
-            interpreter.set_tensor(
-                detail["index"],
-                _quantize_for_tflite_input(adapted_input, detail),
-            )
-        interpreter.invoke()
 
-        for output_name in onnx_output_names:
-            detail = tflite_output_map[output_name]
-            tflite_output = interpreter.get_tensor(detail["index"])
-            if resolved_compare_mode == "dequant":
-                tflite_output = _dequantize_tflite_output(tflite_output, detail)
-            else:
-                tflite_output = np.asarray(tflite_output)
+            onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
+            onnx_outputs_by_name = {
+                output_name: output_value
+                for output_name, output_value in zip(onnx_output_names, onnx_outputs)
+            }
 
-            onnx_output = np.asarray(onnx_outputs_by_name[output_name])
+            for input_name in onnx_input_names:
+                detail = tflite_input_map[input_name]
+                adapted_input = _adapt_input_layout_for_tflite_input(
+                    onnx_inputs[input_name],
+                    detail,
+                )
+                interpreter.set_tensor(
+                    detail["index"],
+                    _quantize_for_tflite_input(adapted_input, detail),
+                )
+
             try:
-                tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
-                    onnx_output=onnx_output,
-                    tflite_output=tflite_output,
-                    rtol=rtol,
-                    atol=atol,
-                )
-            except ValueError as ex:
-                raise ValueError(
-                    "Evaluation output shape mismatch. "
-                    f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
-                    f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
-                    f"reason={ex}"
-                ) from ex
-            layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
-            per_output_layout_alignment[output_name][align_mode] = (
-                int(per_output_layout_alignment[output_name][align_mode]) + 1
-            )
-            if align_perm is not None:
-                perm_key = ",".join(str(int(v)) for v in align_perm)
-                per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
-                    int(
-                        per_output_layout_alignment[output_name]["permutation_counts"].get(
-                            perm_key, 0
-                        )
-                    )
-                    + 1
-                )
+                interpreter.invoke()
+            except Exception as ex:
+                if (
+                    custom_input_op_name_np_data_path is None
+                    and not bool(force_zero_generated_inputs)
+                    and _is_scatter_nd_index_oob_error(ex)
+                ):
+                    force_zero_generated_inputs = True
+                    continue
+                raise
 
-            total_metrics.update(onnx_output, tflite_output)
-            per_output_metrics[output_name].update(onnx_output, tflite_output)
-            is_allclose = bool(
-                np.allclose(
-                    onnx_output,
-                    tflite_output,
-                    rtol=rtol,
-                    atol=atol,
-                    equal_nan=True,
+            for output_name in onnx_output_names:
+                detail = tflite_output_map[output_name]
+                tflite_output = interpreter.get_tensor(detail["index"])
+                if resolved_compare_mode == "dequant":
+                    tflite_output = _dequantize_tflite_output(tflite_output, detail)
+                else:
+                    tflite_output = np.asarray(tflite_output)
+
+                onnx_output = np.asarray(onnx_outputs_by_name[output_name])
+                try:
+                    tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
+                        onnx_output=onnx_output,
+                        tflite_output=tflite_output,
+                        rtol=rtol,
+                        atol=atol,
+                    )
+                except ValueError as ex:
+                    raise ValueError(
+                        "Evaluation output shape mismatch. "
+                        f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
+                        f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
+                        f"reason={ex}"
+                    ) from ex
+                layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
+                per_output_layout_alignment[output_name][align_mode] = (
+                    int(per_output_layout_alignment[output_name][align_mode]) + 1
                 )
-            )
-            allclose_total += 1
-            allclose_matched += int(is_allclose)
-            per_output_allclose[output_name]["total"] += 1
-            per_output_allclose[output_name]["matched"] += int(is_allclose)
+                if align_perm is not None:
+                    perm_key = ",".join(str(int(v)) for v in align_perm)
+                    per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
+                        int(
+                            per_output_layout_alignment[output_name]["permutation_counts"].get(
+                                perm_key, 0
+                            )
+                        )
+                        + 1
+                    )
+
+                total_metrics.update(onnx_output, tflite_output)
+                per_output_metrics[output_name].update(onnx_output, tflite_output)
+                is_allclose = bool(
+                    np.allclose(
+                        onnx_output,
+                        tflite_output,
+                        rtol=rtol,
+                        atol=atol,
+                        equal_nan=True,
+                    )
+                )
+                allclose_total += 1
+                allclose_matched += int(is_allclose)
+                per_output_allclose[output_name]["total"] += 1
+                per_output_allclose[output_name]["matched"] += int(is_allclose)
+            break
 
     os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
     overall_metrics = total_metrics.to_dict()
@@ -1423,168 +1465,168 @@ def evaluate_onnx_tflite_outputs_isolated(
     per_worker_timeout = max(60, int(timeout_sec) // max(int(num_samples), 1))
 
     for sample_index in range(int(num_samples)):
-        onnx_inputs: Dict[str, np.ndarray] = {}
-        for input_name, input_dtype, input_shape in input_specs:
-            custom_data = custom_inputs.get(input_name)
-            if custom_data is None:
-                custom_data = custom_inputs.get(_normalize_tensor_name(input_name))
-            if custom_data is not None:
-                sample = _extract_sample_from_custom(
-                    data=custom_data,
-                    sample_index=sample_index,
-                    expected_shape=input_shape,
-                    np_dtype=input_dtype,
-                )
-            else:
-                sample = _generate_seeded_input(
-                    shape=input_shape,
-                    np_dtype=input_dtype,
-                    rng=rng,
-                )
-            onnx_inputs[input_name] = sample
-
-        onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None
-        onnx_manifest: Optional[Dict[str, Dict[str, Any]]] = None
-        tflite_manifest: Optional[Dict[str, Dict[str, Any]]] = None
-        try:
-            worker_input_payload: Dict[str, Any]
-            if bool(use_worker_input_memmap):
-                if worker_input_memmap_dir is None:
-                    raise RuntimeError("Evaluation input memmap directory is unavailable.")
-                onnx_input_manifest = _write_named_arrays_to_memmap_files(
-                    arrays=onnx_inputs,
-                    memmap_dir=worker_input_memmap_dir,
-                    file_prefix=f"input_sample{sample_index}",
-                )
-                worker_input_payload = {
-                    "onnx_inputs_memmap_manifest": onnx_input_manifest,
-                }
-            else:
-                worker_input_payload = {
-                    "onnx_inputs": onnx_inputs,
-                }
-
-            onnx_result = _run_worker_in_subprocess(
-                worker=_onnx_inference_worker,
-                payload={
-                    "onnx_graph_serialized": onnx_graph_serialized,
-                    "onnx_output_names": onnx_output_names,
-                    **worker_input_payload,
-                    "use_memmap_outputs": bool(use_worker_output_memmap),
-                    "memmap_dir": worker_output_memmap_dir,
-                    "memmap_file_prefix": f"onnx_sample{sample_index}",
-                },
-                timeout_sec=per_worker_timeout,
-            )
-            tflite_result = _run_worker_in_subprocess(
-                worker=_tflite_inference_worker,
-                payload={
-                    "tflite_path": str(tflite_path),
-                    "onnx_input_names": onnx_input_names,
-                    "onnx_output_names": onnx_output_names,
-                    **worker_input_payload,
-                    "compare_mode": runtime_compare_mode,
-                    "use_memmap_outputs": bool(use_worker_output_memmap),
-                    "memmap_dir": worker_output_memmap_dir,
-                    "memmap_file_prefix": f"tflite_sample{sample_index}",
-                },
-                timeout_sec=per_worker_timeout,
+        force_zero_generated_inputs = False
+        while True:
+            onnx_inputs = _build_eval_inputs_for_sample(
+                input_specs=input_specs,
+                custom_inputs=custom_inputs,
+                sample_index=int(sample_index),
+                rng=rng,
+                force_zero_generated_inputs=bool(force_zero_generated_inputs),
             )
 
-            if bool(use_worker_output_memmap):
-                onnx_manifest = {
-                    str(k): v
-                    for k, v in onnx_result["onnx_outputs_memmap_manifest"].items()
-                }
-                tflite_manifest = {
-                    str(k): v
-                    for k, v in tflite_result["tflite_outputs_memmap_manifest"].items()
-                }
-                onnx_outputs_by_name = _load_named_arrays_from_memmap_manifest(
-                    manifest=onnx_manifest,
-                )
-                tflite_outputs_by_name = _load_named_arrays_from_memmap_manifest(
-                    manifest=tflite_manifest,
-                )
-            else:
-                onnx_outputs_by_name = {
-                    str(k): np.asarray(v)
-                    for k, v in onnx_result["onnx_outputs"].items()
-                }
-                tflite_outputs_by_name = {
-                    str(k): np.asarray(v)
-                    for k, v in tflite_result["tflite_outputs"].items()
-                }
-
-            if sample_index == 0:
-                has_quantized_outputs = bool(tflite_result.get("has_quantized_outputs", False))
-                resolved_compare_mode = _resolve_compare_mode(
-                    compare_mode,
-                    has_quantized_outputs=has_quantized_outputs,
-                )
-                resolved_thresholds = _resolve_metric_thresholds(
-                    metric_thresholds=metric_thresholds,
-                    use_quant_defaults=has_quantized_outputs,
-                )
-                tflite_output_name_map = {
-                    str(k): str(v)
-                    for k, v in tflite_result.get("tflite_output_name_map", {}).items()
-                }
-
-            for output_name in onnx_output_names:
-                onnx_output = np.asarray(onnx_outputs_by_name[output_name])
-                tflite_output = np.asarray(tflite_outputs_by_name[output_name])
-                try:
-                    tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
-                        onnx_output=onnx_output,
-                        tflite_output=tflite_output,
-                        rtol=rtol,
-                        atol=atol,
+            onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+            onnx_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+            tflite_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+            try:
+                worker_input_payload: Dict[str, Any]
+                if bool(use_worker_input_memmap):
+                    if worker_input_memmap_dir is None:
+                        raise RuntimeError("Evaluation input memmap directory is unavailable.")
+                    onnx_input_manifest = _write_named_arrays_to_memmap_files(
+                        arrays=onnx_inputs,
+                        memmap_dir=worker_input_memmap_dir,
+                        file_prefix=f"input_sample{sample_index}",
                     )
-                except ValueError as ex:
-                    raise ValueError(
-                        "Evaluation output shape mismatch. "
-                        f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
-                        f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
-                        f"reason={ex}"
-                    ) from ex
+                    worker_input_payload = {
+                        "onnx_inputs_memmap_manifest": onnx_input_manifest,
+                    }
+                else:
+                    worker_input_payload = {
+                        "onnx_inputs": onnx_inputs,
+                    }
 
-                layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
-                per_output_layout_alignment[output_name][align_mode] = (
-                    int(per_output_layout_alignment[output_name][align_mode]) + 1
+                onnx_result = _run_worker_in_subprocess(
+                    worker=_onnx_inference_worker,
+                    payload={
+                        "onnx_graph_serialized": onnx_graph_serialized,
+                        "onnx_output_names": onnx_output_names,
+                        **worker_input_payload,
+                        "use_memmap_outputs": bool(use_worker_output_memmap),
+                        "memmap_dir": worker_output_memmap_dir,
+                        "memmap_file_prefix": f"onnx_sample{sample_index}",
+                    },
+                    timeout_sec=per_worker_timeout,
                 )
-                if align_perm is not None:
-                    perm_key = ",".join(str(int(v)) for v in align_perm)
-                    per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
-                        int(
-                            per_output_layout_alignment[output_name]["permutation_counts"].get(
-                                perm_key, 0
+                tflite_result = _run_worker_in_subprocess(
+                    worker=_tflite_inference_worker,
+                    payload={
+                        "tflite_path": str(tflite_path),
+                        "onnx_input_names": onnx_input_names,
+                        "onnx_output_names": onnx_output_names,
+                        **worker_input_payload,
+                        "compare_mode": runtime_compare_mode,
+                        "use_memmap_outputs": bool(use_worker_output_memmap),
+                        "memmap_dir": worker_output_memmap_dir,
+                        "memmap_file_prefix": f"tflite_sample{sample_index}",
+                    },
+                    timeout_sec=per_worker_timeout,
+                )
+
+                if bool(use_worker_output_memmap):
+                    onnx_manifest = {
+                        str(k): v
+                        for k, v in onnx_result["onnx_outputs_memmap_manifest"].items()
+                    }
+                    tflite_manifest = {
+                        str(k): v
+                        for k, v in tflite_result["tflite_outputs_memmap_manifest"].items()
+                    }
+                    onnx_outputs_by_name = _load_named_arrays_from_memmap_manifest(
+                        manifest=onnx_manifest,
+                    )
+                    tflite_outputs_by_name = _load_named_arrays_from_memmap_manifest(
+                        manifest=tflite_manifest,
+                    )
+                else:
+                    onnx_outputs_by_name = {
+                        str(k): np.asarray(v)
+                        for k, v in onnx_result["onnx_outputs"].items()
+                    }
+                    tflite_outputs_by_name = {
+                        str(k): np.asarray(v)
+                        for k, v in tflite_result["tflite_outputs"].items()
+                    }
+
+                if sample_index == 0:
+                    has_quantized_outputs = bool(tflite_result.get("has_quantized_outputs", False))
+                    resolved_compare_mode = _resolve_compare_mode(
+                        compare_mode,
+                        has_quantized_outputs=has_quantized_outputs,
+                    )
+                    resolved_thresholds = _resolve_metric_thresholds(
+                        metric_thresholds=metric_thresholds,
+                        use_quant_defaults=has_quantized_outputs,
+                    )
+                    tflite_output_name_map = {
+                        str(k): str(v)
+                        for k, v in tflite_result.get("tflite_output_name_map", {}).items()
+                    }
+
+                for output_name in onnx_output_names:
+                    onnx_output = np.asarray(onnx_outputs_by_name[output_name])
+                    tflite_output = np.asarray(tflite_outputs_by_name[output_name])
+                    try:
+                        tflite_output, align_mode, align_perm = _align_output_layout_for_compare(
+                            onnx_output=onnx_output,
+                            tflite_output=tflite_output,
+                            rtol=rtol,
+                            atol=atol,
+                        )
+                    except ValueError as ex:
+                        raise ValueError(
+                            "Evaluation output shape mismatch. "
+                            f"name={output_name} onnx_shape={tuple(onnx_output.shape)} "
+                            f"tflite_shape={tuple(np.asarray(tflite_output).shape)} "
+                            f"reason={ex}"
+                        ) from ex
+
+                    layout_alignment_summary[align_mode] = int(layout_alignment_summary[align_mode]) + 1
+                    per_output_layout_alignment[output_name][align_mode] = (
+                        int(per_output_layout_alignment[output_name][align_mode]) + 1
+                    )
+                    if align_perm is not None:
+                        perm_key = ",".join(str(int(v)) for v in align_perm)
+                        per_output_layout_alignment[output_name]["permutation_counts"][perm_key] = (
+                            int(
+                                per_output_layout_alignment[output_name]["permutation_counts"].get(
+                                    perm_key, 0
+                                )
                             )
-                        )
-                                + 1
-                        )
+                                    + 1
+                            )
 
-                total_metrics.update(onnx_output, tflite_output)
-                per_output_metrics[output_name].update(onnx_output, tflite_output)
-                is_allclose = bool(
-                    np.allclose(
-                        onnx_output,
-                        tflite_output,
-                        rtol=rtol,
-                        atol=atol,
-                        equal_nan=True,
+                    total_metrics.update(onnx_output, tflite_output)
+                    per_output_metrics[output_name].update(onnx_output, tflite_output)
+                    is_allclose = bool(
+                        np.allclose(
+                            onnx_output,
+                            tflite_output,
+                            rtol=rtol,
+                            atol=atol,
+                            equal_nan=True,
+                        )
                     )
-                )
-                allclose_total += 1
-                allclose_matched += int(is_allclose)
-                per_output_allclose[output_name]["total"] += 1
-                per_output_allclose[output_name]["matched"] += int(is_allclose)
-        finally:
-            if bool(use_worker_output_memmap):
-                _cleanup_memmap_manifest(onnx_manifest)
-                _cleanup_memmap_manifest(tflite_manifest)
-            if bool(use_worker_input_memmap):
-                _cleanup_memmap_manifest(onnx_input_manifest)
+                    allclose_total += 1
+                    allclose_matched += int(is_allclose)
+                    per_output_allclose[output_name]["total"] += 1
+                    per_output_allclose[output_name]["matched"] += int(is_allclose)
+                break
+            except Exception as ex:
+                if (
+                    custom_input_op_name_np_data_path is None
+                    and not bool(force_zero_generated_inputs)
+                    and _is_scatter_nd_index_oob_error(ex)
+                ):
+                    force_zero_generated_inputs = True
+                    continue
+                raise
+            finally:
+                if bool(use_worker_output_memmap):
+                    _cleanup_memmap_manifest(onnx_manifest)
+                    _cleanup_memmap_manifest(tflite_manifest)
+                if bool(use_worker_input_memmap):
+                    _cleanup_memmap_manifest(onnx_input_manifest)
 
     os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
     overall_metrics = total_metrics.to_dict()

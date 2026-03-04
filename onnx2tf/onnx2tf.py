@@ -184,6 +184,189 @@ def _supplement_microsoft_domain_for_selected_ops(
     return rewritten_counts
 
 
+def _collect_onnx_tensor_shape_map(
+    *,
+    onnx_model: onnx.ModelProto,
+) -> Dict[str, List[Optional[int]]]:
+    shape_map: Dict[str, List[Optional[int]]] = {}
+    if onnx_model is None or onnx_model.graph is None:
+        return shape_map
+
+    for initializer in onnx_model.graph.initializer:
+        try:
+            shape_map[str(initializer.name)] = [int(v) for v in list(initializer.dims)]
+        except Exception:
+            continue
+
+    value_infos = (
+        list(onnx_model.graph.input)
+        + list(onnx_model.graph.value_info)
+        + list(onnx_model.graph.output)
+    )
+    for value_info in value_infos:
+        try:
+            tensor_type = value_info.type.tensor_type
+            if not tensor_type.HasField('shape'):
+                continue
+            dims: List[Optional[int]] = []
+            for dim in tensor_type.shape.dim:
+                if dim.HasField('dim_value'):
+                    dims.append(int(dim.dim_value))
+                else:
+                    dims.append(None)
+            shape_map[str(value_info.name)] = dims
+        except Exception:
+            continue
+    return shape_map
+
+
+def _rewrite_conv_same_auto_pad_with_explicit_pads_for_runtime(
+    *,
+    onnx_model: onnx.ModelProto,
+) -> int:
+    """
+    Rewrite Conv(auto_pad=SAME_UPPER/SAME_LOWER) to explicit pads when possible.
+
+    ONNX Runtime can fail on some backends when dilation is used together with
+    SAME_* auto_pad. Explicit pads preserve semantics and avoid that limitation.
+    """
+    if onnx_model is None or onnx_model.graph is None:
+        return 0
+
+    shape_map = _collect_onnx_tensor_shape_map(onnx_model=onnx_model)
+    rewritten = 0
+
+    for node in onnx_model.graph.node:
+        if str(node.op_type) != 'Conv' or len(node.input) < 2:
+            continue
+
+        attrs: Dict[str, Any] = {}
+        for attr in node.attribute:
+            try:
+                attrs[str(attr.name)] = onnx.helper.get_attribute_value(attr)
+            except Exception:
+                continue
+
+        auto_pad_raw = attrs.get('auto_pad', 'NOTSET')
+        if isinstance(auto_pad_raw, (bytes, bytearray)):
+            auto_pad = auto_pad_raw.decode('utf-8', errors='ignore').upper()
+        else:
+            auto_pad = str(auto_pad_raw).upper()
+        if auto_pad not in {'SAME_UPPER', 'SAME_LOWER'}:
+            continue
+
+        x_shape = shape_map.get(str(node.input[0]), None)
+        w_shape = shape_map.get(str(node.input[1]), None)
+        if x_shape is None or w_shape is None or len(w_shape) < 3:
+            continue
+
+        spatial_rank = int(len(w_shape) - 2)
+        if len(x_shape) != int(spatial_rank + 2):
+            continue
+
+        kernel_shape_attr = attrs.get('kernel_shape', None)
+        kernel_raw = (
+            list(w_shape[2:])
+            if kernel_shape_attr is None
+            else list(kernel_shape_attr)
+        )
+        kernel: List[int] = []
+        valid_kernel = True
+        for v in kernel_raw:
+            if v is None:
+                valid_kernel = False
+                break
+            v_int = int(v)
+            if v_int <= 0:
+                valid_kernel = False
+                break
+            kernel.append(v_int)
+        if not valid_kernel:
+            continue
+
+        strides_raw = list(attrs.get('strides', [1] * spatial_rank))
+        strides: List[int] = []
+        valid_strides = True
+        for v in strides_raw:
+            if v is None:
+                valid_strides = False
+                break
+            v_int = int(v)
+            if v_int <= 0:
+                valid_strides = False
+                break
+            strides.append(v_int)
+        if not valid_strides:
+            continue
+
+        dilations_raw = list(attrs.get('dilations', [1] * spatial_rank))
+        dilations: List[int] = []
+        valid_dilations = True
+        for v in dilations_raw:
+            if v is None:
+                valid_dilations = False
+                break
+            v_int = int(v)
+            if v_int <= 0:
+                valid_dilations = False
+                break
+            dilations.append(v_int)
+        if not valid_dilations:
+            continue
+        if len(kernel) != spatial_rank or len(strides) != spatial_rank or len(dilations) != spatial_rank:
+            continue
+
+        input_spatial_raw = x_shape[2:]
+        input_spatial: List[int] = []
+        valid_input_spatial = True
+        for v in input_spatial_raw:
+            if v is None:
+                valid_input_spatial = False
+                break
+            v_int = int(v)
+            if v_int <= 0:
+                valid_input_spatial = False
+                break
+            input_spatial.append(v_int)
+        if not valid_input_spatial:
+            continue
+
+        pads_begin: List[int] = []
+        pads_end: List[int] = []
+        valid = True
+        for i in range(spatial_rank):
+            in_dim = int(input_spatial[i])
+            k = int(kernel[i])
+            s = int(strides[i])
+            d = int(dilations[i])
+            if in_dim <= 0 or k <= 0 or s <= 0 or d <= 0:
+                valid = False
+                break
+            effective_kernel = int((k - 1) * d + 1)
+            out_dim = int((in_dim + s - 1) // s)  # ceil(in_dim / stride)
+            total_pad = int(max((out_dim - 1) * s + effective_kernel - in_dim, 0))
+            if auto_pad == 'SAME_UPPER':
+                pad_begin = int(total_pad // 2)
+                pad_end = int(total_pad - pad_begin)
+            else:  # SAME_LOWER
+                pad_end = int(total_pad // 2)
+                pad_begin = int(total_pad - pad_end)
+            pads_begin.append(pad_begin)
+            pads_end.append(pad_end)
+        if not valid:
+            continue
+
+        explicit_pads = [int(v) for v in list(pads_begin + pads_end)]
+        preserved_attrs = [a for a in node.attribute if str(a.name) not in {'auto_pad', 'pads'}]
+        del node.attribute[:]
+        node.attribute.extend(preserved_attrs)
+        node.attribute.append(onnx.helper.make_attribute('auto_pad', 'NOTSET'))
+        node.attribute.append(onnx.helper.make_attribute('pads', explicit_pads))
+        rewritten += 1
+
+    return int(rewritten)
+
+
 def _prepare_onnx_graph_for_runtime_checks(
     *,
     source_onnx_graph: Optional[onnx.ModelProto],
@@ -218,8 +401,17 @@ def _prepare_onnx_graph_for_runtime_checks(
         _supplement_microsoft_domain_for_selected_ops(
             onnx_model=prepared,
         )
+        _rewrite_conv_same_auto_pad_with_explicit_pads_for_runtime(
+            onnx_model=prepared,
+        )
         if preserved_metadata_props:
             prepared.metadata_props.extend(preserved_metadata_props)
+    except Exception:
+        pass
+    try:
+        _rewrite_conv_same_auto_pad_with_explicit_pads_for_runtime(
+            onnx_model=prepared,
+        )
     except Exception:
         pass
     return prepared

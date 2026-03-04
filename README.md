@@ -661,7 +661,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.1.2
+  ghcr.io/pinto0309/onnx2tf:2.1.3
 
   or
 
@@ -670,7 +670,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.1.2
+  docker.io/pinto0309/onnx2tf:2.1.3
 
   or
 
@@ -680,7 +680,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.1.2 \
+  docker.io/pinto0309/onnx2tf:2.1.3 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -2265,7 +2265,8 @@ optional arguments:
 
   -dgc, --disable_group_convolution
     Disable GroupConvolution and replace it with SeparableConvolution for
-    output to saved_model format.
+    conversion outputs.
+    This option is applied in both tf_converter and flatbuffer_direct paths.
 
   -eatfp16, --enable_accumulation_type_float16 ENABLE_ACCUMULATION_TYPE_FLOAT16
     Hint for XNNPACK fp16 inference on float16 tflite model.
@@ -2861,7 +2862,8 @@ convert(
 
     disable_group_convolution: Optional[bool]
       Disable GroupConvolution and replace it with SeparableConvolution for
-      output to saved_model format.
+      conversion outputs.
+      This option is applied in both tf_converter and flatbuffer_direct paths.
 
     enable_accumulation_type_float16: Optional[bool]
       Hint for XNNPack fp16 inference on float16 tflite model.

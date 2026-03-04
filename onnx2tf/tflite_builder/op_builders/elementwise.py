@@ -384,6 +384,51 @@ def build_max_op(node: Any, ctx: Any) -> None:
         output_tensor.shape_signature = [int(v) for v in output_signature]
 
 
+def build_sum_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    if len(input_names) < 2:
+        raise NotImplementedError(
+            f"Sum requires at least 2 inputs in flatbuffer_direct. op={node.name}"
+        )
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_names[0], output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+
+    current_name = input_names[0]
+    for idx, rhs_name in enumerate(input_names[1:], start=1):
+        is_last = idx == int(len(input_names) - 1)
+        add_output_name = output_name
+        if not is_last:
+            add_output_name = ctx.add_intermediate_tensor(
+                f"{output_name}_sum_{idx}",
+                dtype=output_dtype,
+                shape=output_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[current_name, rhs_name],
+                outputs=[add_output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = add_output_name
+
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in output_signature]
+
+
 def build_pow_op(node: Any, ctx: Any) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name

@@ -237,14 +237,485 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
 
 def build_einsum_op(node: Any, ctx: Any) -> None:
     equation = str(node.attrs.get("equation", "")).replace(" ", "")
-    # Specialized rank-4 contraction:
-    #   abgd,gf->abdf
+    input_terms: list[str] = []
+    out = ""
     if equation != "":
         try:
-            lhs, rhs_out = equation.split(",", 1)
-            rhs, out = rhs_out.split("->", 1)
+            input_expr, out = equation.split("->", 1)
+            input_terms = [str(v) for v in input_expr.split(",") if str(v) != ""]
+        except Exception:
+            input_terms = []
+            out = ""
+
+    # Specialized rank-4 attention weighted sum:
+    #   nlhd,nhdv,nlh->nlhv
+    # implemented as:
+    #   transpose(nlhd -> nhld) + batch_matmul(nhld, nhdv) + transpose + mul(expand(nlh))
+    if len(input_terms) == 3 and len(out) == 4:
+        lhs = input_terms[0]
+        rhs = input_terms[1]
+        scale = input_terms[2]
+        if (
+            len(lhs) == 4
+            and len(rhs) == 4
+            and len(scale) == 3
+            and lhs[0] == rhs[0] == scale[0] == out[0]
+            and lhs[1] == scale[1] == out[1]
+            and lhs[2] == rhs[1] == scale[2] == out[2]
+            and lhs[3] == rhs[2]
+            and rhs[3] == out[3]
+            and lhs[3] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            c_name = node.inputs[2].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(c_name)
+            ctx.ensure_tensor(output_name)
+
+            a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+            b_shape = [int(v) for v in ctx.get_tensor_shape(b_name)]
+            c_shape = [int(v) for v in ctx.get_tensor_shape(c_name)]
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+            c_compute = _cast_to_compute(c_name, "einsum_c")
+
+            # nlhd -> nhld
+            a_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_a_perm",
+                np.asarray([0, 2, 1, 3], dtype=np.int32),
+            )
+            a_nhld_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_nhld",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[2]), int(a_shape[1]), int(a_shape[3])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[a_compute, a_perm_name],
+                    outputs=[a_nhld_name],
+                    options={},
+                )
+            )
+
+            # [n,h,l,d] @ [n,h,d,v] -> [n,h,l,v]
+            bmm_out_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_nhlv",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[2]), int(a_shape[1]), int(b_shape[3])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_nhld_name, b_compute],
+                    outputs=[bmm_out_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+
+            # nhlv -> nlhv
+            out_perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_out_perm",
+                np.asarray([0, 2, 1, 3], dtype=np.int32),
+            )
+            bmm_transposed_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_nlhv",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[1]), int(a_shape[2]), int(b_shape[3])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[bmm_out_name, out_perm_name],
+                    outputs=[bmm_transposed_name],
+                    options={},
+                )
+            )
+
+            # nlh -> nlh1
+            axis_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_scale_axis",
+                np.asarray([3], dtype=np.int32),
+            )
+            c_expanded_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_scale_expanded",
+                dtype=compute_dtype,
+                shape=[int(c_shape[0]), int(c_shape[1]), int(c_shape[2]), 1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="EXPAND_DIMS",
+                    inputs=[c_compute, axis_name],
+                    outputs=[c_expanded_name],
+                )
+            )
+
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[bmm_transposed_name, c_expanded_name],
+                    outputs=[y_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+    # Specialized rank-4 contraction:
+    #   abgd,gf->abdf
+    if len(input_terms) == 2:
+        try:
+            lhs = input_terms[0]
+            rhs = input_terms[1]
         except Exception:
             lhs, rhs, out = "", "", ""
+        if (
+            len(lhs) == 4
+            and len(rhs) == 4
+            and len(out) == 4
+            and lhs[0] == rhs[0] == out[0]
+            and lhs[1] == rhs[1] == out[1]
+            and lhs[2] == out[2]
+            and rhs[2] == out[3]
+            and lhs[3] == rhs[3]
+            and lhs[3] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_compute, b_compute],
+                    outputs=[y_name],
+                    options={
+                        "adjX": False,
+                        "adjY": True,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        if (
+            len(lhs) == 4
+            and len(rhs) == 4
+            and len(out) == 4
+            and lhs[0] == rhs[0] == out[0]
+            and lhs[1] == rhs[1] == out[1]
+            and lhs[2] == out[2]
+            and lhs[3] == rhs[2]
+            and rhs[3] == out[3]
+            and lhs[3] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_compute, b_compute],
+                    outputs=[y_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        if (
+            len(lhs) == 4
+            and len(rhs) == 4
+            and len(out) == 4
+            and lhs[0] == rhs[0] == out[0]
+            and lhs[1] == rhs[1] == out[1]
+            and lhs[2] == rhs[2]
+            and lhs[3] == out[2]
+            and rhs[3] == out[3]
+            and lhs[2] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            a_shape = [int(v) for v in ctx.get_tensor_shape(a_name)]
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+
+            perm_name = ctx.add_const_tensor(
+                f"{output_name}_einsum_perm",
+                np.asarray([0, 1, 3, 2], dtype=np.int32),
+            )
+            a_transposed_name = ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_a_transposed",
+                dtype=compute_dtype,
+                shape=[int(a_shape[0]), int(a_shape[1]), int(a_shape[3]), int(a_shape[2])],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[a_compute, perm_name],
+                    outputs=[a_transposed_name],
+                    options={},
+                )
+            )
+
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_transposed_name, b_compute],
+                    outputs=[y_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
+        if (
+            len(lhs) == 3
+            and len(rhs) == 3
+            and len(out) == 3
+            and lhs[0] == rhs[0] == out[0]
+            and lhs[1] == out[1]
+            and rhs[1] == out[2]
+            and lhs[2] == rhs[2]
+            and lhs[2] not in out
+        ):
+            a_name = node.inputs[0].name
+            b_name = node.inputs[1].name
+            output_name = node.outputs[0].name
+            ctx.ensure_tensor(a_name)
+            ctx.ensure_tensor(b_name)
+            ctx.ensure_tensor(output_name)
+
+            output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+            output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+            compute_dtype = "FLOAT32"
+
+            def _cast_to_compute(src_name: str, suffix: str) -> str:
+                src_dtype = str(ctx.get_tensor_dtype(src_name)).upper()
+                if src_dtype == compute_dtype:
+                    return src_name
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_{suffix}_f32",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[src_name],
+                        outputs=[cast_name],
+                        options={"inDataType": src_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                return cast_name
+
+            a_compute = _cast_to_compute(a_name, "einsum_a")
+            b_compute = _cast_to_compute(b_name, "einsum_b")
+            y_name = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+                f"{output_name}_einsum_out_f32",
+                dtype=compute_dtype,
+                shape=output_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[a_compute, b_compute],
+                    outputs=[y_name],
+                    options={
+                        "adjX": False,
+                        "adjY": True,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+            if y_name != output_name:
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[y_name],
+                        outputs=[output_name],
+                        options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                    )
+                )
+            return
+
         if (
             len(lhs) == 4
             and len(rhs) == 4

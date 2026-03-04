@@ -62,6 +62,57 @@ def _tensor_signature(ctx: Any, tensor_name: str) -> list[int]:
     return [int(v) for v in list(tensor.shape)]
 
 
+def _is_unresolved_placeholder_shape(*, shape: list[int], signature: list[int] | None) -> bool:
+    if len(shape) == 0 or not all(int(v) == 1 for v in shape):
+        return False
+    if signature is None:
+        return len(shape) == 1
+    if len(signature) != len(shape):
+        return False
+    if any(int(v) < 0 for v in signature):
+        return True
+    if len(shape) == 1 and int(signature[0]) == 1:
+        return True
+    return False
+
+
+def _is_unresolved_placeholder_tensor(ctx: Any, tensor_name: str) -> bool:
+    tensor = ctx.model_ir.tensors.get(tensor_name, None)
+    if tensor is None:
+        return False
+    signature = (
+        [int(v) for v in list(tensor.shape_signature)]
+        if tensor.shape_signature is not None
+        else None
+    )
+    unresolved = _is_unresolved_placeholder_shape(
+        shape=[int(v) for v in list(tensor.shape)],
+        signature=signature,
+    )
+    if unresolved:
+        return True
+    if (
+        len(list(tensor.shape)) == 1
+        and all(int(v) == 1 for v in list(tensor.shape))
+        and signature is not None
+        and len(signature) == 1
+        and int(signature[0]) == 1
+    ):
+        raw_shape = None
+        if hasattr(ctx, "shape_map"):
+            raw_shape = ctx.shape_map.get(str(tensor_name), None)
+        if raw_shape is None:
+            return True
+        if isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) == 0:
+            return True
+    return False
+
+
+def _materialize_tensor_shape_from_signature(tensor: Any, *, signature: list[int]) -> None:
+    tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(signature)]
+    tensor.shape_signature = [int(v) if int(v) > 0 else -1 for v in list(signature)]
+
+
 def _make_pseudo_node(
     *,
     base_node: Any,
@@ -1205,6 +1256,78 @@ def _infer_rank4_conv_output_signature(
     return [int(v) for v in signature]
 
 
+def _infer_rank3_conv_output_signature(
+    *,
+    input_signature_ncw: list[int],
+    output_shape_ncw: list[int],
+    existing_output_signature_ncw: list[int] | None = None,
+) -> list[int]:
+    signature = [int(v) for v in list(output_shape_ncw)]
+    if len(signature) != 3:
+        return signature
+    if existing_output_signature_ncw is not None and len(existing_output_signature_ncw) == 3:
+        for axis in range(3):
+            if int(existing_output_signature_ncw[axis]) < 0:
+                signature[axis] = -1
+    if len(input_signature_ncw) == 3:
+        if int(input_signature_ncw[0]) < 0:
+            signature[0] = -1
+        if int(input_signature_ncw[2]) < 0:
+            signature[2] = -1
+    return [int(v) for v in signature]
+
+
+def _infer_conv1d_output_shape_ncw(
+    *,
+    node: Any,
+    input_shape_ncw: list[int],
+    weights: np.ndarray,
+) -> list[int]:
+    kernel_shape_attr = node.attrs.get("kernel_shape", None)
+    if kernel_shape_attr is None:
+        kernel_w = int(weights.shape[2])
+    else:
+        kernel_dims = [int(v) for v in list(kernel_shape_attr)]
+        if len(kernel_dims) == 0:
+            kernel_w = int(weights.shape[2])
+        else:
+            kernel_w = int(kernel_dims[-1])
+
+    raw_strides = [int(v) for v in list(node.attrs.get("strides", [1]))]
+    raw_dilations = [int(v) for v in list(node.attrs.get("dilations", [1]))]
+    stride = int(raw_strides[-1]) if len(raw_strides) > 0 else 1
+    dilation = int(raw_dilations[-1]) if len(raw_dilations) > 0 else 1
+    if stride <= 0:
+        stride = 1
+    if dilation <= 0:
+        dilation = 1
+
+    try:
+        pads = _extract_1d_pads(
+            node.attrs.get("pads", [0, 0]),
+            op_name="FusedConv",
+            node_name=str(node.name),
+        )
+    except Exception:
+        pads = [0, 0]
+    pad_left = int(pads[0])
+    pad_right = int(pads[1])
+    auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+
+    n = int(input_shape_ncw[0]) if len(input_shape_ncw) > 0 else 1
+    in_w = int(input_shape_ncw[2]) if len(input_shape_ncw) > 2 else -1
+    out_c = int(weights.shape[0])
+    eff_kw = int((int(kernel_w) - 1) * int(dilation) + 1)
+    if int(in_w) <= 0:
+        out_w = -1
+    elif auto_pad in ["SAME_UPPER", "SAME_LOWER"]:
+        out_w = int(np.ceil(float(in_w) / float(stride)))
+    else:
+        numer = int(in_w) + int(pad_left) + int(pad_right) - int(eff_kw)
+        out_w = int(np.floor(float(numer) / float(stride)) + 1)
+    return [int(n), int(out_c), int(out_w)]
+
+
 def _infer_conv2d_output_shape_nchw(
     *,
     node: Any,
@@ -1246,6 +1369,120 @@ def _infer_conv2d_output_shape_nchw(
     return [int(n), int(out_c), int(out_h), int(out_w)]
 
 
+def _materialize_conv_placeholder_io_shape(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    weight_name: str,
+    output_name: str,
+) -> None:
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if input_tensor is None or output_tensor is None:
+        return
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        return
+    weights = np.asarray(weights)
+
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    input_placeholder = _is_unresolved_placeholder_tensor(ctx, input_name)
+    output_placeholder = _is_unresolved_placeholder_tensor(ctx, output_name)
+    if not input_placeholder and not output_placeholder:
+        return
+
+    def _normalize_signature(signature: list[int], *, rank: int) -> list[int] | None:
+        if len(signature) != int(rank):
+            return None
+        return [int(v) if int(v) > 0 else -1 for v in list(signature)]
+
+    group = int(node.attrs.get("group", 1))
+    if group <= 0:
+        group = 1
+
+    if int(weights.ndim) == 4:
+        in_channels = int(weights.shape[1]) * int(group)
+        input_signature = _normalize_signature(_tensor_signature(ctx, input_name), rank=4)
+        output_signature = _normalize_signature(_tensor_signature(ctx, output_name), rank=4)
+        if input_signature is None:
+            input_signature = [-1, int(in_channels), -1, -1]
+            if output_signature is not None:
+                input_signature[0] = int(output_signature[0]) if int(output_signature[0]) > 0 else -1
+        if int(input_signature[1]) <= 0:
+            input_signature[1] = int(in_channels)
+        if len(input_shape) != 4 or input_placeholder:
+            _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+        elif input_tensor.shape_signature is None or len(list(input_tensor.shape_signature)) != 4:
+            input_tensor.shape_signature = [int(v) for v in list(input_signature)]
+
+        inferred_output_shape = _infer_conv2d_output_shape_nchw(
+            node=node,
+            input_shape_nchw=input_shape,
+            weights=weights,
+        )
+        inferred_output_signature = _infer_rank4_conv_output_signature(
+            input_signature_nchw=input_signature,
+            output_shape_nchw=inferred_output_shape,
+            existing_output_signature_nchw=output_signature,
+        )
+        if len(output_shape) != 4 or output_placeholder:
+            _materialize_tensor_shape_from_signature(output_tensor, signature=inferred_output_signature)
+        elif output_tensor.shape_signature is None or len(list(output_tensor.shape_signature)) != 4:
+            output_tensor.shape_signature = [int(v) for v in list(inferred_output_signature)]
+        return
+
+    if int(weights.ndim) == 3:
+        in_channels = int(weights.shape[1]) * int(group)
+        input_signature = _normalize_signature(_tensor_signature(ctx, input_name), rank=3)
+        output_signature = _normalize_signature(_tensor_signature(ctx, output_name), rank=3)
+        if input_signature is None:
+            input_signature = [-1, int(in_channels), -1]
+            if output_signature is not None:
+                input_signature[0] = int(output_signature[0]) if int(output_signature[0]) > 0 else -1
+        if int(input_signature[1]) <= 0:
+            input_signature[1] = int(in_channels)
+        if len(input_shape) != 3 or input_placeholder:
+            _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+        elif input_tensor.shape_signature is None or len(list(input_tensor.shape_signature)) != 3:
+            input_tensor.shape_signature = [int(v) for v in list(input_signature)]
+
+        inferred_output_shape = _infer_conv1d_output_shape_ncw(
+            node=node,
+            input_shape_ncw=input_shape,
+            weights=weights,
+        )
+        inferred_output_signature = _infer_rank3_conv_output_signature(
+            input_signature_ncw=input_signature,
+            output_shape_ncw=inferred_output_shape,
+            existing_output_signature_ncw=output_signature,
+        )
+        if len(output_shape) != 3 or output_placeholder:
+            _materialize_tensor_shape_from_signature(output_tensor, signature=inferred_output_signature)
+        elif output_tensor.shape_signature is None or len(list(output_tensor.shape_signature)) != 3:
+            output_tensor.shape_signature = [int(v) for v in list(inferred_output_signature)]
+        return
+
+    if int(weights.ndim) == 5:
+        in_channels = int(weights.shape[1]) * int(group)
+        out_channels = int(weights.shape[0])
+        input_signature = _normalize_signature(_tensor_signature(ctx, input_name), rank=5)
+        output_signature = _normalize_signature(_tensor_signature(ctx, output_name), rank=5)
+        if input_signature is None:
+            input_signature = [-1, int(in_channels), -1, -1, -1]
+        if int(input_signature[1]) <= 0:
+            input_signature[1] = int(in_channels)
+        if len(input_shape) != 5 or input_placeholder:
+            _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+        if output_signature is None:
+            output_signature = [int(input_signature[0]), int(out_channels), -1, -1, -1]
+        if len(output_shape) != 5 or output_placeholder:
+            _materialize_tensor_shape_from_signature(output_tensor, signature=output_signature)
+
+
 def _materialize_fusedconv_placeholder_output_shape(
     *,
     node: Any,
@@ -1254,29 +1491,99 @@ def _materialize_fusedconv_placeholder_output_shape(
     weight_name: str,
     output_name: str,
 ) -> None:
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
-    if output_tensor is None:
+    if input_tensor is None or output_tensor is None:
         return
+    input_shape = [int(v) for v in list(input_tensor.shape)]
     output_shape = [int(v) for v in list(output_tensor.shape)]
-    if output_shape != [1]:
-        return
-    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
-    if len(input_shape) != 4:
+    input_placeholder = _is_unresolved_placeholder_tensor(ctx, input_name)
+    output_placeholder = _is_unresolved_placeholder_tensor(ctx, output_name)
+    if (
+        not input_placeholder
+        and not output_placeholder
+        and len(input_shape) in [3, 4]
+        and len(output_shape) in [3, 4]
+    ):
         return
     weights = ctx.get_constant_array(weight_name)
     if weights is None:
         return
     weights = np.asarray(weights)
-    if weights.ndim != 4:
+    if weights.ndim not in [3, 4]:
         return
 
-    inferred = _infer_conv2d_output_shape_nchw(
+    def _normalize_signature(signature: list[int], *, rank: int) -> list[int] | None:
+        if len(signature) != int(rank):
+            return None
+        return [int(v) if int(v) > 0 else -1 for v in list(signature)]
+
+    group = int(node.attrs.get("group", 1))
+    if group <= 0:
+        group = 1
+
+    if int(weights.ndim) == 4:
+        in_channels = int(weights.shape[1]) * int(group)
+        input_signature = _normalize_signature(_tensor_signature(ctx, input_name), rank=4)
+        output_signature = _normalize_signature(_tensor_signature(ctx, output_name), rank=4)
+
+        if input_signature is None:
+            input_signature = [-1, int(in_channels), -1, -1]
+            if output_signature is not None:
+                input_signature[0] = int(output_signature[0]) if int(output_signature[0]) > 0 else -1
+        if int(input_signature[1]) <= 0:
+            input_signature[1] = int(in_channels)
+        if len(input_shape) != 4 or input_placeholder:
+            _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+        elif input_tensor.shape_signature is None or len(list(input_tensor.shape_signature)) != 4:
+            input_tensor.shape_signature = [int(v) for v in list(input_signature)]
+
+        inferred_output_shape = _infer_conv2d_output_shape_nchw(
+            node=node,
+            input_shape_nchw=input_shape,
+            weights=weights,
+        )
+        inferred_output_signature = _infer_rank4_conv_output_signature(
+            input_signature_nchw=input_signature,
+            output_shape_nchw=inferred_output_shape,
+            existing_output_signature_nchw=output_signature,
+        )
+        if len(output_shape) != 4 or output_placeholder:
+            _materialize_tensor_shape_from_signature(output_tensor, signature=inferred_output_signature)
+        elif output_tensor.shape_signature is None or len(list(output_tensor.shape_signature)) != 4:
+            output_tensor.shape_signature = [int(v) for v in list(inferred_output_signature)]
+        return
+
+    in_channels = int(weights.shape[1]) * int(group)
+    input_signature = _normalize_signature(_tensor_signature(ctx, input_name), rank=3)
+    output_signature = _normalize_signature(_tensor_signature(ctx, output_name), rank=3)
+    if input_signature is None:
+        input_signature = [-1, int(in_channels), -1]
+        if output_signature is not None:
+            input_signature[0] = int(output_signature[0]) if int(output_signature[0]) > 0 else -1
+    if int(input_signature[1]) <= 0:
+        input_signature[1] = int(in_channels)
+    if len(input_shape) != 3 or input_placeholder:
+        _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
+        input_shape = [int(v) for v in list(input_tensor.shape)]
+    elif input_tensor.shape_signature is None or len(list(input_tensor.shape_signature)) != 3:
+        input_tensor.shape_signature = [int(v) for v in list(input_signature)]
+
+    inferred_output_shape = _infer_conv1d_output_shape_ncw(
         node=node,
-        input_shape_nchw=input_shape,
+        input_shape_ncw=input_shape,
         weights=weights,
     )
-    output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in inferred]
-    output_tensor.shape_signature = [int(v) if int(v) > 0 else -1 for v in inferred]
+    inferred_output_signature = _infer_rank3_conv_output_signature(
+        input_signature_ncw=input_signature,
+        output_shape_ncw=inferred_output_shape,
+        existing_output_signature_ncw=output_signature,
+    )
+    if len(output_shape) != 3 or output_placeholder:
+        _materialize_tensor_shape_from_signature(output_tensor, signature=inferred_output_signature)
+    elif output_tensor.shape_signature is None or len(list(output_tensor.shape_signature)) != 3:
+        output_tensor.shape_signature = [int(v) for v in list(inferred_output_signature)]
 
 
 def _resolve_conv_transpose_padding(node: Any) -> str:
@@ -1304,6 +1611,8 @@ def _resolve_conv_padding_and_explicit_pads(
     node: Any,
     input_shape_nchw: list[int],
     output_shape_nchw: list[int],
+    input_signature_nchw: list[int] | None = None,
+    output_signature_nchw: list[int] | None = None,
 ) -> tuple[str, list[int] | None]:
     auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
     raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
@@ -1315,12 +1624,31 @@ def _resolve_conv_padding_and_explicit_pads(
 
     if auto_pad == "NOTSET":
         # SAME is safe only when it preserves tensor extent and padding orientation
-        # does not affect sampled coordinates.
+        # does not affect sampled coordinates. Guard against placeholder-derived
+        # [1, ...] shapes by requiring static/equal spatial signatures.
+        input_sig = (
+            [int(v) for v in list(input_signature_nchw)]
+            if isinstance(input_signature_nchw, list)
+            else []
+        )
+        output_sig = (
+            [int(v) for v in list(output_signature_nchw)]
+            if isinstance(output_signature_nchw, list)
+            else []
+        )
+        signatures_confirm_same_spatial = (
+            len(input_sig) == 4
+            and len(output_sig) == 4
+            and all(int(v) > 0 for v in input_sig[2:])
+            and all(int(v) > 0 for v in output_sig[2:])
+            and list(input_sig[2:]) == list(output_sig[2:])
+        )
         if (
             pads_axes_opposite_same
             and len(input_shape_nchw) == 4
             and len(output_shape_nchw) == 4
             and list(input_shape_nchw[2:]) == list(output_shape_nchw[2:])
+            and bool(signatures_confirm_same_spatial)
         ):
             return "SAME", None
         if any(int(v) != 0 for v in pads):
@@ -2463,6 +2791,13 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(weight_name)
     ctx.ensure_tensor(output_name)
+    _materialize_conv_placeholder_io_shape(
+        node=node,
+        ctx=ctx,
+        input_name=str(input_name),
+        weight_name=str(weight_name),
+        output_name=str(output_name),
+    )
 
     input_shape = ctx.get_tensor_shape(input_name)
     output_shape = ctx.get_tensor_shape(output_name)
@@ -2544,17 +2879,10 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
     dilations = list(node.attrs.get("dilations", [1, 1]))
     group = int(node.attrs.get("group", 1))
 
-    nchw_input = input_shape
-    nchw_output = output_shape
-    padding, explicit_pads = _resolve_conv_padding_and_explicit_pads(
-        node=node,
-        input_shape_nchw=nchw_input,
-        output_shape_nchw=nchw_output,
-    )
-    nhwc_input_shape = [nchw_input[0], nchw_input[2], nchw_input[3], nchw_input[1]]
-    nhwc_output_shape = [nchw_output[0], nchw_output[2], nchw_output[3], nchw_output[1]]
     input_tensor = ctx.model_ir.tensors[input_name]
     output_tensor = ctx.model_ir.tensors[output_name]
+    nchw_input = input_shape
+    nchw_output = output_shape
     input_signature = (
         list(input_tensor.shape_signature)
         if input_tensor.shape_signature is not None
@@ -2565,6 +2893,19 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
         if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) == 4
         else None
     )
+    padding, explicit_pads = _resolve_conv_padding_and_explicit_pads(
+        node=node,
+        input_shape_nchw=nchw_input,
+        output_shape_nchw=nchw_output,
+        input_signature_nchw=[int(v) for v in list(input_signature)],
+        output_signature_nchw=(
+            [int(v) for v in list(existing_output_signature)]
+            if isinstance(existing_output_signature, list)
+            else None
+        ),
+    )
+    nhwc_input_shape = [nchw_input[0], nchw_input[2], nchw_input[3], nchw_input[1]]
+    nhwc_output_shape = [nchw_output[0], nchw_output[2], nchw_output[3], nchw_output[1]]
     output_signature = _infer_rank4_conv_output_signature(
         input_signature_nchw=input_signature,
         output_shape_nchw=nchw_output,

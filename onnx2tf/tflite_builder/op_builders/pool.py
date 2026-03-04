@@ -332,6 +332,474 @@ def _clone_quantization(quantization: Any) -> Any:
     return copy.deepcopy(quantization)
 
 
+class _NameRef:
+    def __init__(self, name: str):
+        self.name = str(name)
+
+
+class _PoolNodeProxy:
+    def __init__(
+        self,
+        *,
+        name: str,
+        op: str,
+        attrs: dict[str, Any],
+        input_names: List[str],
+        output_names: List[str],
+    ) -> None:
+        self.name = str(name)
+        self.op = str(op)
+        self.attrs = dict(attrs)
+        self.inputs = [_NameRef(name=v) for v in list(input_names)]
+        self.outputs = [_NameRef(name=v) for v in list(output_names)]
+
+
+def _normalize_1d_pads(raw_pads: List[int]) -> List[int]:
+    pads = [int(v) for v in list(raw_pads)]
+    if len(pads) == 0:
+        return [0, 0]
+    if len(pads) == 1:
+        return [int(pads[0]), int(pads[0])]
+    if len(pads) == 2:
+        return [int(pads[0]), int(pads[1])]
+    if len(pads) == 4:
+        # Some exporters may accidentally materialize as NCHW-style pairs.
+        # Interpret as [top, left, bottom, right] and collapse to width-side.
+        return [int(pads[1]), int(pads[3])]
+    raise NotImplementedError(f"1D MaxPool pads must be length 0/1/2/4. pads={pads}")
+
+
+def _build_maxpool1d_indices(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    indices_output_name: str,
+    kernel_1d: int,
+    stride_1d: int,
+    pad_left: int,
+    pad_right: int,
+) -> None:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(indices_output_name)]
+    if len(input_shape) != 3 or len(output_shape) != 3:
+        raise NotImplementedError(
+            "MaxPool1D indices lowering expects rank-3 input/output. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    n_dim, c_dim, l_dim = [int(v) for v in list(input_shape)]
+    out_n, out_c, out_l = [int(v) for v in list(output_shape)]
+    if any(int(v) <= 0 for v in [n_dim, c_dim, l_dim, out_n, out_c, out_l]):
+        raise NotImplementedError(
+            "MaxPool1D indices lowering requires static positive NCL shapes. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    if int(out_n) != int(n_dim) or int(out_c) != int(c_dim):
+        raise NotImplementedError(
+            "MaxPool1D indices lowering requires output N/C to match input. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    padded_l = int(l_dim) + int(pad_left) + int(pad_right)
+    if int(kernel_1d) != int(stride_1d):
+        raise NotImplementedError(
+            "MaxPool1D indices lowering currently supports non-overlapping windows only "
+            "(kernel==stride). "
+            f"op={node.name} kernel={kernel_1d} stride={stride_1d}"
+        )
+    target_window_length = int(out_l) * int(kernel_1d)
+    if int(padded_l) < int(target_window_length):
+        raise NotImplementedError(
+            "MaxPool1D indices lowering requires padded input length >= output_length * kernel. "
+            f"op={node.name} padded_length={padded_l} output_length={out_l} kernel={kernel_1d}"
+        )
+
+    indices_input_name = input_name
+    if int(pad_left) != 0 or int(pad_right) != 0:
+        input_tensor = ctx.model_ir.tensors[input_name]
+        input_dtype = str(input_tensor.dtype).upper()
+        if input_tensor.quantization is not None:
+            raise NotImplementedError(
+                "MaxPool1D indices lowering with padding currently supports non-quantized tensors only. "
+                f"op={node.name} dtype={input_dtype}"
+            )
+        padded_name = ctx.add_intermediate_tensor(
+            f"{node.name}_indices_input_padded",
+            dtype=input_dtype,
+            shape=[int(n_dim), int(c_dim), int(padded_l)],
+        )
+        pads_name = ctx.add_const_tensor(
+            f"{node.name}_indices_pads_ncl",
+            np.asarray(
+                [
+                    [0, 0],
+                    [0, 0],
+                    [int(pad_left), int(pad_right)],
+                ],
+                dtype=np.int32,
+            ),
+        )
+        pad_value = _max_pool_pad_value_for_tensor(
+            tensor_dtype=input_dtype,
+            tensor_quant=input_tensor.quantization,
+        )
+        pad_value_name = ctx.add_const_tensor(
+            f"{node.name}_indices_pad_value",
+            np.asarray(
+                [pad_value],
+                dtype=_numpy_dtype_from_tflite_dtype(input_dtype),
+            ),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="PADV2",
+                inputs=[input_name, pads_name, pad_value_name],
+                outputs=[padded_name],
+            )
+        )
+        indices_input_name = padded_name
+    if int(padded_l) > int(target_window_length):
+        # ceil_mode=0 with stride=kernel can legally drop the tail region.
+        # Trim trailing elements that do not participate in output windows.
+        sliced_name = ctx.add_intermediate_tensor(
+            f"{node.name}_indices_input_sliced",
+            dtype=str(ctx.get_tensor_dtype(indices_input_name)).upper(),
+            shape=[int(n_dim), int(c_dim), int(target_window_length)],
+        )
+        begin_name = ctx.add_const_tensor(
+            f"{node.name}_indices_slice_begin",
+            np.asarray([0, 0, 0], dtype=np.int32),
+        )
+        size_name = ctx.add_const_tensor(
+            f"{node.name}_indices_slice_size",
+            np.asarray([int(n_dim), int(c_dim), int(target_window_length)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[indices_input_name, begin_name, size_name],
+                outputs=[sliced_name],
+            )
+        )
+        indices_input_name = sliced_name
+        padded_l = int(target_window_length)
+
+    windows_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_windows",
+        dtype=str(ctx.get_tensor_dtype(indices_input_name)).upper(),
+        shape=[int(n_dim), int(c_dim), int(out_l), int(kernel_1d)],
+    )
+    windows_shape_name = ctx.add_const_tensor(
+        f"{node.name}_indices_windows_shape",
+        np.asarray([int(n_dim), int(c_dim), int(out_l), int(kernel_1d)], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[indices_input_name, windows_shape_name],
+            outputs=[windows_name],
+            options={"newShape": [int(n_dim), int(c_dim), int(out_l), int(kernel_1d)]},
+        )
+    )
+
+    block_argmax_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_block_argmax",
+        dtype="INT32",
+        shape=[int(n_dim), int(c_dim), int(out_l)],
+    )
+    axis_name = ctx.add_const_tensor(
+        f"{node.name}_indices_argmax_axis",
+        np.asarray([3], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ARG_MAX",
+            inputs=[windows_name, axis_name],
+            outputs=[block_argmax_name],
+            options={"outputType": "INT32"},
+        )
+    )
+
+    out_grid_name = ctx.add_const_tensor(
+        f"{node.name}_indices_out_grid",
+        np.arange(int(out_l), dtype=np.int32).reshape(1, 1, int(out_l)),
+    )
+    stride_name = ctx.add_const_tensor(
+        f"{node.name}_indices_stride",
+        np.asarray([int(stride_1d)], dtype=np.int32),
+    )
+    base_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_base",
+        dtype="INT32",
+        shape=[1, 1, int(out_l)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[out_grid_name, stride_name],
+            outputs=[base_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    base_shifted_name = base_name
+    if int(pad_left) != 0:
+        minus_pad_name = ctx.add_const_tensor(
+            f"{node.name}_indices_minus_pad_left",
+            np.asarray([-int(pad_left)], dtype=np.int32),
+        )
+        shifted_name = ctx.add_intermediate_tensor(
+            f"{node.name}_indices_base_shifted",
+            dtype="INT32",
+            shape=[1, 1, int(out_l)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[base_name, minus_pad_name],
+                outputs=[shifted_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        base_shifted_name = shifted_name
+
+    l_index_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_l_index",
+        dtype="INT32",
+        shape=[int(n_dim), int(c_dim), int(out_l)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[base_shifted_name, block_argmax_name],
+            outputs=[l_index_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    c_grid_name = ctx.add_const_tensor(
+        f"{node.name}_indices_c_grid",
+        np.arange(int(c_dim), dtype=np.int32).reshape(1, int(c_dim), 1),
+    )
+    l_dim_name = ctx.add_const_tensor(
+        f"{node.name}_indices_l_dim",
+        np.asarray([int(l_dim)], dtype=np.int32),
+    )
+    c_mul_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_c_mul",
+        dtype="INT32",
+        shape=[1, int(c_dim), 1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[c_grid_name, l_dim_name],
+            outputs=[c_mul_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    linear_i32_name = ctx.add_intermediate_tensor(
+        f"{node.name}_indices_linear_i32",
+        dtype="INT32",
+        shape=[int(n_dim), int(c_dim), int(out_l)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[c_mul_name, l_index_name],
+            outputs=[linear_i32_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    target_dtype = str(ctx.get_tensor_dtype(indices_output_name)).upper()
+    if target_dtype == "INT32":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[
+                    linear_i32_name,
+                    ctx.add_const_tensor(
+                        f"{node.name}_indices_out_shape_i32",
+                        np.asarray([int(n_dim), int(c_dim), int(out_l)], dtype=np.int32),
+                    ),
+                ],
+                outputs=[indices_output_name],
+                options={"newShape": [int(n_dim), int(c_dim), int(out_l)]},
+            )
+        )
+        return
+
+    if target_dtype not in {"INT64"}:
+        ctx.model_ir.tensors[indices_output_name].dtype = "INT64"
+        target_dtype = "INT64"
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[linear_i32_name],
+            outputs=[indices_output_name],
+            options={"inDataType": "INT32", "outDataType": target_dtype},
+        )
+    )
+
+
+def _build_maxpool1d_op(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    indices_output_name: Optional[str],
+) -> None:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if len(input_shape) != 3:
+        raise NotImplementedError(
+            f"MaxPool1D lowering requires rank-3 input. op={node.name} input_shape={input_shape}"
+        )
+
+    kernel_raw = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    strides_raw = [int(v) for v in list(node.attrs.get("strides", []))]
+    dilations_raw = [int(v) for v in list(node.attrs.get("dilations", []))]
+    if len(kernel_raw) != 1:
+        raise NotImplementedError(
+            f"MaxPool1D lowering requires 1D kernel_shape. op={node.name} kernel_shape={kernel_raw}"
+        )
+    if len(strides_raw) == 0:
+        strides_raw = [1]
+    if len(strides_raw) != 1:
+        raise NotImplementedError(
+            f"MaxPool1D lowering requires 1D strides. op={node.name} strides={strides_raw}"
+        )
+    if len(dilations_raw) == 0:
+        dilations_raw = [1]
+    if len(dilations_raw) != 1 or int(dilations_raw[0]) != 1:
+        raise NotImplementedError(
+            f"MaxPool1D lowering currently supports dilations=[1]. op={node.name} dilations={dilations_raw}"
+        )
+    kernel_1d = int(kernel_raw[0])
+    stride_1d = int(strides_raw[0])
+    if int(kernel_1d) not in [1, 2] or int(stride_1d) != int(kernel_1d):
+        raise NotImplementedError(
+            "MaxPool1D lowering currently supports kernel/stride [1]/[1] or [2]/[2]. "
+            f"op={node.name} kernel={kernel_raw} strides={strides_raw}"
+        )
+
+    auto_pad = str(node.attrs.get("auto_pad", "NOTSET")).upper()
+    if auto_pad not in {"NOTSET", "VALID"}:
+        raise NotImplementedError(
+            f"MaxPool1D lowering supports auto_pad NOTSET/VALID only. op={node.name} auto_pad={auto_pad}"
+        )
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", []))]
+    pad_left, pad_right = _normalize_1d_pads(raw_pads)
+    if auto_pad == "VALID":
+        pad_left, pad_right = 0, 0
+    if int(kernel_1d) == 1 and (int(pad_left) != 0 or int(pad_right) != 0):
+        raise NotImplementedError(
+            "MaxPool1D kernel=1/stride=1 with indices currently supports zero pads only. "
+            f"op={node.name} pads={[pad_left, pad_right]}"
+        )
+    if int(pad_left) < 0 or int(pad_right) < 0:
+        raise NotImplementedError(
+            f"MaxPool1D lowering requires non-negative pads. op={node.name} pads={[pad_left, pad_right]}"
+        )
+
+    expanded_input_name = ctx.add_intermediate_tensor(
+        f"{node.name}_input_ncl_to_nchw",
+        dtype=str(ctx.get_tensor_dtype(input_name)).upper(),
+        shape=[int(input_shape[0]), int(input_shape[1]), 1, int(input_shape[2])],
+    )
+    input_tensor = ctx.model_ir.tensors[input_name]
+    expanded_tensor = ctx.model_ir.tensors[expanded_input_name]
+    expanded_tensor.quantization = _clone_quantization(input_tensor.quantization)
+    input_signature = (
+        list(input_tensor.shape_signature)
+        if input_tensor.shape_signature is not None
+        else list(input_tensor.shape)
+    )
+    if len(input_signature) == 3:
+        expanded_tensor.shape_signature = [
+            int(input_signature[0]),
+            int(input_signature[1]),
+            1,
+            int(input_signature[2]),
+        ]
+    expand_axis_name = ctx.add_const_tensor(
+        f"{node.name}_input_expand_axis",
+        np.asarray([2], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="EXPAND_DIMS",
+            inputs=[input_name, expand_axis_name],
+            outputs=[expanded_input_name],
+        )
+    )
+
+    output_shape_4d = (
+        [int(output_shape[0]), int(output_shape[1]), 1, int(output_shape[2])]
+        if len(output_shape) == 3
+        else [int(output_shape[0]), int(output_shape[1]), int(output_shape[2]), int(output_shape[3])]
+    )
+    pooled_output_name = ctx.add_intermediate_tensor(
+        f"{node.name}_output_nchw_1d",
+        dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
+        shape=output_shape_4d,
+    )
+    pooled_output_tensor = ctx.model_ir.tensors[pooled_output_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_tensor.shape)
+    )
+    if len(output_signature) == 3:
+        pooled_output_tensor.shape_signature = [
+            int(output_signature[0]),
+            int(output_signature[1]),
+            1,
+            int(output_signature[2]),
+        ]
+
+    proxy_attrs = dict(node.attrs)
+    proxy_attrs["kernel_shape"] = [1, int(kernel_1d)]
+    proxy_attrs["strides"] = [1, int(stride_1d)]
+    proxy_attrs["dilations"] = [1, 1]
+    if auto_pad in {"NOTSET", "VALID"}:
+        proxy_attrs["pads"] = [0, int(pad_left), 0, int(pad_right)]
+
+    proxy_node = _PoolNodeProxy(
+        name=f"{node.name}_maxpool1d_proxy",
+        op=str(node.op),
+        attrs=proxy_attrs,
+        input_names=[expanded_input_name],
+        output_names=[pooled_output_name],
+    )
+    build_pool2d_op(proxy_node, ctx, "MAX_POOL_2D")
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=[pooled_output_name],
+            outputs=[output_name],
+            options={"squeezeDims": [2]},
+        )
+    )
+
+    if indices_output_name is not None:
+        _build_maxpool1d_indices(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            indices_output_name=indices_output_name,
+            kernel_1d=int(kernel_1d),
+            stride_1d=int(stride_1d),
+            pad_left=int(pad_left),
+            pad_right=int(pad_right),
+        )
+
+
 def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -343,6 +811,19 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     output_shape = ctx.get_tensor_shape(output_name)
+    if len(input_shape) == 3:
+        if str(op_type) != "MAX_POOL_2D":
+            raise NotImplementedError(
+                f"Only MaxPool rank-3 (1D) is currently supported in flatbuffer_direct. op={node.name}"
+            )
+        _build_maxpool1d_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            indices_output_name=indices_output_name,
+        )
+        return
     if len(input_shape) != 4:
         raise NotImplementedError(f"Only 2D pooling (rank=4) is supported. op={node.name}")
 
