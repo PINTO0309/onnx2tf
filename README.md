@@ -277,7 +277,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 > `flatbuffer_direct` is an experimental backend. Behavior, supported patterns, and conversion quality may change between releases.
 > For production use, keep `tf_converter` as baseline and validate `flatbuffer_direct` per model with `--report_op_coverage`.
 
-<img width="1829" height="1023" alt="image" src="https://github.com/user-attachments/assets/646cb504-d63f-4811-9f34-3cefa5eafedf" />
+<img width="1842" height="846" alt="image" src="https://github.com/user-attachments/assets/a78e7a7d-b28f-4269-b301-f5101a4b3393" />
 
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
 
