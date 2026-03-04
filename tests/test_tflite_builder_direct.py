@@ -110,9 +110,12 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _topologically_sort_operators,
     _reconcile_static_tensor_shapes,
     _realign_dynamic_boundary_shape_signature_map,
+    _find_unbound_nonconstant_operator_inputs,
+    _repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
     _resolve_dynamic_reshape_shapes,
     _sanitize_squeeze_axes_with_static_input_shapes,
     _sanitize_static_shape_signature_consistency,
+    _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     lower_onnx_to_ir,
 )
 from onnx2tf.tflite_builder.model_writer import serialize_model
@@ -1465,6 +1468,23 @@ def _make_maxpool1d_indices_kernel1_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_averagepool1d_dynamic_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 128, "unk_seq"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 128, "unk_out"])
+    node = helper.make_node(
+        "AveragePool",
+        ["x"],
+        ["y"],
+        name="AveragePool1DDynamicNode",
+        kernel_shape=[100],
+        strides=[100],
+        pads=[0, 0],
+        ceil_mode=1,
+    )
+    graph = helper.make_graph([node], "averagepool1d_dynamic_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_einsum_abgd_gf_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 1, 4, 3])
     w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 5])
@@ -1568,6 +1588,36 @@ def _make_einsum_bmd_bnd_bmn_model() -> onnx.ModelProto:
         equation="bmd,bnd->bmn",
     )
     graph = helper.make_graph([node], "einsum_bmd_bnd_bmn_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_bchw_bnc_bnhw_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 256, 78, 78])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 100, 256])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 100, 78, 78])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumBCHWBNCBNHWNode",
+        equation="bchw,bnc->bnhw",
+    )
+    graph = helper.make_graph([node], "einsum_bchw_bnc_bnhw_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_abcd_aecf_feab_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 6, 4, 7])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [7, 6, 2, 3])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumABCDAECFFEABNode",
+        equation="abcd,aecf->feab",
+    )
+    graph = helper.make_graph([node], "einsum_abcd_aecf_feab_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -2463,6 +2513,24 @@ def _make_min_topk_dynamic_k_model() -> onnx.ModelProto:
         [x],
         [values, indices],
         initializer=[axis_index, k_limit],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_topk_const_k_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, 3])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 3])
+    k_const = numpy_helper.from_array(np.asarray([3], dtype=np.int64), name="topk_k_const")
+    nodes = [
+        helper.make_node("TopK", ["x", "topk_k_const"], ["values", "indices"], name="TopKConstK", axis=1),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "topk_const_k_graph",
+        [x],
+        [values, indices],
+        initializer=[k_const],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
@@ -5162,6 +5230,22 @@ def test_flatbuffer_direct_maxpool1d_indices_kernel1_lowering_uses_builtin_ops()
     assert "SQUEEZE" in op_types
 
 
+def test_flatbuffer_direct_averagepool1d_dynamic_lowering_uses_builtin_ops() -> None:
+    model = _make_averagepool1d_dynamic_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="averagepool1d_dynamic_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "AVERAGE_POOL_2D" in op_types
+    assert "EXPAND_DIMS" in op_types
+    assert "SQUEEZE" in op_types
+
+
 def test_flatbuffer_direct_sum_variadic_lowering_uses_builtin_ops() -> None:
     model = _make_sum_variadic_model()
     register_default_preprocess_rules()
@@ -5279,6 +5363,39 @@ def test_flatbuffer_direct_einsum_bmd_bnd_bmn_lowering_uses_builtin_ops() -> Non
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "CUSTOM" not in op_types
     assert "BATCH_MATMUL" in op_types
+
+
+def test_flatbuffer_direct_einsum_bchw_bnc_bnhw_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_bchw_bnc_bnhw_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_bchw_bnc_bnhw_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "BATCH_MATMUL" in op_types
+    assert "TRANSPOSE" in op_types
+    assert "RESHAPE" in op_types
+
+
+def test_flatbuffer_direct_einsum_abcd_aecf_feab_lowering_uses_builtin_ops() -> None:
+    model = _make_einsum_abcd_aecf_feab_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="einsum_abcd_aecf_feab_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "SUM" in op_types
+    assert "BATCH_MATMUL" in op_types
+    assert "TRANSPOSE" in op_types
+    assert "RESHAPE" in op_types
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -8461,6 +8578,79 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_zero_copy_dims_pass() 
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [10, 1, 3]
 
 
+def test_flatbuffer_direct_repair_unbound_shape_input_with_layout_transpose() -> None:
+    model_ir = ModelIR(name="repair_unbound_shape_input_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["shape_out"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["add_const"] = TensorIR(
+        name="add_const",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 1],
+        shape_signature=[1, 1, 1, 1],
+        data=np.asarray([[[[1.0]]]], dtype=np.float32),
+    )
+    model_ir.tensors["add_out_nhwc"] = TensorIR(
+        name="add_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 8],
+        shape_signature=[1, 4, 4, 8],
+    )
+    model_ir.tensors["add_out_nchw"] = TensorIR(
+        name="add_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 8, 4, 4],
+        shape_signature=[1, 8, 4, 4],
+    )
+    model_ir.tensors["shape_out"] = TensorIR(
+        name="shape_out",
+        dtype="INT64",
+        shape=[4],
+        shape_signature=[4],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "add_const"],
+            outputs=["add_out_nhwc"],
+            options={},
+        )
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=["add_out_nchw"],
+            outputs=["shape_out"],
+            options={},
+        )
+    )
+
+    before_issues = _find_unbound_nonconstant_operator_inputs(model_ir)
+    assert len(before_issues) == 1
+    assert str(before_issues[0]["op_type"]) == "SHAPE"
+
+    stats = _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    assert int(stats["repaired_unbound_nonconstant_inputs_with_layout_transpose"]) == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["ADD", "TRANSPOSE", "SHAPE"]
+    transpose_op = model_ir.operators[1]
+    assert list(transpose_op.inputs)[0] == "add_out_nhwc"
+    assert list(transpose_op.outputs)[0] == "add_out_nchw"
+    perm_name = str(transpose_op.inputs[1])
+    perm_tensor = model_ir.tensors[perm_name]
+    assert perm_tensor.data is not None
+    assert np.asarray(perm_tensor.data).reshape(-1).tolist() == [0, 3, 1, 2]
+
+    after_issues = _find_unbound_nonconstant_operator_inputs(model_ir)
+    assert len(after_issues) == 0
+
+
 def test_flatbuffer_direct_logsoftmax_lowering() -> None:
     model = _make_logsoftmax_model()
     register_default_preprocess_rules()
@@ -8766,6 +8956,32 @@ def test_flatbuffer_direct_min_topk_dynamic_k_lowering() -> None:
         if str(op.op_type) == "CAST" and str(op.outputs[0]) == "indices"
     ]
     assert len(cast_to_i64) == 1
+
+
+def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:
+    model = _make_topk_const_k_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="topk_const_k_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    topk_op = next(op for op in model_ir.operators if str(op.op_type) == "TOPK_V2")
+    k_input_name = str(topk_op.inputs[1])
+    k_tensor = model_ir.tensors[k_input_name]
+    assert str(k_tensor.dtype).upper() == "INT32"
+    assert list(k_tensor.shape) in ([], [1])
+    assert k_tensor.data is not None
+    assert int(np.asarray(k_tensor.data).reshape(-1)[0]) == 3
+
+    k_producers = [
+        op
+        for op in model_ir.operators
+        if str(op.outputs[0]) == k_input_name
+    ]
+    assert len(k_producers) == 0
 
 
 def test_flatbuffer_direct_pad_dynamic_pads_lowering() -> None:
@@ -20010,6 +20226,88 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_relu6_muldiv_suffix(
     assert list(conv_op.outputs) == ["add_out"]
 
 
+def test_flatbuffer_direct_repair_channelwise_broadcast_constants_rotates_rank3_to_nhwc() -> None:
+    model_ir = ModelIR(name="repair_channelwise_rank3_to_nhwc_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 81, 512],
+        shape_signature=[1, 1, 81, 512],
+    )
+    model_ir.tensors["layer_scale"] = TensorIR(
+        name="layer_scale",
+        dtype="FLOAT32",
+        shape=[512, 1, 1],
+        shape_signature=[512, 1, 1],
+        data=np.ones((512, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 512, 81, 512],
+        shape_signature=[1, 512, 81, 512],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x", "layer_scale"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    assert stats["repaired_rank4_channelwise_broadcast_constants"] == 1
+
+    repaired = model_ir.tensors["layer_scale"]
+    assert list(repaired.shape) == [1, 1, 512]
+    assert repaired.data is not None
+    assert np.asarray(repaired.data).shape == (1, 1, 512)
+
+
+def test_flatbuffer_direct_repair_channelwise_broadcast_constants_keeps_nchw_rank3() -> None:
+    model_ir = ModelIR(name="repair_channelwise_rank3_keep_nchw_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 512, 1, 81],
+        shape_signature=[1, 512, 1, 81],
+    )
+    model_ir.tensors["layer_scale"] = TensorIR(
+        name="layer_scale",
+        dtype="FLOAT32",
+        shape=[512, 1, 1],
+        shape_signature=[512, 1, 1],
+        data=np.ones((512, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 512, 1, 81],
+        shape_signature=[1, 512, 1, 81],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x", "layer_scale"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    assert stats["repaired_rank4_channelwise_broadcast_constants"] == 0
+
+    kept = model_ir.tensors["layer_scale"]
+    assert list(kept.shape) == [512, 1, 1]
+
+
 def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation() -> None:
     model_ir = ModelIR(name="fold_conv_add_affine_fused_add_activation_fold_test")
     model_ir.inputs = ["x"]
@@ -23470,6 +23768,34 @@ def test_flatbuffer_direct_maxpool2d_intermediate_preserves_dynamic_batch_signat
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor.shape_signature is not None
     assert int(out_tensor.shape_signature[0]) == -1
+
+
+def test_flatbuffer_direct_averagepool1d_intermediate_preserves_dynamic_signature() -> None:
+    model = _make_averagepool1d_dynamic_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="averagepool1d_dynamic_signature_test",
+    )
+
+    avg_pool_ops = [op for op in model_ir.operators if str(op.op_type) == "AVERAGE_POOL_2D"]
+    assert len(avg_pool_ops) >= 1
+    avg_pool_outputs = [model_ir.tensors[str(op.outputs[0])] for op in avg_pool_ops if len(op.outputs) == 1]
+    assert any(
+        tensor.shape_signature is not None
+        and len(list(tensor.shape_signature)) == 4
+        and int(tensor.shape_signature[1]) == 1
+        and int(tensor.shape_signature[2]) == -1
+        for tensor in avg_pool_outputs
+    )
+
+    y_tensor = model_ir.tensors["y"]
+    assert y_tensor.shape_signature is not None
+    assert len(list(y_tensor.shape_signature)) == 3
+    assert int(y_tensor.shape_signature[0]) == 1
+    assert int(y_tensor.shape_signature[1]) == 128
+    assert int(y_tensor.shape_signature[2]) == -1
 
 
 def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() -> None:

@@ -57,6 +57,34 @@ def _inverse_permutation(perm: list[int]) -> list[int]:
     return inv
 
 
+def _maybe_constantize_topk_k(
+    *,
+    ctx: Any,
+    node: Any,
+    k_input_name: str,
+    values_output_name: str,
+) -> str | None:
+    k_const = ctx.get_constant_array(k_input_name)
+    if k_const is None:
+        return None
+    k_arr = np.asarray(k_const)
+    if int(k_arr.size) != 1:
+        raise NotImplementedError(
+            "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+            f"op={node.name} k_shape={list(k_arr.shape)}"
+        )
+    k_value = int(np.asarray(k_arr).reshape(-1)[0])
+    if k_value < np.iinfo(np.int32).min or k_value > np.iinfo(np.int32).max:
+        raise NotImplementedError(
+            "TopK constant k is out of INT32 range required by TFLite TOPK_V2. "
+            f"op={node.name} k={k_value}"
+        )
+    return ctx.add_const_tensor(
+        f"{values_output_name}_topk_k_const_i32",
+        np.asarray(k_value, dtype=np.int32),
+    )
+
+
 def _tensor_shape_with_signature(ctx: Any, tensor_name: str) -> list[int]:
     shape = [int(v) for v in ctx.get_tensor_shape(tensor_name)]
     tensor = ctx.model_ir.tensors.get(tensor_name, None)
@@ -2247,54 +2275,61 @@ def build_topk_op(node: Any, ctx: Any) -> None:
         )
         topk_input_name = neg_input_name
 
-    k_for_topk_name = k_name
-    k_dtype = str(ctx.get_tensor_dtype(k_for_topk_name)).upper()
-    if k_dtype != "INT32":
-        k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
-        k_i32_name = ctx.add_intermediate_tensor(
-            f"{values_output_name}_topk_k_i32",
-            dtype="INT32",
-            shape=k_shape,
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="CAST",
-                inputs=[k_for_topk_name],
-                outputs=[k_i32_name],
-                options={
-                    "inDataType": k_dtype,
-                    "outDataType": "INT32",
-                },
+    k_for_topk_name = _maybe_constantize_topk_k(
+        ctx=ctx,
+        node=node,
+        k_input_name=k_name,
+        values_output_name=values_output_name,
+    )
+    if k_for_topk_name is None:
+        k_for_topk_name = k_name
+        k_dtype = str(ctx.get_tensor_dtype(k_for_topk_name)).upper()
+        if k_dtype != "INT32":
+            k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
+            k_i32_name = ctx.add_intermediate_tensor(
+                f"{values_output_name}_topk_k_i32",
+                dtype="INT32",
+                shape=k_shape,
             )
-        )
-        k_for_topk_name = k_i32_name
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[k_for_topk_name],
+                    outputs=[k_i32_name],
+                    options={
+                        "inDataType": k_dtype,
+                        "outDataType": "INT32",
+                    },
+                )
+            )
+            k_for_topk_name = k_i32_name
 
-    k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
-    if len(k_shape) == 1:
-        if int(k_shape[0]) > 1:
+        k_shape = [int(v) for v in ctx.get_tensor_shape(k_for_topk_name)]
+        if len(k_shape) == 1:
+            if int(k_shape[0]) > 1:
+                raise NotImplementedError(
+                    "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+                    f"op={node.name} k_shape={k_shape}"
+                )
+            k_scalar_name = ctx.add_intermediate_tensor(
+                f"{values_output_name}_topk_k_scalar",
+                dtype="INT32",
+                shape=[],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SQUEEZE",
+                    inputs=[k_for_topk_name],
+                    outputs=[k_scalar_name],
+                    options={"squeezeDims": [0]},
+                )
+            )
+            k_for_topk_name = k_scalar_name
+        elif len(k_shape) != 0:
             raise NotImplementedError(
                 "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
                 f"op={node.name} k_shape={k_shape}"
             )
-        k_scalar_name = ctx.add_intermediate_tensor(
-            f"{values_output_name}_topk_k_scalar",
-            dtype="INT32",
-            shape=[],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SQUEEZE",
-                inputs=[k_for_topk_name],
-                outputs=[k_scalar_name],
-                options={"squeezeDims": [0]},
-            )
-        )
-        k_for_topk_name = k_scalar_name
-    elif len(k_shape) != 0:
-        raise NotImplementedError(
-            "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
-            f"op={node.name} k_shape={k_shape}"
-        )
 
     topk_values_shape = (
         [int(values_output_shape[int(v)]) for v in perm_to_last]
