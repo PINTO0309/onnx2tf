@@ -1973,8 +1973,7 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
     for tensor_name, producer_idx in producer_map.items():
         if int(producer_idx) < 0 or int(producer_idx) >= len(model_ir.operators):
             continue
-        if str(model_ir.operators[int(producer_idx)].op_type) != "WHERE":
-            continue
+        producer_op_type = str(model_ir.operators[int(producer_idx)].op_type)
         tensor = model_ir.tensors.get(str(tensor_name), None)
         if tensor is None:
             continue
@@ -1983,7 +1982,12 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
             if tensor.shape_signature is not None
             else [int(v) for v in list(tensor.shape)]
         )
-        if len(signature) >= 1 and int(signature[0]) < 0:
+        if producer_op_type == "WHERE" and len(signature) >= 1 and int(signature[0]) < 0:
+            dynamic_lineage_root_names.add(str(tensor_name))
+            continue
+        # TOPK_V2 output extent depends on runtime k. Preserve internal -1 axes
+        # even when dynamic lineage is not anchored to graph boundaries.
+        if producer_op_type == "TOPK_V2" and any(int(v) < 0 for v in signature):
             dynamic_lineage_root_names.add(str(tensor_name))
     dynamic_lineage_cache: Dict[str, bool] = {}
     dynamic_lineage_visiting: set[str] = set()

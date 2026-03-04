@@ -27,6 +27,59 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         dst.shape_signature = list(src_signature)
 
 
+def _tensor_shape_and_signature(
+    *,
+    tensor_name: str,
+    ctx: Any,
+) -> tuple[list[int], list[int]]:
+    shape = [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+    tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+    if (
+        tensor is not None
+        and tensor.shape_signature is not None
+        and len(list(tensor.shape_signature)) == len(shape)
+    ):
+        return shape, [int(v) for v in list(tensor.shape_signature)]
+    return shape, [int(v) for v in list(shape)]
+
+
+def _broadcast_shape_signatures(
+    signature_a: list[int],
+    signature_b: list[int],
+) -> list[int] | None:
+    a = [int(v) for v in list(signature_a)]
+    b = [int(v) for v in list(signature_b)]
+    rank = int(max(len(a), len(b)))
+    a = [1] * (rank - len(a)) + a
+    b = [1] * (rank - len(b)) + b
+    out: list[int] = []
+    for dim_a, dim_b in zip(a, b):
+        if int(dim_a) == int(dim_b):
+            out.append(int(dim_a))
+            continue
+        if int(dim_a) == 1:
+            out.append(-1 if int(dim_b) < 0 else int(dim_b))
+            continue
+        if int(dim_b) == 1:
+            out.append(-1 if int(dim_a) < 0 else int(dim_a))
+            continue
+        if int(dim_a) < 0 and int(dim_b) < 0:
+            out.append(-1)
+            continue
+        if int(dim_a) < 0 and int(dim_b) > 1:
+            out.append(int(dim_b))
+            continue
+        if int(dim_b) < 0 and int(dim_a) > 1:
+            out.append(int(dim_a))
+            continue
+        return None
+    return out
+
+
+def _materialize_shape_from_signature(shape_signature: list[int]) -> list[int]:
+    return [int(v) if int(v) > 0 else 1 for v in list(shape_signature)]
+
+
 def _normalize_axis_for_rank(axis: int, rank: int) -> int:
     a = int(axis)
     if a < 0:
@@ -283,11 +336,119 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     if len(input_names) > 0:
         _propagate_shape(ctx, input_names[0], output_name)
 
+    # Infer broadcast output metadata eagerly so downstream ops (e.g. MatMul)
+    # do not branch on unresolved rank-1 placeholders.
+    inferred_signature: list[int] | None = None
+    for input_name in input_names:
+        _, input_signature = _tensor_shape_and_signature(
+            tensor_name=str(input_name),
+            ctx=ctx,
+        )
+        if inferred_signature is None:
+            inferred_signature = [int(v) for v in list(input_signature)]
+            continue
+        inferred_signature = _broadcast_shape_signatures(inferred_signature, input_signature)
+        if inferred_signature is None:
+            break
+    if inferred_signature is not None:
+        output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+        if output_tensor is not None:
+            inferred_shape = _materialize_shape_from_signature(inferred_signature)
+            current_shape = [int(v) for v in list(output_tensor.shape)]
+            current_signature = (
+                [int(v) for v in list(output_tensor.shape_signature)]
+                if output_tensor.shape_signature is not None
+                else [int(v) for v in list(current_shape)]
+            )
+            should_update = (
+                current_shape == [1]
+                or len(current_shape) != len(inferred_shape)
+                or len(current_signature) != len(inferred_signature)
+                or any(
+                    int(inferred_signature[idx]) > 0 and int(current_signature[idx]) <= 0
+                    for idx in range(len(inferred_signature))
+                )
+            )
+            if should_update:
+                output_tensor.shape = [int(v) for v in list(inferred_shape)]
+                output_tensor.shape_signature = [int(v) for v in list(inferred_signature)]
+
+    def _normalize_binary_dtype(dtype: str) -> str:
+        dt = str(dtype).upper()
+        if dt in {"INT64", "UINT64", "UINT32"}:
+            return "INT32"
+        return dt
+
+    integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
+    normalized_input_dtypes = [
+        _normalize_binary_dtype(str(ctx.get_tensor_dtype(name)).upper())
+        for name in input_names
+    ]
+    target_dtype = _normalize_binary_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
+    if len(normalized_input_dtypes) > 0 and any(dt != target_dtype for dt in normalized_input_dtypes):
+        unique_input_dtypes = set(normalized_input_dtypes)
+        if len(unique_input_dtypes) == 1:
+            target_dtype = normalized_input_dtypes[0]
+        elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
+            target_dtype = "INT32"
+        elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
+            target_dtype = "FLOAT32"
+        else:
+            raise NotImplementedError(
+                "Binary op input dtypes must be compatible in flatbuffer_direct. "
+                f"op={node.name} op_type={op_type} input_dtypes={normalized_input_dtypes} "
+                f"output_dtype={target_dtype}"
+            )
+
+    casted_input_names: list[str] = []
+    for idx, name in enumerate(input_names):
+        input_dtype = str(ctx.get_tensor_dtype(name)).upper()
+        normalized_input_dtype = _normalize_binary_dtype(input_dtype)
+        if normalized_input_dtype == target_dtype and input_dtype == target_dtype:
+            casted_input_names.append(name)
+            continue
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{op_type.lower()}_input{idx}_{target_dtype.lower()}",
+            dtype=target_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(name)],
+        )
+        src_tensor = ctx.model_ir.tensors.get(name, None)
+        cast_tensor = ctx.model_ir.tensors.get(cast_name, None)
+        if src_tensor is not None and cast_tensor is not None:
+            cast_tensor.shape_signature = (
+                [int(v) for v in list(src_tensor.shape_signature)]
+                if src_tensor.shape_signature is not None
+                else [int(v) for v in list(src_tensor.shape)]
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[name],
+                outputs=[cast_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": target_dtype,
+                },
+            )
+        )
+        casted_input_names.append(cast_name)
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = target_dtype
+        if len(casted_input_names) > 0:
+            ref_tensor = ctx.model_ir.tensors.get(casted_input_names[0], None)
+            if ref_tensor is not None:
+                output_tensor.quantization = _clone_quantization(ref_tensor.quantization)
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = target_dtype
+
     options = {"fusedActivationFunction": "NONE"}
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
-            inputs=input_names,
+            inputs=casted_input_names,
             outputs=[output_name],
             options=options,
         )
@@ -1398,6 +1559,53 @@ def build_where_op(node: Any, ctx: Any) -> None:
     _propagate_shape(ctx, x_name, output_name)
 
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    x_dtype = str(ctx.get_tensor_dtype(x_name)).upper()
+    y_dtype = str(ctx.get_tensor_dtype(y_name)).upper()
+
+    def _normalize_where_dtype(dtype: str) -> str:
+        dt = str(dtype).upper()
+        if dt in {"INT64", "UINT64", "UINT32"}:
+            return "INT32"
+        return dt
+
+    normalized_output_dtype = _normalize_where_dtype(output_dtype)
+    normalized_x_dtype = _normalize_where_dtype(x_dtype)
+    normalized_y_dtype = _normalize_where_dtype(y_dtype)
+    integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    where_target_dtype = normalized_output_dtype
+    if normalized_x_dtype != where_target_dtype or normalized_y_dtype != where_target_dtype:
+        if normalized_x_dtype == normalized_y_dtype:
+            where_target_dtype = normalized_x_dtype
+        elif x_dtype in integer_dtypes and y_dtype in integer_dtypes:
+            where_target_dtype = "INT32"
+        else:
+            raise NotImplementedError(
+                "Where input dtypes must be compatible in flatbuffer_direct. "
+                f"op={node.name} x_dtype={x_dtype} y_dtype={y_dtype} output_dtype={output_dtype}"
+            )
+
+    x_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=x_name,
+        dst_dtype=where_target_dtype,
+        base_name=f"{output_name}_where_x_cast",
+    )
+    y_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=y_name,
+        dst_dtype=where_target_dtype,
+        base_name=f"{output_name}_where_y_cast",
+    )
+    output_dtype = where_target_dtype
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = output_dtype
+        src_tensor = ctx.model_ir.tensors.get(x_name, None)
+        if src_tensor is not None:
+            output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = output_dtype
+
     condition_dtype = str(ctx.get_tensor_dtype(condition_name)).upper()
     cond_bool_name = condition_name
     if condition_dtype != "BOOL":
