@@ -623,7 +623,11 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             attr_name="ends",
             label="ends",
         )
-    if dynamic_end_input_name == "" and len(starts) != len(ends):
+    if (
+        dynamic_start_input_name == ""
+        and dynamic_end_input_name == ""
+        and len(starts) != len(ends)
+    ):
         raise NotImplementedError(
             f"Slice starts and ends length mismatch. op={node.name} "
             f"starts_len={len(starts)} ends_len={len(ends)}"
@@ -2546,6 +2550,83 @@ def build_shape_op(node: Any, ctx: Any) -> None:
     )
 
 
+def build_size_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    input_rank = int(max(len(input_shape), len(input_signature)))
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=output_dtype,
+    )
+    if compute_dtype not in {"INT32", "INT64"}:
+        compute_dtype = "INT32"
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_tensor.shape = []
+    output_tensor.shape_signature = []
+    output_tensor.dtype = str(output_dtype)
+
+    shape_out_name = ctx.add_intermediate_tensor(
+        f"{output_name}_size_shape",
+        dtype=compute_dtype,
+        shape=[int(input_rank)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[shape_out_name],
+            options={"outType": compute_dtype},
+        )
+    )
+
+    size_core_name = output_name
+    if output_dtype != compute_dtype:
+        size_core_name = ctx.add_intermediate_tensor(
+            f"{output_name}_size_core",
+            dtype=compute_dtype,
+            shape=[],
+        )
+    reduce_axes_name = ctx.add_const_tensor(
+        f"{output_name}_size_axes",
+        np.asarray([0], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="REDUCE_PROD",
+            inputs=[shape_out_name, reduce_axes_name],
+            outputs=[size_core_name],
+            options={"keepDims": False},
+        )
+    )
+
+    if size_core_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[size_core_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+
 def build_constant_of_shape_op(node: Any, ctx: Any) -> None:
     shape_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -2663,6 +2744,23 @@ def build_expand_op(node: Any, ctx: Any) -> None:
         if any(int(v) < 0 for v in output_signature)
         else [-1 for _ in output_shape]
     )
+    if (
+        _is_unresolved_placeholder_shape(output_shape, output_signature)
+        and len(output_shape) < len(input_shape)
+    ):
+        inferred_rank = int(len(input_shape))
+        if shape_const is not None:
+            inferred_rank = max(1, int(np.asarray(shape_const).size))
+        output_shape = [1 for _ in range(max(1, inferred_rank))]
+        if dynamic_expand_shape:
+            dynamic_output_signature = [-1 for _ in output_shape]
+            output_signature = [int(v) for v in dynamic_output_signature]
+        else:
+            output_signature = [int(v) for v in output_shape]
+            dynamic_output_signature = [int(v) for v in output_signature]
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in output_shape]
+            output_tensor.shape_signature = [int(v) for v in output_signature]
     shape_for_fill = shape_name
     shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
     if dynamic_expand_shape and shape_dtype != "INT32":
@@ -3259,6 +3357,29 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
     )
     if input_rank == 0 and len(output_signature) > 0:
         input_rank = int(max(len(output_signature) - len(axes), 0))
+
+    if logical_scalar_input and len(axes) > 0:
+        scalar_output_rank = int(len(axes))
+        scalar_axes_valid = True
+        scalar_seen_axes: set[int] = set()
+        for axis in axes:
+            scalar_axis = int(axis)
+            if scalar_axis < 0:
+                scalar_axis += scalar_output_rank
+            if (
+                scalar_axis < 0
+                or scalar_axis >= scalar_output_rank
+                or scalar_axis in scalar_seen_axes
+            ):
+                scalar_axes_valid = False
+                break
+            scalar_seen_axes.add(int(scalar_axis))
+        if not scalar_axes_valid:
+            # Some models lose rank info and appear as scalar placeholders ([] -> [1]).
+            # If axes are incompatible with true scalar semantics, reinterpret as rank-1.
+            logical_scalar_input = False
+            input_rank = int(len(ctx.get_tensor_shape(input_name)))
+
     output_rank = int(input_rank + len(axes))
     normalized_axes: list[int] = []
     for axis in axes:

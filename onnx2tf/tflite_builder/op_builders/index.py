@@ -119,6 +119,51 @@ def _tensor_shape_with_signature(ctx: Any, tensor_name: str) -> list[int]:
     ]
 
 
+def _is_unknown_rank_placeholder_tensor(ctx: Any, tensor_name: str) -> bool:
+    shape = [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+    if len(shape) == 0 or not all(int(v) == 1 for v in shape):
+        return False
+    tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+    if tensor is not None:
+        signature = (
+            [int(v) for v in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else [int(v) for v in shape]
+        )
+        if len(signature) != len(shape):
+            return False
+        if any(int(v) < 0 for v in signature):
+            return True
+        if len(shape) == 1 and int(signature[0]) == 1:
+            raw_shape = None
+            if hasattr(ctx, "shape_map"):
+                raw_shape = ctx.shape_map.get(str(tensor_name), None)
+            if raw_shape is None:
+                return True
+            if isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) == 0:
+                return True
+        return False
+    raw_shape = None
+    if hasattr(ctx, "shape_map"):
+        raw_shape = ctx.shape_map.get(str(tensor_name), None)
+    if raw_shape is None:
+        return True
+    if not isinstance(raw_shape, (list, tuple)):
+        return True
+    if len(list(raw_shape)) == 0:
+        return True
+    unresolved = False
+    for dim in list(raw_shape):
+        if isinstance(dim, (int, np.integer)):
+            if int(dim) <= 0:
+                unresolved = True
+                break
+        else:
+            unresolved = True
+            break
+    return bool(unresolved)
+
+
 def _add_reshape_operator(
     *,
     ctx: Any,
@@ -2971,6 +3016,18 @@ def build_one_hot_op(node: Any, ctx: Any) -> None:
 
 
 def build_gather_elements_op(node: Any, ctx: Any) -> None:
+    def _rank_is_unknown_placeholder(tensor_name: str, shape: list[int]) -> bool:
+        raw_shape = None
+        if hasattr(ctx, "shape_map"):
+            raw_shape = ctx.shape_map.get(str(tensor_name), None)
+        if isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) > 0:
+            # Rank is known even when dimensions are symbolic/unknown.
+            return False
+        return bool(
+            len(shape) == 1
+            and _is_unknown_rank_placeholder_tensor(ctx, tensor_name)
+        )
+
     data_name = node.inputs[0].name
     indices_name = node.inputs[1].name
     output_name = node.outputs[0].name
@@ -2987,17 +3044,60 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
         if output_tensor is not None and output_tensor.shape_signature is not None
         else [int(v) for v in list(output_shape)]
     )
+    data_tensor = ctx.model_ir.tensors.get(data_name, None)
+    data_signature = (
+        [int(v) for v in list(data_tensor.shape_signature)]
+        if data_tensor is not None and data_tensor.shape_signature is not None
+        else [int(v) for v in list(data_shape)]
+    )
+    indices_tensor = ctx.model_ir.tensors.get(indices_name, None)
+    indices_signature = (
+        [int(v) for v in list(indices_tensor.shape_signature)]
+        if indices_tensor is not None and indices_tensor.shape_signature is not None
+        else [int(v) for v in list(indices_shape)]
+    )
+    data_rank_unknown = _rank_is_unknown_placeholder(data_name, data_shape)
+    indices_rank_unknown = _rank_is_unknown_placeholder(indices_name, indices_shape)
+    output_rank_unknown = _rank_is_unknown_placeholder(output_name, output_shape)
+
+    if data_rank_unknown and not indices_rank_unknown:
+        data_shape = [int(v) for v in list(indices_shape)]
+        data_signature = [int(v) for v in list(indices_signature)]
+        if data_tensor is not None:
+            data_tensor.shape = [int(v) for v in list(data_shape)]
+            data_tensor.shape_signature = [int(v) for v in list(data_signature)]
+        data_rank_unknown = False
+    elif data_rank_unknown and not output_rank_unknown:
+        data_shape = [int(v) for v in list(output_shape)]
+        data_signature = [int(v) for v in list(output_signature)]
+        if data_tensor is not None:
+            data_tensor.shape = [int(v) for v in list(data_shape)]
+            data_tensor.shape_signature = [int(v) for v in list(data_signature)]
+        data_rank_unknown = False
+
+    if indices_rank_unknown and not output_rank_unknown:
+        indices_shape = [int(v) for v in list(output_shape)]
+        indices_signature = [int(v) for v in list(output_signature)]
+        if indices_tensor is not None:
+            indices_tensor.shape = [int(v) for v in list(indices_shape)]
+            indices_tensor.shape_signature = [int(v) for v in list(indices_signature)]
+        indices_rank_unknown = False
     replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
     rtpo_gathernd = "gathernd" in set(replace_to_pseudo_operators or set())
-    if len(data_shape) != len(indices_shape):
+    if len(data_shape) != len(indices_shape) and not data_rank_unknown and not indices_rank_unknown:
         raise NotImplementedError(
             "GatherElements requires data and indices with the same rank in flatbuffer_direct. "
             f"op={node.name} data_shape={data_shape} indices_shape={indices_shape}"
         )
-    if len(indices_shape) != len(output_shape):
+    if len(indices_shape) != len(output_shape) and not indices_rank_unknown and not output_rank_unknown:
         raise NotImplementedError(
             "GatherElements requires output rank equal to indices rank in flatbuffer_direct. "
             f"op={node.name} indices_shape={indices_shape} output_shape={output_shape}"
+        )
+    if data_rank_unknown and indices_rank_unknown and output_rank_unknown:
+        raise NotImplementedError(
+            "GatherElements requires resolvable rank in flatbuffer_direct. "
+            f"op={node.name} data_shape={data_shape} indices_shape={indices_shape} output_shape={output_shape}"
         )
     if any(int(v) <= 0 for v in data_shape):
         raise NotImplementedError(
@@ -3006,6 +3106,10 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
         )
 
     rank = len(data_shape)
+    if data_rank_unknown and not indices_rank_unknown:
+        rank = len(indices_shape)
+    elif data_rank_unknown and not output_rank_unknown:
+        rank = len(output_shape)
     axis = int(node.attrs.get("axis", 0))
     if axis < 0:
         axis += rank

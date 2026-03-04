@@ -571,9 +571,12 @@ class _NodeWrap:
                 pass
         remap = input_name_remap if isinstance(input_name_remap, dict) else {}
         self.inputs = [
-            type("In", (), {"name": remap.get(i, i)})
+            type(
+                "In",
+                (),
+                {"name": (remap.get(i, i) if i != "" else "")},
+            )
             for i in n.input
-            if i != ""
         ]
         self.outputs = [type("Out", (), {"name": o}) for o in n.output if o != ""]
 

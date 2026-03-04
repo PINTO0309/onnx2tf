@@ -39,6 +39,52 @@ _IF_NMS_GUARD_ELSE_OPS_SIMPLE = [
 ]
 
 
+_IF_GENERIC_BRANCH_SAFE_OPS = {
+    "Add",
+    "Sub",
+    "Mul",
+    "Div",
+    "Pow",
+    "Max",
+    "Min",
+    "Abs",
+    "Neg",
+    "Relu",
+    "Sigmoid",
+    "Tanh",
+    "Cast",
+    "Identity",
+    "Squeeze",
+    "Unsqueeze",
+    "Reshape",
+    "Transpose",
+    "Concat",
+    "Equal",
+    "Greater",
+    "GreaterOrEqual",
+    "Less",
+    "LessOrEqual",
+    "Not",
+    "And",
+    "Or",
+    "Xor",
+    "ReduceSum",
+    "ReduceMean",
+    "ReduceMin",
+    "ReduceMax",
+    "Constant",
+    "ConstantOfShape",
+    "Shape",
+    "Size",
+    "Gather",
+    "Slice",
+    "Pad",
+    "Conv",
+    "Sqrt",
+    "LSTM",
+}
+
+
 def is_supported_if_nms_guard_pattern(node: Any) -> bool:
     then_graph = node.attrs.get("then_branch", None)
     else_graph = node.attrs.get("else_branch", None)
@@ -117,6 +163,44 @@ def _value_info_tflite_dtype(value_info: Any) -> Optional[str]:
         "BOOL": "BOOL",
     }
     return mapping.get(name, None)
+
+
+def _apply_value_info_hint_to_tensor(
+    *,
+    tensor_name: str,
+    value_info: Any,
+    ctx: Any,
+) -> None:
+    if value_info is None:
+        return
+    hinted_shape = [int(v) for v in _value_info_shape(value_info)]
+    hinted_dtype = _value_info_tflite_dtype(value_info)
+    if tensor_name not in ctx.model_ir.tensors:
+        ctx.ensure_tensor(tensor_name, dtype=hinted_dtype, shape=hinted_shape)
+        return
+
+    tensor = ctx.model_ir.tensors[tensor_name]
+    if hinted_dtype is not None:
+        tensor.dtype = str(hinted_dtype)
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(tensor_name)] = str(hinted_dtype)
+
+    hinted_norm_shape = [int(v) if int(v) > 0 else 1 for v in hinted_shape]
+    hinted_signature = [int(v) if int(v) > 0 else -1 for v in hinted_shape]
+    current_shape = [int(v) for v in list(tensor.shape)]
+    current_signature = (
+        [int(v) for v in list(tensor.shape_signature)]
+        if tensor.shape_signature is not None
+        else [int(v) for v in current_shape]
+    )
+    current_is_unresolved = (
+        len(current_shape) == 1
+        and int(current_shape[0]) == 1
+        and all(int(v) <= 0 for v in current_signature)
+    )
+    if len(current_shape) != len(hinted_norm_shape) or current_is_unresolved:
+        tensor.shape = hinted_norm_shape
+        tensor.shape_signature = hinted_signature
 
 
 def is_supported_if_axis0_add_branch_pattern(node: Any) -> bool:
@@ -305,6 +389,61 @@ def is_supported_if_nested_reducemin_add_branch_pattern(node: Any) -> bool:
     return True
 
 
+def is_supported_if_generic_branch_mux_pattern(node: Any, ctx: Any = None) -> bool:
+    then_graph = node.attrs.get("then_branch", None)
+    else_graph = node.attrs.get("else_branch", None)
+    if then_graph is None or else_graph is None:
+        return False
+    if not hasattr(then_graph, "node") or not hasattr(else_graph, "node"):
+        return False
+    if len(node.inputs) != 1:
+        return False
+    output_count = int(len(node.outputs))
+    if output_count <= 0:
+        return False
+    if len(then_graph.input) != 0 or len(else_graph.input) != 0:
+        return False
+    if len(then_graph.output) != output_count or len(else_graph.output) != output_count:
+        return False
+
+    def _is_safe_graph(graph: Any) -> bool:
+        for graph_node in list(getattr(graph, "node", [])):
+            op_type = str(graph_node.op_type)
+            if op_type == "If":
+                attrs = {a.name: a for a in graph_node.attribute}
+                if "then_branch" not in attrs or "else_branch" not in attrs:
+                    return False
+                if len(graph_node.input) != 1 or len(graph_node.output) <= 0:
+                    return False
+                if not _is_safe_graph(attrs["then_branch"].g):
+                    return False
+                if not _is_safe_graph(attrs["else_branch"].g):
+                    return False
+                continue
+            if op_type not in _IF_GENERIC_BRANCH_SAFE_OPS:
+                return False
+        return True
+
+    if not _is_safe_graph(then_graph):
+        return False
+    if not _is_safe_graph(else_graph):
+        return False
+
+    for output_index in range(output_count):
+        then_output = then_graph.output[output_index]
+        else_output = else_graph.output[output_index]
+        then_dtype = _value_info_tflite_dtype(then_output)
+        else_dtype = _value_info_tflite_dtype(else_output)
+        if then_dtype is not None and else_dtype is not None and then_dtype != else_dtype:
+            return False
+
+        then_shape = _value_info_shape(then_output)
+        else_shape = _value_info_shape(else_output)
+        if not _are_shapes_broadcast_compatible(then_shape, else_shape):
+            return False
+    return True
+
+
 def _ensure_graph_initializers(graph: Any, ctx: Any) -> None:
     for initializer in graph.initializer:
         name = str(initializer.name)
@@ -375,9 +514,12 @@ def _wrap_node(
     wrapped.op = str(node_proto.op_type)
     wrapped.attrs = attrs
     wrapped.inputs = [
-        type("In", (), {"name": remap_in.get(str(name), str(name))})
+        type(
+            "In",
+            (),
+            {"name": (remap_in.get(str(name), str(name)) if str(name) != "" else "")},
+        )
         for name in node_proto.input
-        if str(name) != ""
     ]
     wrapped.outputs = [
         type("Out", (), {"name": remap_out.get(str(name), str(name))})
@@ -411,6 +553,130 @@ def _tflite_dtype_from_np_dtype(np_dtype: np.dtype) -> str:
     if np.issubdtype(dt, np.float16):
         return "FLOAT16"
     return "FLOAT32"
+
+
+def _are_shapes_broadcast_compatible(
+    lhs_shape: List[int],
+    rhs_shape: List[int],
+) -> bool:
+    lhs = [int(v) for v in list(lhs_shape)]
+    rhs = [int(v) for v in list(rhs_shape)]
+    max_rank = int(max(len(lhs), len(rhs)))
+    for idx in range(1, max_rank + 1):
+        lhs_dim = int(lhs[-idx]) if idx <= len(lhs) else 1
+        rhs_dim = int(rhs[-idx]) if idx <= len(rhs) else 1
+        if lhs_dim > 0 and rhs_dim > 0 and lhs_dim != rhs_dim and lhs_dim != 1 and rhs_dim != 1:
+            return False
+    return True
+
+
+def _tensor_shape_and_signature(
+    *,
+    tensor_name: str,
+    ctx: Any,
+) -> tuple[List[int], List[int]]:
+    shape = [int(v) for v in ctx.get_tensor_shape(tensor_name)]
+    signature = [int(v) for v in list(shape)]
+    tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+    if tensor is not None and tensor.shape_signature is not None and len(tensor.shape_signature) == len(shape):
+        signature = [int(v) for v in list(tensor.shape_signature)]
+    return shape, signature
+
+
+def _broadcast_shape_signature(
+    lhs_signature: List[int],
+    rhs_signature: List[int],
+) -> Optional[List[int]]:
+    lhs = [int(v) for v in list(lhs_signature)]
+    rhs = [int(v) for v in list(rhs_signature)]
+    max_rank = int(max(len(lhs), len(rhs)))
+    out_rev: List[int] = []
+    for idx in range(1, max_rank + 1):
+        lhs_dim = int(lhs[-idx]) if idx <= len(lhs) else 1
+        rhs_dim = int(rhs[-idx]) if idx <= len(rhs) else 1
+        if lhs_dim > 0 and rhs_dim > 0:
+            if lhs_dim == rhs_dim:
+                out_rev.append(lhs_dim)
+            elif lhs_dim == 1:
+                out_rev.append(rhs_dim)
+            elif rhs_dim == 1:
+                out_rev.append(lhs_dim)
+            else:
+                return None
+        elif lhs_dim > 0 and rhs_dim <= 0:
+            out_rev.append(lhs_dim if lhs_dim != 1 else -1)
+        elif lhs_dim <= 0 and rhs_dim > 0:
+            out_rev.append(rhs_dim if rhs_dim != 1 else -1)
+        else:
+            out_rev.append(-1)
+    return [int(v) for v in reversed(out_rev)]
+
+
+def _normalize_onnx_axes(axes: np.ndarray, rank: int) -> List[int]:
+    normalized: List[int] = []
+    for axis in np.asarray(axes, dtype=np.int64).reshape(-1).tolist():
+        axis_i = int(axis)
+        if axis_i < 0:
+            axis_i += int(rank)
+        if axis_i < 0 or axis_i >= int(rank):
+            raise ValueError(f"axis out of range: axis={axis} rank={rank}")
+        normalized.append(axis_i)
+    return normalized
+
+
+def _const_fold_slice(
+    data: np.ndarray,
+    starts: np.ndarray,
+    ends: np.ndarray,
+    axes: Optional[np.ndarray],
+    steps: Optional[np.ndarray],
+) -> np.ndarray:
+    x = np.asarray(data)
+    rank = int(x.ndim)
+    starts_v = np.asarray(starts, dtype=np.int64).reshape(-1)
+    ends_v = np.asarray(ends, dtype=np.int64).reshape(-1)
+    if axes is None:
+        axes_v = np.arange(int(starts_v.size), dtype=np.int64)
+    else:
+        axes_v = np.asarray(axes, dtype=np.int64).reshape(-1)
+    if steps is None:
+        steps_v = np.ones(int(starts_v.size), dtype=np.int64)
+    else:
+        steps_v = np.asarray(steps, dtype=np.int64).reshape(-1)
+    if int(starts_v.size) != int(ends_v.size) or int(starts_v.size) != int(axes_v.size):
+        raise ValueError("Slice const-fold requires starts/ends/axes lengths to match.")
+    if int(steps_v.size) != int(starts_v.size):
+        raise ValueError("Slice const-fold requires steps length to match starts.")
+
+    slices: List[slice] = [slice(None)] * rank
+    for start, end, axis, step in zip(starts_v.tolist(), ends_v.tolist(), axes_v.tolist(), steps_v.tolist()):
+        axis_i = int(axis)
+        if axis_i < 0:
+            axis_i += rank
+        if axis_i < 0 or axis_i >= rank:
+            raise ValueError(f"Slice axis out of range in const-fold: axis={axis} rank={rank}")
+        step_i = int(step)
+        if step_i == 0:
+            raise ValueError("Slice step must not be 0 in const-fold.")
+        dim = int(x.shape[axis_i])
+        start_i = int(start)
+        end_i = int(end)
+        if step_i > 0:
+            if start_i < 0:
+                start_i += dim
+            if end_i < 0:
+                end_i += dim
+            start_i = min(max(start_i, 0), dim)
+            end_i = min(max(end_i, 0), dim)
+        else:
+            if start_i < 0:
+                start_i += dim
+            if end_i < 0:
+                end_i += dim
+            start_i = min(max(start_i, -1), dim - 1)
+            end_i = min(max(end_i, -1), dim - 1)
+        slices[axis_i] = slice(start_i, end_i, step_i)
+    return np.asarray(x[tuple(slices)])
 
 
 def _add_cond_gate_to_slice_output(
@@ -509,9 +775,34 @@ def _lower_graph_nodes(
 
     remap_in = input_name_remap if isinstance(input_name_remap, dict) else {}
     remap_out = output_name_remap if isinstance(output_name_remap, dict) else {}
+    value_info_map: Dict[str, Any] = {}
+    for value_info in list(getattr(graph, "value_info", [])) + list(getattr(graph, "input", [])) + list(getattr(graph, "output", [])):
+        value_name = str(getattr(value_info, "name", ""))
+        if value_name != "":
+            value_info_map[value_name] = value_info
 
     for graph_node in graph.node:
         op_type = str(graph_node.op_type)
+        for input_name in graph_node.input:
+            original_name = str(input_name)
+            if original_name == "":
+                continue
+            mapped_name = remap_in.get(original_name, original_name)
+            _apply_value_info_hint_to_tensor(
+                tensor_name=mapped_name,
+                value_info=value_info_map.get(original_name, None),
+                ctx=ctx,
+            )
+        for output_name in graph_node.output:
+            original_name = str(output_name)
+            if original_name == "":
+                continue
+            mapped_name = remap_out.get(original_name, original_name)
+            _apply_value_info_hint_to_tensor(
+                tensor_name=mapped_name,
+                value_info=value_info_map.get(original_name, None),
+                ctx=ctx,
+            )
 
         if op_type == "Constant":
             if len(graph_node.output) != 1:
@@ -530,6 +821,178 @@ def _lower_graph_nodes(
             else:
                 ctx.add_const_tensor(out_name, const_value)
             continue
+
+        if op_type == "Concat" and len(graph_node.output) == 1:
+            concat_inputs = [
+                remap_in.get(str(name), str(name))
+                for name in graph_node.input
+                if str(name) != ""
+            ]
+            concat_values = [ctx.get_constant_array(name) for name in concat_inputs]
+            if len(concat_values) > 0 and all(value is not None for value in concat_values):
+                axis = 0
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "axis":
+                        axis = int(attr.i)
+                        break
+                concat_arrays = [np.asarray(value) for value in concat_values]
+                try:
+                    concat_result = np.concatenate(concat_arrays, axis=axis)
+                except Exception:
+                    concat_result = None
+                if concat_result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    if out_name in ctx.model_ir.tensors:
+                        out_tensor = ctx.model_ir.tensors[out_name]
+                        out_tensor.data = concat_result
+                        out_tensor.dtype = _tflite_dtype_from_np_dtype(concat_result.dtype)
+                        out_tensor.shape = [int(v) for v in concat_result.shape]
+                        out_tensor.shape_signature = [int(v) for v in concat_result.shape]
+                        ctx.constants[out_name] = concat_result
+                    else:
+                        ctx.add_const_tensor(out_name, concat_result)
+                    continue
+
+        if op_type == "Slice" and len(graph_node.output) == 1 and len(graph_node.input) >= 3:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            starts_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+            ends_name = remap_in.get(str(graph_node.input[2]), str(graph_node.input[2]))
+            data_value = ctx.get_constant_array(data_name)
+            starts_value = ctx.get_constant_array(starts_name)
+            ends_value = ctx.get_constant_array(ends_name)
+            axes_value = None
+            steps_value = None
+            if len(graph_node.input) >= 4 and str(graph_node.input[3]) != "":
+                axes_name = remap_in.get(str(graph_node.input[3]), str(graph_node.input[3]))
+                axes_value = ctx.get_constant_array(axes_name)
+            if len(graph_node.input) >= 5 and str(graph_node.input[4]) != "":
+                steps_name = remap_in.get(str(graph_node.input[4]), str(graph_node.input[4]))
+                steps_value = ctx.get_constant_array(steps_name)
+            if data_value is not None and starts_value is not None and ends_value is not None:
+                try:
+                    slice_result = _const_fold_slice(
+                        data=np.asarray(data_value),
+                        starts=np.asarray(starts_value),
+                        ends=np.asarray(ends_value),
+                        axes=(np.asarray(axes_value) if axes_value is not None else None),
+                        steps=(np.asarray(steps_value) if steps_value is not None else None),
+                    )
+                except Exception:
+                    slice_result = None
+                if slice_result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    if out_name in ctx.model_ir.tensors:
+                        out_tensor = ctx.model_ir.tensors[out_name]
+                        out_tensor.data = slice_result
+                        out_tensor.dtype = _tflite_dtype_from_np_dtype(slice_result.dtype)
+                        out_tensor.shape = [int(v) for v in slice_result.shape]
+                        out_tensor.shape_signature = [int(v) for v in slice_result.shape]
+                        ctx.constants[out_name] = slice_result
+                    else:
+                        ctx.add_const_tensor(out_name, slice_result)
+                    continue
+
+        if op_type == "Unsqueeze" and len(graph_node.output) == 1 and len(graph_node.input) >= 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            data_value = ctx.get_constant_array(data_name)
+            axes_value = None
+            if len(graph_node.input) >= 2 and str(graph_node.input[1]) != "":
+                axes_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+                axes_value = ctx.get_constant_array(axes_name)
+            if axes_value is None:
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "axes":
+                        axes_value = np.asarray([int(v) for v in list(attr.ints)], dtype=np.int64)
+                        break
+            if data_value is not None and axes_value is not None:
+                try:
+                    result = np.asarray(data_value)
+                    axes_norm = _normalize_onnx_axes(
+                        np.asarray(axes_value),
+                        int(result.ndim + np.asarray(axes_value).reshape(-1).size),
+                    )
+                    for axis in sorted(axes_norm):
+                        result = np.expand_dims(result, axis=axis)
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    if out_name in ctx.model_ir.tensors:
+                        out_tensor = ctx.model_ir.tensors[out_name]
+                        out_tensor.data = result
+                        out_tensor.dtype = _tflite_dtype_from_np_dtype(result.dtype)
+                        out_tensor.shape = [int(v) for v in result.shape]
+                        out_tensor.shape_signature = [int(v) for v in result.shape]
+                        ctx.constants[out_name] = result
+                    else:
+                        ctx.add_const_tensor(out_name, result)
+                    continue
+
+        if op_type == "Squeeze" and len(graph_node.output) == 1 and len(graph_node.input) >= 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            data_value = ctx.get_constant_array(data_name)
+            axes_value = None
+            if len(graph_node.input) >= 2 and str(graph_node.input[1]) != "":
+                axes_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+                axes_value = ctx.get_constant_array(axes_name)
+            if axes_value is None:
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "axes":
+                        axes_value = np.asarray([int(v) for v in list(attr.ints)], dtype=np.int64)
+                        break
+            if data_value is not None:
+                try:
+                    result = np.asarray(data_value)
+                    if axes_value is None:
+                        result = np.squeeze(result)
+                    else:
+                        axes_norm = _normalize_onnx_axes(
+                            np.asarray(axes_value),
+                            int(result.ndim),
+                        )
+                        result = np.squeeze(result, axis=tuple(axes_norm))
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    if out_name in ctx.model_ir.tensors:
+                        out_tensor = ctx.model_ir.tensors[out_name]
+                        out_tensor.data = result
+                        out_tensor.dtype = _tflite_dtype_from_np_dtype(result.dtype)
+                        out_tensor.shape = [int(v) for v in np.asarray(result).shape]
+                        out_tensor.shape_signature = [int(v) for v in np.asarray(result).shape]
+                        ctx.constants[out_name] = np.asarray(result)
+                    else:
+                        ctx.add_const_tensor(out_name, np.asarray(result))
+                    continue
+
+        if op_type == "Gather" and len(graph_node.input) >= 2 and len(graph_node.output) == 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            indices_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+            data_value = ctx.get_constant_array(data_name)
+            indices_value = ctx.get_constant_array(indices_name)
+            if data_value is not None and indices_value is not None:
+                axis = 0
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "axis":
+                        axis = int(attr.i)
+                        break
+                gather_result = np.take(
+                    np.asarray(data_value),
+                    np.asarray(indices_value, dtype=np.int64),
+                    axis=axis,
+                )
+                out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                if out_name in ctx.model_ir.tensors:
+                    out_tensor = ctx.model_ir.tensors[out_name]
+                    out_tensor.data = gather_result
+                    out_tensor.dtype = _tflite_dtype_from_np_dtype(gather_result.dtype)
+                    out_tensor.shape = [int(v) for v in gather_result.shape]
+                    out_tensor.shape_signature = [int(v) for v in gather_result.shape]
+                    ctx.constants[out_name] = gather_result
+                else:
+                    ctx.add_const_tensor(out_name, gather_result)
+                continue
 
         if op_type == "SequenceConstruct":
             if skip_sequenceconstruct:
@@ -558,164 +1021,12 @@ def _lower_graph_nodes(
                 continue
 
         if op_type == "If":
-            if len(graph_node.input) != 1 or len(graph_node.output) != 1:
-                raise NotImplementedError(
-                    f"If in branch requires 1 input/1 output in flatbuffer_direct. node={graph_node.name}"
-                )
-            cond_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
-            cond_value = ctx.get_constant_array(cond_name)
-            attrs = {a.name: a for a in graph_node.attribute}
-            if cond_value is None:
-                then_attr = attrs.get("then_branch", None)
-                else_attr = attrs.get("else_branch", None)
-                then_graph = then_attr.g if then_attr is not None else None
-                else_graph = else_attr.g if else_attr is not None else None
-                if (
-                    then_graph is not None
-                    and else_graph is not None
-                    and len(then_graph.input) == 0
-                    and len(else_graph.input) == 0
-                    and len(then_graph.output) == 1
-                    and len(else_graph.output) == 1
-                    and len(then_graph.node) == 0
-                    and len(else_graph.node) == 0
-                ):
-                    _ensure_graph_initializers(then_graph, ctx)
-                    _ensure_graph_initializers(else_graph, ctx)
-
-                    then_output_name = remap_in.get(
-                        str(then_graph.output[0].name),
-                        str(then_graph.output[0].name),
-                    )
-                    else_output_name = remap_in.get(
-                        str(else_graph.output[0].name),
-                        str(else_graph.output[0].name),
-                    )
-                    nested_out_name = remap_out.get(
-                        str(graph_node.output[0]),
-                        str(graph_node.output[0]),
-                    )
-                    ctx.ensure_tensor(then_output_name)
-                    ctx.ensure_tensor(else_output_name)
-
-                    then_shape = [int(v) for v in ctx.get_tensor_shape(then_output_name)]
-                    else_shape = [int(v) for v in ctx.get_tensor_shape(else_output_name)]
-                    if then_shape != else_shape:
-                        raise NotImplementedError(
-                            "If in branch with dynamic condition requires same-shape then/else "
-                            f"constant outputs. node={graph_node.name} "
-                            f"then_shape={then_shape} else_shape={else_shape}"
-                        )
-
-                    expected_output_dtype = str(ctx.get_tensor_dtype(then_output_name)).upper()
-                    if nested_out_name in ctx.model_ir.tensors:
-                        expected_output_dtype = str(ctx.get_tensor_dtype(nested_out_name)).upper()
-                        expected_output_shape = [int(v) for v in ctx.get_tensor_shape(nested_out_name)]
-                    else:
-                        expected_output_shape = [int(v) for v in then_shape]
-                        ctx.ensure_tensor(
-                            nested_out_name,
-                            dtype=expected_output_dtype,
-                            shape=expected_output_shape,
-                        )
-                    then_output_name = _cast_to_dtype_for_if(
-                        tensor_name=then_output_name,
-                        target_dtype=expected_output_dtype,
-                        output_name=nested_out_name,
-                        suffix="then",
-                        ctx=ctx,
-                    )
-                    else_output_name = _cast_to_dtype_for_if(
-                        tensor_name=else_output_name,
-                        target_dtype=expected_output_dtype,
-                        output_name=nested_out_name,
-                        suffix="else",
-                        ctx=ctx,
-                    )
-                    _emit_where_mux(
-                        cond_name=cond_name,
-                        then_name=then_output_name,
-                        else_name=else_output_name,
-                        output_name=nested_out_name,
-                        output_shape=expected_output_shape,
-                        output_dtype=expected_output_dtype,
-                        node_name=f"{graph_node.name}_where",
-                        ctx=ctx,
-                    )
-                    continue
-                raise NotImplementedError(
-                    f"If in branch requires constant condition in flatbuffer_direct. node={graph_node.name}"
-                )
-            cond_bool = bool(np.asarray(cond_value).reshape(-1)[0])
-            selected_attr = "then_branch" if cond_bool else "else_branch"
-            if selected_attr not in attrs:
-                raise NotImplementedError(
-                    f"If branch '{selected_attr}' is missing in node={graph_node.name}"
-                )
-            selected_graph = attrs[selected_attr].g
-            _ensure_graph_initializers(selected_graph, ctx)
-            selected_output_name = (
-                str(selected_graph.output[0].name)
-                if len(selected_graph.output) > 0
-                else ""
-            )
-            nested_out_name = str(graph_node.output[0])
-            nested_output_remap = dict(remap_out)
-            if selected_output_name != "" and nested_out_name != "":
-                nested_output_remap[selected_output_name] = remap_out.get(
-                    nested_out_name,
-                    nested_out_name,
-                )
-
-            # The nested If in torchvision NMS heads emits Squeeze(axis=1) for
-            # [K,1] selected indices. Branch tensors are out-of-scope for the
-            # parent shape map, so validation may see rank=1 placeholders and
-            # reject axis=1. Lower this branch explicitly as RESHAPE([-1]).
-            if (
-                len(selected_graph.node) == 1
-                and str(selected_graph.node[0].op_type) == "Squeeze"
-                and len(selected_graph.node[0].input) >= 1
-                and len(selected_graph.node[0].output) == 1
-            ):
-                squeeze_input_name = remap_in.get(
-                    str(selected_graph.node[0].input[0]),
-                    str(selected_graph.node[0].input[0]),
-                )
-                squeeze_output_name = nested_output_remap.get(
-                    str(selected_graph.node[0].output[0]),
-                    str(selected_graph.node[0].output[0]),
-                )
-                ctx.ensure_tensor(squeeze_input_name)
-                ctx.ensure_tensor(
-                    squeeze_output_name,
-                    dtype=str(ctx.get_tensor_dtype(squeeze_input_name)).upper(),
-                    shape=[-1],
-                )
-                squeeze_output_tensor = ctx.model_ir.tensors.get(squeeze_output_name, None)
-                if squeeze_output_tensor is not None:
-                    squeeze_output_tensor.dtype = str(ctx.get_tensor_dtype(squeeze_input_name)).upper()
-                    squeeze_output_tensor.shape = [-1]
-                    squeeze_output_tensor.shape_signature = [-1]
-                reshape_shape_name = ctx.add_const_tensor(
-                    f"{squeeze_output_name}_if_nested_squeeze_shape",
-                    np.asarray([-1], dtype=np.int32),
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="RESHAPE",
-                        inputs=[squeeze_input_name, reshape_shape_name],
-                        outputs=[squeeze_output_name],
-                        options={"newShape": [-1]},
-                    )
-                )
-                continue
-
-            _lower_graph_nodes(
-                graph=selected_graph,
-                ctx=ctx,
+            wrapped_if = _wrap_node(
+                graph_node,
                 input_name_remap=remap_in,
-                output_name_remap=nested_output_remap,
+                output_name_remap=remap_out,
             )
+            dispatch_node(wrapped_if, ctx)
             continue
 
         wrapped = _wrap_node(
@@ -809,6 +1120,33 @@ def _cast_to_dtype_for_if(
         )
     )
     return casted_name
+
+
+def _reshape_if_tensor_to_vector(
+    *,
+    tensor_name: str,
+    output_name: str,
+    suffix: str,
+    ctx: Any,
+) -> str:
+    reshaped_name = ctx.add_intermediate_tensor(
+        f"{output_name}_if_{suffix}_reshape1d",
+        dtype=str(ctx.get_tensor_dtype(tensor_name)).upper(),
+        shape=[-1],
+    )
+    reshape_shape_name = ctx.add_const_tensor(
+        f"{reshaped_name}_shape",
+        np.asarray([-1], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[tensor_name, reshape_shape_name],
+            outputs=[reshaped_name],
+            options={"newShape": [-1]},
+        )
+    )
+    return reshaped_name
 
 
 def _build_if_axis0_tensor_mux(
@@ -1219,6 +1557,132 @@ def _emit_where_mux(
     dispatch_node(where_node, ctx)
 
 
+def _resolve_if_branch_output_name(
+    *,
+    graph_output_name: str,
+    remapped_name: str,
+    ctx: Any,
+) -> str:
+    if str(remapped_name) in ctx.model_ir.tensors:
+        return str(remapped_name)
+    if str(graph_output_name) in ctx.model_ir.tensors:
+        return str(graph_output_name)
+    raise NotImplementedError(
+        "If branch output tensor was not materialized in flatbuffer_direct lowering. "
+        f"graph_output={graph_output_name} remapped_output={remapped_name}"
+    )
+
+
+def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
+    if not is_supported_if_generic_branch_mux_pattern(node, ctx):
+        raise NotImplementedError(
+            "If generic branch-mux lowering requires 1 condition input, no branch graph inputs, "
+            "and matching then/else output signatures."
+        )
+
+    cond_name = node.inputs[0].name
+    ctx.ensure_tensor(cond_name)
+
+    then_graph = node.attrs["then_branch"]
+    else_graph = node.attrs["else_branch"]
+    _ensure_graph_initializers(then_graph, ctx)
+    _ensure_graph_initializers(else_graph, ctx)
+
+    then_output_remap: Dict[str, str] = {}
+    else_output_remap: Dict[str, str] = {}
+    node_name = str(node.name) if str(getattr(node, "name", "")) != "" else "if"
+    output_count = int(len(node.outputs))
+    for output_index in range(output_count):
+        then_output_name = str(then_graph.output[output_index].name)
+        else_output_name = str(else_graph.output[output_index].name)
+        then_output_remap[then_output_name] = f"{node_name}_if_then_output_{output_index}"
+        else_output_remap[else_output_name] = f"{node_name}_if_else_output_{output_index}"
+
+    _lower_graph_nodes(
+        graph=then_graph,
+        ctx=ctx,
+        output_name_remap=then_output_remap,
+    )
+    _lower_graph_nodes(
+        graph=else_graph,
+        ctx=ctx,
+        output_name_remap=else_output_remap,
+    )
+
+    for output_index, output_obj in enumerate(node.outputs):
+        output_name = str(output_obj.name)
+        then_graph_output_name = str(then_graph.output[output_index].name)
+        else_graph_output_name = str(else_graph.output[output_index].name)
+        then_output_name = _resolve_if_branch_output_name(
+            graph_output_name=then_graph_output_name,
+            remapped_name=then_output_remap[then_graph_output_name],
+            ctx=ctx,
+        )
+        else_output_name = _resolve_if_branch_output_name(
+            graph_output_name=else_graph_output_name,
+            remapped_name=else_output_remap[else_graph_output_name],
+            ctx=ctx,
+        )
+
+        ctx.ensure_tensor(output_name)
+        ctx.ensure_tensor(then_output_name)
+        ctx.ensure_tensor(else_output_name)
+        expected_output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+
+        then_output_name = _cast_to_dtype_for_if(
+            tensor_name=then_output_name,
+            target_dtype=expected_output_dtype,
+            output_name=output_name,
+            suffix=f"generic_then_{output_index}",
+            ctx=ctx,
+        )
+        else_output_name = _cast_to_dtype_for_if(
+            tensor_name=else_output_name,
+            target_dtype=expected_output_dtype,
+            output_name=output_name,
+            suffix=f"generic_else_{output_index}",
+            ctx=ctx,
+        )
+
+        then_shape, then_signature = _tensor_shape_and_signature(
+            tensor_name=then_output_name,
+            ctx=ctx,
+        )
+        else_shape, else_signature = _tensor_shape_and_signature(
+            tensor_name=else_output_name,
+            ctx=ctx,
+        )
+        if not _are_shapes_broadcast_compatible(then_signature, else_signature):
+            raise NotImplementedError(
+                "If generic branch-mux requires broadcast-compatible then/else outputs. "
+                f"node={node.name} output_index={output_index} "
+                f"then_shape={then_shape} else_shape={else_shape}"
+            )
+        inferred_signature = _broadcast_shape_signature(then_signature, else_signature)
+        if inferred_signature is None:
+            raise NotImplementedError(
+                "If generic branch-mux failed to infer broadcast shape/signature. "
+                f"node={node.name} output_index={output_index} "
+                f"then_signature={then_signature} else_signature={else_signature}"
+            )
+        expected_output_shape = [int(v) if int(v) > 0 else 1 for v in inferred_signature]
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in expected_output_shape]
+            output_tensor.shape_signature = [int(v) for v in inferred_signature]
+
+        _emit_where_mux(
+            cond_name=cond_name,
+            then_name=then_output_name,
+            else_name=else_output_name,
+            output_name=output_name,
+            output_shape=expected_output_shape,
+            output_dtype=expected_output_dtype,
+            node_name=f"{node_name}_generic_if_where_{output_index}",
+            ctx=ctx,
+        )
+
+
 def _build_if_nested_reducemin_add_branch_mux(node: Any, ctx: Any) -> None:
     cond_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -1347,167 +1811,144 @@ def build_if_op(node: Any, ctx: Any) -> None:
         _build_if_nested_reducemin_add_branch_mux(node, ctx)
         return
 
-    if not is_supported_if_nms_guard_pattern(node):
-        raise NotImplementedError(
-            (
-                "If pattern is not supported by flatbuffer_direct built-in lowering. "
-                "supported patterns: NMS-guard pattern, axis0 Add-branch pattern, "
-                "SequenceConstruct Add-branch pattern, nested ReduceMin/Add pattern. "
-                f"node={node.name}"
+    if is_supported_if_nms_guard_pattern(node):
+        cond_name = node.inputs[0].name
+        output_name = node.outputs[0].name
+
+        then_graph = node.attrs["then_branch"]
+        else_graph = node.attrs["else_branch"]
+        _ensure_graph_initializers(then_graph, ctx)
+        _ensure_graph_initializers(else_graph, ctx)
+
+        else_ops = [str(n.op_type) for n in else_graph.node]
+        if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
+            unsqueeze_scores_idx = 3
+            nms_idx = 9
+        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
+            unsqueeze_scores_idx = 2
+            nms_idx = 8
+        else:
+            raise NotImplementedError(
+                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
             )
+
+        reduce_max_node = else_graph.node[0]
+        cast_node = else_graph.node[1]
+        unsqueeze_scores_node = else_graph.node[unsqueeze_scores_idx]
+        nms_node = else_graph.node[nms_idx]
+        if (
+            str(reduce_max_node.op_type) != "ReduceMax"
+            or str(cast_node.op_type) != "Cast"
+            or str(unsqueeze_scores_node.op_type) != "Unsqueeze"
+            or str(nms_node.op_type) != "NonMaxSuppression"
+        ):
+            raise NotImplementedError(
+                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
+            )
+
+        boxes_name = str(reduce_max_node.input[0])
+        idxs_name = str(cast_node.input[0])
+        scores_name = str(unsqueeze_scores_node.input[0])
+        ctx.ensure_tensor(boxes_name)
+        ctx.ensure_tensor(scores_name)
+        ctx.ensure_tensor(idxs_name)
+
+        boxes_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(boxes_name))
+        scores_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(scores_name))
+        idxs_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(idxs_name))
+
+        dummy_box_value = float(np.finfo(boxes_np_dtype).min) if np.issubdtype(boxes_np_dtype, np.floating) else 0.0
+        dummy_score_value = float(np.finfo(scores_np_dtype).min) if np.issubdtype(scores_np_dtype, np.floating) else 0.0
+        if len(nms_node.input) >= 5:
+            score_threshold_name = str(nms_node.input[4])
+            score_threshold = ctx.get_constant_array(score_threshold_name)
+            if score_threshold is not None:
+                score_threshold_f = float(np.asarray(score_threshold, dtype=np.float32).reshape(-1)[0])
+                dummy_score_value = min(dummy_score_value, float(score_threshold_f - 1.0))
+
+        dummy_box_name = ctx.add_const_tensor(
+            f"{output_name}_if_dummy_box",
+            np.full((1, 4), dummy_box_value, dtype=boxes_np_dtype),
+        )
+        dummy_score_name = ctx.add_const_tensor(
+            f"{output_name}_if_dummy_score",
+            np.asarray([dummy_score_value], dtype=scores_np_dtype),
+        )
+        dummy_idx_name = ctx.add_const_tensor(
+            f"{output_name}_if_dummy_idx",
+            np.asarray([0], dtype=idxs_np_dtype),
         )
 
-    cond_name = node.inputs[0].name
-    output_name = node.outputs[0].name
-
-    then_graph = node.attrs["then_branch"]
-    else_graph = node.attrs["else_branch"]
-    _ensure_graph_initializers(then_graph, ctx)
-    _ensure_graph_initializers(else_graph, ctx)
-
-    else_ops = [str(n.op_type) for n in else_graph.node]
-    if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
-        unsqueeze_scores_idx = 3
-        nms_idx = 9
-    elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
-        unsqueeze_scores_idx = 2
-        nms_idx = 8
-    else:
-        raise NotImplementedError(
-            f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-        )
-
-    reduce_max_node = else_graph.node[0]
-    cast_node = else_graph.node[1]
-    unsqueeze_scores_node = else_graph.node[unsqueeze_scores_idx]
-    nms_node = else_graph.node[nms_idx]
-    if (
-        str(reduce_max_node.op_type) != "ReduceMax"
-        or str(cast_node.op_type) != "Cast"
-        or str(unsqueeze_scores_node.op_type) != "Unsqueeze"
-        or str(nms_node.op_type) != "NonMaxSuppression"
-    ):
-        raise NotImplementedError(
-            f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-        )
-
-    boxes_name = str(reduce_max_node.input[0])
-    idxs_name = str(cast_node.input[0])
-    scores_name = str(unsqueeze_scores_node.input[0])
-    ctx.ensure_tensor(boxes_name)
-    ctx.ensure_tensor(scores_name)
-    ctx.ensure_tensor(idxs_name)
-
-    boxes_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(boxes_name))
-    scores_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(scores_name))
-    idxs_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(idxs_name))
-
-    dummy_box_value = float(np.finfo(boxes_np_dtype).min) if np.issubdtype(boxes_np_dtype, np.floating) else 0.0
-    dummy_score_value = float(np.finfo(scores_np_dtype).min) if np.issubdtype(scores_np_dtype, np.floating) else 0.0
-    if len(nms_node.input) >= 5:
-        score_threshold_name = str(nms_node.input[4])
-        score_threshold = ctx.get_constant_array(score_threshold_name)
-        if score_threshold is not None:
-            score_threshold_f = float(np.asarray(score_threshold, dtype=np.float32).reshape(-1)[0])
-            dummy_score_value = min(dummy_score_value, float(score_threshold_f - 1.0))
-
-    dummy_box_name = ctx.add_const_tensor(
-        f"{output_name}_if_dummy_box",
-        np.full((1, 4), dummy_box_value, dtype=boxes_np_dtype),
-    )
-    dummy_score_name = ctx.add_const_tensor(
-        f"{output_name}_if_dummy_score",
-        np.asarray([dummy_score_value], dtype=scores_np_dtype),
-    )
-    dummy_idx_name = ctx.add_const_tensor(
-        f"{output_name}_if_dummy_idx",
-        np.asarray([0], dtype=idxs_np_dtype),
-    )
-
-    boxes_safe_name = ctx.add_intermediate_tensor(
-        f"{output_name}_if_boxes_safe",
-        dtype=str(ctx.get_tensor_dtype(boxes_name)).upper(),
-        shape=[-1, 4],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CONCATENATION",
-            inputs=[boxes_name, dummy_box_name],
-            outputs=[boxes_safe_name],
-            options={"axis": 0, "fusedActivationFunction": "NONE"},
-        )
-    )
-
-    scores_safe_name = ctx.add_intermediate_tensor(
-        f"{output_name}_if_scores_safe",
-        dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
-        shape=[-1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CONCATENATION",
-            inputs=[scores_name, dummy_score_name],
-            outputs=[scores_safe_name],
-            options={"axis": 0, "fusedActivationFunction": "NONE"},
-        )
-    )
-
-    idxs_safe_name = ctx.add_intermediate_tensor(
-        f"{output_name}_if_idxs_safe",
-        dtype=str(ctx.get_tensor_dtype(idxs_name)).upper(),
-        shape=[-1],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CONCATENATION",
-            inputs=[idxs_name, dummy_idx_name],
-            outputs=[idxs_safe_name],
-            options={"axis": 0, "fusedActivationFunction": "NONE"},
-        )
-    )
-
-    remap_inputs = {
-        boxes_name: boxes_safe_name,
-        scores_name: scores_safe_name,
-        idxs_name: idxs_safe_name,
-    }
-    _lower_graph_nodes(
-        graph=else_graph,
-        ctx=ctx,
-        input_name_remap=remap_inputs,
-        output_name_remap=None,
-    )
-
-    candidate_output_name = str(else_graph.output[0].name)
-    ctx.ensure_tensor(candidate_output_name)
-    expected_output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
-    candidate_output_dtype = str(ctx.get_tensor_dtype(candidate_output_name)).upper()
-    if candidate_output_dtype != expected_output_dtype:
-        casted_candidate_name = ctx.add_intermediate_tensor(
-            f"{output_name}_if_candidate_cast",
-            dtype=expected_output_dtype,
-            shape=[int(v) for v in ctx.get_tensor_shape(candidate_output_name)],
+        boxes_safe_name = ctx.add_intermediate_tensor(
+            f"{output_name}_if_boxes_safe",
+            dtype=str(ctx.get_tensor_dtype(boxes_name)).upper(),
+            shape=[-1, 4],
         )
         ctx.add_operator(
             OperatorIR(
-                op_type="CAST",
-                inputs=[candidate_output_name],
-                outputs=[casted_candidate_name],
-                options={
-                    "inDataType": candidate_output_dtype,
-                    "outDataType": expected_output_dtype,
-                },
+                op_type="CONCATENATION",
+                inputs=[boxes_name, dummy_box_name],
+                outputs=[boxes_safe_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
             )
         )
-        candidate_output_name = casted_candidate_name
 
-    _add_cond_gate_to_slice_output(
-        cond_name=cond_name,
-        candidate_name=candidate_output_name,
-        output_name=output_name,
-        ctx=ctx,
+        scores_safe_name = ctx.add_intermediate_tensor(
+            f"{output_name}_if_scores_safe",
+            dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+            shape=[-1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[scores_name, dummy_score_name],
+                outputs=[scores_safe_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+
+        idxs_safe_name = ctx.add_intermediate_tensor(
+            f"{output_name}_if_idxs_safe",
+            dtype=str(ctx.get_tensor_dtype(idxs_name)).upper(),
+            shape=[-1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[idxs_name, dummy_idx_name],
+                outputs=[idxs_safe_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+
+        remap_inputs = {
+            boxes_name: boxes_safe_name,
+            scores_name: scores_safe_name,
+            idxs_name: idxs_safe_name,
+        }
+        _lower_graph_nodes(
+            graph=else_graph,
+            ctx=ctx,
+            input_name_remap=remap_inputs,
+            output_name_remap=None,
+        )
+        return
+
+    if is_supported_if_generic_branch_mux_pattern(node, ctx):
+        _build_if_generic_branch_mux(node, ctx)
+        return
+
+    raise NotImplementedError(
+        (
+            "If pattern is not supported by flatbuffer_direct built-in lowering. "
+            "supported patterns: NMS-guard pattern, axis0 Add-branch pattern, "
+            "SequenceConstruct Add-branch pattern, nested ReduceMin/Add pattern, "
+            "or generic branch-mux pattern (no branch inputs, safe branch-op subset, "
+            "with matching "
+            "then/else outputs). "
+            f"node={node.name}"
+        )
     )
-
 
 def _loop_const_trip_count(node: Any, ctx: Any) -> Optional[int]:
     if len(node.inputs) < 1:
