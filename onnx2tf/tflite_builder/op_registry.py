@@ -116,6 +116,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_softmax_op,
     build_softplus_op,
     build_softsign_op,
+    build_sum_op,
     build_tan_op,
     build_transpose_op,
     build_trilu_op,
@@ -6210,6 +6211,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=["ADD"],
         builder=_make_binary_builder("ADD"),
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+    ),
+    "Sum": DispatchEntry(
+        onnx_op="Sum",
+        tflite_ops=["ADD"],
+        builder=build_sum_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=None, min_outputs=1, max_outputs=1),
     ),
     "Sub": DispatchEntry(
         onnx_op="Sub",

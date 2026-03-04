@@ -4577,6 +4577,16 @@ def _make_reduce_sum_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_sum_variadic_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4, 4])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3, 4, 4])
+    w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [1, 3, 4, 4])
+    node = helper.make_node("Sum", ["x", "y", "z"], ["w"], name="SumVariadicNode")
+    graph = helper.make_graph([node], "sum_variadic_graph", [x, y, z], [w])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_reduce_prod_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
@@ -5150,6 +5160,20 @@ def test_flatbuffer_direct_maxpool1d_indices_kernel1_lowering_uses_builtin_ops()
     assert "MAX_POOL_2D" in op_types
     assert "ARG_MAX" in op_types
     assert "SQUEEZE" in op_types
+
+
+def test_flatbuffer_direct_sum_variadic_lowering_uses_builtin_ops() -> None:
+    model = _make_sum_variadic_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="sum_variadic_builtin_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert op_types.count("ADD") == 2
 
 
 def test_flatbuffer_direct_einsum_abgd_gf_lowering_uses_builtin_ops() -> None:

@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -477,6 +478,22 @@ def _is_channel_last_layout_name(tensor_name: str) -> bool:
     )
 
 
+def _sanitize_input_name_for_filename(input_name: str) -> str:
+    """
+    Convert ONNX input names into a safe single path component.
+
+    Some models use names like "gpu_0/data_0". Using them directly in file names
+    creates nested paths and can raise FileNotFoundError on np.save.
+    """
+    normalized = _normalize_tensor_name(str(input_name))
+    sanitized = re.sub(r"[\\/:\s]+", "_", normalized)
+    sanitized = re.sub(r"[^0-9A-Za-z._-]", "_", sanitized)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("._")
+    if sanitized == "":
+        return "input"
+    return sanitized
+
+
 def _get_onnx_eval_outputs(
     *,
     onnx_graph: onnx.ModelProto,
@@ -507,7 +524,7 @@ def _get_onnx_eval_outputs(
                     rng=rng,
                 )
             file_name = (
-                f"seeded_{input_idx:04d}_{_normalize_tensor_name(input_name)}.npy"
+                f"seeded_{input_idx:04d}_{_sanitize_input_name_for_filename(input_name)}.npy"
             )
             file_path = os.path.join(generated_input_dir, file_name)
             np.save(file_path, np.asarray(sample))
