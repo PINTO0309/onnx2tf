@@ -10,6 +10,23 @@ from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
+def _prefer_int32_indices_output_dtype(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    requested_dtype: str,
+) -> str:
+    dtype = str(requested_dtype).upper()
+    if dtype == "INT32":
+        return "INT32"
+    tensor = ctx.model_ir.tensors.get(tensor_name, None)
+    if tensor is not None:
+        tensor.dtype = "INT32"
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(tensor_name)] = "INT32"
+    return "INT32"
+
+
 def _infer_pool_output_hw(
     *,
     node: Any,
@@ -630,7 +647,11 @@ def _build_maxpool1d_indices(
         )
     )
 
-    target_dtype = str(ctx.get_tensor_dtype(indices_output_name)).upper()
+    target_dtype = _prefer_int32_indices_output_dtype(
+        ctx=ctx,
+        tensor_name=indices_output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(indices_output_name)).upper(),
+    )
     if target_dtype == "INT32":
         ctx.add_operator(
             OperatorIR(
@@ -648,16 +669,8 @@ def _build_maxpool1d_indices(
         )
         return
 
-    if target_dtype not in {"INT64"}:
-        ctx.model_ir.tensors[indices_output_name].dtype = "INT64"
-        target_dtype = "INT64"
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CAST",
-            inputs=[linear_i32_name],
-            outputs=[indices_output_name],
-            options={"inDataType": "INT32", "outDataType": target_dtype},
-        )
+    raise NotImplementedError(
+        f"MaxPool1D indices dtype coercion failed. op={node.name} dtype={target_dtype}"
     )
 
 
@@ -1905,41 +1918,16 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             )
         )
 
-        target_indices_dtype = str(ctx.get_tensor_dtype(indices_output_name)).upper()
+        target_indices_dtype = _prefer_int32_indices_output_dtype(
+            ctx=ctx,
+            tensor_name=indices_output_name,
+            requested_dtype=str(ctx.get_tensor_dtype(indices_output_name)).upper(),
+        )
         linear_output_name = linear_nhwc_name
-        if target_indices_dtype == "INT64":
-            linear_i64_name = ctx.add_intermediate_tensor(
-                f"{node.name}_argmax_linear_nhwc_i64",
-                dtype="INT64",
-                shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
+        if target_indices_dtype != "INT32":
+            raise NotImplementedError(
+                f"MaxPool indices dtype coercion failed. op={node.name} dtype={target_indices_dtype}"
             )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="CAST",
-                    inputs=[linear_nhwc_name],
-                    outputs=[linear_i64_name],
-                    options={"inDataType": "INT32", "outDataType": "INT64"},
-                )
-            )
-            linear_output_name = linear_i64_name
-        elif target_indices_dtype != "INT32":
-            # Keep ONNX MaxPool indices contract (int64/int32). Unknown dtypes
-            # are normalized to int64 to preserve downstream index arithmetic.
-            ctx.model_ir.tensors[indices_output_name].dtype = "INT64"
-            linear_i64_name = ctx.add_intermediate_tensor(
-                f"{node.name}_argmax_linear_nhwc_i64",
-                dtype="INT64",
-                shape=[int(n_dim), int(out_h), int(out_w), int(c_dim)],
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="CAST",
-                    inputs=[linear_nhwc_name],
-                    outputs=[linear_i64_name],
-                    options={"inDataType": "INT32", "outDataType": "INT64"},
-                )
-            )
-            linear_output_name = linear_i64_name
 
         make_transpose(
             ctx,

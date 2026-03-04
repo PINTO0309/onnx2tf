@@ -21,6 +21,8 @@ from onnx2tf.tflite_builder.preprocess.rules import (
     register_normalize_attrs_rule,
     register_pattern_fusion_wave2_rule,
     register_quant_chain_fusion_wave3_rule,
+    configure_pseudo_ops_wave1_targets,
+    get_supported_pseudo_ops_wave1_aliases,
     register_pseudo_ops_wave1_rule,
 )
 
@@ -41,6 +43,8 @@ __all__ = [
     "register_normalize_attrs_rule",
     "register_pattern_fusion_wave2_rule",
     "register_quant_chain_fusion_wave3_rule",
+    "configure_pseudo_ops_wave1_targets",
+    "get_supported_pseudo_ops_wave1_aliases",
     "register_preprocess_rule",
     "register_pseudo_ops_wave1_rule",
     "run_preprocess_pipeline",

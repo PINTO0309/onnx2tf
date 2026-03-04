@@ -61,6 +61,25 @@ def _numpy_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
     )
 
 
+def _prefer_int32_index_output_dtype(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    requested_dtype: str,
+) -> str:
+    dtype = str(requested_dtype).upper()
+    if dtype == "INT32":
+        return "INT32"
+    if dtype == "INT64":
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.dtype = "INT32"
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(tensor_name)] = "INT32"
+        return "INT32"
+    return dtype
+
+
 def _normalize_axis(axis: int, rank: int, *, op_name: str) -> int:
     normalized = int(axis)
     if normalized < 0:
@@ -2253,7 +2272,11 @@ def build_range_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(delta_name)
     ctx.ensure_tensor(output_name)
 
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
+    )
     if output_dtype not in {
         "INT8", "INT16", "INT32", "INT64",
         "UINT8", "UINT16", "UINT32", "UINT64",
@@ -2461,7 +2484,13 @@ def build_shape_op(node: Any, ctx: Any) -> None:
 
     input_rank = len(ctx.get_tensor_shape(input_name))
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
-    shape_output_dtype = output_dtype if output_dtype in {"INT32", "INT64"} else "INT32"
+    shape_output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=output_dtype,
+    )
+    if shape_output_dtype not in {"INT32", "INT64"}:
+        shape_output_dtype = "INT32"
 
     start = int(node.attrs.get("start", 0))
     end = int(node.attrs.get("end", input_rank))
@@ -2587,7 +2616,11 @@ def build_cast_op(node: Any, ctx: Any) -> None:
     )
 
     input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
@@ -4478,6 +4511,8 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         else "FLOAT16"
     )
     compute_np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
+    replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
+    rtpo_gather = "gather" in set(replace_to_pseudo_operators or set())
 
     def _add_float_const(base_name: str, value: float) -> str:
         return ctx.add_const_tensor(
@@ -4529,22 +4564,158 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         _add_binary_op("ADD", mul_name, x_idx, linear_name)
         return linear_name
 
+    def _build_gather_rtpo(
+        *,
+        linear_idx_name: str,
+        params_name: str,
+        gathered_name: str,
+        tag: str,
+        spatial_shape: List[int],
+        flattened_axis_size: int,
+    ) -> None:
+        if not bool(rtpo_gather):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_name, linear_idx_name],
+                    outputs=[gathered_name],
+                    options={
+                        "axis": 2,
+                        "batchDims": 1,
+                    },
+                )
+            )
+            return
+
+        batch_size = int(n)
+        channels = int(c)
+        spatial_dims = [int(v) for v in list(spatial_shape)]
+        if (
+            int(batch_size) <= 0
+            or int(channels) <= 0
+            or int(flattened_axis_size) <= 0
+            or any(int(v) <= 0 for v in spatial_dims)
+        ):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_name, linear_idx_name],
+                    outputs=[gathered_name],
+                    options={
+                        "axis": 2,
+                        "batchDims": 1,
+                    },
+                )
+            )
+            return
+
+        indices_shape = [int(batch_size)] + [int(v) for v in spatial_dims]
+        offsets_shape = [int(batch_size)] + [1] * len(spatial_dims)
+        batch_offsets = (
+            np.arange(int(batch_size), dtype=np.int32).reshape(offsets_shape)
+            * np.asarray(int(flattened_axis_size), dtype=np.int32)
+        )
+        offsets_name = ctx.add_const_tensor(
+            f"{output_name}_gridsample_{tag}_gather_offsets",
+            batch_offsets,
+        )
+        global_idx_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_global_idx",
+            dtype="INT32",
+            shape=indices_shape,
+        )
+        _add_binary_op("ADD", linear_idx_name, offsets_name, global_idx_name)
+
+        flat_index_count = int(np.prod(np.asarray(indices_shape, dtype=np.int64)))
+        global_idx_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_global_idx_flat",
+            dtype="INT32",
+            shape=[int(flat_index_count)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=global_idx_name,
+            output_name=global_idx_flat_name,
+            new_shape=[int(flat_index_count)],
+            preserve_dynamic_shape=True,
+        )
+
+        params_nlc_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_params_nlc",
+            dtype=compute_dtype,
+            shape=[int(batch_size), int(flattened_axis_size), int(channels)],
+        )
+        params_nlc_name = make_transpose(
+            ctx=ctx,
+            input_name=params_name,
+            output_name=params_nlc_name,
+            perm_values=[0, 2, 1],
+            allow_elide_inverse_chain=True,
+        )
+        params_linear_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_params_linear",
+            dtype=compute_dtype,
+            shape=[int(batch_size) * int(flattened_axis_size), int(channels)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=params_nlc_name,
+            output_name=params_linear_name,
+            new_shape=[int(batch_size) * int(flattened_axis_size), int(channels)],
+            preserve_dynamic_shape=True,
+        )
+
+        gathered_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_flat",
+            dtype=compute_dtype,
+            shape=[int(flat_index_count), int(channels)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[params_linear_name, global_idx_flat_name],
+                outputs=[gathered_flat_name],
+                options={
+                    "axis": 0,
+                    "batchDims": 0,
+                },
+            )
+        )
+
+        gathered_nspatialc_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_{tag}_gather_nspatialc",
+            dtype=compute_dtype,
+            shape=[int(batch_size)] + [int(v) for v in spatial_dims] + [int(channels)],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=gathered_flat_name,
+            output_name=gathered_nspatialc_name,
+            new_shape=[int(batch_size)] + [int(v) for v in spatial_dims] + [int(channels)],
+            preserve_dynamic_shape=True,
+        )
+        gather_perm = [0, len(spatial_dims) + 1] + [idx + 1 for idx in range(len(spatial_dims))]
+        make_transpose(
+            ctx=ctx,
+            input_name=gathered_nspatialc_name,
+            output_name=gathered_name,
+            perm_values=[int(v) for v in gather_perm],
+            allow_elide_inverse_chain=True,
+        )
+
     def _build_gather(linear_idx_name: str, tag: str, params_name: str) -> str:
         gathered_name = ctx.add_intermediate_tensor(
             f"{output_name}_gridsample_{tag}_gather",
             dtype=compute_dtype,
             shape=[int(n), int(c), int(out_h), int(out_w)],
         )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="GATHER",
-                inputs=[params_name, linear_idx_name],
-                outputs=[gathered_name],
-                options={
-                    "axis": 2,
-                    "batchDims": 1,
-                },
-            )
+        _build_gather_rtpo(
+            linear_idx_name=linear_idx_name,
+            params_name=params_name,
+            gathered_name=gathered_name,
+            tag=tag,
+            spatial_shape=[int(out_h), int(out_w)],
+            flattened_axis_size=int((w + 2) * (h + 2)),
         )
         return gathered_name
 
@@ -4636,16 +4807,13 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
                 dtype=compute_dtype,
                 shape=[int(n), int(c), int(out_d), int(out_h), int(out_w)],
             )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="GATHER",
-                    inputs=[params_name, linear_idx_name],
-                    outputs=[gathered_name],
-                    options={
-                        "axis": 2,
-                        "batchDims": 1,
-                    },
-                )
+            _build_gather_rtpo(
+                linear_idx_name=linear_idx_name,
+                params_name=params_name,
+                gathered_name=gathered_name,
+                tag=tag,
+                spatial_shape=[int(out_d), int(out_h), int(out_w)],
+                flattened_axis_size=int((d + 2) * (h + 2) * (w + 2)),
             )
             return gathered_name
 

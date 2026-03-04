@@ -726,8 +726,10 @@ def _lower_graph_nodes(
         if op_type == "NonMaxSuppression":
             for wrapped_output in wrapped.outputs:
                 out_name = str(wrapped_output.name)
-                ctx.ensure_tensor(out_name, dtype="INT64")
-                ctx.model_ir.tensors[out_name].dtype = "INT64"
+                ctx.ensure_tensor(out_name, dtype="INT32")
+                ctx.model_ir.tensors[out_name].dtype = "INT32"
+                if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+                    ctx.dtype_map[out_name] = "INT32"
         if op_type == "Squeeze" and len(graph_node.input) >= 1 and len(graph_node.output) == 1:
             squeeze_input_name = remap_in.get(
                 str(graph_node.input[0]),

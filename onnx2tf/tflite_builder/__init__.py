@@ -20,6 +20,8 @@ from onnx2tf.tflite_builder.quantization import (
     build_integer_quantized_with_int16_act_model_ir,
 )
 from onnx2tf.tflite_builder.preprocess import (
+    configure_pseudo_ops_wave1_targets,
+    get_supported_pseudo_ops_wave1_aliases,
     register_default_preprocess_rules,
     run_preprocess_pipeline,
 )
@@ -266,6 +268,37 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     number_of_dimensions_after_flexstridedslice_compression = int(
         kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
     )
+    requested_pseudo_ops_raw = kwargs.get("replace_to_pseudo_operators", None)
+    if requested_pseudo_ops_raw is None:
+        requested_pseudo_ops: List[str] = []
+    elif isinstance(requested_pseudo_ops_raw, (list, tuple, set)):
+        requested_pseudo_ops = [
+            str(v).strip().lower()
+            for v in requested_pseudo_ops_raw
+            if str(v).strip() != ""
+        ]
+    else:
+        requested_pseudo_ops = [
+            str(requested_pseudo_ops_raw).strip().lower()
+        ] if str(requested_pseudo_ops_raw).strip() != "" else []
+    supported_pseudo_aliases = set(get_supported_pseudo_ops_wave1_aliases())
+    ignored_requested_pseudo_ops = sorted(
+        list(
+            {
+                str(alias) for alias in requested_pseudo_ops
+                if str(alias) not in supported_pseudo_aliases
+            }
+        )
+    )
+    if len(ignored_requested_pseudo_ops) > 0:
+        _progress_write(
+            message=(
+                "flatbuffer_direct: ignored unsupported --replace_to_pseudo_operators entries. "
+                f"unsupported={ignored_requested_pseudo_ops} "
+                f"supported={sorted(list(supported_pseudo_aliases))}"
+            ),
+            enabled=bool(flatbuffer_direct_show_progress),
+        )
 
     if onnx_graph is None:
         raise ValueError(
@@ -318,16 +351,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             output_report_path=op_coverage_report_path,
         )
 
+    configure_pseudo_ops_wave1_targets(
+        requested_pseudo_ops if len(requested_pseudo_ops) > 0 else None
+    )
     try:
-        preprocessed_onnx_graph, preprocess_report = run_preprocess_pipeline(
-            onnx_graph=onnx_graph,
-        )
-    except Exception as ex:
         try:
-            _write_coverage_report(str(ex))
-        except Exception:
-            pass
-        raise
+            preprocessed_onnx_graph, preprocess_report = run_preprocess_pipeline(
+                onnx_graph=onnx_graph,
+            )
+        except Exception as ex:
+            try:
+                _write_coverage_report(str(ex))
+            except Exception:
+                pass
+            raise
+    finally:
+        configure_pseudo_ops_wave1_targets(None)
 
     try:
         model_ir = lower_onnx_to_ir(
@@ -345,6 +384,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             show_progress=flatbuffer_direct_show_progress,
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+            replace_to_pseudo_operators=requested_pseudo_ops,
         )
     except Exception as ex:
         try:

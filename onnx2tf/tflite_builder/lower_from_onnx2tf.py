@@ -418,6 +418,7 @@ class LoweringContext:
         switch_nms_version: str = "v4",
         number_of_dimensions_after_flextranspose_compression: int = 6,
         number_of_dimensions_after_flexstridedslice_compression: int = 5,
+        replace_to_pseudo_operators: Optional[List[str]] = None,
     ):
         self.model_ir = model_ir
         self.shape_map = shape_map
@@ -453,6 +454,11 @@ class LoweringContext:
                 f"got: {switch_nms_version}"
             )
         self.switch_nms_version = nms_version
+        self.replace_to_pseudo_operators: set[str] = {
+            str(v).strip().lower()
+            for v in (replace_to_pseudo_operators or [])
+            if str(v).strip() != ""
+        }
         self._serial = 0
 
     def _next_name(self, base: str) -> str:
@@ -1682,6 +1688,82 @@ def _sanitize_squeeze_axes_with_static_input_shapes(model_ir: ModelIR) -> Dict[s
         "sanitized_squeeze_axes_with_static_input_shapes": int(sanitized_ops),
         "repaired_squeeze_input_singleton_dims": int(repaired_input_dims),
         "updated_squeeze_output_shapes": int(updated_output_shapes),
+    }
+
+
+def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Replace EXPAND_DIMS/SQUEEZE with RESHAPE for LiteRT.js WebGPU compatibility.
+
+    The replacement uses output tensor metadata as target shape. When possible,
+    a single unknown dimension from shape_signature is preserved as -1.
+    """
+    rewritten = 0
+    shape_tensors_created = 0
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 0
+        while name in model_ir.tensors:
+            suffix += 1
+            name = f"{base}_{suffix}"
+        return name
+
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type not in {"EXPAND_DIMS", "SQUEEZE"}:
+            continue
+        if len(op.inputs) < 1 or len(op.outputs) != 1:
+            continue
+
+        input_name = str(op.inputs[0])
+        output_name = str(op.outputs[0])
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if output_tensor is None or output_tensor.shape is None:
+            continue
+
+        output_shape = [int(v) for v in list(output_tensor.shape)]
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_shape)]
+        )
+
+        if len(output_signature) == 0:
+            reshape_target = []
+        else:
+            reshape_target = [int(v) for v in list(output_shape)]
+            if len(output_signature) == len(output_shape):
+                if all(int(v) > 0 for v in output_signature):
+                    reshape_target = [int(v) for v in list(output_signature)]
+                else:
+                    negative_count = sum(1 for dim in output_signature if int(dim) < 0)
+                    if negative_count == 1:
+                        reshape_target = [
+                            int(dim) if int(dim) > 0 else -1 for dim in output_signature
+                        ]
+
+        shape_name = _unique_tensor_name(f"{output_name}_reshape_shape")
+        model_ir.tensors[shape_name] = TensorIR(
+            name=shape_name,
+            dtype="INT32",
+            shape=[int(len(reshape_target))],
+            shape_signature=[int(len(reshape_target))],
+            data=np.asarray(reshape_target, dtype=np.int32),
+            is_variable=False,
+            quantization=None,
+        )
+        op.op_type = "RESHAPE"
+        op.inputs = [input_name, shape_name]
+        op.options = {"newShape": [int(v) for v in list(reshape_target)]}
+        rewritten += 1
+        shape_tensors_created += 1
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir)
+    return {
+        "replaced_expand_dims_and_squeeze_with_reshape": int(rewritten),
+        "expand_dims_squeeze_rewrite_shape_tensors": int(shape_tensors_created),
     }
 
 
@@ -64186,6 +64268,7 @@ def lower_onnx_to_ir(
     apply_safe_transpose_reduction_lite_on_no_layout_opt: bool = False,
     number_of_dimensions_after_flextranspose_compression: int = 6,
     number_of_dimensions_after_flexstridedslice_compression: int = 5,
+    replace_to_pseudo_operators: Optional[List[str]] = None,
 ) -> ModelIR:
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
@@ -64234,6 +64317,7 @@ def lower_onnx_to_ir(
         switch_nms_version=switch_nms_version,
         number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
         number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+        replace_to_pseudo_operators=replace_to_pseudo_operators,
     )
 
     keep_ncw_input_names = {
@@ -65301,6 +65385,7 @@ def lower_onnx_to_ir(
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_layout_transpose_chains(model_ir)
+    _replace_expand_dims_and_squeeze_with_reshape(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
 

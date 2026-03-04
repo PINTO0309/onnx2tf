@@ -114,6 +114,9 @@ from onnx2tf.utils.enums import (
 from onnx2tf.tflite_builder.preprocess.rules.cleanup_unused_initializers import (
     prune_unused_initializers_inplace,
 )
+from onnx2tf.tflite_builder.preprocess import (
+    get_supported_pseudo_ops_wave1_aliases,
+)
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
@@ -145,6 +148,34 @@ _TEMP_MICROSOFT_DOMAIN_OPS = {
     'QLinearSoftmax',
     'QLinearSigmoid',
 }
+
+
+_SUPPORTED_RTPO_ALIASES = set(get_supported_pseudo_ops_wave1_aliases())
+
+
+def _normalize_replace_to_pseudo_operators(
+    replace_to_pseudo_operators: Optional[List[str]],
+) -> List[str]:
+    normalized_aliases: List[str] = []
+    ignored_aliases: List[str] = []
+    for alias in (replace_to_pseudo_operators or []):
+        alias_norm = str(alias).strip().lower()
+        if alias_norm == "":
+            continue
+        if alias_norm in _SUPPORTED_RTPO_ALIASES:
+            if alias_norm not in normalized_aliases:
+                normalized_aliases.append(alias_norm)
+        else:
+            ignored_aliases.append(alias_norm)
+    if len(ignored_aliases) > 0:
+        warn(
+            Color.YELLOW(
+                "Ignoring unsupported --replace_to_pseudo_operators aliases: "
+                f"{sorted(set(ignored_aliases))}. "
+                f"Supported aliases: {sorted(_SUPPORTED_RTPO_ALIASES)}"
+            )
+        )
+    return normalized_aliases
 
 
 def _supplement_microsoft_domain_for_selected_ops(
@@ -1777,6 +1808,9 @@ def convert(
         flatbuffer_direct_fallback_to_tf_converter
     )
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
+    replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
+        replace_to_pseudo_operators
+    )
     if flatbuffer_direct_custom_op_allowlist is None:
         flatbuffer_direct_custom_op_allowlist = None
     elif isinstance(flatbuffer_direct_custom_op_allowlist, list):
@@ -3441,6 +3475,7 @@ def convert(
                             tflite_split_target_bytes=tflite_split_target_bytes,
                             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
                             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+                            replace_to_pseudo_operators=replace_to_pseudo_operators,
                         )
                         if direct_output_nms_with_argmax and not output_nms_with_argmax:
                             info(
@@ -3702,9 +3737,6 @@ def convert(
                 f'options={", ".join(flatbuffer_direct_fast_path_blockers)}'
             )
         )
-
-    if replace_to_pseudo_operators is None:
-        replace_to_pseudo_operators = []
 
     # debug counta
     op_counta = 1
@@ -4174,6 +4206,7 @@ def convert(
                                     tflite_split_target_bytes=tflite_split_target_bytes,
                                     number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
                                     number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+                                    replace_to_pseudo_operators=replace_to_pseudo_operators,
                                 )
                                 if direct_output_nms_with_argmax and not output_nms_with_argmax:
                                     info(
@@ -4599,6 +4632,7 @@ def convert(
                                 tflite_split_target_bytes=tflite_split_target_bytes,
                                 number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
                                 number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+                                replace_to_pseudo_operators=replace_to_pseudo_operators,
                             )
                             if direct_output_nms_with_argmax and not output_nms_with_argmax:
                                 info(
@@ -6505,6 +6539,8 @@ def main():
         '-rtpo',
         '--replace_to_pseudo_operators',
         nargs='*',
+        type=lambda v: str(v).strip().lower(),
+        choices=sorted(_SUPPORTED_RTPO_ALIASES),
         default=[],
         help=\
             'Replace list of operators to pseudo operators. \n ' +
@@ -6706,9 +6742,9 @@ def main():
         if len(parsed_allowlist) > 0:
             flatbuffer_direct_custom_op_allowlist = parsed_allowlist
 
-    args.replace_to_pseudo_operators = [
-        name.lower() for name in args.replace_to_pseudo_operators
-    ]
+    args.replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
+        args.replace_to_pseudo_operators
+    )
 
     # Convert
     model = convert(
