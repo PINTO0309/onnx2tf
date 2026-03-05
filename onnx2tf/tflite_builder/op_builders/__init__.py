@@ -37,6 +37,7 @@ from onnx2tf.tflite_builder.op_builders.elementwise import (
 )
 from onnx2tf.tflite_builder.op_builders.shape import (
     build_cast_op,
+    build_castlike_op,
     build_concat_op,
     build_constant_of_shape_op,
     build_depth_to_space_op,
@@ -185,6 +186,7 @@ __all__ = [
     "build_unary_op",
     "build_where_op",
     "build_cast_op",
+    "build_castlike_op",
     "build_concat_op",
     "build_constant_of_shape_op",
     "build_depth_to_space_op",

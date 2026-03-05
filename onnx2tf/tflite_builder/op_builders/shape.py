@@ -2484,11 +2484,17 @@ def build_range_op(node: Any, ctx: Any) -> None:
         if src_dtype == output_dtype:
             converted_inputs.append(src_name)
             continue
+        src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
         cast_name = ctx.add_intermediate_tensor(
             f"{output_name}_range_{label}_{output_dtype.lower()}",
             dtype=output_dtype,
-            shape=[int(v) for v in ctx.get_tensor_shape(src_name)],
+            shape=src_shape,
         )
+        if len(src_shape) == 0:
+            cast_tensor = ctx.model_ir.tensors.get(cast_name, None)
+            if cast_tensor is not None:
+                cast_tensor.shape = []
+                cast_tensor.shape_signature = []
         ctx.add_operator(
             OperatorIR(
                 op_type="CAST",
@@ -2505,16 +2511,23 @@ def build_range_op(node: Any, ctx: Any) -> None:
     scalar_inputs: list[str] = []
     for idx, src_name in enumerate(converted_inputs):
         src_shape = [int(v) for v in ctx.get_tensor_shape(src_name)]
+        if len(src_shape) == 0:
+            scalar_inputs.append(src_name)
+            continue
         if len(src_shape) != 1 or int(src_shape[0]) != 1:
             raise NotImplementedError(
-                "Range expects scalar-like inputs represented as shape [1] in flatbuffer_direct. "
+                "Range expects scalar-like inputs represented as shape [] or [1] in flatbuffer_direct. "
                 f"op={node.name} input_index={idx} input_shape={src_shape}"
             )
         scalar_name = ctx.add_intermediate_tensor(
             f"{output_name}_range_scalar_{idx}",
             dtype=output_dtype,
-            shape=[1],
+            shape=[],
         )
+        scalar_tensor = ctx.model_ir.tensors.get(scalar_name, None)
+        if scalar_tensor is not None:
+            scalar_tensor.shape = []
+            scalar_tensor.shape_signature = []
         ctx.add_operator(
             OperatorIR(
                 op_type="SQUEEZE",
@@ -2886,6 +2899,43 @@ def build_cast_op(node: Any, ctx: Any) -> None:
         tensor_name=output_name,
         requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
     )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[output_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+
+
+def build_castlike_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    like_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(like_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_passthrough_shape_signature(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = _prefer_int32_index_output_dtype(
+        ctx=ctx,
+        tensor_name=output_name,
+        requested_dtype=str(ctx.get_tensor_dtype(like_name)).upper(),
+    )
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = str(output_dtype)
+    output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+    if output_tensor is not None:
+        output_tensor.dtype = str(output_dtype)
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",

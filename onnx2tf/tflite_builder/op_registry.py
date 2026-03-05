@@ -22,6 +22,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_bitshift_op,
     build_bitwise_not_op,
     build_cast_op,
+    build_castlike_op,
     build_celu_op,
     build_clip_op,
     build_col2im_op,
@@ -6543,10 +6544,20 @@ def _resolve_generic_custom_fallback(node: Any, ctx: Any) -> Optional[DispatchRe
 def _validate_clip(node: Any, ctx: Any) -> None:
     min_value = node.attrs.get("min", float("-inf"))
     max_value = node.attrs.get("max", float("inf"))
+    min_known = True
+    max_known = True
     if len(node.inputs) >= 2 and str(node.inputs[1].name) != "":
-        min_value = _require_const_input(node, ctx, 1, "clip minimum")
+        min_const = ctx.get_constant_array(str(node.inputs[1].name))
+        if min_const is not None:
+            min_value = min_const
+        else:
+            min_known = False
     if len(node.inputs) >= 3 and str(node.inputs[2].name) != "":
-        max_value = _require_const_input(node, ctx, 2, "clip maximum")
+        max_const = ctx.get_constant_array(str(node.inputs[2].name))
+        if max_const is not None:
+            max_value = max_const
+        else:
+            max_known = False
 
     def _to_float(v: Any, default: float) -> float:
         if isinstance(v, (int, float)):
@@ -6556,18 +6567,19 @@ def _validate_clip(node: Any, ctx: Any) -> None:
             return float(default)
         return float(arr.reshape(-1)[0])
 
-    min_f = _to_float(min_value, float("-inf"))
-    max_f = _to_float(max_value, float("inf"))
-    if np.isfinite(min_f) and np.isfinite(max_f) and min_f > max_f:
-        raise NodeValidationError(
-            reason_code="unsupported_attribute_value",
-            message=(
-                "Clip minimum must be <= maximum. "
-                f"min={min_f} max={max_f}"
-            ),
-            node_name=node.name,
-            node_op=node.op,
-        )
+    if min_known and max_known:
+        min_f = _to_float(min_value, float("-inf"))
+        max_f = _to_float(max_value, float("inf"))
+        if np.isfinite(min_f) and np.isfinite(max_f) and min_f > max_f:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "Clip minimum must be <= maximum. "
+                    f"min={min_f} max={max_f}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
@@ -6723,6 +6735,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_cast_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_cast,
+    ),
+    "CastLike": DispatchEntry(
+        onnx_op="CastLike",
+        tflite_ops=["CAST"],
+        builder=build_castlike_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
     ),
     "Expand": DispatchEntry(
         onnx_op="Expand",
