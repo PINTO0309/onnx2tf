@@ -1,3 +1,4 @@
+from typing import Any, List, Optional, cast
 import sys
 import random
 random.seed(0)
@@ -31,7 +32,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Slice
 
@@ -84,8 +85,9 @@ def make_node(
     )
 
     input_tensor_shape = input_tensor.shape
-    input_tensor_rank = len(input_tensor_shape) \
-        if input_tensor_shape != tf.TensorShape(None) else 1
+    input_tensor_shape_list = input_tensor_shape.as_list() \
+        if input_tensor_shape.rank is not None else None
+    input_tensor_rank = int(input_tensor_shape.rank) if input_tensor_shape.rank is not None else 1
 
     starts = None
     if len(graph_node.inputs) >= 2:
@@ -113,8 +115,15 @@ def make_node(
     ends = graph_node.attrs.get('ends', ends)
     if isinstance(ends, list):
         ends = tf.convert_to_tensor(np.asarray(ends))
-    ends_dtype = NUMPY_DTYPES_TO_TF_DTYPES[ends.dtype] \
-        if isinstance(ends.dtype, np.dtype) else ends.dtype
+    if starts is None or ends is None:
+        error(f'Slice requires starts/ends. node.name: {graph_node.name}')
+        sys.exit(1)
+    ends_dtype = tf.int64
+    if isinstance(ends, np.ndarray):
+        ends_dtype = NUMPY_DTYPES_TO_TF_DTYPES[ends.dtype] \
+            if isinstance(ends.dtype, np.dtype) else ends.dtype
+    elif tf.is_tensor(ends):
+        ends_dtype = cast(Any, ends).dtype
 
     axes = None
     if len(graph_node.inputs) >= 4:
@@ -126,15 +135,16 @@ def make_node(
     axes = tf_layers_dict[axes.name]['tf_node'] \
         if isinstance(axes, gs.Variable) else axes
 
-    if isinstance(axes, np.ndarray):
-        axes = axes \
-            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends_dtype)
+    if len(graph_node.inputs) < 4:
+        starts_tensor_for_axes = tf.convert_to_tensor(cast(Any, starts))
+        axes = tf.range(
+            tf.gather(tf.shape(starts_tensor_for_axes), indices=0),
+            dtype=cast(Any, ends_dtype),
+        )
+    elif isinstance(axes, np.ndarray):
+        axes = axes
     elif isinstance(axes, list):
-        axes = np.asarray(axes, dtype=ends.dtype) \
-            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends_dtype)
-    elif axes is not None:
-        axes = axes \
-            if len(graph_node.inputs) >= 4 else tf.range(tf.shape(starts)[0], dtype=ends_dtype)
+        axes = np.asarray(axes, dtype=cast(Any, ends_dtype))
 
     steps = None
     if len(graph_node.inputs) >= 5:
@@ -184,10 +194,14 @@ def make_node(
     }
 
     # Determine if the axes are randomly placed on the axes.
-    if (isinstance(axes, np.ndarray) or hasattr(axes, 'numpy')) \
-        and len(axes.shape) > 1:
-        base_axes = list(axes) if isinstance(axes, np.ndarray) else list(axes.numpy())
-        sorted_axes = list(sorted(axes)) if isinstance(axes, np.ndarray) else list(sorted(axes.numpy()))
+    axes_np_for_check: Optional[np.ndarray] = None
+    if isinstance(axes, np.ndarray):
+        axes_np_for_check = axes
+    elif tf.is_tensor(axes) and hasattr(axes, 'numpy'):
+        axes_np_for_check = np.asarray(cast(Any, axes).numpy())
+    if axes_np_for_check is not None and axes_np_for_check.ndim > 1:
+        base_axes = list(np.asarray(axes_np_for_check).reshape(-1))
+        sorted_axes = list(sorted(base_axes))
         if base_axes != sorted_axes:
             if tf_layers_dict[graph_node_output.name]['nhwc'] == True:
                 tmp_axes = [
@@ -197,10 +211,25 @@ def make_node(
                         before_op_output_shape_trans=True,
                     ) for idx in base_axes
                 ]
-                starts = starts[tmp_axes]
-                ends = ends[tmp_axes]
+                if isinstance(starts, np.ndarray):
+                    starts = starts[tmp_axes]
+                elif tf.is_tensor(starts):
+                    starts = tf.gather(cast(Any, starts), indices=tmp_axes)
+                else:
+                    starts = np.asarray(cast(Any, starts))[tmp_axes]
+                if isinstance(ends, np.ndarray):
+                    ends = ends[tmp_axes]
+                elif tf.is_tensor(ends):
+                    ends = tf.gather(cast(Any, ends), indices=tmp_axes)
+                else:
+                    ends = np.asarray(cast(Any, ends))[tmp_axes]
                 if steps is not None:
-                    steps = steps[tmp_axes]
+                    if isinstance(steps, np.ndarray):
+                        steps = steps[tmp_axes]
+                    elif tf.is_tensor(steps):
+                        steps = tf.gather(cast(Any, steps), indices=tmp_axes)
+                    else:
+                        steps = np.asarray(cast(Any, steps))[tmp_axes]
                 axes = tf.convert_to_tensor(sorted_axes)
 
     # Param replacement - OP replacement
@@ -260,6 +289,13 @@ def make_node(
     COMPRESSION_DEFAULT_VALUE = 5
     op_rep_params = kwargs.get('op_rep_params', [])
     begin_ = None
+    end_ = None
+    strides_ = None
+    begin_mask_ = 0
+    end_mask_ = 0
+    ellipsis_mask_ = 0
+    new_axis_mask_ = 0
+    shrink_axis_mask_ = 0
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == 'op':
             begin_ = op_rep_param.get('begin', None)
@@ -287,7 +323,7 @@ def make_node(
             param_name=graph_node.inputs[1].name,
             **kwargs,
         )
-    starts = tf.convert_to_tensor(starts)
+    starts = tf.convert_to_tensor(cast(Any, starts))
     # Param replacement - ends
     if len(graph_node.inputs) >= 3:
         ends = replace_parameter(
@@ -296,7 +332,7 @@ def make_node(
             param_name=graph_node.inputs[2].name,
             **kwargs,
         )
-        ends = tf.convert_to_tensor(ends)
+        ends = tf.convert_to_tensor(cast(Any, ends))
     # Param replacement - axes
     if len(graph_node.inputs) >= 4:
         axes = replace_parameter(
@@ -305,7 +341,7 @@ def make_node(
             param_name=graph_node.inputs[3].name,
             **kwargs,
         )
-        axes = tf.convert_to_tensor(axes)
+        axes = tf.convert_to_tensor(cast(Any, axes))
     # Param replacement - steps
     if len(graph_node.inputs) >= 5:
         steps = replace_parameter(
@@ -314,7 +350,7 @@ def make_node(
             param_name=graph_node.inputs[4].name,
             **kwargs,
         )
-        steps = tf.convert_to_tensor(steps)
+        steps = tf.convert_to_tensor(cast(Any, steps))
 
     # Generation of TF OP
     tf_type = None
@@ -331,27 +367,33 @@ def make_node(
         if begin_ is None:
             ##### begin
             if isinstance(starts, tf.Tensor) and hasattr(starts, "numpy"):
-                begin_ = [dim for dim in starts.numpy()]
+                begin_ = [int(dim) for dim in cast(Any, starts).numpy().reshape(-1).tolist()]
             elif not isinstance(starts, np.ndarray) and tf_keras.backend.is_keras_tensor(starts):
                 begin_ = starts
+            elif isinstance(starts, np.ndarray):
+                begin_ = [int(dim) for dim in starts.reshape(-1).tolist()]
             else:
-                begin_ = [dim for dim in starts]
+                begin_ = [int(dim) for dim in cast(Any, starts)]
             ##### end
             if isinstance(ends, tf.Tensor) and hasattr(ends, "numpy"):
-                end_ = [dim for dim in ends.numpy()]
+                end_ = [int(dim) for dim in cast(Any, ends).numpy().reshape(-1).tolist()]
             elif not isinstance(ends, np.ndarray) and tf_keras.backend.is_keras_tensor(ends):
                 end_ = ends
+            elif isinstance(ends, np.ndarray):
+                end_ = [int(dim) for dim in ends.reshape(-1).tolist()]
             else:
-                end_ = [dim for dim in ends]
+                end_ = [int(dim) for dim in cast(Any, ends)]
             ##### strides
             strides_ = None
             if steps is not None:
                 if isinstance(steps, tf.Tensor) and hasattr(steps, "numpy"):
-                    strides_ = [dim for dim in steps.numpy()]
+                    strides_ = [int(dim) for dim in cast(Any, steps).numpy().reshape(-1).tolist()]
                 elif not isinstance(steps, np.ndarray) and tf_keras.backend.is_keras_tensor(steps):
                     strides_ = steps
+                elif isinstance(steps, np.ndarray):
+                    strides_ = [int(dim) for dim in steps.reshape(-1).tolist()]
                 else:
-                    strides_ = [dim for dim in steps]
+                    strides_ = [int(dim) for dim in cast(Any, steps)]
 
             axes_list_for_reorder = None
             if axes is not None:
@@ -360,10 +402,13 @@ def make_node(
                 elif isinstance(axes, np.ndarray):
                     axes_list_for_reorder = [int(axis) for axis in list(np.asarray(axes).reshape(-1))]
                 elif tf.is_tensor(axes):
-                    if hasattr(axes, "numpy"):
-                        axes_list_for_reorder = [int(axis) for axis in list(np.asarray(axes.numpy()).reshape(-1))]
-                    elif hasattr(axes, "_inferred_value") and axes._inferred_value not in (None, [None]):
-                        axes_list_for_reorder = [int(axis) for axis in list(axes._inferred_value)]
+                    axes_tensor = cast(Any, axes)
+                    if hasattr(axes_tensor, "numpy"):
+                        axes_list_for_reorder = [int(axis) for axis in list(np.asarray(axes_tensor.numpy()).reshape(-1))]
+                    else:
+                        axes_tensor_inferred_value = getattr(axes_tensor, "_inferred_value", None)
+                        if axes_tensor_inferred_value not in (None, [None]):
+                            axes_list_for_reorder = [int(axis) for axis in list(axes_tensor_inferred_value)]
             if axes_list_for_reorder is not None:
                 axes_list_for_reorder = [
                     int(axis) if int(axis) >= 0 else int(axis) + int(input_tensor_rank)
@@ -410,41 +455,54 @@ def make_node(
                         strides_ = expanded_strides
 
             # Adjust the number of dimensions of the input data according to the number of axes [Tensor]
-            if not isinstance(begin_, list) and input_tensor_rank > begin_.shape[0]:
+            begin_dim0 = cast(Any, begin_).shape[0] if (not isinstance(begin_, list) and hasattr(begin_, 'shape') and cast(Any, begin_).shape is not None) else None
+            if begin_dim0 is not None and input_tensor_rank > int(begin_dim0):
                 begin_zeros = tf.zeros(shape=input_tensor_rank, dtype=tf.int64)
+                scatter_axes = axes if axes is not None else tf.range(input_tensor_rank, dtype=tf.int64)
                 begin_ = tf.tensor_scatter_nd_update(
                     tensor=begin_zeros,
-                    indices=[[axis] for axis in axes],
-                    updates=begin_,
+                    indices=tf.reshape(tf.cast(cast(Any, scatter_axes), tf.int64), [-1, 1]),
+                    updates=tf.cast(cast(Any, begin_), tf.int64),
                 )
-            begin_ = tf.cast(x=begin_, dtype=tf.int64)
-            if not isinstance(end_, list) and input_tensor_rank > end_.shape[0]:
+            begin_ = tf.cast(x=cast(Any, begin_), dtype=tf.int64)
+            end_dim0 = cast(Any, end_).shape[0] if (not isinstance(end_, list) and hasattr(end_, 'shape') and cast(Any, end_).shape is not None) else None
+            if end_dim0 is not None and input_tensor_rank > int(end_dim0):
                 end_zeros = tf.zeros(input_tensor_rank, dtype=tf.int64)
+                scatter_axes = axes if axes is not None else tf.range(input_tensor_rank, dtype=tf.int64)
                 end_ = tf.tensor_scatter_nd_update(
                     tensor=end_zeros,
-                    indices=[[axis] for axis in axes],
-                    updates=end_,
+                    indices=tf.reshape(tf.cast(cast(Any, scatter_axes), tf.int64), [-1, 1]),
+                    updates=tf.cast(cast(Any, end_), tf.int64),
                 )
-            end_ = tf.cast(x=end_, dtype=tf.int64)
-            if strides_ is not None and not isinstance(strides_, list) and input_tensor_rank > strides_.shape[0]:
+            end_ = tf.cast(x=cast(Any, end_), dtype=tf.int64)
+            strides_dim0 = cast(Any, strides_).shape[0] if (strides_ is not None and not isinstance(strides_, list) and hasattr(strides_, 'shape') and cast(Any, strides_).shape is not None) else None
+            if strides_dim0 is not None and input_tensor_rank > int(strides_dim0):
                 strides_ones = tf.ones(input_tensor_rank, dtype=tf.int64)
+                scatter_axes = axes if axes is not None else tf.range(input_tensor_rank, dtype=tf.int64)
                 strides_ = tf.tensor_scatter_nd_update(
                     tensor=strides_ones,
-                    indices=[[axis] for axis in axes],
-                    updates=strides_,
+                    indices=tf.reshape(tf.cast(cast(Any, scatter_axes), tf.int64), [-1, 1]),
+                    updates=tf.cast(cast(Any, strides_), tf.int64),
                 )
-                strides_ = tf.cast(x=strides_, dtype=tf.int64)
+                strides_ = tf.cast(x=cast(Any, strides_), dtype=tf.int64)
 
             ##### begin_mask
             begin_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
-            cliped_values = tf.cast(1-tf.clip_by_value(t=begin_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+            cliped_values = tf.cast(
+                tf.subtract(
+                    1,
+                    tf.clip_by_value(t=begin_, clip_value_min=0, clip_value_max=1),
+                ),
+                dtype=tf.int32,
+            )
             begin_mask_ = tf.cast(
                 tf.math.reduce_sum(
                     input_tensor=tf.math.multiply(x=cliped_values, y=begin_bit_mask),
                 ),
                 dtype=tf.int32,
             )
-            if hasattr(begin_mask_, '_inferred_value') and begin_mask_._inferred_value == [None]:
+            begin_mask_inferred_value = getattr(begin_mask_, '_inferred_value', None)
+            if begin_mask_inferred_value == [None]:
                 axes_list = None
                 if axes is not None:
                     if isinstance(axes, (list, tuple)):
@@ -452,10 +510,13 @@ def make_node(
                     elif isinstance(axes, np.ndarray):
                         axes_list = axes.tolist() if axes.ndim > 0 else [int(axes)]
                     elif tf.is_tensor(axes):
-                        if hasattr(axes, 'numpy'):
-                            axes_list = axes.numpy().tolist()
-                        elif hasattr(axes, '_inferred_value') and axes._inferred_value not in (None, [None]):
-                            axes_list = list(axes._inferred_value)
+                        axes_tensor = cast(Any, axes)
+                        if hasattr(axes_tensor, 'numpy'):
+                            axes_list = np.asarray(axes_tensor.numpy()).reshape(-1).tolist()
+                        else:
+                            axes_tensor_inferred_value = getattr(axes_tensor, '_inferred_value', None)
+                            if axes_tensor_inferred_value not in (None, [None]):
+                                axes_list = list(axes_tensor_inferred_value)
                 if axes_list is not None:
                     begin_mask_ = sum(
                         1 << axis for axis in range(input_tensor_rank) if axis not in axes_list
@@ -465,14 +526,21 @@ def make_node(
 
             ##### end_mask
             end_bit_mask = tf.constant([2**idx for idx in range(input_tensor_rank)], dtype=tf.int32)
-            cliped_values = tf.cast(1-tf.clip_by_value(t=end_,clip_value_min=0,clip_value_max=1), dtype=tf.int32)
+            cliped_values = tf.cast(
+                tf.subtract(
+                    1,
+                    tf.clip_by_value(t=end_, clip_value_min=0, clip_value_max=1),
+                ),
+                dtype=tf.int32,
+            )
             end_mask_ = tf.cast(
                 tf.math.reduce_sum(
                     input_tensor=tf.math.multiply(x=cliped_values, y=end_bit_mask),
                 ),
                 dtype=tf.int32,
             )
-            if hasattr(end_mask_, '_inferred_value') and end_mask_._inferred_value == [None]:
+            end_mask_inferred_value = getattr(end_mask_, '_inferred_value', None)
+            if end_mask_inferred_value == [None]:
                 axes_list = None
                 if axes is not None:
                     if isinstance(axes, (list, tuple)):
@@ -480,16 +548,38 @@ def make_node(
                     elif isinstance(axes, np.ndarray):
                         axes_list = axes.tolist() if axes.ndim > 0 else [int(axes)]
                     elif tf.is_tensor(axes):
-                        if hasattr(axes, 'numpy'):
-                            axes_list = axes.numpy().tolist()
-                        elif hasattr(axes, '_inferred_value') and axes._inferred_value not in (None, [None]):
-                            axes_list = list(axes._inferred_value)
+                        axes_tensor = cast(Any, axes)
+                        if hasattr(axes_tensor, 'numpy'):
+                            axes_list = np.asarray(axes_tensor.numpy()).reshape(-1).tolist()
+                        else:
+                            axes_tensor_inferred_value = getattr(axes_tensor, '_inferred_value', None)
+                            if axes_tensor_inferred_value not in (None, [None]):
+                                axes_list = list(axes_tensor_inferred_value)
                 if axes_list is not None:
                     end_mask_ = sum(
                         1 << axis for axis in range(input_tensor_rank) if axis not in axes_list
                     )
                 else:
                     end_mask_ = 0
+
+            def _to_int_mask(mask_value: Any) -> int:
+                if isinstance(mask_value, (int, np.integer)):
+                    return int(mask_value)
+                if tf.is_tensor(mask_value):
+                    static_value = tf.get_static_value(mask_value)
+                    if static_value is not None:
+                        return int(np.asarray(static_value).reshape(-1)[0])
+                    mask_numpy = getattr(mask_value, 'numpy', None)
+                    if callable(mask_numpy):
+                        return int(np.asarray(mask_numpy()).reshape(-1)[0])
+                    return 0
+                try:
+                    return int(mask_value)
+                except Exception:
+                    return 0
+
+            begin_mask_int = _to_int_mask(begin_mask_)
+            end_mask_int = _to_int_mask(end_mask_)
 
             # strided_slice
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -498,13 +588,13 @@ def make_node(
                     begin=begin_,
                     end=end_,
                     strides=strides_,
-                    begin_mask=begin_mask_,
-                    end_mask=end_mask_,
+                    begin_mask=begin_mask_int,
+                    end_mask=end_mask_int,
                     name=graph_node.name,
                 )
             try:
-                if input_tensor_shape != tf.TensorShape(None) \
-                    and None not in input_tensor_shape \
+                if input_tensor_shape_list is not None \
+                    and None not in input_tensor_shape_list \
                     and len(input_tensor_shape) > kwargs['number_of_dimensions_after_flexstridedslice_compression']:
 
                     onnx_slice_dims_count = 0
@@ -512,7 +602,11 @@ def make_node(
                     if isinstance(starts, np.ndarray):
                         onnx_slice_dims_count = len(starts)
                     elif hasattr(starts, 'numpy'):
-                        onnx_slice_dims_count = len(starts.numpy())
+                        starts_numpy = getattr(starts, 'numpy', None)
+                        if callable(starts_numpy):
+                            onnx_slice_dims_count = len(np.asarray(starts_numpy()))
+                        else:
+                            onnx_slice_dims_count = len(np.asarray(cast(Any, starts)))
                     elif isinstance(starts, int):
                         onnx_slice_dims_count = 1
                     elif tf_keras.backend.is_keras_tensor(starts):
@@ -530,8 +624,8 @@ def make_node(
                             begin=begin_,
                             end=end_,
                             strides=strides_,
-                            begin_mask=begin_mask_,
-                            end_mask=end_mask_,
+                            begin_mask=begin_mask_int,
+                            end_mask=end_mask_int,
                             ignore_axes=ignore_axes,
                             compression_defult_value=COMPRESSION_DEFAULT_VALUE,
                             onnx_slice_dims_count=onnx_slice_dims_count,
@@ -556,10 +650,10 @@ def make_node(
                 print(f'{Color.YELLOW("WARNING")} Dimensional compression of `Slice` fails. node.name: {graph_node.name}')
                 print('')
 
-            check_input_shape = list(input_tensor_shape) \
-                if input_tensor_shape != tf.TensorShape(None) else None
-            check_output_shape = list(tf_layers_dict[graph_node_output.name]['tf_node'].shape) \
-                if tf_layers_dict[graph_node_output.name]['tf_node'].shape != tf.TensorShape(None) else None
+            check_input_shape = input_tensor_shape_list
+            output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
+            check_output_shape = output_tensor_shape.as_list() \
+                if output_tensor_shape.rank is not None else None
             if check_input_shape is not None \
                 and check_output_shape is not None \
                 and None not in check_input_shape \
@@ -572,13 +666,17 @@ def make_node(
                         name=graph_node.name,
                     )
 
-            elif input_tensor.shape != tf.TensorShape(None):
+            elif input_tensor.shape.rank is not None:
                 # FlexStridedSlice generation suppression process
                 onnx_slice_dims_count = 0
                 if isinstance(starts, np.ndarray):
                     onnx_slice_dims_count = len(starts)
                 elif hasattr(starts, 'numpy'):
-                    onnx_slice_dims_count = len(starts.numpy())
+                    starts_numpy = getattr(starts, 'numpy', None)
+                    if callable(starts_numpy):
+                        onnx_slice_dims_count = len(np.asarray(starts_numpy()))
+                    else:
+                        onnx_slice_dims_count = len(np.asarray(cast(Any, starts)))
                 elif isinstance(starts, int):
                     onnx_slice_dims_count = 1
                 elif tf_keras.backend.is_keras_tensor(starts):

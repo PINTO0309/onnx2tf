@@ -1,3 +1,4 @@
+from typing import Any
 import re
 import sys
 import random
@@ -28,7 +29,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """If
 
@@ -177,17 +178,18 @@ def make_node(
 
     # Generation of Debug Info
     tf_outputs = {f"output{idx}": value for idx, value in enumerate(if_cond_outputs)}
-    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
-        make_tf_node_info(
-            node_info={
-                'tf_op_type': tf.cond,
-                'tf_inputs': {
-                    'input': input_tensor,
-                    'true_fn': then_branch_ops,
-                    'false_fn': else_branch_ops,
-                },
-                'tf_outputs': {
-                    'output': tf_outputs,
-                },
-            }
-        )
+    for graph_node_output in graph_node_outputs:
+        tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+            make_tf_node_info(
+                node_info={
+                    'tf_op_type': tf.cond,
+                    'tf_inputs': {
+                        'input': input_tensor,
+                        'true_fn': then_branch_ops,
+                        'false_fn': else_branch_ops,
+                    },
+                    'tf_outputs': {
+                        'output': tf_outputs,
+                    },
+                }
+            )

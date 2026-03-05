@@ -14,7 +14,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
-from typing import Any
+from typing import Any, Tuple, cast
 
 
 def _make_coords(
@@ -26,16 +26,22 @@ def _make_coords(
     size_f = tf.cast(size_dim, dtype)
 
     if align_corners:
-        denom = size_f - tf.constant(1.0, dtype=dtype)
+        denom = tf.subtract(
+            size_f,
+            tf.ones_like(size_f, dtype=dtype),
+        )
         step = tf.where(
             condition=size_dim > 1,
-            x=tf.constant(2.0, dtype=dtype) / denom,
+            x=tf.math.divide_no_nan(tf.constant(2.0, dtype=dtype), denom),
             y=tf.constant(0.0, dtype=dtype),
         )
         start = tf.constant(-1.0, dtype=dtype)
     else:
-        step = tf.constant(2.0, dtype=dtype) / size_f
-        start = tf.constant(-1.0, dtype=dtype) + step / tf.constant(2.0, dtype=dtype)
+        step = tf.math.divide_no_nan(tf.constant(2.0, dtype=dtype), size_f)
+        start = tf.add(
+            tf.constant(-1.0, dtype=dtype),
+            tf.math.divide_no_nan(step, tf.constant(2.0, dtype=dtype)),
+        )
 
     return start + tf.range(size_dim, dtype=dtype) * step
 
@@ -47,7 +53,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """AffineGrid
 
@@ -74,7 +80,7 @@ def make_node(
     graph_node_input_size = get_constant_or_variable(
         graph_node.inputs[1],
         False \
-            if hasattr(graph_node.inputs[1], 'values') \
+            if isinstance(graph_node.inputs[1], gs.Constant) \
                 and isinstance(graph_node.inputs[1].values, np.ndarray) \
                     else before_op_output_shape_trans,
     )
@@ -118,7 +124,10 @@ def make_node(
     size_rank = size_tensor.shape[0] if size_tensor.shape.rank == 1 else None
 
     def _build_grid_2d(size_vec):
-        N, _, H, W = tf.unstack(size_vec)
+        N, _, H, W = cast(
+            Tuple[Any, Any, Any, Any],
+            tf.unstack(size_vec, num=4),
+        )
         h_coords = _make_coords(H, align_corners, theta_dtype)
         w_coords = _make_coords(W, align_corners, theta_dtype)
         grid_h, grid_w = tf.meshgrid(h_coords, w_coords, indexing='ij')
@@ -133,7 +142,10 @@ def make_node(
         return out
 
     def _build_grid_3d(size_vec):
-        N, _, D, H, W = tf.unstack(size_vec)
+        N, _, D, H, W = cast(
+            Tuple[Any, Any, Any, Any, Any],
+            tf.unstack(size_vec, num=5),
+        )
         d_coords = _make_coords(D, align_corners, theta_dtype)
         h_coords = _make_coords(H, align_corners, theta_dtype)
         w_coords = _make_coords(W, align_corners, theta_dtype)
@@ -153,7 +165,7 @@ def make_node(
     elif size_rank == 5:
         grid = _build_grid_3d(size_tensor)
     else:
-        size_dim = tf.shape(size_tensor)[0]
+        size_dim = tf.size(size_tensor)
         grid = tf.cond(
             pred=tf.equal(size_dim, 4),
             true_fn=lambda: _build_grid_2d(size_tensor),

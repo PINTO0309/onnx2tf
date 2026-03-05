@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Relu
 
@@ -80,7 +81,7 @@ def make_node(
     try:
         opset = int(kwargs['opset'])
         if opset >= 11:
-            relu6_node: gs.Node = None
+            relu6_node: Any = None
             if graph_node.o().op == 'Clip' \
                 and len(graph_node.o().inputs) == 3 \
                 and isinstance(graph_node.o().inputs[1], gs.Constant) \

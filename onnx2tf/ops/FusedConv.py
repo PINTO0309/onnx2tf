@@ -1,3 +1,4 @@
+from typing import Any
 import sys
 import random
 random.seed(0)
@@ -20,7 +21,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """FusedConv
 
@@ -80,7 +81,7 @@ def make_node(
             and (isinstance(max_value, np.ndarray)  or isinstance(max_value, float)) and max_value == 6.0:
             conv_act_op = tf.nn.relu6(features=conv_op)
         elif (isinstance(min_value, np.ndarray) or isinstance(min_value, float)) and min_value == 0.0 \
-            and (max_value is None or max_value.shape is None):
+            and (max_value is None or getattr(max_value, 'shape', None) is None):
             conv_act_op = tf.nn.relu(features=conv_op)
         else:
             if (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
@@ -92,14 +93,14 @@ def make_node(
                         clip_value_max=max_value,
                     )
             elif (isinstance(min_value, np.ndarray) and min_value.shape is not None) \
-                and (max_value is None or max_value.shape is None):
+                and (max_value is None or getattr(max_value, 'shape', None) is None):
                 conv_act_op = \
                     tf.maximum(
                         x=conv_op,
                         y=min_value,
                     )
-            elif (min_value is None or min_value.shape is None) \
-                and (max_value is not None and max_value.shape is not None):
+            elif (min_value is None or getattr(min_value, 'shape', None) is None) \
+                and (max_value is not None and getattr(max_value, 'shape', None) is not None):
                 conv_act_op = \
                     tf.minimum(
                         x=conv_op,

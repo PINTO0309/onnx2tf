@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Any, Optional, Tuple, cast
 import random
 random.seed(0)
 import numpy as np
@@ -44,9 +44,7 @@ class HardSigmoid(Layer):
 class LeakyReLU(Layer):
     def __init__(self, alpha: float, beta: float):
         super(LeakyReLU, self).__init__()
-        self.alpha = 0.01
-        self.alpha = tf.convert_to_tensor(alpha) \
-            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.alpha: float = float(alpha)
 
     def call(self, x):
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#leakyrelu-16
@@ -90,9 +88,7 @@ class Tanh(Layer):
 class ThresholdedReLU(Layer):
     def __init__(self, alpha: float, beta: float):
         super(ThresholdedReLU, self).__init__()
-        self.alpha = 1.0
-        self.alpha = tf.convert_to_tensor(alpha) \
-            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.alpha: float = float(alpha)
 
     def call(self, x):
         return tf_keras.layers.ThresholdedReLU(theta=self.alpha)(x)
@@ -373,7 +369,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GRU
 
@@ -496,20 +492,20 @@ def make_node(
     # Always three or more present if specified
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activations: List[str] =  graph_node.attrs.get('activations', [])
+    activations: Any = graph_node.attrs.get('activations', [])
     # Different value ranges for each activation function
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activation_alpha: List[float] = graph_node.attrs.get('activation_alpha', [0.01])
+    activation_alpha: Any = graph_node.attrs.get('activation_alpha', [0.01])
     # Different value ranges for each activation function
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activation_beta: List[float] = graph_node.attrs.get('activation_beta', [])
+    activation_beta: Any = graph_node.attrs.get('activation_beta', [])
 
     # Default activation function setting
-    tf_activations: List = None
+    tf_activations: List[Any] = []
 
-    clip: float =  graph_node.attrs.get('clip', None)
+    clip: Any = graph_node.attrs.get('clip', None)
     direction: str =  graph_node.attrs.get('direction', 'forward')
 
     if len(activations) == 0:
@@ -562,9 +558,9 @@ def make_node(
             ),
         ] if direction == 'bidirectional' else tf_activations
 
-    hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
-    linear_before_reset: bool = bool(graph_node.attrs.get('linear_before_reset', 0))
-    layout: int = graph_node.attrs.get('layout', 0)
+    hidden_size: Any = graph_node.attrs.get('hidden_size', 1)
+    linear_before_reset: Any = bool(graph_node.attrs.get('linear_before_reset', 0))
+    layout: Any = graph_node.attrs.get('layout', 0)
 
     # Need transpose for batchwise, X
     # layout==0
@@ -579,9 +575,11 @@ def make_node(
     graph_node_output1: gs.Variable = graph_node.outputs[0]
     shape1 = graph_node_output1.shape
     dtype1 = graph_node_output1.dtype
-    graph_node_output2 = None
+    graph_node_output2: Optional[gs.Variable] = None
+    shape2 = None
+    dtype2 = None
     if len(graph_node.outputs) >= 2:
-        graph_node_output2: gs.Variable = graph_node.outputs[1]
+        graph_node_output2 = graph_node.outputs[1]
         shape2 = graph_node_output2.shape
         dtype2 = graph_node_output2.dtype
 
@@ -684,6 +682,20 @@ def make_node(
         param_name='layout',
         **kwargs,
     )
+    X = tf.convert_to_tensor(X)
+    W = tf.convert_to_tensor(W)
+    R = tf.convert_to_tensor(R)
+    if B is None:
+        directions = 2 if direction == 'bidirectional' else 1
+        w_dtype = getattr(W, 'dtype', None)
+        b_dtype: tf.dtypes.DType = cast(tf.dtypes.DType, w_dtype) if w_dtype is not None else tf.float32
+        B = tf.zeros(
+            [directions, 6 * int(hidden_size)],
+            dtype=b_dtype,
+        )
+    B = tf.convert_to_tensor(B)
+    if initial_h is not None:
+        initial_h = tf.convert_to_tensor(cast(Any, initial_h))
 
     # Generation of TF OP
     forward_lstm = None
@@ -700,26 +712,32 @@ def make_node(
         initial_h = tf.transpose(initial_h, perm=[1, 0, 2]) if initial_h is not None else None
 
     # initial state
-    forward_initial_state = None
-    backward_initial_state = None
+    forward_initial_state: List[Any] = []
+    backward_initial_state: List[Any] = []
     if direction == 'forward':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
+        forward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))] if initial_h is not None else []
 
     elif direction == 'reverse':
-        backward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
+        backward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))] if initial_h is not None else []
 
     elif direction == 'bidirectional':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
-        backward_initial_state = [tf.convert_to_tensor(initial_h[1])] if initial_h is not None else None
+        if initial_h is not None:
+            forward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))]
+            backward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=1, axis=0))]
+        else:
+            forward_initial_state = []
+            backward_initial_state = []
 
     # LSTM layer
+    output: Optional[Any] = None
+    hidden_state: Optional[Any] = None
     if direction == 'forward':
-        tW = tf.convert_to_tensor(W[0]) # [12, 3]
-        tR = tf.convert_to_tensor(R[0]) # [12, 4]
-        tB = tf.convert_to_tensor(B[0]) # [24]
-        w_z, w_r, w_h = tf.split(tW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
-        r_z, r_r, r_h = tf.split(tR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
-        w_bz, w_br, w_bh, r_bz, r_br, r_bh = tf.split(tB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+        tW = tf.convert_to_tensor(tf.gather(W, indices=0, axis=0)) # [12, 3]
+        tR = tf.convert_to_tensor(tf.gather(R, indices=0, axis=0)) # [12, 4]
+        tB = tf.convert_to_tensor(tf.gather(B, indices=0, axis=0)) # [24]
+        w_z, w_r, w_h = cast(Tuple[Any, Any, Any], tf.split(tW, num_or_size_splits=3)) # [4, 3], [4, 3], [4, 3]
+        r_z, r_r, r_h = cast(Tuple[Any, Any, Any], tf.split(tR, num_or_size_splits=3)) # [4, 4], [4, 4], [4, 4]
+        w_bz, w_br, w_bh, r_bz, r_br, r_bh = cast(Tuple[Any, Any, Any, Any, Any, Any], tf.split(tB, num_or_size_splits=6)) # [4], [4], [4], [4], [4], [4]
 
         # forward
         forward_lstm = CustomGRU(
@@ -749,17 +767,21 @@ def make_node(
             go_backwards=False,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        output, hidden_state = forward_lstm(X, initial_state=forward_initial_state) # [2,5,3], [2, 4]
-        output = tf.expand_dims(output, axis=1)
-        hidden_state = tf.expand_dims(hidden_state, axis=0)
+        forward_result = cast(
+            Tuple[Any, Any],
+            forward_lstm(X, initial_state=forward_initial_state),
+        ) # [2,5,3], [2, 4]
+        fwd_output, fwd_hidden_state = forward_result
+        output = tf.expand_dims(fwd_output, axis=1)
+        hidden_state = tf.expand_dims(fwd_hidden_state, axis=0)
 
     elif direction == 'reverse':
-        tW = tf.convert_to_tensor(W[0]) # [12, 3]
-        tR = tf.convert_to_tensor(R[0]) # [12, 4]
-        tB = tf.convert_to_tensor(B[0]) # [24]
-        w_z, w_r, w_h = tf.split(tW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
-        r_z, r_r, r_h = tf.split(tR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
-        w_bz, w_br, w_bh, r_bz, r_br, r_bh = tf.split(tB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+        tW = tf.convert_to_tensor(tf.gather(W, indices=0, axis=0)) # [12, 3]
+        tR = tf.convert_to_tensor(tf.gather(R, indices=0, axis=0)) # [12, 4]
+        tB = tf.convert_to_tensor(tf.gather(B, indices=0, axis=0)) # [24]
+        w_z, w_r, w_h = cast(Tuple[Any, Any, Any], tf.split(tW, num_or_size_splits=3)) # [4, 3], [4, 3], [4, 3]
+        r_z, r_r, r_h = cast(Tuple[Any, Any, Any], tf.split(tR, num_or_size_splits=3)) # [4, 4], [4, 4], [4, 4]
+        w_bz, w_br, w_bh, r_bz, r_br, r_bh = cast(Tuple[Any, Any, Any, Any, Any, Any], tf.split(tB, num_or_size_splits=6)) # [4], [4], [4], [4], [4], [4]
 
         # reverse
         reverse_lstm = CustomGRU(
@@ -789,25 +811,29 @@ def make_node(
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        output, hidden_state = reverse_lstm(X, initial_state=backward_initial_state) # [2,5,3], [2, 4]
-        output = tf.reverse(output, axis=[1])
-        output = tf.expand_dims(output, axis=1)
-        hidden_state = tf.expand_dims(hidden_state, axis=0)
+        reverse_result = cast(
+            Tuple[Any, Any],
+            reverse_lstm(X, initial_state=backward_initial_state),
+        ) # [2,5,3], [2, 4]
+        rev_output, rev_hidden_state = reverse_result
+        rev_output_reversed = tf.reverse(rev_output, axis=[1])
+        output = tf.expand_dims(rev_output_reversed, axis=1)
+        hidden_state = tf.expand_dims(rev_hidden_state, axis=0)
 
     elif direction == 'bidirectional':
-        ftW = tf.convert_to_tensor(W[0]) # [12, 3]
-        ftR = tf.convert_to_tensor(R[0]) # [12, 4]
-        ftB = tf.convert_to_tensor(B[0]) # [24]
-        fw_z, fw_r, fw_h = tf.split(ftW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
-        fr_z, fr_r, fr_h = tf.split(ftR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
-        fw_bz, fw_br, fw_bh, fr_bz, fr_br, fr_bh = tf.split(ftB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+        ftW = tf.convert_to_tensor(tf.gather(W, indices=0, axis=0)) # [12, 3]
+        ftR = tf.convert_to_tensor(tf.gather(R, indices=0, axis=0)) # [12, 4]
+        ftB = tf.convert_to_tensor(tf.gather(B, indices=0, axis=0)) # [24]
+        fw_z, fw_r, fw_h = cast(Tuple[Any, Any, Any], tf.split(ftW, num_or_size_splits=3)) # [4, 3], [4, 3], [4, 3]
+        fr_z, fr_r, fr_h = cast(Tuple[Any, Any, Any], tf.split(ftR, num_or_size_splits=3)) # [4, 4], [4, 4], [4, 4]
+        fw_bz, fw_br, fw_bh, fr_bz, fr_br, fr_bh = cast(Tuple[Any, Any, Any, Any, Any, Any], tf.split(ftB, num_or_size_splits=6)) # [4], [4], [4], [4], [4], [4]
 
-        rtW = tf.convert_to_tensor(W[1]) # [12, 3]
-        rtR = tf.convert_to_tensor(R[1]) # [12, 4]
-        rtB = tf.convert_to_tensor(B[1]) # [24]
-        rw_z, rw_r, rw_h = tf.split(rtW, num_or_size_splits=3) # [4, 3], [4, 3], [4, 3]
-        rr_z, rr_r, rr_h = tf.split(rtR, num_or_size_splits=3) # [4, 4], [4, 4], [4, 4]
-        rw_bz, rw_br, rw_bh, rr_bz, rr_br, rr_bh = tf.split(rtB, num_or_size_splits=6) # [4], [4], [4], [4], [4], [4]
+        rtW = tf.convert_to_tensor(tf.gather(W, indices=1, axis=0)) # [12, 3]
+        rtR = tf.convert_to_tensor(tf.gather(R, indices=1, axis=0)) # [12, 4]
+        rtB = tf.convert_to_tensor(tf.gather(B, indices=1, axis=0)) # [24]
+        rw_z, rw_r, rw_h = cast(Tuple[Any, Any, Any], tf.split(rtW, num_or_size_splits=3)) # [4, 3], [4, 3], [4, 3]
+        rr_z, rr_r, rr_h = cast(Tuple[Any, Any, Any], tf.split(rtR, num_or_size_splits=3)) # [4, 4], [4, 4], [4, 4]
+        rw_bz, rw_br, rw_bh, rr_bz, rr_br, rr_bh = cast(Tuple[Any, Any, Any, Any, Any, Any], tf.split(rtB, num_or_size_splits=6)) # [4], [4], [4], [4], [4], [4]
 
         # forward
         forward_lstm = CustomGRU(
@@ -867,10 +893,16 @@ def make_node(
             enable_rnn_unroll=enable_rnn_unroll,
         )
 
-        forward_output, forward_h = \
-            forward_lstm(X, initial_state=forward_initial_state)
-        reverse_output, reverse_h = \
-            reverse_lstm(X, initial_state=backward_initial_state)
+        forward_result = cast(
+            Tuple[Any, Any],
+            forward_lstm(X, initial_state=forward_initial_state),
+        )
+        reverse_result = cast(
+            Tuple[Any, Any],
+            reverse_lstm(X, initial_state=backward_initial_state),
+        )
+        forward_output, forward_h = forward_result
+        reverse_output, reverse_h = reverse_result
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
@@ -885,6 +917,7 @@ def make_node(
             ],
             axis=0,
         )
+    assert output is not None and hidden_state is not None
 
     if len(output.shape) == 4:
         output = tf.transpose(output, perm=[2,1,0,3])

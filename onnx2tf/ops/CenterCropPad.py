@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -24,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """CenterCropPad
 
@@ -103,7 +104,11 @@ def make_node(
                 axes_tensor = tf.where(
                     tf.equal(axes_tensor, 0),
                     0,
-                    tf.where(tf.equal(axes_tensor, 1), rank_t - 1, axes_tensor - 1),
+                    tf.where(
+                        tf.equal(axes_tensor, 1),
+                        tf.subtract(rank_t, 1),
+                        tf.subtract(axes_tensor, 1),
+                    ),
                 )
     else:
         if not isinstance(axes, list):
@@ -121,11 +126,19 @@ def make_node(
             axes_tensor = tf.convert_to_tensor(axes, dtype=tf.int32)
             if before_op_output_shape_trans:
                 rank_t = tf.cast(input_rank, tf.int32)
-                axes_tensor = tf.where(axes_tensor < 0, axes_tensor + rank_t, axes_tensor)
+                axes_tensor = tf.where(
+                    tf.less(axes_tensor, 0),
+                    tf.add(axes_tensor, rank_t),
+                    axes_tensor,
+                )
                 axes_tensor = tf.where(
                     tf.equal(axes_tensor, 0),
                     0,
-                    tf.where(tf.equal(axes_tensor, 1), rank_t - 1, axes_tensor - 1),
+                    tf.where(
+                        tf.equal(axes_tensor, 1),
+                        tf.subtract(rank_t, 1),
+                        tf.subtract(axes_tensor, 1),
+                    ),
                 )
 
     if isinstance(target_shape, list):
@@ -155,15 +168,16 @@ def make_node(
 
     paddings = tf.stack([pad_before, pad_after], axis=1)
     if input_tensor.dtype == tf.string:
-        pad_value = tf.constant('', dtype=tf.string)
-    else:
-        pad_value = tf.cast(0, input_tensor.dtype)
-
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.pad(
+        tf_layers_dict[graph_node_output.name]['tf_node'] = cast(Any, tf.pad)(
             tensor=cropped,
             paddings=paddings,
-            constant_values=pad_value,
+            constant_values='',
+            name=graph_node.name,
+        )
+    else:
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.pad(
+            tensor=cropped,
+            paddings=paddings,
             name=graph_node.name,
         )
 

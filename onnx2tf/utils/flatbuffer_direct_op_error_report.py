@@ -9,7 +9,7 @@ import json
 import os
 import re
 import shutil
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import numpy as np
 import onnx
@@ -30,6 +30,26 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
 )
 from onnx2tf.utils.tempdir_cleanup import make_managed_tempdir
 from onnx2tf.utils.common_functions import dummy_onnx_inference
+
+
+class _LiteInterpreterProtocol(Protocol):
+    def allocate_tensors(self) -> None:
+        ...
+
+    def get_input_details(self) -> List[Dict[str, Any]]:
+        ...
+
+    def get_tensor_details(self) -> List[Dict[str, Any]]:
+        ...
+
+    def set_tensor(self, tensor_index: int, value: Any) -> None:
+        ...
+
+    def get_tensor(self, tensor_index: int) -> Any:
+        ...
+
+    def invoke(self) -> None:
+        ...
 
 
 def _default_output_paths(onnx_path: str, output_dir: str) -> Tuple[str, str]:
@@ -611,7 +631,7 @@ def _get_onnx_eval_outputs(
 def _invoke_tflite_with_onnx_inputs(
     *,
     onnx_graph: onnx.ModelProto,
-    interpreter: Any,
+    interpreter: _LiteInterpreterProtocol,
     onnx_input_datas_for_validation: Dict[str, np.ndarray],
 ) -> None:
     input_specs = _collect_onnx_input_specs(onnx_graph)
@@ -866,7 +886,7 @@ def generate_op_error_report(
     onnx_output_meta = _build_onnx_output_meta(onnx_graph)
     onnx_tensor_names = list(onnx_output_meta.keys())
 
-    interpreter = _create_tflite_interpreter(tflite_path)
+    interpreter: _LiteInterpreterProtocol = _create_tflite_interpreter(tflite_path)
     interpreter.allocate_tensors()
     tflite_tensor_details = interpreter.get_tensor_details()
     tflite_base_detail_map = _build_tflite_base_detail_map(tflite_tensor_details)

@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import collections
@@ -71,6 +72,8 @@ class NgramPart:
         return self.leafs_.emplace(key, value)
 
     def __getitem__(self, key):
+        if self._leafs_ is None:
+            raise KeyError(key)
         return self._leafs_[key]
 
 
@@ -315,7 +318,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """TfIdfVectorizer
 

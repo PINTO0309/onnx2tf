@@ -1,3 +1,4 @@
+from typing import Any, Optional, cast
 import sys
 import random
 random.seed(0)
@@ -27,7 +28,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GatherND
 
@@ -130,36 +131,37 @@ def make_node(
     indices_tensor = indices_tensor \
         if not isinstance(indices_tensor, np.ndarray) \
             else tf.convert_to_tensor(indices_tensor)
+    indices_tensor = tf.convert_to_tensor(cast(Any, indices_tensor))
 
     # Complex GatherND -> Simple GatherND
     simple_gathernd = False
     # Verify if negative numbers need to be converted to positive numbers
-    if isinstance(indices_tensor, np.ndarray) and None not in indices_tensor:
-        flatten_indices_tensor = indices_tensor.flatten()
-        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
-            simple_gathernd = False
-        else:
-            simple_gathernd = True
-    elif hasattr(indices_tensor, 'numpy') and None not in indices_tensor.numpy():
-        flatten_indices_tensor = indices_tensor.numpy().flatten()
-        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
-            simple_gathernd = False
-        else:
-            simple_gathernd = True
-    elif isinstance(indices_tensor, int) and indices_tensor >= 0:
-        simple_gathernd = True
+    static_indices: Optional[np.ndarray] = None
+    if isinstance(indices_tensor, np.ndarray):
+        static_indices = np.asarray(indices_tensor)
+    elif tf.is_tensor(indices_tensor):
+        resolved_indices = tf.get_static_value(indices_tensor)
+        if resolved_indices is not None:
+            static_indices = np.asarray(resolved_indices)
+    if static_indices is not None:
+        flatten_indices_tensor = static_indices.flatten()
+        simple_gathernd = bool(np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) == 0)
+    elif isinstance(indices_tensor, int):
+        simple_gathernd = bool(indices_tensor >= 0)
     else:
         simple_gathernd = False
 
     if not simple_gathernd:
-        if input_tensor.shape is not None \
-            and indices_tensor.shape is not None \
+        input_tensor_shape = getattr(input_tensor, 'shape', None)
+        indices_tensor_shape = getattr(indices_tensor, 'shape', None)
+        if input_tensor_shape is not None \
+            and indices_tensor_shape is not None \
             and hasattr(input_tensor.shape, '__len__') \
-            and hasattr(indices_tensor.shape, '__len__') \
+            and hasattr(indices_tensor_shape, '__len__') \
             and len(input_tensor.shape) > 0 \
-            and len(indices_tensor.shape) > 0 \
+            and len(indices_tensor_shape) > 0 \
             and None not in input_tensor.shape \
-            and None not in indices_tensor.shape:
+            and None not in indices_tensor_shape:
             indices_tensor = process_neg_idx(
                 data=input_tensor,
                 indices=indices_tensor,
@@ -186,9 +188,9 @@ def make_node(
             )
             sys.exit(1)
 
-        params_shape = input_tensor.shape
-        idx_shape = indices_tensor.shape
-        idx_dims = idx_shape[-1]
+        params_shape = tf.shape(input_tensor)
+        idx_shape = tf.shape(indices_tensor)
+        idx_dims = tf.shape(indices_tensor)[-1]
         gather_shape = params_shape[idx_dims:]
         params_flat = tf.reshape(
             input_tensor,
@@ -216,10 +218,11 @@ def make_node(
             indices_flat,
         )
         pseudo_gathernd = None
-        if len(idx_shape) > 0 and len(idx_shape[:-1]) > 0 and idx_shape[:-1][0] is not None:
+        indices_rank = indices_tensor.shape.rank
+        if indices_rank is not None and indices_rank > 1:
             pseudo_gathernd = tf.reshape(
                 result_flat,
-                tf.concat([idx_shape[:-1], gather_shape], axis=0),
+                tf.concat([tf.shape(indices_tensor)[:-1], gather_shape], axis=0),
             )
         else:
             pseudo_gathernd = result_flat

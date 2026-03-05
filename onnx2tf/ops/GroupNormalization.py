@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GroupNormalization
 
@@ -133,11 +134,14 @@ def make_node(
 
     x = input_tensor
     if internal_perm is not None:
-        x = transpose_with_flexing_deterrence(
-            input_tensor=x,
-            perm=internal_perm,
-            **kwargs,
-        )
+        if isinstance(internal_perm, list):
+            x = transpose_with_flexing_deterrence(
+                input_tensor=x,
+                perm=internal_perm,
+                **kwargs,
+            )
+        else:
+            x = tf.transpose(a=x, perm=internal_perm)
 
     input_dtype = x.dtype
     calc_dtype = tf.float32 if stash_type == 1 else input_dtype
@@ -198,11 +202,14 @@ def make_node(
         x_norm = x_norm * tf.cast(scale_reshape, input_dtype) + tf.cast(bias_reshape, input_dtype)
 
     if internal_inverse_perm is not None:
-        x_norm = transpose_with_flexing_deterrence(
-            input_tensor=x_norm,
-            perm=internal_inverse_perm,
-            **kwargs,
-        )
+        if isinstance(internal_inverse_perm, list):
+            x_norm = transpose_with_flexing_deterrence(
+                input_tensor=x_norm,
+                perm=internal_inverse_perm,
+                **kwargs,
+            )
+        else:
+            x_norm = tf.transpose(a=x_norm, perm=internal_inverse_perm)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = x_norm
 

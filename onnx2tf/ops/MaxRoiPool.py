@@ -1,3 +1,4 @@
+from typing import Any, Tuple, cast
 import random
 random.seed(0)
 import numpy as np
@@ -26,7 +27,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MaxRoiPool
 
@@ -125,22 +126,26 @@ def make_node(
         rois = tf.expand_dims(rois, axis=0)
 
     channels_static = input_tensor.shape[-1]
-    channel_spec = tf.TensorSpec(
+    tensor_spec = cast(Any, tf.TensorSpec)
+    channel_spec = tensor_spec(
         shape=(channels_static,) if channels_static is not None else (None,),
         dtype=input_tensor.dtype,
     )
-    row_spec = tf.TensorSpec(
+    row_spec = tensor_spec(
         shape=(pooled_w, channels_static) if channels_static is not None else (pooled_w, None),
         dtype=input_tensor.dtype,
     )
-    roi_spec = tf.TensorSpec(
+    roi_spec = tensor_spec(
         shape=(pooled_h, pooled_w, channels_static) if channels_static is not None else (pooled_h, pooled_w, None),
         dtype=input_tensor.dtype,
     )
 
     def roi_pool_single(roi):
         batch_idx = tf.cast(roi[0], tf.int32)
-        x1, y1, x2, y2 = tf.unstack(roi[1:5])
+        x1, y1, x2, y2 = cast(
+            Tuple[Any, Any, Any, Any],
+            tf.unstack(roi[1:5], num=4),
+        )
         x1 = x1 * spatial_scale
         y1 = y1 * spatial_scale
         x2 = x2 * spatial_scale
@@ -151,37 +156,68 @@ def make_node(
         roi_end_w = tf.cast(tf.round(x2), tf.int32)
         roi_end_h = tf.cast(tf.round(y2), tf.int32)
 
-        height = tf.shape(input_tensor)[1]
-        width = tf.shape(input_tensor)[2]
+        input_shape = tf.shape(input_tensor)
+        height = tf.gather(input_shape, indices=1)
+        width = tf.gather(input_shape, indices=2)
 
         roi_start_w = tf.clip_by_value(roi_start_w, 0, width)
         roi_start_h = tf.clip_by_value(roi_start_h, 0, height)
         roi_end_w = tf.clip_by_value(roi_end_w, 0, width)
         roi_end_h = tf.clip_by_value(roi_end_h, 0, height)
 
-        roi_width = tf.maximum(roi_end_w - roi_start_w + 1, 1)
-        roi_height = tf.maximum(roi_end_h - roi_start_h + 1, 1)
+        roi_width = tf.maximum(
+            tf.add(tf.subtract(roi_end_w, roi_start_w), 1),
+            1,
+        )
+        roi_height = tf.maximum(
+            tf.add(tf.subtract(roi_end_h, roi_start_h), 1),
+            1,
+        )
 
-        bin_size_h = tf.cast(roi_height, tf.float32) / tf.cast(pooled_h, tf.float32)
-        bin_size_w = tf.cast(roi_width, tf.float32) / tf.cast(pooled_w, tf.float32)
+        bin_size_h = tf.math.divide_no_nan(
+            tf.cast(roi_height, tf.float32),
+            tf.cast(pooled_h, tf.float32),
+        )
+        bin_size_w = tf.math.divide_no_nan(
+            tf.cast(roi_width, tf.float32),
+            tf.cast(pooled_w, tf.float32),
+        )
 
-        channels_dynamic = tf.shape(input_tensor)[-1]
+        channels_dynamic = tf.gather(
+            tf.shape(input_tensor),
+            indices=tf.subtract(tf.size(tf.shape(input_tensor)), 1),
+        )
         zero = tf.zeros([channels_dynamic], dtype=input_tensor.dtype)
 
         def pool_bin(ph, pw):
             ph_f = tf.cast(ph, tf.float32)
             pw_f = tf.cast(pw, tf.float32)
-            hstart = tf.cast(tf.floor(ph_f * bin_size_h), tf.int32) + roi_start_h
-            hend = tf.cast(tf.ceil((ph_f + 1.0) * bin_size_h), tf.int32) + roi_start_h
-            wstart = tf.cast(tf.floor(pw_f * bin_size_w), tf.int32) + roi_start_w
-            wend = tf.cast(tf.ceil((pw_f + 1.0) * bin_size_w), tf.int32) + roi_start_w
+            hstart = tf.add(
+                tf.cast(tf.math.floor(tf.multiply(ph_f, bin_size_h)), tf.int32),
+                roi_start_h,
+            )
+            hend = tf.add(
+                tf.cast(tf.math.ceil(tf.multiply(tf.add(ph_f, 1.0), bin_size_h)), tf.int32),
+                roi_start_h,
+            )
+            wstart = tf.add(
+                tf.cast(tf.math.floor(tf.multiply(pw_f, bin_size_w)), tf.int32),
+                roi_start_w,
+            )
+            wend = tf.add(
+                tf.cast(tf.math.ceil(tf.multiply(tf.add(pw_f, 1.0), bin_size_w)), tf.int32),
+                roi_start_w,
+            )
 
             hstart = tf.clip_by_value(hstart, 0, height)
             hend = tf.clip_by_value(hend, 0, height)
             wstart = tf.clip_by_value(wstart, 0, width)
             wend = tf.clip_by_value(wend, 0, width)
 
-            is_empty = tf.logical_or(hend <= hstart, wend <= wstart)
+            is_empty = tf.logical_or(
+                tf.less_equal(hend, hstart),
+                tf.less_equal(wend, wstart),
+            )
 
             def do_max():
                 region = input_tensor[batch_idx, hstart:hend, wstart:wend, :]

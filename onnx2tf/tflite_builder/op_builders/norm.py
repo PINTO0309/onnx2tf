@@ -9,7 +9,7 @@ from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _float_numpy_dtype(dtype: str) -> np.dtype:
-    return np.float16 if str(dtype).upper() == "FLOAT16" else np.float32
+    return np.dtype(np.float16) if str(dtype).upper() == "FLOAT16" else np.dtype(np.float32)
 
 
 def build_l2_normalization_op(node: Any, ctx: Any) -> None:

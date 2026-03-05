@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MatMulInteger
 
@@ -117,9 +118,14 @@ def make_node(
             @tf.function
             def get_a_zero_point(a_zero_point):
                 shape = tf.shape(a_zero_point)
-                if len(shape) > 0 and shape[0] > 1:
+                shape_rank = tf.size(shape)
+                first_dim = tf.gather(shape, indices=0)
+                if tf.logical_and(
+                    tf.greater(shape_rank, 0),
+                    tf.greater(first_dim, 1),
+                ):
                     # reshape a_zero_point before subtract it from A
-                    a_zero_point = tf.reshape(a_zero_point, [shape[0], 1])
+                    a_zero_point = tf.reshape(a_zero_point, [first_dim, 1])
                 return a_zero_point
             a_zero_point = get_a_zero_point(a_zero_point)
 

@@ -4,7 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx2tf.gs as gs
-from typing import List
+from typing import List, Any, cast
 from onnx2tf.utils.common_functions import (
     replace_parameter,
     get_constant_or_variable,
@@ -25,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Split
 
@@ -134,7 +134,13 @@ def make_node(
         axis_from = tf.argmax(mask, axis=0, output_type=tf.int32)
         fallback_axis_tensor = tf.cast(fallback_axis, tf.int32)
         is_single = tf.cast(tf.equal(count, 1), tf.int32)
-        return axis_from * is_single + fallback_axis_tensor * (1 - is_single)
+        return tf.add(
+            tf.multiply(axis_from, is_single),
+            tf.multiply(
+                fallback_axis_tensor,
+                tf.subtract(tf.constant(1, dtype=tf.int32), is_single),
+            ),
+        )
 
     axis_for_split = axis
     sum_split = None
@@ -144,7 +150,7 @@ def make_node(
     elif isinstance(split, (list, tuple)):
         split_list = list(split)
     if split_list is not None and len(split_list) > 1:
-        if len(split_list) == sum([1 for dim in split_list if isinstance(dim, (np.int64, int))]):
+        if len(split_list) == sum([1 for dim in split_list if isinstance(dim, (int, np.integer))]):
             sum_split = int(np.sum(split_list))
             axis_dim = input_tensor_shape[axis] if axis < len(input_tensor_shape) else None
             if axis_dim is None or (isinstance(axis_dim, int) and axis_dim != sum_split):
@@ -240,7 +246,7 @@ def make_node(
         and len(list(split)) > 1 \
         and np.prod(split) != 1 \
         and isinstance(input_tensor_shape[axis], int) \
-        and len(split) == sum([1 for dim in split if isinstance(dim, np.int64) or isinstance(dim, int)]) \
+        and len(split) == sum([1 for dim in split if isinstance(dim, (int, np.integer))]) \
         and len(split) == sum([1 for dim in split if split[0] == dim]):
         # Suppression of FlexSplitV generation
         splited_tensors = \
@@ -254,7 +260,7 @@ def make_node(
     elif isinstance(split, (list, tuple, np.ndarray)) \
         and len(list(split)) > 1 \
         and (np.prod(split) != 1 if isinstance(split, np.ndarray) else True) \
-        and len(list(split)) == sum([1 for dim in list(split) if isinstance(dim, (np.int64, int))]) \
+        and len(list(split)) == sum([1 for dim in list(split) if isinstance(dim, (int, np.integer))]) \
         and len(list(split)) != sum([1 for dim in list(split) if list(split)[0] == dim]) \
         and (not isinstance(input_tensor_shape[axis], int) or np.sum(list(split)) == input_tensor_shape[axis]):
         # Suppression of FlexSplitV generation
@@ -290,15 +296,17 @@ def make_node(
             )
             begin_stock.append(begin_)
     else:
+        tf_split = cast(Any, tf.split)
         splited_tensors = \
-            tf.split(
+            tf_split(
                 value=input_tensor,
                 num_or_size_splits=split,
                 axis=axis_for_split,
                 num=num_outputs,
                 name=graph_node.name,
             )
-    for splited_tensor, graph_node_output in zip(splited_tensors, graph_node_outputs):
+    splited_tensors_list = cast(List[Any], splited_tensors)
+    for splited_tensor, graph_node_output in zip(splited_tensors_list, graph_node_outputs):
         tf_layers_dict[graph_node_output.name]['tf_node'] = splited_tensor
         # Post-process transpose
         tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(
@@ -309,17 +317,18 @@ def make_node(
         )
 
     # Generation of Debug Info
-    tf_outputs = {f"output{idx}": value for idx, value in enumerate(splited_tensors)}
-    tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
-        make_tf_node_info(
-            node_info={
-                'tf_op_type': tf.split,
-                'tf_inputs': {
-                    'value': input_tensor,
-                    'num_or_size_splits': split,
-                    'axis': axis,
-                    'num': num_outputs,
-                },
-                'tf_outputs': tf_outputs,
-            }
-        )
+    tf_outputs = {f"output{idx}": value for idx, value in enumerate(splited_tensors_list)}
+    for graph_node_output in graph_node_outputs:
+        tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
+            make_tf_node_info(
+                node_info={
+                    'tf_op_type': tf.split,
+                    'tf_inputs': {
+                        'value': input_tensor,
+                        'num_or_size_splits': split,
+                        'axis': axis,
+                        'num': num_outputs,
+                    },
+                    'tf_outputs': tf_outputs,
+                }
+            )

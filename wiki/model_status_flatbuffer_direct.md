@@ -1,4 +1,4 @@
-*Report generated at 2026-03-04T11:22:22Z.*
+*Report generated at 2026-03-05T05:11:21Z.*
 
 ## Environment
 Package | Version
@@ -6,7 +6,7 @@ Package | Version
 Platform | Linux-6.8.0-86-generic-x86_64-with-glibc2.35
 Python | 3.10.12 (main, Jan 26 2026, 14:55:28) [GCC 11.4.0]
 onnx | 1.19.1
-onnx2tf | 2.1.4
+onnx2tf | 2.2.0
 tensorflow | 2.19.0
 tflite_backend | flatbuffer_direct
 

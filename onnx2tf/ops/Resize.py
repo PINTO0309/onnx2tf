@@ -5,7 +5,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import tf_keras
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from tensorflow.python.keras.layers import Lambda
 import onnx2tf.gs as gs
 from onnx2tf.utils.common_functions import (
@@ -316,7 +316,7 @@ def _try_resize_cubic_without_flex(
 
     if original_dtype != y.dtype:
         y = tf.cast(y, original_dtype, name=f"{name}_resize_cubic_output_cast")
-    return y
+    return tf.convert_to_tensor(y)
 
 
 @print_node_info
@@ -326,7 +326,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Resize
 
@@ -497,17 +497,17 @@ def make_node(
 
         if isinstance(sizes, np.ndarray):
             sizes = np.insert(arr=sizes, obj=1, values=1)
-        elif sizes is not None and sizes.shape is not None and hasattr(sizes, 'numpy'):
-            sizes = np.insert(arr=sizes.numpy(), obj=1, values=1)
+        elif sizes is not None and getattr(sizes, 'shape', None) is not None and tf.is_tensor(sizes) and hasattr(sizes, 'numpy'):
+            sizes = np.insert(arr=cast(Any, sizes).numpy(), obj=1, values=1)
         elif sizes is not None and sizes.shape is not None and tf_keras.backend.is_keras_tensor(sizes):
             sizes = tf.concat([sizes[:1], [1], sizes[1:]], axis=0)
 
         if isinstance(scales, np.ndarray):
             scales = np.insert(arr=scales, obj=1, values=1)
-        elif scales is not None and scales.shape is not None and hasattr(scales, 'numpy'):
-            scales = np.insert(arr=scales.numpy(), obj=1, values=1)
+        elif scales is not None and getattr(scales, 'shape', None) is not None and tf.is_tensor(scales) and hasattr(scales, 'numpy'):
+            scales = np.insert(arr=cast(Any, scales).numpy(), obj=1, values=1)
         elif scales is not None and scales.shape is not None and tf_keras.backend.is_keras_tensor(scales):
-            scales = tf.concat([scales[:1], [1], scales[1:]], axis=0)
+            scales = tf.concat([cast(Any, scales)[:1], [1], cast(Any, scales)[1:]], axis=0)
 
     # Generation of TF OP
     if mode.lower() == "linear":
@@ -554,19 +554,23 @@ def make_node(
     if sizes is not None:
         # sizes is defined
         # The number of elements of 'sizes' should be the same as the rank of input 'X'
-        if isinstance(sizes, gs.Variable):
-            sizes = sizes.set_shape(input_tensor_shape.shape)
-            new_size = tf.cast(sizes[1:input_tensor_rank-1], tf.int32)
-        elif isinstance(sizes, np.ndarray):
+        sizes_shape = getattr(sizes, 'shape', None)
+        sizes_rank = sizes_shape.rank if sizes_shape is not None and hasattr(sizes_shape, 'rank') else None
+        sizes_dim0 = None
+        if sizes_shape is not None and hasattr(sizes_shape, 'as_list') and sizes_shape.rank is not None:
+            sizes_shape_list = sizes_shape.as_list()
+            if sizes_shape_list is not None and len(sizes_shape_list) > 0:
+                sizes_dim0 = sizes_shape_list[0]
+        if isinstance(sizes, np.ndarray):
             new_size = tf.cast(tf.convert_to_tensor(sizes[1:input_tensor_rank-1]), tf.int32)
-        elif hasattr(sizes, 'numpy'):
-            new_size = tf.cast(tf.convert_to_tensor(sizes.numpy()[1:input_tensor_rank-1]), tf.int32)
-        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) > 1:
+        elif tf.is_tensor(sizes) and hasattr(sizes, 'numpy'):
+            new_size = tf.cast(tf.convert_to_tensor(cast(Any, sizes).numpy()[1:input_tensor_rank-1]), tf.int32)
+        elif tf_keras.backend.is_keras_tensor(sizes) and sizes_rank is not None and sizes_rank > 1:
             new_size = tf.cast(tf.slice(sizes, [1], [input_tensor_rank-2]), tf.int32)
-        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 2:
+        elif tf_keras.backend.is_keras_tensor(sizes) and sizes_rank == 1 and sizes_dim0 == 2:
             new_size = tf.cast(sizes, tf.int32)
-        elif tf_keras.backend.is_keras_tensor(sizes) and len(sizes.shape) == 1 and sizes.shape[0] == 4:
-            new_size = tf.cast(sizes[1:3], tf.int32)
+        elif tf_keras.backend.is_keras_tensor(sizes) and sizes_rank == 1 and sizes_dim0 == 4:
+            new_size = tf.cast(tf.slice(sizes, [1], [2]), tf.int32)
 
     elif scales is not None:
         # only scales is defined
@@ -576,14 +580,15 @@ def make_node(
             if numeric_bools.all():
                 new_size = graph_node_output.shape[-len(numeric_bools):len(graph_node_output.shape)] # Estimated from ONNX output shape
             else:
-                h_w_scale = scales[1:input_tensor_rank-1]
+                h_w_scale = cast(Any, scales)[1:input_tensor_rank-1]
                 h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
+                scales_dtype = cast(Any, scales).dtype
                 try:
                     new_size = tf.cast(
                         h_w_scale * tf.cast(
                             h_w_shape,
-                            NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                                if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                            NUMPY_DTYPES_TO_TF_DTYPES[scales_dtype] \
+                                if isinstance(scales_dtype, np.dtype) else scales_dtype,
                         ),
                         tf.int32,
                     )
@@ -591,37 +596,46 @@ def make_node(
                     # Workaround when h_w_shape contains undefined dimensions
                     new_size = tf.cast(
                         h_w_scale * tf.cast(
-                            tf.shape(input_tensor)[1:input_tensor_rank-1],
-                            NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                                if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                            tf.slice(
+                                tf.shape(input_tensor),
+                                begin=[1],
+                                size=[input_tensor_rank - 2],
+                            ),
+                            NUMPY_DTYPES_TO_TF_DTYPES[scales_dtype] \
+                                if isinstance(scales_dtype, np.dtype) else scales_dtype,
                         ),
                         tf.int32,
                     )
         else:
-            h_w_scale = scales[1:input_tensor_rank-1]
+            h_w_scale = cast(Any, scales)[1:input_tensor_rank-1]
             h_w_shape = input_tensor_shape[1:input_tensor_rank-1]
+            scales_dtype = cast(Any, scales).dtype
             if None not in h_w_shape:
                 new_size = tf.cast(
                     h_w_scale * tf.cast(
                         h_w_shape,
-                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                        NUMPY_DTYPES_TO_TF_DTYPES[scales_dtype] \
+                            if isinstance(scales_dtype, np.dtype) else scales_dtype,
                     ),
                     tf.int32,
                 )
             else:
-                h_w_shape = tf.shape(input_tensor)[1:input_tensor_rank-1]
+                h_w_shape = tf.slice(
+                    tf.shape(input_tensor),
+                    begin=[1],
+                    size=[input_tensor_rank - 2],
+                )
                 new_size = tf.cast(
                     h_w_scale * tf.cast(
                         h_w_shape,
-                        NUMPY_DTYPES_TO_TF_DTYPES[scales.dtype] \
-                            if isinstance(scales.dtype, np.dtype) else scales.dtype,
+                        NUMPY_DTYPES_TO_TF_DTYPES[scales_dtype] \
+                            if isinstance(scales_dtype, np.dtype) else scales_dtype,
                     ),
                     tf.int32,
                 )
 
-    if hasattr(new_size, '_inferred_value'):
-        new_size_values = new_size._inferred_value
+    if tf.is_tensor(new_size) and hasattr(new_size, '_inferred_value'):
+        new_size_values = cast(Any, new_size)._inferred_value
         if (new_size_values is None or new_size_values.count(None) == len(new_size_values)) \
             and graph_node_output.shape is not None \
             and sum([1 if isinstance(s, str) else 0 for s in graph_node_output.shape[1:input_tensor_rank-1]]) == 0:
@@ -629,7 +643,8 @@ def make_node(
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
             new_values = [0] * tensor_rank
             for new_idx, idx in enumerate(convertion_table):
-                new_values[new_idx] = graph_node_output.shape[idx]
+                dim = graph_node_output.shape[idx]
+                new_values[new_idx] = int(dim) if isinstance(dim, int) else 0
             new_size = new_values[-(input_tensor_rank-1):-1]
 
     if (replace_argmax_to_fused_argmax_and_indices_is_int64 \
@@ -637,7 +652,7 @@ def make_node(
         and graph_node.o().op == 'ArgMax' \
         and input_tensor_rank == 4:
         new_size = tf.cast(
-            tf.cast(new_size, dtype=tf.float32) * fused_argmax_scale_ratio,
+            tf.cast(tf.convert_to_tensor(cast(Any, new_size)), dtype=tf.float32) * fused_argmax_scale_ratio,
             dtype=tf.int32,
         )
 
@@ -756,7 +771,7 @@ def make_node(
         box_indices = tf.cast(tf.range(0, input_tensor_shape[0]), dtype=tf.int32)
         # run crop and resize
         resized_tensor = tf.image.crop_and_resize(
-            images=input_tensor,
+            image=input_tensor,
             boxes=boxes,
             box_indices=box_indices,
             crop_size=new_size,
@@ -824,6 +839,7 @@ def make_node(
     # Reshape N,H,W,C -> N,W,C
     if resize_one_d:
         resized_tensor = tf.gather(params=resized_tensor, indices=0, axis=1)
+    resized_tensor = tf.convert_to_tensor(cast(Any, resized_tensor))
 
     # TensorFlow's Resize operation casts to Float32 on its own,
     # so we have to change it back to the original type.

@@ -101,20 +101,21 @@ def _fold_cast(values: List[np.ndarray], node: onnx.NodeProto) -> Optional[np.nd
     if len(values) < 1:
         return None
     to = int(_get_attr_int(node, "to", 1))
-    np_dtype = {
-        onnx.TensorProto.FLOAT: np.float32,
-        onnx.TensorProto.FLOAT16: np.float16,
-        onnx.TensorProto.DOUBLE: np.float64,
-        onnx.TensorProto.INT8: np.int8,
-        onnx.TensorProto.INT16: np.int16,
-        onnx.TensorProto.INT32: np.int32,
-        onnx.TensorProto.INT64: np.int64,
-        onnx.TensorProto.UINT8: np.uint8,
-        onnx.TensorProto.UINT16: np.uint16,
-        onnx.TensorProto.UINT32: np.uint32,
-        onnx.TensorProto.UINT64: np.uint64,
-        onnx.TensorProto.BOOL: np.bool_,
-    }.get(to, None)
+    cast_dtype_map: Dict[int, np.dtype[Any]] = {
+        int(onnx.TensorProto.FLOAT): np.dtype(np.float32),
+        int(onnx.TensorProto.FLOAT16): np.dtype(np.float16),
+        int(onnx.TensorProto.DOUBLE): np.dtype(np.float64),
+        int(onnx.TensorProto.INT8): np.dtype(np.int8),
+        int(onnx.TensorProto.INT16): np.dtype(np.int16),
+        int(onnx.TensorProto.INT32): np.dtype(np.int32),
+        int(onnx.TensorProto.INT64): np.dtype(np.int64),
+        int(onnx.TensorProto.UINT8): np.dtype(np.uint8),
+        int(onnx.TensorProto.UINT16): np.dtype(np.uint16),
+        int(onnx.TensorProto.UINT32): np.dtype(np.uint32),
+        int(onnx.TensorProto.UINT64): np.dtype(np.uint64),
+        int(onnx.TensorProto.BOOL): np.dtype(np.bool_),
+    }
+    np_dtype = cast_dtype_map.get(int(to), None)
     if np_dtype is None:
         return None
     return np.asarray(values[0]).astype(np_dtype)

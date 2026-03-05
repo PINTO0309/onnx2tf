@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -40,7 +41,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """LpPool
 
@@ -206,7 +207,7 @@ def make_node(
             [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
             [[0, 0]]
 
-        padded_tensor = tf.pad(
+        padded_tensor = cast(Any, tf.pad)(
             tensor=input_tensor,
             paddings=tf_pads,
             mode='CONSTANT',

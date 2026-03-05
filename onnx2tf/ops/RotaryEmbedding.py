@@ -1,3 +1,4 @@
+from typing import Any, Tuple, cast
 import sys
 import random
 random.seed(0)
@@ -20,7 +21,9 @@ from onnx2tf.utils.logging import *
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -32,7 +35,7 @@ def _split_rotary(input_tensor, rotary_dim):
         return x_rotate, x_not_rotate
     rotary_dim = tf.cast(rotary_dim, tf.int32)
     input_shape = tf.shape(input_tensor)
-    head_size = input_shape[-1]
+    head_size = tf.gather(input_shape, indices=tf.subtract(tf.rank(input_tensor), 1))
     x_rotate = tf.slice(
         input_tensor,
         [0, 0, 0, 0],
@@ -53,7 +56,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """RotaryEmbedding
 
@@ -188,18 +191,21 @@ def make_node(
             )
             sys.exit(1)
         num_heads = int(num_heads)
-        input_shape = tf.shape(input_tensor)
+        input_shape = tf.shape(input_tensor, out_type=tf.int32)
+        input_batch = tf.gather(input_shape, indices=0)
+        input_seq = tf.gather(input_shape, indices=1)
+        input_hidden = tf.gather(input_shape, indices=tf.subtract(tf.rank(input_tensor), 1))
         head_size = tf.math.floordiv(
-            input_shape[-1],
-            tf.constant(num_heads, dtype=input_shape.dtype),
+            input_hidden,
+            tf.constant(num_heads, dtype=tf.int32),
         )
         input_tensor = tf.reshape(
             input_tensor,
             tf.stack(
                 [
-                    input_shape[0],
-                    input_shape[1],
-                    tf.constant(num_heads, dtype=input_shape.dtype),
+                    input_batch,
+                    input_seq,
+                    tf.constant(num_heads, dtype=tf.int32),
                     head_size,
                 ]
             ),
@@ -213,7 +219,10 @@ def make_node(
 
     head_size = input_tensor.shape[-1]
     if head_size is None:
-        head_size = tf.shape(input_tensor)[-1]
+        head_size = tf.gather(
+            tf.shape(input_tensor, out_type=tf.int32),
+            indices=tf.subtract(tf.rank(input_tensor), 1),
+        )
 
     if rotary_embedding_dim is None or int(rotary_embedding_dim) == 0:
         rotary_embedding_dim = head_size
@@ -233,7 +242,7 @@ def make_node(
         x1 = x_rotate[:, :, :, 0::2]
         x2 = x_rotate[:, :, :, 1::2]
     else:
-        x1, x2 = tf.split(x_rotate, num_or_size_splits=2, axis=-1)
+        x1, x2 = cast(Tuple[Any, Any], tf.split(x_rotate, num_or_size_splits=2, axis=-1))
 
     real = (cos_cache * x1) - (sin_cache * x2)
     imag = (sin_cache * x1) + (cos_cache * x2)

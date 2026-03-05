@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -28,15 +29,16 @@ def _apply_avg_pool(
 ):
     spatial_size = len(kernel_shape)
     if spatial_size == 1:
-        if input_tensor.shape[1] is not None and kernel_shape[0] > input_tensor.shape[1]:
+        dim1 = input_tensor.shape[1]
+        if isinstance(dim1, int) and kernel_shape[0] > dim1:
             return AveragePooling1D(
-                pool_size=[input_tensor.shape[1]],
-                strides=[input_tensor.shape[1]],
+                pool_size=int(dim1),
+                strides=int(dim1),
                 padding=padding.upper(),
             )(input_tensor), AveragePooling1D
         return AveragePooling1D(
-            pool_size=kernel_shape,
-            strides=strides,
+            pool_size=int(kernel_shape[0]),
+            strides=int(strides[0]),
             padding=padding.upper(),
         )(input_tensor), AveragePooling1D
     if spatial_size == 2:
@@ -62,7 +64,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QLinearAveragePool
 
@@ -206,11 +208,12 @@ def make_node(
         )
 
     pooled, tf_op_type = _apply_avg_pool(
-        input_tensor=pooled_input,
+        input_tensor=cast(tf.Tensor, pooled_input),
         kernel_shape=kernel_shape,
         strides=strides,
         padding=tf_pad_mode,
     )
+    pooled = tf.convert_to_tensor(cast(Any, pooled))
 
     # Match ONNX count_include_pad=False for explicit paddings.
     if is_explicit_padding and not count_include_pad and tf_pads_as_tf is not None:
@@ -226,13 +229,17 @@ def make_node(
             strides=strides,
             padding=tf_pad_mode,
         )
+        mask_pooled = tf.convert_to_tensor(cast(Any, mask_pooled))
         kernel_volume = float(np.prod(kernel_shape))
-        count_valid = mask_pooled * tf.cast(kernel_volume, dtype=mask_pooled.dtype)
+        count_valid = tf.math.multiply(
+            mask_pooled,
+            tf.cast(kernel_volume, dtype=mask_pooled.dtype),
+        )
         multiplier = tf.math.divide_no_nan(
             tf.cast(kernel_volume, dtype=mask_pooled.dtype),
             count_valid,
         )
-        pooled = pooled * multiplier
+        pooled = tf.math.multiply(pooled, multiplier)
 
     requantized = tf.add(
         x=tf.divide(

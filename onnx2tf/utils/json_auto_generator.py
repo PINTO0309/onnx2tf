@@ -161,17 +161,17 @@ class ReshapeFixer(OperationFixer):
         def get_all_permutations(ndim: int) -> List[List[int]]:
             if ndim <= 3:
                 # For 3D or less, generate all permutations
-                return list(itertools.permutations(range(ndim)))
+                return [list(p) for p in itertools.permutations(range(ndim))]
             elif ndim == 4:
                 # For 4D, generate all permutations (24 total)
-                return list(itertools.permutations(range(ndim)))
+                return [list(p) for p in itertools.permutations(range(ndim))]
             elif ndim == 5:
                 # For 5D, limit to most common patterns + some variations (120 total is too many)
                 base_perms = list(itertools.permutations(range(ndim)))
                 # Prioritize permutations that keep batch dimension (0) in place
-                priority_perms = [p for p in base_perms if p[0] == 0][:20]
+                priority_perms = [list(p) for p in base_perms if p[0] == 0][:20]
                 # Add some that move batch dimension
-                other_perms = [p for p in base_perms if p[0] != 0][:10]
+                other_perms = [list(p) for p in base_perms if p[0] != 0][:10]
                 return priority_perms + other_perms
             else:
                 # For 6D and above, use strategic permutations
@@ -355,18 +355,18 @@ class AddMulDivSubFixer(OperationFixer):
         # Generate all permutations for pre/post transpose
         def get_perms_for_ndim(ndim: int) -> List[List[int]]:
             if ndim <= 3:
-                return list(itertools.permutations(range(ndim)))
+                return [list(p) for p in itertools.permutations(range(ndim))]
             elif ndim == 4:
-                return list(itertools.permutations(range(ndim)))
+                return [list(p) for p in itertools.permutations(range(ndim))]
             elif ndim == 5:
                 # For arithmetic ops, prioritize certain patterns
                 all_perms = list(itertools.permutations(range(ndim)))
                 # Common broadcast patterns
                 priority_patterns = [
-                    p for p in all_perms if p[0] == 0  # Keep batch
+                    list(p) for p in all_perms if p[0] == 0  # Keep batch
                 ][:30]
                 other_patterns = [
-                    p for p in all_perms if p[0] != 0
+                    list(p) for p in all_perms if p[0] != 0
                 ][:10]
                 return priority_patterns + other_patterns
             else:
@@ -742,11 +742,11 @@ class MatMulFixer(OperationFixer):
         # MatMul often needs transpose adjustments
         def get_matmul_perms(ndim: int) -> List[List[int]]:
             if ndim == 2:
-                return list(itertools.permutations(range(ndim)))  # All 2 perms
+                return [list(p) for p in itertools.permutations(range(ndim))]  # All 2 perms
             elif ndim == 3:
-                return list(itertools.permutations(range(ndim)))  # All 6 perms
+                return [list(p) for p in itertools.permutations(range(ndim))]  # All 6 perms
             elif ndim == 4:
-                return list(itertools.permutations(range(ndim)))  # All 24 perms
+                return [list(p) for p in itertools.permutations(range(ndim))]  # All 24 perms
             else:
                 # For higher dimensions, limit to strategic perms
                 perms = [list(range(ndim))]  # Identity
@@ -884,11 +884,12 @@ def analyze_conversion_error(
         error_info["suggested_op_types"].extend(["Expand", "Transpose", "Reshape"])
 
     # Check if the exception has onnx_op_name attribute
-    if hasattr(error, 'onnx_op_name') and error.onnx_op_name:
-        error_info["onnx_op_name"] = error.onnx_op_name
-        if error.onnx_op_name not in error_info["problematic_ops"]:
-            error_info["problematic_ops"].append(error.onnx_op_name)
-        info(f"Error from ONNX operation: {error.onnx_op_name}")
+    onnx_op_name_from_error = getattr(error, 'onnx_op_name', None)
+    if onnx_op_name_from_error:
+        error_info["onnx_op_name"] = onnx_op_name_from_error
+        if onnx_op_name_from_error not in error_info["problematic_ops"]:
+            error_info["problematic_ops"].append(onnx_op_name_from_error)
+        info(f"Error from ONNX operation: {onnx_op_name_from_error}")
     else:
         # Also check for ONNX op name in ERROR lines (multi-line error messages)
         # Look for pattern like "ERROR: onnx_op_name: wa/lightglue/posenc/Expand"
@@ -925,14 +926,23 @@ def analyze_accuracy_errors(
         matched_flg = checked_value[1]
         max_abs_err = checked_value[2]
 
-        if (matched_flg == 0 or matched_flg == False) and isinstance(max_abs_err, (int, float, np.float32, np.float64)):
-            if max_abs_err > error_threshold:
+        if (matched_flg == 0 or matched_flg == False) and np.isscalar(max_abs_err):
+            max_abs_err_value: Optional[float] = None
+            if isinstance(max_abs_err, (bool, int, float, np.integer, np.floating)):
+                max_abs_err_value = float(max_abs_err)
+            elif isinstance(max_abs_err, np.generic):
+                scalar_item = max_abs_err.item()
+                if isinstance(scalar_item, (bool, int, float)):
+                    max_abs_err_value = float(scalar_item)
+            if max_abs_err_value is None:
+                continue
+            if max_abs_err_value > error_threshold:
                 # Find the operation that produces this output
                 for node in onnx_graph.nodes:
                     if any(output.name == onnx_output_name for output in node.outputs):
                         if node.name not in op_errors:
                             op_errors[node.name] = []
-                        op_errors[node.name].append(max_abs_err)
+                        op_errors[node.name].append(max_abs_err_value)
                         break
 
     # Analyze error distribution
@@ -953,7 +963,7 @@ def analyze_accuracy_errors(
 def generate_candidate_fixes(
     onnx_graph: gs.Graph,
     error_info: Dict[str, Any],
-    previous_attempts: Set[str] = None
+    previous_attempts: Optional[Set[str]] = None
 ) -> List[Dict[str, Any]]:
     """Generate candidate fixes based on error analysis"""
     if previous_attempts is None:

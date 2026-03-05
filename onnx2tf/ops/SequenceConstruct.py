@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -19,7 +20,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SequenceConstruct
 
@@ -55,6 +56,7 @@ def make_node(
 
     # Generation of TF OP
     output_seq = None
+    is_first = True
     for input in graph_node.inputs:
         graph_node_input = get_constant_or_variable(
             input,
@@ -63,8 +65,9 @@ def make_node(
         input_tensor = tf_layers_dict[graph_node_input.name]['tf_node'] \
             if isinstance(graph_node_input, gs.Variable) else graph_node_input
         expanded_input_tensor = tf.expand_dims(input_tensor, 0)
-        if input_sequence.shape[0] == 0:
-            output_seq = tf.RaggedTensor.from_tensor(expanded_input_tensor)
+        if is_first:
+            output_seq = cast(Any, tf.RaggedTensor).from_tensor(expanded_input_tensor)
+            is_first = False
         else:
             output_seq = tf.concat([input_sequence, expanded_input_tensor], axis=0)
         input_sequence = output_seq

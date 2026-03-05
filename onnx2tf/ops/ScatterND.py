@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -24,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ScatterND
 
@@ -237,12 +238,16 @@ def make_node(
             simple_scatternd = False
         else:
             simple_scatternd = True
-    elif hasattr(indices_tensor, 'numpy') and None not in indices_tensor.numpy():
-        flatten_indices_tensor = indices_tensor.numpy().flatten()
-        if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+    elif tf.is_tensor(indices_tensor):
+        indices_tensor_np = cast(Any, indices_tensor).numpy()
+        if None in indices_tensor_np:
             simple_scatternd = False
         else:
-            simple_scatternd = True
+            flatten_indices_tensor = indices_tensor_np.flatten()
+            if np.sum(np.where(flatten_indices_tensor < 0, 1, 0)) > 0:
+                simple_scatternd = False
+            else:
+                simple_scatternd = True
     elif isinstance(indices_tensor, int) and indices_tensor >= 0:
         simple_scatternd = True
     else:

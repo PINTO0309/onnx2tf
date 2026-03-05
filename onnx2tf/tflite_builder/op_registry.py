@@ -1296,12 +1296,47 @@ def _validate_slice(node: Any, ctx: Any) -> None:
 
 
 def _validate_split(node: Any, ctx: Any) -> None:
-    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    input_name = node.inputs[0].name
+    input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)
-    axis = int(node.attrs.get("axis", 0))
+    raw_shape = None
+    if hasattr(ctx, "shape_map"):
+        raw_shape = ctx.shape_map.get(str(input_name), None)
+    input_rank_unknown = bool(
+        len(input_shape) == 1
+        and _is_unknown_rank_placeholder_tensor(ctx, input_name)
+        and not (isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) > 0)
+    )
+
+    axis_raw = int(node.attrs.get("axis", 0))
+    axis = int(axis_raw)
     if axis < 0:
-        axis += rank
-    if axis < 0 or axis >= rank:
+        if input_rank_unknown:
+            output_rank_candidates: list[int] = []
+            for output in node.outputs:
+                output_name = str(output.name)
+                if output_name == "":
+                    continue
+                output_shape = ctx.get_tensor_shape(output_name)
+                output_raw_shape = None
+                if hasattr(ctx, "shape_map"):
+                    output_raw_shape = ctx.shape_map.get(str(output_name), None)
+                output_rank_unknown = bool(
+                    len(output_shape) == 1
+                    and _is_unknown_rank_placeholder_tensor(ctx, output_name)
+                    and not (
+                        isinstance(output_raw_shape, (list, tuple))
+                        and len(list(output_raw_shape)) > 0
+                    )
+                )
+                if not output_rank_unknown:
+                    output_rank_candidates.append(len(output_shape))
+            if len(output_rank_candidates) > 0:
+                rank = int(max(output_rank_candidates))
+                axis += rank
+        else:
+            axis += rank
+    if (not input_rank_unknown) and (axis < 0 or axis >= rank):
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"Split axis out of range. axis={axis} rank={rank}",
@@ -2950,10 +2985,21 @@ def _normalize_axes_for_rank(
 
 
 def _validate_reduce(node: Any, ctx: Any) -> None:
-    _ = (node, ctx)
-    # Builder-side reduce rank/axis resolution handles dynamic/placeholder ranks
-    # more robustly than pre-validation in control-flow-heavy graphs.
-    return
+    # Reduce axes must be compile-time constant in flatbuffer_direct.
+    # Keep rank/axis normalization in builder-side logic, but fail early in
+    # coverage/dispatch checks when non-constant axes input is provided.
+    if len(node.inputs) >= 2 and str(node.inputs[1].name) != "":
+        axes_arr = ctx.get_constant_array(node.inputs[1].name)
+        if axes_arr is None:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message=(
+                    "Reduce axes input must be constant in flatbuffer_direct. "
+                    f"op={node.name}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 def _validate_cumsum(node: Any, ctx: Any) -> None:
@@ -3019,7 +3065,17 @@ def _validate_squeeze(node: Any, ctx: Any) -> None:
 
 
 def _validate_unsqueeze(node: Any, ctx: Any) -> None:
-    input_rank = len(ctx.get_tensor_shape(node.inputs[0].name))
+    input_name = node.inputs[0].name
+    input_shape = ctx.get_tensor_shape(input_name)
+    input_rank = len(input_shape)
+    raw_shape = None
+    if hasattr(ctx, "shape_map"):
+        raw_shape = ctx.shape_map.get(str(input_name), None)
+    input_rank_unknown = bool(
+        len(input_shape) == 1
+        and _is_unknown_rank_placeholder_tensor(ctx, input_name)
+        and not (isinstance(raw_shape, (list, tuple)) and len(list(raw_shape)) > 0)
+    )
     axes = _extract_axes(
         node=node,
         ctx=ctx,
@@ -3037,6 +3093,26 @@ def _validate_unsqueeze(node: Any, ctx: Any) -> None:
         output_rank = len(ctx.get_tensor_shape(node.outputs[0].name))
         if output_rank > 0:
             input_rank = int(max(output_rank - len(axes), 0))
+    if input_rank_unknown and len(axes) > 0:
+        output_name = node.outputs[0].name
+        output_shape = ctx.get_tensor_shape(output_name)
+        output_raw_shape = None
+        if hasattr(ctx, "shape_map"):
+            output_raw_shape = ctx.shape_map.get(str(output_name), None)
+        output_rank_unknown = bool(
+            len(output_shape) == 1
+            and _is_unknown_rank_placeholder_tensor(ctx, output_name)
+            and not (
+                isinstance(output_raw_shape, (list, tuple))
+                and len(list(output_raw_shape)) > 0
+            )
+        )
+        if not output_rank_unknown:
+            input_rank = int(max(input_rank, len(output_shape) - len(axes)))
+        positive_axes = [int(v) for v in axes if int(v) >= 0]
+        if len(positive_axes) > 0:
+            min_output_rank = int(max(max(positive_axes) + 1, len(axes)))
+            input_rank = int(max(input_rank, min_output_rank - len(axes)))
     output_rank = int(input_rank + len(axes))
     normalized_axes: List[int] = []
     for axis in axes:
@@ -6467,9 +6543,9 @@ def _resolve_generic_custom_fallback(node: Any, ctx: Any) -> Optional[DispatchRe
 def _validate_clip(node: Any, ctx: Any) -> None:
     min_value = node.attrs.get("min", float("-inf"))
     max_value = node.attrs.get("max", float("inf"))
-    if len(node.inputs) >= 2:
+    if len(node.inputs) >= 2 and str(node.inputs[1].name) != "":
         min_value = _require_const_input(node, ctx, 1, "clip minimum")
-    if len(node.inputs) >= 3:
+    if len(node.inputs) >= 3 and str(node.inputs[2].name) != "":
         max_value = _require_const_input(node, ctx, 2, "clip maximum")
 
     def _to_float(v: Any, default: float) -> float:

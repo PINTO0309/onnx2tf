@@ -1,5 +1,5 @@
 import random
-from typing import List
+from typing import List, Any
 
 random.seed(0)
 import numpy as np
@@ -36,7 +36,7 @@ def make_node(
         *,
         graph_node: gs.Node,
         tf_layers_dict: dict,
-        **kwargs: dict,
+        **kwargs: Any,
 ):
     """Unique
 
@@ -72,7 +72,7 @@ def make_node(
 
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape) \
-        if input_tensor_shape != tf.TensorShape(None) else 1
+        if not (isinstance(input_tensor_shape, tf.TensorShape) and input_tensor_shape.rank is None) else 1
 
     axis = graph_node.attrs.get('axis', None)
     sorted = graph_node.attrs.get('sorted', 1)
@@ -107,8 +107,8 @@ def make_node(
 
     # use tf.unique again to get true unique indices
     rey, reidx = tf.unique(inverse_indices)
-    num_segments = tf.shape(rey)[0]
-    num_elems = tf.shape(inverse_indices)[0]
+    num_segments = tf.gather(tf.shape(rey), indices=0)
+    num_elems = tf.gather(tf.shape(inverse_indices), indices=0)
     indices = tf.math.unsorted_segment_min(tf.range(num_elems), reidx, num_segments)
     indices = tf.cast(indices, dtype=inverse_indices.dtype)
 
@@ -131,7 +131,7 @@ def make_node(
             cols = flat_2d.shape[1]
             if cols is None:
                 return None
-            order = tf.range(tf.shape(flat_2d)[0])
+            order = tf.range(tf.gather(tf.shape(flat_2d, out_type=tf.int32), indices=0))
             for col in reversed(range(cols)):
                 col_vals = tf.gather(flat_2d, order)[:, col]
                 if col_vals.dtype == tf.bool:
@@ -149,7 +149,7 @@ def make_node(
         elif y_rank is not None and axis_ is not None and 0 <= axis_ < y_rank:
             perm = [axis_] + [i for i in range(y_rank) if i != axis_]
             y_t = tf.transpose(y, perm)
-            flat = tf.reshape(y_t, [tf.shape(y_t)[0], -1])
+            flat = tf.reshape(y_t, [tf.gather(tf.shape(y_t, out_type=tf.int32), indices=0), -1])
             order = _lexsort_perm(flat)
 
         if order is None:

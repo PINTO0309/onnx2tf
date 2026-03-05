@@ -20,7 +20,7 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
     get_tf_model_inputs,
 )
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 
 @print_node_info
@@ -30,7 +30,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """LayerNormalization
 
@@ -69,13 +69,13 @@ def make_node(
     input_tensor_rank = len(input_tensor_shape)
 
     graph_node_input_2 = None
-    if hasattr(graph_node.inputs[1], 'values'):
+    if isinstance(graph_node.inputs[1], gs.Constant):
         graph_node_input_2 = graph_node.inputs[1].values
     else:
         graph_node_input_2 = graph_node.inputs[1]
     graph_node_input_3 = None
     if len(graph_node.inputs) >= 3:
-        if hasattr(graph_node.inputs[2], 'values'):
+        if isinstance(graph_node.inputs[2], gs.Constant):
             graph_node_input_3 = graph_node.inputs[2].values
         else:
             graph_node_input_3 = graph_node.inputs[2]
@@ -109,7 +109,7 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
 
-    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -117,12 +117,14 @@ def make_node(
     validation_data = None
 
     # Generation of TF OP
+    gamma_init: Any = tf_keras.initializers.constant(cast(Any, scale)) if scale is not None else 'ones'
+    beta_init: Any = tf_keras.initializers.constant(cast(Any, bias)) if bias is not None else 'zeros'
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
         tf_keras.layers.LayerNormalization(
-            axis=[axis],
+            axis=axis,
             epsilon=epsilon,
-            gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
-            beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
+            gamma_initializer=cast(Any, gamma_init),
+            beta_initializer=cast(Any, beta_init),
         )(input_tensor)
 
     # Detect conversion errors in axis and identify the axis
@@ -167,7 +169,7 @@ def make_node(
         #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
         tf_pre_tensor_infos = {}
         try:
-            tf_pre_tensor_infos: Dict[Any] = \
+            tf_pre_tensor_infos: Dict[Any, Any] = \
                 dummy_tf_inference(
                     model=val_model,
                     inputs=tf_model_inputs,
@@ -213,15 +215,15 @@ def make_node(
                         ],
                         outputs=[
                             tf_keras.layers.LayerNormalization(
-                                axis=[check_axis],
+                                axis=check_axis,
                                 epsilon=epsilon,
-                                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
-                                beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
+                                gamma_initializer=cast(Any, gamma_init),
+                                beta_initializer=cast(Any, beta_init),
                             )(input)
                         ],
                     )
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = \
+                    tf_tensor_infos: Dict[Any, Any] = \
                         dummy_tf_inference(
                             model=val_model,
                             inputs=[
@@ -265,10 +267,10 @@ def make_node(
 
             tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
                 tf_keras.layers.LayerNormalization(
-                    axis=[min_abs_err_axis],
+                    axis=min_abs_err_axis,
                     epsilon=epsilon,
-                    gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
-                    beta_initializer=tf_keras.initializers.constant(bias) if bias is not None else 'zeros',
+                    gamma_initializer=cast(Any, gamma_init),
+                    beta_initializer=cast(Any, beta_init),
                 )(input_tensor)
 
     # Post-process transpose

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, TypedDict
 
 import numpy as np
 
@@ -20,6 +20,14 @@ _DYNAMIC_RANGE_CONST_DEQUANT_OPS = {
     "DIV",
     "CONCATENATION",
 }
+
+
+class _QuantizationControls(TypedDict):
+    calibration_method: str
+    calibration_percentile: float
+    min_numel: int
+    min_abs_max: float
+    scale_floor: float
 
 
 def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
@@ -301,7 +309,7 @@ def _normalize_quantization_controls(
     min_numel: int,
     min_abs_max: float,
     scale_floor: float,
-) -> Dict[str, object]:
+) -> _QuantizationControls:
     return {
         "calibration_method": _normalize_calibration_method(calibration_method),
         "calibration_percentile": _normalize_calibration_percentile(calibration_percentile),

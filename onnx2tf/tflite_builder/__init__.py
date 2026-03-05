@@ -832,7 +832,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if split_plan_report_path is not None:
         outputs["split_plan_report_path"] = split_plan_report_path
         outputs["split_required_by_estimate"] = bool(split_required_by_estimate)
-        outputs["split_plan_total_estimated_bytes"] = int(split_plan_total_estimated_bytes)
+        if split_plan_total_estimated_bytes is not None:
+            outputs["split_plan_total_estimated_bytes"] = int(split_plan_total_estimated_bytes)
     if split_manifest_path is not None:
         outputs["split_manifest_path"] = split_manifest_path
     if split_partition_paths is not None:

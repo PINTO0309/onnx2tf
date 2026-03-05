@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -17,7 +18,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ConstantOfShape
 
@@ -51,10 +52,12 @@ def make_node(
     if isinstance(shape, gs.Variable) \
         and graph_node.inputs[0].name in tf_layers_dict:
         shape = tf_layers_dict[graph_node.inputs[0].name]['tf_node']
+    if not tf.is_tensor(shape):
+        shape = tf.convert_to_tensor(cast(Any, shape))
 
     # make sure the shape dtype is either int32 or int64
     if shape.dtype not in [tf.int64, tf.int32]:
-        shape = tf.cast(shape, tf.int64)
+        shape = tf.cast(cast(Any, shape), tf.int64)
 
     # the default value is 0, float32
     constant_tensor = None

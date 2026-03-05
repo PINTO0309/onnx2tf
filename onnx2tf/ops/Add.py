@@ -39,7 +39,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Add
 
@@ -168,11 +168,9 @@ def make_node(
         is_scalar_1 = False
         is_scalar_2 = False
         is_scalar_1_rank = tf.rank(input_tensor_1) == 0
-        if hasattr(is_scalar_1_rank, 'numpy'):
-            is_scalar_1 = is_scalar_1_rank.numpy()
+        is_scalar_1 = bool(np.asarray(is_scalar_1_rank).item())
         is_scalar_2_rank = tf.rank(input_tensor_2) == 0
-        if hasattr(is_scalar_2_rank, 'numpy'):
-            is_scalar_2 = is_scalar_2_rank.numpy()
+        is_scalar_2 = bool(np.asarray(is_scalar_2_rank).item())
 
         if (is_scalar_1 or is_scalar_2) and graph_node.i().op == 'Gemm':
             pass
@@ -185,6 +183,7 @@ def make_node(
             elif is_scalar_2:
                 first_tensor = input_tensor_1
                 second_tensor = input_tensor_2
+            assert first_tensor is not None and second_tensor is not None
             tmp_result = tf.math.add(first_tensor, second_tensor)
             tmp_result_shape = tmp_result.shape
             if first_tensor.shape == tmp_result_shape:
@@ -303,7 +302,7 @@ def make_node(
 
     def _get_static_shape(tensor):
         shape = getattr(tensor, 'shape', None)
-        if shape is None or shape == tf.TensorShape(None):
+        if shape is None or (isinstance(shape, tf.TensorShape) and shape.rank is None):
             return None
         return [_normalize_dim(dim) for dim in list(shape)]
 

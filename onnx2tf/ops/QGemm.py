@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -60,7 +61,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QGemm
 
@@ -178,12 +179,18 @@ def make_node(
     if a_is_dequantized:
         dequantized_a = tf.cast(a, tf.float32)
     else:
-        dequantized_a = tf.multiply(tf.subtract(a, a_zero_point), a_scale)
+        dequantized_a = tf.multiply(
+            tf.subtract(cast(Any, a), cast(Any, a_zero_point)),
+            cast(Any, a_scale),
+        )
 
     if b_is_dequantized:
         dequantized_b = tf.cast(b, tf.float32)
     else:
-        dequantized_b = tf.multiply(tf.subtract(b, b_zero_point), b_scale)
+        dequantized_b = tf.multiply(
+            tf.subtract(cast(Any, b), cast(Any, b_zero_point)),
+            cast(Any, b_scale),
+        )
 
     if trans_a:
         dequantized_a = tf.linalg.matrix_transpose(dequantized_a)
@@ -193,10 +200,13 @@ def make_node(
     x = tf.matmul(dequantized_a, dequantized_b)
 
     # bias is int32 quantized by (a_scale * b_scale)
-    bias_scale = tf.cast(a_scale_raw, tf.float32) * tf.cast(b_scale_raw, tf.float32)
+    bias_scale = tf.multiply(
+        tf.cast(a_scale_raw, tf.float32),
+        tf.cast(b_scale_raw, tf.float32),
+    )
     bias_scale = _reshape_for_output(value=bias_scale, output_tensor=x)
     bias = _reshape_for_output(value=bias, output_tensor=x)
-    x = tf.add(x, tf.multiply(bias, bias_scale))
+    x = tf.add(x, tf.multiply(cast(Any, bias), cast(Any, bias_scale)))
 
     # quantize then dequantize to float32
     y_scale = _reshape_for_output(value=y_scale, output_tensor=x)

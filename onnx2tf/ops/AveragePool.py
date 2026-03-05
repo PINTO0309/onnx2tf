@@ -1,3 +1,4 @@
+from typing import Any, List, Optional, cast
 import math
 import random
 random.seed(0)
@@ -63,7 +64,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """AveragePool
 
@@ -167,6 +168,8 @@ def make_node(
         input_tensor=input_tensor
     )
 
+    build_tf_pads_from_begin_end_fn: Optional[Any] = None
+    calc_extra_padding_with_ceil_dynamic_fn: Optional[Any] = None
     if not is_known_shape:
         def build_tf_pads_from_begin_end(pads_begin, pads_end):
             pads_begin = tf.cast(pads_begin, tf.int32)
@@ -183,34 +186,71 @@ def make_node(
 
         def calc_extra_padding_with_ceil_dynamic(input_tensor, pads, kernel_shape, dilations, strides):
             input_shape = tf.shape(input_tensor)
-            input_spatial = input_shape[1:-1]
+            input_rank = tf.size(input_shape)
+            input_spatial = tf.slice(
+                input_shape,
+                begin=[1],
+                size=[tf.subtract(input_rank, 2)],
+            )
             pads_begin = tf.constant(pads[:len(pads) // 2], dtype=tf.int32)
             pads_end = tf.constant(pads[len(pads) // 2:], dtype=tf.int32)
-            pads_along_axis = pads_begin + pads_end
+            pads_along_axis = tf.add(pads_begin, pads_end)
             k = tf.constant(kernel_shape, dtype=tf.int32)
             d = tf.constant(dilations, dtype=tf.int32)
             s = tf.constant(strides, dtype=tf.int32)
 
-            numerator = input_spatial + pads_along_axis - d * (k - 1) - 1
+            numerator = tf.subtract(
+                tf.subtract(
+                    tf.add(input_spatial, pads_along_axis),
+                    tf.multiply(d, tf.subtract(k, 1)),
+                ),
+                1,
+            )
             output_spatial = tf.cast(
                 tf.math.ceil(
-                    tf.cast(numerator, tf.float32) / tf.cast(s, tf.float32) + 1.0
+                    tf.add(
+                        tf.math.divide(
+                            tf.cast(numerator, tf.float32),
+                            tf.cast(s, tf.float32),
+                        ),
+                        1.0,
+                    )
                 ),
                 tf.int32,
             )
-            last_stride_starts = (output_spatial - 1) * s
-            last_stride_validity = last_stride_starts < (input_spatial + pads_begin)
+            last_stride_starts = tf.multiply(tf.subtract(output_spatial, 1), s)
+            last_stride_validity = tf.less(
+                last_stride_starts,
+                tf.add(input_spatial, pads_begin),
+            )
 
             extra_pads = tf.where(
                 last_stride_validity,
-                last_stride_starts + (k - 1) * d + 1 - (input_spatial + pads_along_axis),
+                tf.subtract(
+                    tf.add(
+                        tf.add(
+                            last_stride_starts,
+                            tf.multiply(tf.subtract(k, 1), d),
+                        ),
+                        1,
+                    ),
+                    tf.add(input_spatial, pads_along_axis),
+                ),
                 tf.zeros_like(input_spatial),
             )
             return extra_pads
 
+        build_tf_pads_from_begin_end_fn = build_tf_pads_from_begin_end
+        calc_extra_padding_with_ceil_dynamic_fn = calc_extra_padding_with_ceil_dynamic
+
         def compute_output_spatial_shape_from_tensor(input_tensor, pads, kernel_shape, dilations, strides, ceil_mode=False):
             input_shape = tf.shape(input_tensor)  # Get dynamic shape
-            input_spatial = input_shape[1:-1]  # Extract spatial dimensions only (NHWC format)
+            input_rank = tf.size(input_shape)
+            input_spatial = tf.slice(
+                input_shape,
+                begin=[1],
+                size=[tf.subtract(input_rank, 2)],
+            )  # Extract spatial dimensions only (NHWC format)
 
             pad_begin = pads[:len(pads) // 2]
             pad_end = pads[len(pads) // 2:]
@@ -218,7 +258,8 @@ def make_node(
             round_func = tf.math.ceil if ceil_mode else tf.math.floor
 
             output_spatial = []
-            for i, pb, pe, k, d, s in zip(tf.unstack(input_spatial), pad_begin, pad_end, kernel_shape, dilations, strides):
+            input_spatial_elems = cast(List[Any], tf.unstack(input_spatial))
+            for i, pb, pe, k, d, s in zip(input_spatial_elems, pad_begin, pad_end, kernel_shape, dilations, strides):
                 i = tf.cast(i, tf.float32)
                 pb = tf.constant(pb, dtype=tf.float32)
                 pe = tf.constant(pe, dtype=tf.float32)
@@ -226,8 +267,14 @@ def make_node(
                 d = tf.constant(d, dtype=tf.float32)
                 s = tf.constant(s, dtype=tf.float32)
 
-                numerator = i + pb + pe - d * (k - 1) - 1
-                raw_output = numerator / s + 1
+                numerator = tf.subtract(
+                    tf.subtract(
+                        tf.add(tf.add(i, pb), pe),
+                        tf.multiply(d, tf.subtract(k, 1)),
+                    ),
+                    1,
+                )
+                raw_output = tf.add(tf.math.divide(numerator, s), 1)
                 output_dim = tf.cast(round_func(raw_output), tf.int32)
                 output_spatial.append(output_dim)
 
@@ -267,7 +314,8 @@ def make_node(
                 pads_begin = tf.constant(pads[:len(pads) // 2], dtype=tf.int32)
                 pads_end = tf.constant(pads[len(pads) // 2:], dtype=tf.int32)
                 if ceil_mode:
-                    extra_pads = calc_extra_padding_with_ceil_dynamic(
+                    assert calc_extra_padding_with_ceil_dynamic_fn is not None
+                    extra_pads = calc_extra_padding_with_ceil_dynamic_fn(
                         input_tensor=input_tensor,
                         pads=pads,
                         kernel_shape=kernel_shape,
@@ -275,7 +323,8 @@ def make_node(
                         strides=strides,
                     )
                     pads_end = pads_end + extra_pads
-                tf_pads = build_tf_pads_from_begin_end(pads_begin, pads_end)
+                assert build_tf_pads_from_begin_end_fn is not None
+                tf_pads = build_tf_pads_from_begin_end_fn(pads_begin, pads_end)
             else:
                 if ceil_mode:
                     extra_pads = \
@@ -367,7 +416,7 @@ def make_node(
         if not is_known_shape:
             padded_tensor = tf.pad(
                 tensor=input_tensor,
-                paddings=tf_pads,
+                paddings=cast(Any, tf_pads),
                 mode='CONSTANT',
             )
             if input_tensor_shape is not None and len(input_tensor_shape) == spatial_size + 2:
@@ -379,7 +428,8 @@ def make_node(
         else:
             if auto_pad == 'SAME_LOWER':
                 # switch the order of pads
-                tf_pads = [i for tup in zip(tf_pads[len(tf_pads) // 2:], tf_pads[:len(tf_pads) // 2]) for i in tup]
+                tf_pads_list = cast(List[int], tf_pads)
+                tf_pads = [i for tup in zip(tf_pads_list[len(tf_pads_list) // 2:], tf_pads_list[:len(tf_pads_list) // 2]) for i in tup]
 
             if not count_include_pad and need_multiplier:
                 average_multiplier = []
@@ -388,9 +438,10 @@ def make_node(
                     average_multiplier.append(multiplier)
 
             # convert to tensorflow padding format
+            tf_pads_list = cast(List[int], tf_pads)
             tf_pads = \
                 [[0, 0]] + \
-                [list(i) for i in zip(tf_pads[:len(tf_pads) // 2], tf_pads[len(tf_pads) // 2:])] + \
+                [list(i) for i in zip(tf_pads_list[:len(tf_pads_list) // 2], tf_pads_list[len(tf_pads_list) // 2:])] + \
                 [[0, 0]]
 
             if spatial_size == 1 and kernel_shape[0] > input_tensor_shape[1]:
@@ -398,7 +449,7 @@ def make_node(
             else:
                 padded_tensor = tf.pad(
                     tensor=input_tensor,
-                    paddings=tf_pads,
+                    paddings=cast(Any, tf_pads),
                     mode='CONSTANT',
                 )
 
@@ -415,7 +466,8 @@ def make_node(
         # extra padding in last stride should not be included in averaging
         if average_multiplier is None:
             average_multiplier = []
-            for k, non_zero_count, extra_pad in zip(kernel_shape, non_zero_counts, extra_pads):
+            extra_pads_list = cast(List[int], extra_pads)
+            for k, non_zero_count, extra_pad in zip(kernel_shape, non_zero_counts, extra_pads_list):
                 multiplier = [1 for _ in non_zero_count]
                 multiplier[-1] = k / (k - extra_pad)
                 average_multiplier.append(multiplier)
@@ -436,10 +488,12 @@ def make_node(
     # Generation of TF OP
     tf_op_type = None
     if len(kernel_shape) == 1:
-        if padded_tensor.shape[1] is not None and kernel_shape[0] > padded_tensor.shape[1]:
+        dim1 = padded_tensor.shape[1]
+        if isinstance(dim1, int) and kernel_shape[0] > dim1:
+            pool_dim = int(dim1)
             pooled_tensor = AveragePooling1D(
-                pool_size=[padded_tensor.shape[1]],
-                strides=[padded_tensor.shape[1]],
+                pool_size=pool_dim,
+                strides=pool_dim,
                 padding=tf_pad_mode.upper(),
             )(padded_tensor)
         else:
@@ -473,6 +527,7 @@ def make_node(
             f'opname: {graph_node.name} Type: AveragePool{len(kernel_shape)}D'
         print(error_msg)
         raise AssertionError(error_msg)
+    pooled_tensor = tf.convert_to_tensor(cast(Any, pooled_tensor))
 
     # Dynamic shape compensation for count_include_pad=False with explicit padding.
     # Use pooled mask to compute valid element counts per window.
@@ -482,13 +537,13 @@ def make_node(
             if tf.is_tensor(tf_pads):
                 mask = tf.pad(
                     tensor=mask,
-                    paddings=tf_pads,
+                    paddings=cast(Any, tf_pads),
                     mode='CONSTANT',
                 )
             elif tf_pads != [0] * spatial_size * 2:
                 mask = tf.pad(
                     tensor=mask,
-                    paddings=tf_pads,
+                    paddings=cast(Any, tf_pads),
                     mode='CONSTANT',
                 )
         if len(kernel_shape) == 1:
@@ -509,13 +564,17 @@ def make_node(
                 strides=strides,
                 padding=tf_pad_mode.upper(),
             )(mask)
+        mask_pooled = tf.convert_to_tensor(cast(Any, mask_pooled))
         kernel_volume = float(np.prod(kernel_shape))
-        count_valid = mask_pooled * tf.cast(kernel_volume, dtype=mask_pooled.dtype)
+        count_valid = tf.multiply(
+            mask_pooled,
+            tf.cast(kernel_volume, dtype=mask_pooled.dtype),
+        )
         multiplier = tf.math.divide_no_nan(
             tf.cast(kernel_volume, dtype=mask_pooled.dtype),
             count_valid,
         )
-        pooled_tensor = pooled_tensor * multiplier
+        pooled_tensor = tf.multiply(pooled_tensor, multiplier)
 
     # tensorflow average pooling needs extra process to get same output with onnx
     # https://github.com/PINTO0309/onnx2tf/issues/124
@@ -536,7 +595,8 @@ def make_node(
             for m in multiplier:
                 start, stop, value = m
                 slice_list[i] = slice(start, stop + 1)
-                multiplied_slices.append(pooled_tensor[slice_list] * value)
+                sliced_tensor = cast(Any, pooled_tensor)[tuple(slice_list)]
+                multiplied_slices.append(tf.multiply(sliced_tensor, value))
 
             pooled_tensor = tf.concat(multiplied_slices, axis=i)
 

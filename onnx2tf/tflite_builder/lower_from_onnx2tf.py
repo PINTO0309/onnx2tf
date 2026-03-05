@@ -1431,6 +1431,7 @@ def _resolve_dynamic_reshape_shapes(model_ir: ModelIR) -> Dict[str, int]:
         if len(op.inputs) < 1 or len(op.outputs) != 1:
             continue
 
+        has_onnx_raw_new_shape = "onnxRawNewShape" in op.options
         raw_new_shape = op.options.get("onnxRawNewShape", op.options.get("newShape", []))
         try:
             new_shape = [int(v) for v in np.asarray(raw_new_shape).reshape(-1).tolist()]
@@ -1445,20 +1446,32 @@ def _resolve_dynamic_reshape_shapes(model_ir: ModelIR) -> Dict[str, int]:
             if input_tensor.shape_signature is not None
             else list(input_tensor.shape)
         )
-        resolved_shape = _resolve_reshape_new_shape_from_static_input(
-            new_shape=new_shape,
-            input_signature=input_signature,
-            allow_zero=(
-                bool(op.options.get("allowZero"))
-                if "allowZero" in op.options
-                else None
-            ),
-        )
+        if has_onnx_raw_new_shape and len(new_shape) > 0 and all(int(dim) > 0 for dim in new_shape):
+            # ONNX-exported raw reshape constants are semantically authoritative.
+            # Do not re-infer them from possibly stale intermediate static metadata.
+            resolved_shape = [int(v) for v in new_shape]
+        else:
+            resolved_shape = _resolve_reshape_new_shape_from_static_input(
+                new_shape=new_shape,
+                input_signature=input_signature,
+                allow_zero=(
+                    bool(op.options.get("allowZero"))
+                    if "allowZero" in op.options
+                    else None
+                ),
+            )
         if resolved_shape is None:
             continue
 
         changed = False
-        if [int(v) for v in new_shape] != [int(v) for v in resolved_shape]:
+        existing_new_shape = op.options.get("newShape", [])
+        try:
+            existing_new_shape_list = [
+                int(v) for v in np.asarray(existing_new_shape).reshape(-1).tolist()
+            ]
+        except Exception:
+            existing_new_shape_list = []
+        if existing_new_shape_list != [int(v) for v in resolved_shape]:
             op.options["newShape"] = [int(v) for v in resolved_shape]
             changed = True
 
@@ -1973,8 +1986,7 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
     for tensor_name, producer_idx in producer_map.items():
         if int(producer_idx) < 0 or int(producer_idx) >= len(model_ir.operators):
             continue
-        if str(model_ir.operators[int(producer_idx)].op_type) != "WHERE":
-            continue
+        producer_op_type = str(model_ir.operators[int(producer_idx)].op_type)
         tensor = model_ir.tensors.get(str(tensor_name), None)
         if tensor is None:
             continue
@@ -1983,7 +1995,12 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
             if tensor.shape_signature is not None
             else [int(v) for v in list(tensor.shape)]
         )
-        if len(signature) >= 1 and int(signature[0]) < 0:
+        if producer_op_type == "WHERE" and len(signature) >= 1 and int(signature[0]) < 0:
+            dynamic_lineage_root_names.add(str(tensor_name))
+            continue
+        # TOPK_V2 output extent depends on runtime k. Preserve internal -1 axes
+        # even when dynamic lineage is not anchored to graph boundaries.
+        if producer_op_type == "TOPK_V2" and any(int(v) < 0 for v in signature):
             dynamic_lineage_root_names.add(str(tensor_name))
     dynamic_lineage_cache: Dict[str, bool] = {}
     dynamic_lineage_visiting: set[str] = set()
@@ -3032,15 +3049,30 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     new_shape = [int(v) for v in np.asarray(raw_new_shape).reshape(-1).tolist()]
                 except Exception:
                     new_shape = []
-                resolved = _resolve_reshape_new_shape_from_static_input(
-                    new_shape=new_shape,
-                    input_signature=input_signature,
-                    allow_zero=(
-                        bool(op.options.get("allowZero"))
-                        if "allowZero" in op.options
-                        else None
-                    ),
-                )
+                has_onnx_raw_new_shape = "onnxRawNewShape" in op.options
+                onnx_raw_shape = op.options.get("onnxRawNewShape", [])
+                try:
+                    onnx_raw_shape_list = [
+                        int(v) for v in np.asarray(onnx_raw_shape).reshape(-1).tolist()
+                    ]
+                except Exception:
+                    onnx_raw_shape_list = []
+                if (
+                    has_onnx_raw_new_shape
+                    and len(onnx_raw_shape_list) > 0
+                    and all(int(dim) > 0 for dim in onnx_raw_shape_list)
+                ):
+                    resolved = [int(v) for v in onnx_raw_shape_list]
+                else:
+                    resolved = _resolve_reshape_new_shape_from_static_input(
+                        new_shape=new_shape,
+                        input_signature=input_signature,
+                        allow_zero=(
+                            bool(op.options.get("allowZero"))
+                            if "allowZero" in op.options
+                            else None
+                        ),
+                    )
                 if resolved is not None and _is_fully_known_positive_shape(resolved):
                     changed |= _update_tensor_shape(outputs[0], resolved)
                 continue
@@ -65393,6 +65425,10 @@ def lower_onnx_to_ir(
     _advance_post_progress()
 
     _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    # Very late terminal bridge/transpose rewrites above can still stale out
+    # RESHAPE constant inputs. Re-resolve once immediately before final sort.
+    _resolve_dynamic_reshape_shapes(model_ir)
+    _reconcile_static_tensor_shapes(model_ir)
 
     # Safety fallback:
     # Some aggressive transpose/layout rewrites can leave dangling dynamic inputs

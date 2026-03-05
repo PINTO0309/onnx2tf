@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -63,7 +64,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QuantizeLinear
 
@@ -185,7 +186,7 @@ def make_node(
 
     output_dtype_attr = int(graph_node.attrs.get('output_dtype', 0))
     if y_zero_point is None:
-        output_dtype = ONNX_DTYPES_TO_TF_DTYPES.get(output_dtype_attr, tf.uint8) \
+        output_dtype = ONNX_DTYPES_TO_TF_DTYPES.get(cast(Any, output_dtype_attr), tf.uint8) \
             if output_dtype_attr != 0 else tf.uint8
         y_zero_point = tf.zeros_like(y_scale)
     else:

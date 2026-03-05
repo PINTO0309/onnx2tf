@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -18,7 +19,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SequenceEmpty
 
@@ -44,7 +45,7 @@ def make_node(
     }
 
     # Generation of TF OP
-    ragged = tf.RaggedTensor.from_row_lengths(values=[], row_lengths=[])
+    ragged = cast(Any, tf.RaggedTensor).from_row_lengths(values=[], row_lengths=[])
     sparse = tf.cast(ragged.to_sparse(), sequence_dtype)
 
     tf_layers_dict[graph_node_output.name]['tf_node'] = \

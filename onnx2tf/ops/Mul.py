@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -32,7 +33,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Mul
 
@@ -158,26 +159,31 @@ def make_node(
         is_scalar_2 = False
         is_partial_scalar = False
         is_scalar_1_rank = tf.rank(input_tensor_1) == 0
-        if hasattr(is_scalar_1_rank, 'numpy'):
-            is_scalar_1 = is_scalar_1_rank.numpy()
+        is_scalar_1_numpy = getattr(is_scalar_1_rank, 'numpy', None)
+        if callable(is_scalar_1_numpy):
+            is_scalar_1 = is_scalar_1_numpy()
         is_scalar_2_rank = tf.rank(input_tensor_2) == 0
-        if hasattr(is_scalar_2_rank, 'numpy'):
-            is_scalar_2 = is_scalar_2_rank.numpy()
+        is_scalar_2_numpy = getattr(is_scalar_2_rank, 'numpy', None)
+        if callable(is_scalar_2_numpy):
+            is_scalar_2 = is_scalar_2_numpy()
 
         if (is_scalar_1 or is_scalar_2) and graph_node.i().op == 'Gemm':
             pass
         elif (is_scalar_1 or is_scalar_2) and graph_node.i().op != 'Gemm':
-            first_tensor = None
-            second_tensor = None
+            first_tensor: Any = input_tensor_1
+            second_tensor: Any = input_tensor_2
             if is_scalar_1:
                 first_tensor = input_tensor_2
                 second_tensor = input_tensor_1
             elif is_scalar_2:
                 first_tensor = input_tensor_1
                 second_tensor = input_tensor_2
-            tmp_result = tf.math.multiply(first_tensor, second_tensor)
+            tmp_result = tf.math.multiply(
+                cast(Any, first_tensor),
+                cast(Any, second_tensor),
+            )
             tmp_result_shape = tmp_result.shape
-            if first_tensor.shape == tmp_result_shape:
+            if cast(Any, first_tensor).shape == tmp_result_shape:
                 pass
             else:
                 input_tensor_1, input_tensor_2 = \
@@ -290,7 +296,7 @@ def make_node(
         # )
 
         # Mul -> Mul avoid
-        mul_div_node: gs.Node = None
+        mul_div_node: Any = None
         if hasattr(input_tensor_2, 'numpy'):
             try:
                 if graph_node.o().op == 'Div':
@@ -325,7 +331,11 @@ def make_node(
         else:
             try:
                 # Skip precomputation if broadcast changes the tensor shape
-                precalculated_tensor = input_tensor_2 / tf.convert_to_tensor(mul_div_node.inputs[1].values)
+                mul_div_const = mul_div_node.inputs[1]
+                mul_div_values = mul_div_const.values if isinstance(mul_div_const, gs.Constant) else None
+                if not isinstance(mul_div_values, np.ndarray):
+                    raise ValueError('mul_div_values is not ndarray')
+                precalculated_tensor = input_tensor_2 / tf.convert_to_tensor(mul_div_values)
                 if input_tensor_1.shape == precalculated_tensor.shape:
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         tf.math.multiply(

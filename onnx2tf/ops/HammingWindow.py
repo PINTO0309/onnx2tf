@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -24,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """HammingWindow
 
@@ -49,7 +50,7 @@ def make_node(
     dtype = graph_node_output.dtype
 
     output_datatype = int(graph_node.attrs.get('output_datatype', TensorProto.FLOAT))
-    output_datatype = ONNX_DTYPES_TO_TF_DTYPES[output_datatype]
+    output_datatype = ONNX_DTYPES_TO_TF_DTYPES[cast(Any, output_datatype)]
     periodic = bool(graph_node.attrs.get('periodic', 1))
 
     # Preserving Graph Structure (Dict)

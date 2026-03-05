@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -19,7 +20,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QLinearGlobalAveragePool
 
@@ -147,8 +148,15 @@ def make_node(
     for axis in onnx_spatial_axes:
         if axis < len(inferred_shape):
             inferred_shape[axis] = 1
-    graph_node_output.shape = inferred_shape
-    tf_layers_dict[graph_node_output.name]['shape'] = inferred_shape
+    normalized_inferred_shape = []
+    for dim in inferred_shape:
+        if dim is None or isinstance(dim, (int, str)):
+            normalized_inferred_shape.append(dim)
+        else:
+            dim_value = tf.compat.dimension_value(cast(Any, dim))
+            normalized_inferred_shape.append(dim_value if isinstance(dim_value, int) else None)
+    graph_node_output.shape = normalized_inferred_shape
+    tf_layers_dict[graph_node_output.name]['shape'] = normalized_inferred_shape
 
     # Generation of Debug Info
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \

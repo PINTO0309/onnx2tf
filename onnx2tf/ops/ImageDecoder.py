@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -20,7 +21,9 @@ from onnx2tf.utils.logging import *
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -60,7 +63,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ImageDecoder
 

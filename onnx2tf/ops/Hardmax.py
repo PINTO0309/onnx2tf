@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Hardmax
 
@@ -101,11 +102,7 @@ def make_node(
                 values=[perm1, [tensor_rank - 1], perm2, [axis]],
                 axis=-1,
             )
-            x = transpose_with_flexing_deterrence(
-                input_tensor=input_tensor,
-                perm=perm,
-                **kwargs,
-            )
+            x = tf.transpose(a=input_tensor, perm=perm)
         else:
             cal_shape = (
                 tf.reduce_prod(input_tensor=input_tensor_shape[0:axis]),

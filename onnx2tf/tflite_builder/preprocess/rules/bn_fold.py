@@ -300,7 +300,7 @@ def _extract_channel_affine_vector(
         scalar = float(np.asarray(arr).reshape(-1)[0])
         return np.full((int(out_channels),), scalar, dtype=np.float32)
 
-    index = [0 for _ in range(int(rank))]
+    index: list[int | slice] = [0 for _ in range(int(rank))]
     index[1] = slice(None)
     vec = np.asarray(arr, dtype=np.float32)[tuple(index)].reshape(-1)
     if int(vec.size) != int(out_channels):

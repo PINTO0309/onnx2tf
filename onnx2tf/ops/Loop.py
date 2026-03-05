@@ -1,3 +1,4 @@
+from typing import Any, List, cast
 import re
 import sys
 import random
@@ -39,7 +40,9 @@ def _to_tf_dtype(dtype):
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -48,12 +51,12 @@ def _shape_invariant(value):
     try:
         shape = value.shape
     except Exception:
-        return tf.TensorShape(None)
+        return tf.TensorShape(cast(Any, None))
     if shape is None:
-        return tf.TensorShape(None)
+        return tf.TensorShape(cast(Any, None))
     if isinstance(shape, tf.TensorShape):
         if shape.rank is None:
-            return tf.TensorShape(None)
+            return tf.TensorShape(cast(Any, None))
         return tf.TensorShape([None for _ in range(shape.rank)])
     return tf.TensorShape([None for _ in range(len(shape))])
 
@@ -64,7 +67,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Loop
 
@@ -172,7 +175,7 @@ def make_node(
                 element_shape=elem_shape,
             )
         )
-    scan_outputs_shapes = [tf.TensorShape(None) for _ in scan_outputs_init]
+    scan_outputs_shapes = [tf.TensorShape(cast(Any, None)) for _ in scan_outputs_init]
 
     graph_node_outputs = list(graph_node.outputs)
     for graph_node_output in graph_node_outputs:
@@ -287,7 +290,7 @@ def make_node(
             ],
             shape_invariants=[
                 tf.TensorShape([]),
-                tf.TensorShape(None),
+                tf.TensorShape(cast(Any, None)),
                 v_shapes,
                 scan_outputs_shapes,
             ],
@@ -307,7 +310,7 @@ def make_node(
             ],
             shape_invariants=[
                 tf.TensorShape([]),
-                tf.TensorShape(None),
+                tf.TensorShape(cast(Any, None)),
                 v_shapes,
                 scan_outputs_shapes,
             ],
@@ -326,7 +329,7 @@ def make_node(
             ],
             shape_invariants=[
                 tf.TensorShape([]),
-                tf.TensorShape(None),
+                tf.TensorShape(cast(Any, None)),
                 v_shapes,
                 scan_outputs_shapes,
             ],
@@ -352,7 +355,7 @@ def make_node(
             return empty_scan_outputs
 
         scan_out_final = tf.cond(tf.greater(iter_cnt_final, 0), true_fn, false_fn)
-        scan_outputs_tensors = [o.stack() for o in scan_out_final]
+        scan_outputs_tensors = [o.stack() for o in cast(List[Any], scan_out_final)]
         final_outputs = list(v_final) + scan_outputs_tensors
 
     if len(final_outputs) != len(graph_node_outputs):

@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """IsInf
 
@@ -76,7 +77,8 @@ def make_node(
         and before_trans_shape != after_trans_shape:
         tf_layers_dict[graph_node_output.name].pop('nhwc')
 
-    zero = tf.zeros(shape, dtype)
+    zero_shape = shape if shape is not None else tf.shape(input_tensor_1)
+    zero = tf.zeros(zero_shape, dtype)
     dn = bool(graph_node.attrs.get('detect_negative', 1))
     dp = bool(graph_node.attrs.get('detect_positive', 1))
     inp = input_tensor_1

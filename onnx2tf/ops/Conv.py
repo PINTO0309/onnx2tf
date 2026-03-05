@@ -27,7 +27,7 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
     post_process_transpose,
 )
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, cast
 from onnx2tf.utils.logging import *
 
 INF_INDEX_VALUE: int = 4294967296
@@ -40,7 +40,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Conv
 
@@ -62,7 +62,8 @@ def make_node(
         before_op_output_shape_trans,
     )
     kernel_shape = graph_node.attrs.get('kernel_shape', [])
-    kernel_size = len(kernel_shape) if kernel_shape != [] else len(graph_node.inputs[1].shape) - 2
+    input_weight_shape = graph_node.inputs[1].shape
+    kernel_size = len(kernel_shape) if kernel_shape != [] else (len(input_weight_shape) - 2 if input_weight_shape is not None else 0)
     try:
         input_weights = get_weights_constant_or_variable(
             const_or_var=graph_node.inputs[1] \
@@ -107,7 +108,7 @@ def make_node(
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
     disable_group_convolution: bool = kwargs['disable_group_convolution']
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -136,6 +137,8 @@ def make_node(
     ]
 
     all_axes_same = False
+    onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
+    validation_data = None
     if onnx_input_shape is not None \
         and len(onnx_input_shape) > 1 and len(tf_input_shape) > 1 \
         and onnx_input_shape == tf_input_shape:
@@ -170,11 +173,12 @@ def make_node(
         else:
             all_axes_same = True
             # Get the output tensor of one previous OP of TensorFlow only once
+            tf_model_inputs: List[Any] = []
+            val_model: Any = None
             if not disable_strict_mode:
                 tf_model_inputs = get_tf_model_inputs(
                     tf_layers_dict=tf_layers_dict,
                 )
-                val_model = None
                 if not isinstance(input_tensor, np.ndarray):
                     val_model = tf_keras.Model(
                         inputs=tf_model_inputs,
@@ -192,7 +196,7 @@ def make_node(
             tf_pre_tensor_infos = {}
             if not disable_strict_mode:
                 try:
-                    tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_pre_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
                         test_data_nhwc=test_data_nhwc,
@@ -200,10 +204,12 @@ def make_node(
                     )
                 except Exception as ex:
                     pass
-                del val_model
+                if val_model is not None:
+                    del val_model
 
             # Get np.ndarray for validation
             validation_data = None
+            onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
             if not disable_strict_mode:
                 if len(tf_pre_tensor_infos) == 1:
                     if not isinstance(input_tensor, np.ndarray):
@@ -212,7 +218,6 @@ def make_node(
                         validation_data = copy.deepcopy(input_tensor)
 
                 # Get ONNX inference results
-                onnx_tensor_infos = None
                 if onnx_tensor_infos_for_validation is not None \
                     and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                     onnx_tensor_infos = {
@@ -318,7 +323,7 @@ def make_node(
     def group_conv1d_bias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor, input_bias):
         return \
             tf.add(
-                x=Conv1D(
+                x=cast(Any, Conv1D(
                     filters=input_weights.shape[-1],
                     kernel_size=input_weights.shape[:1],
                     strides=strides,
@@ -326,16 +331,16 @@ def make_node(
                     dilation_rate=dilations,
                     groups=group,
                     use_bias=False,
-                    kernel_initializer=tf_keras.initializers.constant(input_weights),
+                    kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                     name=graph_node.name,
-                )(input_tensor),
-                y=input_bias,
+                )(input_tensor)),
+                y=cast(Any, input_bias),
             )
 
     def group_conv2d_bias(input_weights, strides, pad_mode, dilations, group, graph_node, input_tensor, input_bias):
         return \
             tf.add(
-                x=Conv2D(
+                x=cast(Any, Conv2D(
                     filters=input_weights.shape[-1],
                     kernel_size=input_weights.shape[:2],
                     strides=strides,
@@ -343,15 +348,21 @@ def make_node(
                     dilation_rate=dilations,
                     groups=group,
                     use_bias=False,
-                    kernel_initializer=tf_keras.initializers.constant(input_weights),
+                    kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                     name=graph_node.name,
-                )(input_tensor),
-                y=input_bias,
+                )(input_tensor)),
+                y=cast(Any, input_bias),
             )
 
     def sep_conv_bias(input_tensor, input_weights, pad_mode, strides, dilations, input_bias):
-        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        input_tensor_splits = cast(
+            List[Any],
+            tf.split(input_tensor, num_or_size_splits=group, axis=-1),
+        )
+        weight_splits = cast(
+            List[Any],
+            tf.split(input_weights, num_or_size_splits=group, axis=-1),
+        )
         return \
             tf.add(
                 tf.concat(
@@ -416,7 +427,7 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf_keras.initializers.constant(input_weights),
+                kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                 name=graph_node.name,
             )(input_tensor)
 
@@ -430,13 +441,19 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf_keras.initializers.constant(input_weights),
+                kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                 name=graph_node.name,
             )(input_tensor)
 
     def sep_conv_nobias(input_tensor, input_weights, pad_mode, strides, dilations):
-        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        input_tensor_splits = cast(
+            List[Any],
+            tf.split(input_tensor, num_or_size_splits=group, axis=-1),
+        )
+        weight_splits = cast(
+            List[Any],
+            tf.split(input_weights, num_or_size_splits=group, axis=-1),
+        )
         return \
             tf.concat(
                 values=[
@@ -668,7 +685,7 @@ def make_node(
 
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(input_tensor_rank)]
+    min_abs_err_perm_1: List[int] = [idx for idx in range(input_tensor_rank)]
 
     if not disable_strict_mode and all_axes_same:
         if onnx_tensor_infos is not None and validation_data is not None:
@@ -804,7 +821,7 @@ def make_node(
                         ],
                     )
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=[
                             input,

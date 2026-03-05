@@ -1,3 +1,4 @@
+from typing import Any
 import sys
 import random
 random.seed(0)
@@ -28,7 +29,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ScatterElements
 
@@ -196,8 +197,9 @@ def make_node(
             for i in range(updates_tensor_rank)
         ]
     else:
+        updates_dynamic_shape = tf.shape(updates_tensor, out_type=tf.int32)
         idx_tensors_per_axis = [
-            tf.range(tf.shape(updates_tensor)[i])
+            tf.range(tf.gather(updates_dynamic_shape, indices=i))
             for i in range(updates_tensor_rank)
         ]
 

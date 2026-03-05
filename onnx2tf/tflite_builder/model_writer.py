@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import flatbuffers
 
@@ -728,7 +728,8 @@ def _build_subgraph_tensors_and_append_buffers(
     for tensor in tensors:
         current_buffer = int(getattr(tensor, "buffer", 0))
         if current_buffer > 0:
-            tensor.buffer = int(current_buffer + buffer_offset)
+            tensor_any = cast(Any, tensor)
+            tensor_any.buffer = int(current_buffer + buffer_offset)
     global_buffer_table.extend(local_buffers[1:])
     return tensors, tensor_index_map
 
@@ -1366,7 +1367,7 @@ def _serialize_model_with_object_pack(
     )
     t2 = time.perf_counter()
     builder = flatbuffers.Builder(0)
-    model_offset = model.Pack(builder)
+    model_offset = cast(Any, model).Pack(builder)
     builder.Finish(model_offset, file_identifier=b"TFL3")
     t3 = time.perf_counter()
     model_bytes = builder.Output()

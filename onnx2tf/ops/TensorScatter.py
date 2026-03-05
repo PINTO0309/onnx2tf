@@ -1,3 +1,4 @@
+from typing import Any
 import sys
 import random
 random.seed(0)
@@ -23,7 +24,9 @@ from onnx2tf.utils.logging import *
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -35,7 +38,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """TensorScatter
 
@@ -167,17 +170,17 @@ def make_node(
 
     if write_indices is None:
         write_indices = tf.zeros(
-            [past_shape[0]],
+            [tf.gather(past_shape, indices=0)],
             dtype=tf.int64,
         )
     else:
         write_indices = tf.cast(write_indices, tf.int64)
 
-    max_sequence_length = past_shape[axis]
-    sequence_length = update_shape[axis]
+    max_sequence_length = tf.gather(past_shape, indices=axis)
+    sequence_length = tf.gather(update_shape, indices=axis)
 
     idx_tensors_per_axis = [
-        tf.range(update_shape[i]) for i in range(cache_rank)
+        tf.range(tf.gather(update_shape, indices=i)) for i in range(cache_rank)
     ]
     idx_tensors_per_axis = tf.meshgrid(*idx_tensors_per_axis, indexing='ij')
 

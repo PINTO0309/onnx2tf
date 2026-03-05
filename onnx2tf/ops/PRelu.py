@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """PRelu
 
@@ -172,8 +173,11 @@ def make_node(
     use_native_prelu = not replace_prelu_to_pseudo_prelu
     if not use_native_prelu:
         pos = tf.nn.relu(input_tensor)
-        neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
-        tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+        neg = tf.math.multiply(
+            tf.math.subtract(input_tensor, tf.math.abs(input_tensor)),
+            tf.math.multiply(slope, 0.5),
+        )
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.math.add(pos, neg)
     else:
         try:
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -183,8 +187,11 @@ def make_node(
                 )(input_tensor)
         except Exception:
             pos = tf.nn.relu(input_tensor)
-            neg = (input_tensor - abs(input_tensor)) * (slope * 0.5)
-            tf_layers_dict[graph_node_output.name]['tf_node'] = pos + neg
+            neg = tf.math.multiply(
+                tf.math.subtract(input_tensor, tf.math.abs(input_tensor)),
+                tf.math.multiply(slope, 0.5),
+            )
+            tf_layers_dict[graph_node_output.name]['tf_node'] = tf.math.add(pos, neg)
 
     # Post-process transpose
     before_trans_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape

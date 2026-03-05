@@ -26,7 +26,7 @@ def _is_empty_input(input_var: Any) -> bool:
         return True
     if isinstance(input_var, str) and input_var == "":
         return True
-    if hasattr(input_var, 'name') and input_var.name == "":
+    if not isinstance(input_var, str) and hasattr(input_var, 'name') and input_var.name == "":
         return True
     return False
 
@@ -42,7 +42,10 @@ def _pad_or_slice_last_dim(
     pad_value: Any,
 ) -> Any:
     mask_shape = tf.shape(mask_tensor)
-    last_dim = mask_shape[-1]
+    last_dim = tf.gather(
+        mask_shape,
+        indices=tf.subtract(tf.size(mask_shape), 1),
+    )
 
     def _pad():
         pad_len = target_len - last_dim
@@ -50,7 +53,7 @@ def _pad_or_slice_last_dim(
         paddings = tf.concat(
             values=[
                 tf.zeros(
-                    shape=tf.stack([rank - 1, 2]),
+                    shape=tf.stack([tf.subtract(rank, 1), 2]),
                     dtype=tf.int32,
                 ),
                 tf.reshape(tf.stack([0, pad_len]), (1, 2)),
@@ -87,7 +90,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Attention
 
@@ -334,6 +337,15 @@ def make_node(
         q_shape = tf.shape(Q)
         k_shape = tf.shape(K)
         v_shape = tf.shape(V)
+        q_batch = tf.gather(q_shape, indices=0)
+        q_seq = tf.gather(q_shape, indices=1)
+        q_hidden = tf.gather(q_shape, indices=2)
+        k_batch = tf.gather(k_shape, indices=0)
+        k_seq = tf.gather(k_shape, indices=1)
+        k_hidden = tf.gather(k_shape, indices=2)
+        v_batch = tf.gather(v_shape, indices=0)
+        v_seq = tf.gather(v_shape, indices=1)
+        v_hidden = tf.gather(v_shape, indices=2)
 
         q_num_heads_tensor = \
             tf.constant(q_num_heads, dtype=tf.int32) \
@@ -342,21 +354,21 @@ def make_node(
             tf.constant(kv_num_heads, dtype=tf.int32) \
                 if isinstance(kv_num_heads, int) else tf.cast(kv_num_heads, tf.int32)
 
-        q_head_size = tf.math.floordiv(q_shape[2], q_num_heads_tensor)
-        k_head_size = tf.math.floordiv(k_shape[2], kv_num_heads_tensor)
-        v_head_size = tf.math.floordiv(v_shape[2], kv_num_heads_tensor)
+        q_head_size = tf.math.floordiv(q_hidden, q_num_heads_tensor)
+        k_head_size = tf.math.floordiv(k_hidden, kv_num_heads_tensor)
+        v_head_size = tf.math.floordiv(v_hidden, kv_num_heads_tensor)
 
         Q = tf.reshape(
             tensor=Q,
-            shape=tf.stack([q_shape[0], q_shape[1], q_num_heads_tensor, q_head_size]),
+            shape=tf.stack([q_batch, q_seq, q_num_heads_tensor, q_head_size]),
         )
         K = tf.reshape(
             tensor=K,
-            shape=tf.stack([k_shape[0], k_shape[1], kv_num_heads_tensor, k_head_size]),
+            shape=tf.stack([k_batch, k_seq, kv_num_heads_tensor, k_head_size]),
         )
         V = tf.reshape(
             tensor=V,
-            shape=tf.stack([v_shape[0], v_shape[1], kv_num_heads_tensor, v_head_size]),
+            shape=tf.stack([v_batch, v_seq, kv_num_heads_tensor, v_head_size]),
         )
         Q = transpose_with_flexing_deterrence(
             input_tensor=Q,
@@ -393,8 +405,10 @@ def make_node(
     present_value = V
 
     # Heads for GQA/MQA
-    q_heads = Q.shape[1] if Q.shape[1] is not None else tf.shape(Q)[1]
-    kv_heads = present_key.shape[1] if present_key.shape[1] is not None else tf.shape(present_key)[1]
+    q_dynamic_shape = tf.shape(Q)
+    present_key_dynamic_shape = tf.shape(present_key)
+    q_heads = Q.shape[1] if Q.shape[1] is not None else tf.gather(q_dynamic_shape, indices=1)
+    kv_heads = tf.gather(present_key_dynamic_shape, indices=1)
 
     attn_key = present_key
     attn_value = present_value
@@ -404,12 +418,20 @@ def make_node(
             attn_key = tf.repeat(attn_key, repeats=repeat, axis=1)
             attn_value = tf.repeat(attn_value, repeats=repeat, axis=1)
     else:
-        repeat = tf.math.floordiv(tf.cast(q_heads, tf.int32), tf.cast(kv_heads, tf.int32))
+        q_heads_tensor = tf.cast(
+            q_heads if q_heads is not None else tf.gather(q_dynamic_shape, indices=1),
+            tf.int32,
+        )
+        kv_heads_tensor = tf.cast(
+            kv_heads if kv_heads is not None else tf.gather(present_key_dynamic_shape, indices=1),
+            tf.int32,
+        )
+        repeat = tf.math.floordiv(q_heads_tensor, kv_heads_tensor)
         attn_key = tf.repeat(attn_key, repeats=repeat, axis=1)
         attn_value = tf.repeat(attn_value, repeats=repeat, axis=1)
 
     # Scale Q and K
-    head_size = tf.shape(Q)[-1]
+    head_size = tf.gather(q_dynamic_shape, indices=3)
     if scale is None:
         scale_value = tf.math.rsqrt(tf.cast(head_size, q_dtype))
     else:
@@ -426,8 +448,8 @@ def make_node(
         transpose_b=True,
     )
 
-    q_seq_len = tf.shape(Q)[2]
-    kv_seq_len = tf.shape(present_key)[2]
+    q_seq_len = tf.gather(q_dynamic_shape, indices=2)
+    kv_seq_len = tf.gather(present_key_dynamic_shape, indices=2)
 
     attn_bias = None
 
@@ -505,7 +527,7 @@ def make_node(
             y=softcap_value,
         )
         qk_softcap = tf.where(
-            condition=softcap_value > 0,
+            condition=tf.greater(softcap_value, 0),
             x=softcap_value * tf.math.tanh(qk_with_bias / safe_softcap),
             y=qk_with_bias,
         )
@@ -527,7 +549,7 @@ def make_node(
         axis=-1,
     )
 
-    if softmax_dtype is not None and qk_softmax.dtype != q_dtype:
+    if softmax_dtype is not None:
         qk_softmax = tf.cast(qk_softmax, q_dtype)
 
     # Output
@@ -543,9 +565,13 @@ def make_node(
             **kwargs,
         )
         y_shape_dyn = tf.shape(Y)
+        y_batch = tf.gather(y_shape_dyn, indices=0)
+        y_seq = tf.gather(y_shape_dyn, indices=1)
+        y_num_heads = tf.gather(y_shape_dyn, indices=2)
+        y_head_size = tf.gather(y_shape_dyn, indices=3)
         Y = tf.reshape(
             tensor=Y,
-            shape=tf.stack([y_shape_dyn[0], y_shape_dyn[1], y_shape_dyn[2] * y_shape_dyn[3]]),
+            shape=tf.stack([y_batch, y_seq, tf.multiply(y_num_heads, y_head_size)]),
         )
 
     tf_layers_dict[graph_node_output_y.name]['tf_node'] = Y

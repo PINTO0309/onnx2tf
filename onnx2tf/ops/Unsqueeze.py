@@ -1,3 +1,4 @@
+from typing import Any
 import copy
 import random
 random.seed(0)
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Unsqueeze
 
@@ -71,7 +72,7 @@ def make_node(
 
     input_tensor_shape = None
     tensor_rank = None
-    if input_tensor.shape != tf.TensorShape(None):
+    if input_tensor.shape.rank is not None:
         input_tensor_shape = list(input_tensor.shape)
     elif graph_node_output.shape is not None and axes is not None:
         input_tensor_shape = [
@@ -113,15 +114,7 @@ def make_node(
                     tensor_rank=tensor_rank+1,
                     before_op_output_shape_trans=True,
                 )
-            elif not nhwc and (isinstance(axes, list) and len(axes) == 1 or isinstance(axes, np.ndarray) and len(axes.shape) == 1) and axes[0] == -1:
-                axes = [
-                    convert_axis(
-                        axis=idx,
-                        tensor_rank=tensor_rank+len(axes),
-                        before_op_output_shape_trans=before_op_output_shape_trans,
-                    ) for idx in axes
-                ]
-        axes = list(axes[np.newaxis])
+        axes = [int(np.asarray(axes).item())]
 
     if axes is not None and isinstance(axes, list) and len(axes) > 0:
         axes.sort()
@@ -254,9 +247,12 @@ def make_node(
 
         unsqueeze_tensor = input_tensor
         for axis_idx, axis in enumerate(axes_list):
-            axis_val = int(axis) if isinstance(axis, (np.integer, np.int64, np.int32)) else axis
+            axis_val = int(axis) if isinstance(axis, np.generic) else axis
             if isinstance(axis_val, int) and axis_val < 0:
-                axis_val = tf.rank(unsqueeze_tensor) + axis_val + 1
+                axis_val = tf.add(
+                    tf.rank(unsqueeze_tensor),
+                    tf.constant(axis_val + 1, dtype=tf.int32),
+                )
             unsqueeze_tensor = tf.expand_dims(
                 input=unsqueeze_tensor,
                 axis=axis_val,
@@ -292,10 +288,11 @@ def make_node(
         tf_type = tf.expand_dims
 
     else:
+        reshape_shape = new_shape if new_shape is not None else tf.shape(input_tensor)
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.reshape(
                 tensor=input_tensor,
-                shape=new_shape,
+                shape=reshape_shape,
                 name=graph_node.name,
             )
         tf_type = tf.reshape
