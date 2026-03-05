@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MaxUnpool
 
@@ -126,14 +127,17 @@ def make_node(
         if hasattr(unpooled, 'get_shape') else unpooled.shape
 
     if output_shape is not None:
-        unpool_shape = tf.cast(unpooled_shape, dtype=tf.int32)
+        unpool_shape = tf.shape(unpooled, out_type=tf.int32)
         new_shape = tf.cast(output_shape, dtype=tf.int32)
         pads_begin = []
         pads_end = []
-        for d in range(len(unpool_shape)):
-            pad_total = new_shape[d] - unpool_shape[d]
-            pad_begin = tf.cast(pad_total / 2, tf.int32)
-            pad_end = pad_total - pad_begin
+        for d in range(spatial_size + 2):
+            pad_total = tf.subtract(
+                tf.gather(new_shape, indices=d),
+                tf.gather(unpool_shape, indices=d),
+            )
+            pad_begin = tf.cast(tf.math.floordiv(pad_total, 2), tf.int32)
+            pad_end = tf.subtract(pad_total, pad_begin)
             pads_begin = pads_begin + [pad_begin]
             pads_end = pads_end + [pad_end]
         pads = pads_begin + pads_end

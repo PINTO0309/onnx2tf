@@ -1,3 +1,4 @@
+from typing import Any, cast
 import sys
 import random
 random.seed(0)
@@ -22,7 +23,9 @@ from onnx2tf.utils.logging import *
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -46,7 +49,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SoftmaxCrossEntropyLoss
 
@@ -94,6 +97,8 @@ def make_node(
         if isinstance(output_1_dtype, np.dtype) else output_1_dtype
 
     graph_node_output_2 = None
+    output_2_shape = None
+    output_2_dtype = None
     if len(graph_node.outputs) >= 2:
         graph_node_output_2 = graph_node.outputs[1]
         output_2_shape = graph_node_output_2.shape
@@ -176,10 +181,12 @@ def make_node(
     )
 
     log_prob_for_loss, _ = _move_class_to_last(log_prob, class_axis)
+    log_prob_for_loss = tf.convert_to_tensor(cast(Any, log_prob_for_loss))
 
-    depth = log_prob_for_loss.shape[-1]
-    if depth is None:
-        depth = tf.shape(log_prob_for_loss)[-1]
+    depth = tf.gather(
+        tf.shape(log_prob_for_loss, out_type=tf.int32),
+        indices=tf.subtract(tf.rank(log_prob_for_loss), 1),
+    )
     depth = tf.cast(depth, tf.int32)
 
     labels = tf.cast(labels_tensor, tf.int32)
@@ -234,7 +241,7 @@ def make_node(
     tf_layers_dict[graph_node_output_1.name]['tf_node'] = output_tensor
 
     if graph_node_output_2 is not None:
-        log_prob_out = log_prob
+        log_prob_out = tf.convert_to_tensor(cast(Any, log_prob))
         if output_2_tf_dtype is not None and log_prob_out.dtype != output_2_tf_dtype:
             log_prob_out = tf.cast(log_prob_out, output_2_tf_dtype)
         tf_layers_dict[graph_node_output_2.name]['tf_node'] = log_prob_out

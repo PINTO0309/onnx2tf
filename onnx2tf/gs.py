@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, cast
 
 import numpy as np
 import onnx
@@ -128,7 +128,14 @@ class Constant(Tensor):
         resolved_dtype = _ensure_numpy_dtype(dtype) if dtype is not None else np_values.dtype
         if resolved_dtype is not None and np_values.dtype != resolved_dtype:
             np_values = np_values.astype(resolved_dtype)
-        resolved_shape = shape if shape is not None else list(np_values.shape)
+        resolved_shape: List[int | str | None]
+        if shape is not None:
+            resolved_shape = [dim for dim in shape]
+        else:
+            resolved_shape = cast(
+                List[int | str | None],
+                [int(dim) for dim in list(np_values.shape)],
+            )
         super().__init__(
             name=name,
             dtype=np_values.dtype,

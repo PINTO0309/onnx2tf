@@ -23,7 +23,7 @@ from onnx2tf.utils.common_functions import (
 from onnx2tf.utils.enums import (
     NUMPY_DTYPES_TO_TF_DTYPES,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, cast
 
 def _matmul_output_shape(shape_a, shape_b):
     """ _matmul_output_shape
@@ -86,7 +86,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MatMul
 
@@ -149,10 +149,10 @@ def make_node(
 
     # Obtain ONNX inference results and
     # TensorFlow inference results up to the previous layer of TensorFlow
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
-    onnx_tensor_infos = None
-    validation_data_1 = None
-    validation_data_2 = None
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
+    validation_data_1: Optional[np.ndarray] = None
+    validation_data_2: Optional[np.ndarray] = None
     if onnx_tensor_infos_for_validation is not None \
         and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         onnx_tensor_infos, validation_data_1, validation_data_2 = \
@@ -201,7 +201,7 @@ def make_node(
         target_perm_2: List,
         taget_output_dtype: tf.dtypes.DType,
         target_name: str,
-        **kwargs: Dict,
+        **kwargs: Any,
     ):
         return \
             tf.matmul(
@@ -223,8 +223,7 @@ def make_node(
                 name=target_name,
             )
 
-
-    if onnx_tensor_infos:
+    if onnx_tensor_infos and validation_data_1 is not None and validation_data_2 is not None:
         tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
         tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
 
@@ -237,7 +236,7 @@ def make_node(
             target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
             target_onnx_output_shape = target_onnx_output.shape
         else:
-            target_onnx_output_shape = onnx_output_shape
+            target_onnx_output_shape = tuple(onnx_output_shape) if onnx_output_shape is not None else ()
 
         for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
             for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
@@ -258,7 +257,9 @@ def make_node(
                             dummy_np_result: np.ndarray = np.matmul(dummy_np_1, dummy_np_2)
                             actual_output_shape = dummy_np_result.shape
                             
-                        if np.prod(actual_output_shape) != np.prod(target_onnx_output_shape):
+                        actual_shape_for_prod = [int(dim) for dim in actual_output_shape]
+                        onnx_shape_for_prod = [int(dim) for dim in target_onnx_output_shape if isinstance(dim, int)]
+                        if np.prod(actual_shape_for_prod) != np.prod(onnx_shape_for_prod):
                             continue
 
                     # Build TF dummy model
@@ -285,9 +286,9 @@ def make_node(
                         target_name=graph_node.name,
                         **kwargs
                     )
-                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in target_onnx_output_shape])
+                    onnx_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in target_onnx_output_shape])
                     matmul_output_shapes = list(dummy_matmul.shape)
-                    matmul_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in matmul_output_shapes])
+                    matmul_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in matmul_output_shapes])
                     if onnx_output_shape_prod != matmul_output_shape_prod:
                         del input_1
                         del input_2
@@ -309,7 +310,7 @@ def make_node(
                         )
 
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = \
+                        tf_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=[

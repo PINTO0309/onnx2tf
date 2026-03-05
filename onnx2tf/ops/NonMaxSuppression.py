@@ -1,3 +1,4 @@
+from typing import Any, cast
 import sys
 import random
 random.seed(0)
@@ -41,6 +42,8 @@ class NMSLayer(tf_keras.layers.Layer):
         name=None,
     ):
         with ops.name_scope(name, 'non_max_suppression'):
+            selected_indices = tf.constant([], dtype=tf.int32)
+            num_valid = tf.constant(0, dtype=tf.int32)
             if self.switch_nms_version == 'v4':
                 selected_indices, num_valid = gen_image_ops.non_max_suppression_v4(
                     boxes=boxes,
@@ -95,7 +98,8 @@ class NMSLayer(tf_keras.layers.Layer):
                 return selected_indices
 
             else:
-                return selected_indices[:num_valid]
+                valid_count = tf.cast(num_valid, tf.int32)
+                return tf.gather(selected_indices, tf.range(valid_count))
 
     def call(
         self,
@@ -125,7 +129,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """NonMaxSuppression
 
@@ -175,6 +179,8 @@ def make_node(
         param_name=graph_node.inputs[1].name,
         **kwargs,
     )
+    boxes = tf.convert_to_tensor(boxes)
+    scores = tf.convert_to_tensor(scores)
 
     graph_node_input_3 = None
     if len(graph_node.inputs) >= 3:
@@ -201,30 +207,34 @@ def make_node(
     score_threshold = tf_layers_dict[graph_node_input_5.name]['tf_node'] \
         if isinstance(graph_node_input_5, gs.Variable) else graph_node_input_5
 
-    try:
-        max_output_boxes_per_class = tf.cast(
-            max_output_boxes_per_class,
-            tf.int32,
-        )
-    except:
+    if max_output_boxes_per_class is None \
+        or (isinstance(max_output_boxes_per_class, str) and max_output_boxes_per_class == ""):
         max_output_boxes_per_class = tf.constant(0, tf.int32)
+    max_output_boxes_per_class = tf.cast(
+        tf.convert_to_tensor(max_output_boxes_per_class),
+        tf.int32,
+    )
 
+    boxes_shape = cast(Any, tf.shape(boxes, out_type=tf.int32))
+    boxes_dim_1 = tf.gather(boxes_shape, indices=1)
     max_output_boxes_per_class = tf.where(
-        condition=max_output_boxes_per_class <= 0,
-        x=tf.shape(boxes)[1],
+        condition=tf.less_equal(max_output_boxes_per_class, 0),
+        x=boxes_dim_1,
         y=max_output_boxes_per_class,
     )
 
     max_output_boxes_per_class = tf.squeeze(max_output_boxes_per_class) \
         if len(max_output_boxes_per_class.shape) == 1 else max_output_boxes_per_class
 
-    iou_threshold = iou_threshold \
-        if (iou_threshold is not None and iou_threshold != "") else tf.constant(0, tf.float32)
+    if iou_threshold is None or (isinstance(iou_threshold, str) and iou_threshold == ""):
+        iou_threshold = tf.constant(0, tf.float32)
+    iou_threshold = tf.convert_to_tensor(iou_threshold, dtype=tf.float32)
     iou_threshold = tf.squeeze(iou_threshold) \
         if len(iou_threshold.shape) == 1 else iou_threshold
 
-    score_threshold = score_threshold \
-        if (score_threshold is not None and score_threshold != "") else tf.constant(-np.inf)
+    if score_threshold is None or (isinstance(score_threshold, str) and score_threshold == ""):
+        score_threshold = tf.constant(-np.inf)
+    score_threshold = tf.convert_to_tensor(score_threshold, dtype=tf.float32)
     score_threshold = tf.squeeze(score_threshold) \
         if len(score_threshold.shape) == 1 else score_threshold
 
@@ -281,6 +291,8 @@ def make_node(
         param_name='center_point_box',
         **kwargs,
     )
+    boxes = tf.convert_to_tensor(boxes)
+    scores = tf.convert_to_tensor(scores)
 
     # Generation of TF OP
     if center_point_box == 1:
@@ -297,12 +309,16 @@ def make_node(
         x1 = tf.subtract(x_centers, tf.divide(widths, 2))
         y2 = tf.add(y_centers, tf.divide(heights, 2))
         x2 = tf.add(x_centers, tf.divide(widths, 2))
-        boxes_t = tf.concat([y1, x1, y2, x2], 1)
+        boxes_t = tf.concat(
+            values=cast(Any, [y1, x1, y2, x2]),
+            axis=1,
+        )
         boxes = transpose_with_flexing_deterrence(
             input_tensor=boxes_t,
             perm=[0, 2, 1],
             **kwargs,
         )
+        boxes = tf.convert_to_tensor(boxes)
 
     # Canonicalize NMS tensor layouts:
     # boxes:  [batch, num_boxes, 4]
@@ -310,8 +326,8 @@ def make_node(
     def _static_int(dim):
         return int(dim) if isinstance(dim, (int, np.integer)) else None
 
-    boxes_rank = boxes.shape.rank if hasattr(boxes.shape, 'rank') else len(boxes.shape)
-    scores_rank = scores.shape.rank if hasattr(scores.shape, 'rank') else len(scores.shape)
+    boxes_rank = len(boxes.shape)
+    scores_rank = len(scores.shape)
     if boxes_rank == 3 and scores_rank == 3:
         boxes_shape = [_static_int(dim) for dim in list(boxes.shape)]
         scores_shape = [_static_int(dim) for dim in list(scores.shape)]
@@ -334,10 +350,11 @@ def make_node(
                     perm=[0, 2, 1],
                     **kwargs,
                 )
+                scores = tf.convert_to_tensor(scores)
 
     scores_argmax_classes = None
     if output_nms_with_argmax:
-        scores_rank = scores.shape.rank if hasattr(scores.shape, 'rank') else len(scores.shape)
+        scores_rank = len(scores.shape)
         if scores_rank == 3:
             scores_argmax_classes = tf.argmax(
                 scores,
@@ -366,6 +383,13 @@ def make_node(
         )
         sys.exit(1)
 
+    boxes_dtype_any = getattr(boxes, 'dtype', None)
+    boxes_dtype: tf.dtypes.DType = cast(tf.dtypes.DType, boxes_dtype_any) if boxes_dtype_any is not None else tf.float32
+    scores_dtype_any = getattr(scores, 'dtype', None)
+    scores_dtype: tf.dtypes.DType = cast(tf.dtypes.DType, scores_dtype_any) if scores_dtype_any is not None else tf.float32
+    tf_boxes = tf.zeros([0, 4], dtype=boxes_dtype)
+    tf_scores = tf.zeros([0], dtype=scores_dtype)
+    result = tf.zeros([0, 3], dtype=tf.int64)
     for batch_i in tf.range(num_batches):
         # get boxes in batch_i only
         begin_ = [0 if idx != 0 else batch_i for idx in range(len(boxes.shape))]
@@ -456,12 +480,13 @@ def make_node(
             else:
                 output = tf.transpose([selected_indices_int64])
                 paddings = tf.constant([[0, 0], [1, 0]])
-                output = tf.pad(
+                tf_pad = cast(Any, tf.pad)
+                output = tf_pad(
                     output,
                     paddings,
                     constant_values=tf.cast(class_j, dtype=tf.int64),
                 )
-                output = tf.pad(
+                output = tf_pad(
                     output,
                     paddings,
                     constant_values=tf.cast(batch_i, dtype=tf.int64),

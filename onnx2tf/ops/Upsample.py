@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Upsample
 
@@ -150,17 +151,18 @@ def make_node(
         h_w_shape = input_tensor_shape[1:3]
         new_size = tf.cast(h_w_scale * tf.cast(h_w_shape, scales.dtype), tf.int32)
 
-    if hasattr(new_size, 'set_shape'):
+    if isinstance(new_size, tf.Tensor) and hasattr(new_size, 'set_shape'):
         new_size.set_shape([2])
 
-    if hasattr(new_size, '_inferred_value'):
+    if isinstance(new_size, tf.Tensor) and hasattr(new_size, '_inferred_value'):
         new_size_values = new_size._inferred_value
-        if new_size_values.count(None) == len(new_size_values):
+        if new_size_values is not None and new_size_values.count(None) == len(new_size_values) and graph_node_output.shape is not None:
             tensor_rank = len(graph_node_output.shape)
             convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
-            new_values = [0] * tensor_rank
+            new_values = [0 for _ in range(tensor_rank)]
             for new_idx, idx in enumerate(convertion_table):
-                new_values[new_idx] = graph_node_output.shape[idx]
+                dim = graph_node_output.shape[idx]
+                new_values[new_idx] = dim if isinstance(dim, int) else -1
             new_size = new_values[-3:-1]
 
     resized_tensor = None

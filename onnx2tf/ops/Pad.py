@@ -1,3 +1,4 @@
+from typing import Any, cast
 import sys
 import copy
 import random
@@ -26,7 +27,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Pad
 
@@ -97,12 +98,12 @@ def make_node(
         paddings = np.asarray(paddings)
 
     values = None
-    if hasattr(paddings, 'values'):
+    if isinstance(paddings, gs.Constant):
         values = paddings.values
     elif isinstance(paddings, np.ndarray):
         values = paddings
-    elif hasattr(paddings, 'numpy'):
-        values = paddings.numpy()
+    elif tf.is_tensor(paddings) and hasattr(paddings, 'numpy'):
+        values = cast(Any, paddings).numpy()
 
     if values is not None:
         paddings = values.reshape([2, tensor_rank]).transpose()
@@ -160,7 +161,7 @@ def make_node(
             )
             if before_op_output_shape_trans:
                 convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
-                new_values = [0] * tensor_rank
+                new_values = [[0, 0] for _ in range(tensor_rank)]
                 for new_idx, idx in enumerate(convertion_table):
                     new_values[new_idx] = paddings[idx]
                 paddings = np.asarray(new_values, dtype=paddings.dtype)
@@ -171,7 +172,7 @@ def make_node(
         paddings = \
             tf.transpose(
                 a=tf.reshape(
-                    tensor=paddings,
+                    tensor=cast(Any, paddings),
                     shape=[2, tensor_rank]
                 )
             )
@@ -183,7 +184,7 @@ def make_node(
             ]
             if before_op_output_shape_trans:
                 convertion_table = [0] + [i for i in range(2, tensor_rank)] + [1]
-                new_values = [0] * tensor_rank
+                new_values = [[0, 0] for _ in range(tensor_rank)]
                 for new_idx, idx in enumerate(convertion_table):
                     new_values[new_idx] = paddings[idx]
                 paddings = new_values
@@ -206,19 +207,22 @@ def make_node(
     if isinstance(paddings, np.ndarray):
         paddings = tf.cast(tf.convert_to_tensor(paddings), dtype=tf.int32)
     else:
-        paddings = tf.cast(paddings, dtype=tf.int32)
+        paddings = tf.cast(tf.convert_to_tensor(cast(Any, paddings)), dtype=tf.int32)
 
     # Support for negative number padding
     # No relief when paddings are not constants
     # https://github.com/PINTO0309/onnx2tf/issues/473
-    if input_tensor.shape != tf.TensorShape(None) \
+    paddings_numpy_fn = getattr(paddings, 'numpy', None)
+    paddings_numpy_raw = paddings_numpy_fn() if callable(paddings_numpy_fn) else None
+    paddings_numpy = np.asarray(paddings_numpy_raw) if paddings_numpy_raw is not None else None
+    if input_tensor.shape.rank is not None \
         and None not in input_tensor.shape \
-        and hasattr(paddings, 'numpy') and (paddings.numpy() < 0).any():
+        and paddings_numpy is not None and (paddings_numpy < 0).any():
 
-        begin_ = [-1 if padding[0] >=0 else -padding[0].numpy() for padding in paddings]
-        begin_mask_ = tf.convert_to_tensor(sum([2 ** idx if begin == -1 else 0 for idx, begin in enumerate(begin_)]))
-        end_ = [-1 if padding[1] >=0 else -padding[1].numpy() for padding in paddings]
-        end_mask_ = tf.convert_to_tensor(sum([2 ** idx if end == -1 else 0 for idx, end in enumerate(end_)]))
+        begin_ = [-1 if padding[0] >= 0 else -int(padding[0]) for padding in paddings_numpy]
+        begin_mask_ = sum([2 ** idx if begin == -1 else 0 for idx, begin in enumerate(begin_)])
+        end_ = [-1 if padding[1] >= 0 else -int(padding[1]) for padding in paddings_numpy]
+        end_mask_ = sum([2 ** idx if end == -1 else 0 for idx, end in enumerate(end_)])
         begin_ = tf.convert_to_tensor([0 if val == -1 else val for val in begin_])
         end_ = [0 if val == -1 else input_tensor.shape[idx] - val for idx, val in enumerate(end_)]
         end_ = tf.convert_to_tensor(end_)
@@ -251,9 +255,9 @@ def make_node(
                     begin_mask=begin_mask_,
                     end_mask=end_mask_,
                 )
-        paddings_numpy: np.ndarray = paddings.numpy()
+        paddings_numpy = paddings_numpy.copy()
         paddings_numpy[paddings_numpy < 0] = 0
-        paddings = tf.convert_to_tensor(paddings_numpy)
+        paddings = tf.convert_to_tensor(paddings_numpy, dtype=tf.int32)
 
     if mode != 'edge':
         # mode != 'edge'
@@ -268,7 +272,8 @@ def make_node(
     else:
         # mode = 'edge'
         input_tensor_padded = input_tensor
-        for idx, p in enumerate(paddings):
+        paddings_for_loop = tf.unstack(paddings) if tf.is_tensor(paddings) else paddings
+        for idx, p in enumerate(cast(Any, paddings_for_loop)):
             begin_, end_ = p[0], p[1]
             empty_paddings = np.zeros([tensor_rank, 2], dtype=np.int32)
             for idxe, empty_padding in enumerate(empty_paddings):

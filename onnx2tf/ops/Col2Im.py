@@ -1,3 +1,4 @@
+from typing import Any
 import sys
 import random
 random.seed(0)
@@ -27,8 +28,14 @@ def _build_col2im_kernel(
 ):
     k_h = tf.cast(k_h, tf.int32)
     k_w = tf.cast(k_w, tf.int32)
-    eff_k_h = (k_h - 1) * dilation_h + 1
-    eff_k_w = (k_w - 1) * dilation_w + 1
+    eff_k_h = tf.add(
+        tf.multiply(tf.subtract(k_h, 1), dilation_h),
+        1,
+    )
+    eff_k_w = tf.add(
+        tf.multiply(tf.subtract(k_w, 1), dilation_w),
+        1,
+    )
 
     ky = tf.reshape(tf.repeat(tf.range(k_h), k_w), tf.stack([k_h, k_w]))
     kx = tf.reshape(tf.tile(tf.range(k_w), [k_h]), tf.stack([k_h, k_w]))
@@ -36,7 +43,7 @@ def _build_col2im_kernel(
     positions = ky * dilation_h * eff_k_w + kx * dilation_w
     positions = tf.reshape(positions, [-1])
     one_hot = tf.one_hot(positions, depth=eff_k_h * eff_k_w, dtype=dtype)
-    kernel = tf.reshape(one_hot, tf.stack([k_h * k_w, eff_k_h, eff_k_w]))
+    kernel = tf.reshape(one_hot, tf.stack([tf.multiply(k_h, k_w), eff_k_h, eff_k_w]))
     kernel = tf.transpose(kernel, [1, 2, 0])
     kernel = tf.expand_dims(kernel, axis=2)
     return kernel, eff_k_h, eff_k_w
@@ -60,6 +67,10 @@ def _maybe_align_col2im_input_layout(
     d2 = static_shape[2]
     if d1 is None or d2 is None:
         return input_tensor
+    d1_int = d1 if isinstance(d1, int) else getattr(d1, 'value', None)
+    d2_int = d2 if isinstance(d2, int) else getattr(d2, 'value', None)
+    if d1_int is None or d2_int is None:
+        return input_tensor
 
     k_prod_static = tf.get_static_value(k_prod)
     if k_prod_static is None:
@@ -71,11 +82,11 @@ def _maybe_align_col2im_input_layout(
     out_hw_static = tf.get_static_value(out_hw)
     out_hw_int = int(out_hw_static) if out_hw_static is not None else None
 
-    as_nckl_valid = (int(d1) % k_prod_int) == 0
-    as_nlkc_valid = (int(d2) % k_prod_int) == 0
+    as_nckl_valid = (d1_int % k_prod_int) == 0
+    as_nlkc_valid = (d2_int % k_prod_int) == 0
     if out_hw_int is not None:
-        as_nckl_valid = as_nckl_valid and int(d2) == out_hw_int
-        as_nlkc_valid = as_nlkc_valid and int(d1) == out_hw_int
+        as_nckl_valid = as_nckl_valid and d2_int == out_hw_int
+        as_nlkc_valid = as_nlkc_valid and d1_int == out_hw_int
 
     if as_nlkc_valid and not as_nckl_valid:
         return tf.transpose(input_tensor, perm=[0, 2, 1])
@@ -89,7 +100,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Col2Im
 
@@ -180,10 +191,10 @@ def make_node(
         error('Col2Im supports only 2D block_shape input.')
         sys.exit(1)
 
-    k_h = input_block_shape[0]
-    k_w = input_block_shape[1]
-    h_img = input_image_shape[0]
-    w_img = input_image_shape[1]
+    k_h = tf.gather(input_block_shape, indices=0)
+    k_w = tf.gather(input_block_shape, indices=1)
+    h_img = tf.gather(input_image_shape, indices=0)
+    w_img = tf.gather(input_image_shape, indices=1)
 
     stride_h, stride_w = strides
     dilation_h, dilation_w = dilations
@@ -205,6 +216,7 @@ def make_node(
 
     k_prod = k_h * k_w
     out_hw = out_h * out_w
+    input_tensor = tf.convert_to_tensor(input_tensor)
     input_tensor = _maybe_align_col2im_input_layout(
         input_tensor=input_tensor,
         k_prod=k_prod,
@@ -212,8 +224,8 @@ def make_node(
     )
 
     input_shape = tf.shape(input_tensor)
-    n = input_shape[0]
-    ck = input_shape[1]
+    n = tf.gather(input_shape, indices=0)
+    ck = tf.gather(input_shape, indices=1)
     c = tf.math.floordiv(ck, k_prod)
 
     cols = tf.reshape(

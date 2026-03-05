@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SequenceLength
 
@@ -66,11 +67,11 @@ def make_node(
         **kwargs,
     )
 
-    tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        tf.shape(
-            input=input_sequence.to_sparse(),
-            out_type=tf.int64,
-        )[0]
+    sparse_shape = tf.shape(
+        input=input_sequence.to_sparse(),
+        out_type=tf.int64,
+    )
+    tf_layers_dict[graph_node_output.name]['tf_node'] = tf.gather(sparse_shape, indices=0)
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

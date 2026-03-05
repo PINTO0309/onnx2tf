@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -59,7 +60,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QLinearMatMul
 
@@ -170,12 +171,18 @@ def make_node(
     if a_is_dequantized:
         dequantized_a = tf.cast(a, tf.float32)
     else:
-        dequantized_a = tf.multiply(tf.subtract(a, a_zero_point), a_scale)
+        dequantized_a = tf.multiply(
+            tf.subtract(cast(Any, a), cast(Any, a_zero_point)),
+            cast(Any, a_scale),
+        )
 
     if b_is_dequantized:
         dequantized_b = tf.cast(b, tf.float32)
     else:
-        dequantized_b = tf.multiply(tf.subtract(b, b_zero_point), b_scale)
+        dequantized_b = tf.multiply(
+            tf.subtract(cast(Any, b), cast(Any, b_zero_point)),
+            cast(Any, b_scale),
+        )
 
     # matmul
     x = tf.matmul(dequantized_a, dequantized_b)

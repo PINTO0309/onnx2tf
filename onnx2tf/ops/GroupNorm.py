@@ -20,7 +20,7 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
 )
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, cast
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
@@ -31,7 +31,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GroupNorm (com.microsoft.GroupNorm)
 
@@ -97,15 +97,13 @@ def make_node(
     shape = graph_node_output.shape
     dtype = graph_node_output.dtype
 
-    epsilon = graph_node.attrs.get('epsilon', 1e-05)
-    epsilon = tf.convert_to_tensor(epsilon, dtype=tf.float32)
+    epsilon = float(graph_node.attrs.get('epsilon', 1e-05))
 
     activation = graph_node.attrs.get('activation', 0)
 
-    groups = graph_node.attrs.get('groups', 1)
-    groups = tf.convert_to_tensor(groups, dtype=tf.int32)
+    groups = int(graph_node.attrs.get('groups', 1))
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -121,11 +119,12 @@ def make_node(
     }
 
     # Get the output tensor of one previous OP of TensorFlow only once
+    tf_model_inputs: List[Any] = []
+    val_model: Any = None
     if not disable_strict_mode:
         tf_model_inputs = get_tf_model_inputs(
             tf_layers_dict=tf_layers_dict,
         )
-        val_model = None
         if not isinstance(input_tensor, np.ndarray):
             val_model = tf_keras.Model(
                 inputs=tf_model_inputs,
@@ -143,7 +142,7 @@ def make_node(
     tf_pre_tensor_infos = {}
     if not disable_strict_mode:
         try:
-            tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+            tf_pre_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                 model=val_model,
                 inputs=tf_model_inputs,
                 test_data_nhwc=test_data_nhwc,
@@ -151,9 +150,11 @@ def make_node(
             )
         except Exception as ex:
             pass
-        del val_model
+        if val_model is not None:
+            del val_model
 
     # Get np.ndarray for validation
+    onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
     validation_data = None
     if not disable_strict_mode:
         if len(tf_pre_tensor_infos) == 1:
@@ -163,7 +164,6 @@ def make_node(
                 validation_data = copy.deepcopy(input_tensor)
 
         # Get ONNX inference results
-        onnx_tensor_infos = None
         if onnx_tensor_infos_for_validation is not None \
             and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
             onnx_tensor_infos = {
@@ -185,7 +185,7 @@ def make_node(
 
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(input_tensor_rank)]
+    min_abs_err_perm_1: List[int] = [idx for idx in range(input_tensor_rank)]
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
 
     if not disable_strict_mode:
@@ -217,7 +217,7 @@ def make_node(
                         ],
                     )
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=[
                             input,
@@ -260,6 +260,8 @@ def make_node(
 
     # Generation of TF OP
     input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
+    beta_init: Any = tf_keras.initializers.constant(cast(Any, B)) if B is not None else 'zeros'
+    gamma_init: Any = tf_keras.initializers.constant(cast(Any, scale)) if scale is not None else 'ones'
 
     if activation == 0:
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -269,8 +271,8 @@ def make_node(
                 epsilon=epsilon,
                 center=True if B is not None else False, # beta/bias
                 scale=True if scale is not None else False, # gamma/scale
-                beta_initializer=tf_keras.initializers.constant(B) if B is not None else 'zeros',
-                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
+                beta_initializer=cast(Any, beta_init),
+                gamma_initializer=cast(Any, gamma_init),
             )(input_tensor)
     else:
         group_norm = \
@@ -280,8 +282,8 @@ def make_node(
                 epsilon=epsilon,
                 center=True if B is not None else False, # beta/bias
                 scale=True if scale is not None else False, # gamma/scale
-                beta_initializer=tf_keras.initializers.constant(B) if B is not None else 'zeros',
-                gamma_initializer=tf_keras.initializers.constant(scale) if scale is not None else 'ones',
+                beta_initializer=cast(Any, beta_init),
+                gamma_initializer=cast(Any, gamma_init),
             )(input_tensor)
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf_keras.activations.swish(group_norm)

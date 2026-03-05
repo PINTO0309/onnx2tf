@@ -1,3 +1,4 @@
+from typing import Any, List, cast
 import random
 random.seed(0)
 import numpy as np
@@ -29,7 +30,10 @@ def _dequantize_tensor(
     base = tf.cast(base, tf.float32)
     zero_point = tf.cast(zero_point, tf.float32)
     scale = tf.cast(scale, tf.float32)
-    return (base - zero_point) * scale
+    return tf.multiply(
+        tf.subtract(base, zero_point),
+        scale,
+    )
 
 
 def _reshape_per_output_channel(
@@ -66,7 +70,10 @@ def _dequantize_weights(
         value=casted_scale,
         weights=casted_base,
     )
-    return (casted_base - casted_zero_point) * casted_scale
+    return tf.multiply(
+        tf.subtract(casted_base, casted_zero_point),
+        casted_scale,
+    )
 
 
 def _get_qmin_qmax(dtype: tf.dtypes.DType):
@@ -87,7 +94,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QLinearConv
 
@@ -209,8 +216,11 @@ def make_node(
     # if bias is defined save it here
     if input_bias is not None:
         input_bias = tf.cast(input_bias, tf.float32)
-        input_bias_scale = tf.cast(input_tensor_scale, tf.float32) * tf.cast(input_weights_scale, tf.float32)
-        input_bias = input_bias * input_bias_scale
+        input_bias_scale = tf.multiply(
+            tf.cast(input_tensor_scale, tf.float32),
+            tf.cast(input_weights_scale, tf.float32),
+        )
+        input_bias = tf.multiply(input_bias, input_bias_scale)
 
     # Workaround to avoid as many conversion failures as possible
     # for models with useless Transpose immediately before them.
@@ -380,8 +390,8 @@ def make_node(
             tf_op_type = tf.nn.convolution
         else:
             # SeparableConv
-            input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-            weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+            input_tensor_splits = cast(List[Any], tf.split(input_tensor, num_or_size_splits=group, axis=-1))
+            weight_splits = cast(List[Any], tf.split(input_weights, num_or_size_splits=group, axis=-1))
             conv_node = \
                 tf.concat(
                     values=[
@@ -419,7 +429,7 @@ def make_node(
     # quantize then dequantize to float32
     y_scale = tf.cast(y_scale, tf.float32)
     y_zero_point = tf.cast(y_zero_point, tf.float32)
-    quantized = tf.round(tf.divide(conv_node, y_scale)) + y_zero_point
+    quantized = tf.add(tf.round(tf.divide(conv_node, y_scale)), y_zero_point)
     qmin, qmax = _get_qmin_qmax(output_quant_dtype)
     if qmin is not None and qmax is not None:
         quantized = tf.clip_by_value(quantized, qmin, qmax)

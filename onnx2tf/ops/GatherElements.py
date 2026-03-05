@@ -23,7 +23,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
 )
-from typing import List, Dict, Any
+from typing import List, Dict, Any, cast
 
 
 @print_node_info
@@ -33,7 +33,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GatherElements
 
@@ -90,13 +90,13 @@ def make_node(
             and op_rep_param['param_name'] == graph_node.inputs[1].name:
             indices_perm = op_rep_param.get('pre_process_transpose_perm', None)
     target_perm = indices_perm if indices_perm is not None else params_perm
-    if target_perm is not None:
+    if isinstance(target_perm, (list, tuple)) and all(isinstance(p, int) for p in target_perm):
         try:
             rank = len(indices_tensor.shape) if hasattr(indices_tensor, "shape") else None
             if rank is None or rank == len(target_perm):
                 indices_tensor = transpose_with_flexing_deterrence(
                     input_tensor=indices_tensor,
-                    perm=target_perm,
+                    perm=list(target_perm),
                     **kwargs,
                 )
         except Exception:
@@ -111,7 +111,7 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -147,16 +147,8 @@ def make_node(
                 tf.constant([[0], [axis]]),
                 tf.constant([axis, 0])
             )
-            data_swaped = transpose_with_flexing_deterrence(
-                input_tensor=target_tensor,
-                perm=axis_perm,
-                **kwargs,
-            )
-            index_swaped = transpose_with_flexing_deterrence(
-                input_tensor=target_indices,
-                perm=axis_perm,
-                **kwargs,
-            )
+            data_swaped = tf.transpose(a=target_tensor, perm=axis_perm)
+            index_swaped = tf.transpose(a=target_indices, perm=axis_perm)
 
         idx_tensors_per_axis = [
             tf.range(tf.shape(index_swaped, index_swaped.dtype)[i]) \
@@ -174,12 +166,7 @@ def make_node(
         ]
         index_expanded = tf.concat(dim_expanded_idx_tensors_per_axis, axis=-1)
         gathered = tf.gather_nd(data_swaped, index_expanded)
-        transposed = \
-            transpose_with_flexing_deterrence(
-                input_tensor=gathered,
-                perm=axis_perm,
-                **kwargs,
-            )
+        transposed = tf.transpose(a=gathered, perm=axis_perm)
         return transposed
 
     # Workaround to special patterns with wrong transposition when all axes except batch size have the same value.
@@ -195,13 +182,15 @@ def make_node(
         and len(graph_node_input_2_shape) >= 2 \
         and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_1_shape]) == 0 \
         and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_2_shape]) == 0:
+        tf_model_inputs: List[Any] = []
+        val_model: Any = None
+        onnx_tensor_infos: Dict[str, np.ndarray] | None = None
 
         # Get the output tensor of one previous OP of TensorFlow only once
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(
                 tf_layers_dict=tf_layers_dict,
             )
-            val_model = None
             if not isinstance(input_tensor, np.ndarray) \
                 and not hasattr(input_tensor, "numpy"):
                 val_model = tf_keras.Model(
@@ -221,7 +210,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -312,7 +301,7 @@ def make_node(
                             ],
                         )
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = \
+                        tf_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=[

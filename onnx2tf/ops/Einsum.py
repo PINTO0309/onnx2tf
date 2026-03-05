@@ -20,7 +20,7 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
     acquisition_of_validation_data,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 
 @print_node_info
@@ -30,7 +30,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Einsum
 
@@ -63,12 +63,16 @@ def make_node(
     dtype = graph_node_output.dtype
 
     equation = graph_node.attrs['equation']
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     if onnx_tensor_infos_for_validation is not None \
         and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None \
         and graph_node_output.name in onnx_tensor_infos_for_validation:
-        onnx_output_shape = list(onnx_tensor_infos_for_validation[graph_node_output.name].shape)
-        graph_node_output.shape = onnx_output_shape
+        validated_shape = cast(
+            List[int | str | None],
+            [int(dim) for dim in onnx_tensor_infos_for_validation[graph_node_output.name].shape],
+        )
+        onnx_output_shape = validated_shape
+        graph_node_output.shape = validated_shape
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -109,18 +113,18 @@ def make_node(
             )
 
         min_abs_err = sys.maxsize
-        min_abs_err_perm_1: int = [idx for idx in range(len(input_tensor_1.shape))]
-        min_abs_err_perm_2: int = [idx for idx in range(len(input_tensor_2.shape))]
+        min_abs_err_perm_1: List[int] = [idx for idx in range(len(input_tensor_1.shape))]
+        min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2.shape))]
 
         def define_einsum(
             *,
             target_input_tensor_1: Any,
-            target_perm_1: List,
-            target_input_tensor_2: Any,
-            target_perm_2: List,
+                target_perm_1: List[int],
+                target_input_tensor_2: Any,
+                target_perm_2: List[int],
             target_name: str,
             equation: str,
-            **kwargs: Dict,
+            **kwargs: Any,
         ):
             return \
                 tf.einsum(
@@ -177,9 +181,20 @@ def make_node(
                     # Verify that the output shape matches that of ONNX
                     # If the combination of each value of a dimension is not correct,
                     # invalidate the normal processing judgment.
-                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                    onnx_output_shape_for_prod = [
+                        dim if isinstance(dim, int) else -1
+                        for dim in (onnx_output_shape or [])
+                    ]
+                    onnx_output_shape_prod = int(
+                        np.prod(onnx_output_shape_for_prod, dtype=np.int64)
+                    )
                     concat_output_shapes = list(dummy_concat.shape)
-                    concat_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in concat_output_shapes])
+                    concat_output_shape_prod = int(
+                        np.prod(
+                            [dim if isinstance(dim, int) else -1 for dim in concat_output_shapes],
+                            dtype=np.int64,
+                        )
+                    )
                     if onnx_output_shape_prod != concat_output_shape_prod:
                         del input_1
                         del input_2
@@ -202,7 +217,7 @@ def make_node(
                             )
 
                             # TF dummy inference
-                            tf_tensor_infos: Dict[Any] = \
+                            tf_tensor_infos: Dict[Any, Any] = \
                                 dummy_tf_inference(
                                     model=val_model,
                                     inputs=[

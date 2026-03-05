@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Any, Optional, Tuple, cast
 import random
 random.seed(0)
 import numpy as np
@@ -44,9 +44,7 @@ class HardSigmoid(Layer):
 class LeakyReLU(Layer):
     def __init__(self, alpha: float, beta: float):
         super(LeakyReLU, self).__init__()
-        self.alpha = 0.01
-        self.alpha = tf.convert_to_tensor(alpha) \
-            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.alpha: float = float(alpha)
 
     def call(self, x):
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#leakyrelu-16
@@ -90,9 +88,7 @@ class Tanh(Layer):
 class ThresholdedReLU(Layer):
     def __init__(self, alpha: float, beta: float):
         super(ThresholdedReLU, self).__init__()
-        self.alpha = 1.0
-        self.alpha = tf.convert_to_tensor(alpha) \
-            if self.alpha != alpha else tf.convert_to_tensor(self.alpha)
+        self.alpha: float = float(alpha)
 
     def call(self, x):
         return tf_keras.layers.ThresholdedReLU(theta=self.alpha)(x)
@@ -263,7 +259,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """RNN
 
@@ -386,22 +382,22 @@ def make_node(
     # Always three or more present if specified
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activations: List[str] =  graph_node.attrs.get('activations', [])
+    activations: Any = graph_node.attrs.get('activations', [])
     # Different value ranges for each activation function
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activation_alpha: List[float] = graph_node.attrs.get('activation_alpha', [0.01])
+    activation_alpha: Any = graph_node.attrs.get('activation_alpha', [0.01])
     # Different value ranges for each activation function
     #   forward, reverse: 3 items
     #   bidirectional: 6 items
-    activation_beta: List[float] = graph_node.attrs.get('activation_beta', [])
+    activation_beta: Any = graph_node.attrs.get('activation_beta', [])
 
     # Default activation function setting
-    tf_activations: List = None
-    tf_activation_alphas: List = None
-    tf_activation_betas: List = None
+    tf_activations: List[Any] = []
+    tf_activation_alphas: List[Any] = []
+    tf_activation_betas: List[Any] = []
 
-    clip: float =  graph_node.attrs.get('clip', None)
+    clip: Any = graph_node.attrs.get('clip', None)
     direction: str =  graph_node.attrs.get('direction', 'forward')
     if len(activations) == 0:
         # https://github.com/onnx/onnx/blob/main/docs/Changelog.md#rnn-14
@@ -436,8 +432,8 @@ def make_node(
             ),
         ] if direction == 'bidirectional' else tf_activations
 
-    hidden_size: int =  graph_node.attrs.get('hidden_size', 1)
-    layout: int = graph_node.attrs.get('layout', 0)
+    hidden_size: Any = graph_node.attrs.get('hidden_size', 1)
+    layout: Any = graph_node.attrs.get('layout', 0)
 
     # Need transpose for batchwise, X
     # layout==0
@@ -452,9 +448,11 @@ def make_node(
     graph_node_output1: gs.Variable = graph_node.outputs[0]
     shape1 = graph_node_output1.shape
     dtype1 = graph_node_output1.dtype
-    graph_node_output2 = None
+    graph_node_output2: Optional[gs.Variable] = None
+    shape2 = None
+    dtype2 = None
     if len(graph_node.outputs) >= 2:
-        graph_node_output2: gs.Variable = graph_node.outputs[1]
+        graph_node_output2 = graph_node.outputs[1]
         shape2 = graph_node_output2.shape
         dtype2 = graph_node_output2.dtype
 
@@ -551,6 +549,20 @@ def make_node(
         param_name='layout',
         **kwargs,
     )
+    X = tf.convert_to_tensor(X)
+    W = tf.convert_to_tensor(W)
+    R = tf.convert_to_tensor(R)
+    if B is None:
+        directions = 2 if direction == 'bidirectional' else 1
+        w_dtype = getattr(W, 'dtype', None)
+        b_dtype: tf.dtypes.DType = cast(tf.dtypes.DType, w_dtype) if w_dtype is not None else tf.float32
+        B = tf.zeros(
+            [directions, 2 * int(hidden_size)],
+            dtype=b_dtype,
+        )
+    B = tf.convert_to_tensor(B)
+    if initial_h is not None:
+        initial_h = tf.convert_to_tensor(cast(Any, initial_h))
 
     # Generation of TF OP
     forward_lstm = None
@@ -568,25 +580,34 @@ def make_node(
         initial_h = tf.transpose(initial_h, perm=[1, 0, 2]) if initial_h is not None else None
 
     # initial state
-    forward_initial_state = None
-    backward_initial_state = None
+    forward_initial_state: List[Any] = []
+    backward_initial_state: List[Any] = []
     if direction == 'forward':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
+        forward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))] if initial_h is not None else []
 
     elif direction == 'reverse':
-        backward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
+        backward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))] if initial_h is not None else []
 
     elif direction == 'bidirectional':
-        forward_initial_state = [tf.convert_to_tensor(initial_h[0])] if initial_h is not None else None
-        backward_initial_state = [tf.convert_to_tensor(initial_h[1])] if initial_h is not None else None
+        if initial_h is not None:
+            forward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=0, axis=0))]
+            backward_initial_state = [tf.convert_to_tensor(tf.gather(initial_h, indices=1, axis=0))]
+        else:
+            forward_initial_state = []
+            backward_initial_state = []
 
     # LSTM layer
+    output: Optional[Any] = None
+    hidden_state: Optional[Any] = None
     if direction == 'forward':
-        forward_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[1, hidden_size, input_size])
-        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[1, hidden_size, hidden_size])
-        forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:hidden_size]), shape=[1, hidden_size])
-        forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][hidden_size:hidden_size*2]), shape=[1, hidden_size])
-        forward_bias = forward_bias_W + forward_bias_R
+        w0 = tf.gather(W, indices=0, axis=0)
+        r0 = tf.gather(R, indices=0, axis=0)
+        b0 = tf.gather(B, indices=0, axis=0)
+        forward_weight = tf.reshape(tf.convert_to_tensor(w0), shape=[1, hidden_size, input_size])
+        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(r0), shape=[1, hidden_size, hidden_size])
+        forward_bias_W = tf.reshape(tf.slice(b0, [0], [hidden_size]), shape=[1, hidden_size])
+        forward_bias_R = tf.reshape(tf.slice(b0, [hidden_size], [hidden_size]), shape=[1, hidden_size])
+        forward_bias = tf.add(forward_bias_W, forward_bias_R)
         fW_i = forward_weight
         fR_i = forward_recurrence_weight
         fB_i = forward_bias
@@ -606,17 +627,24 @@ def make_node(
             go_backwards=False,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        output, hidden_state = forward_lstm(X, initial_state=forward_initial_state)
-        output = tf.expand_dims(output, axis=1)
-        hidden_state = tf.expand_dims(hidden_state, axis=0)
+        forward_result = cast(
+            Tuple[Any, Any],
+            forward_lstm(X, initial_state=forward_initial_state),
+        )
+        fwd_output, fwd_hidden_state = forward_result
+        output = tf.expand_dims(fwd_output, axis=1)
+        hidden_state = tf.expand_dims(fwd_hidden_state, axis=0)
 
     elif direction == 'reverse':
-        reverse_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[1, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[1, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:hidden_size]), shape=[1, hidden_size])
-        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[0][hidden_size:hidden_size*2]), shape=[1, hidden_size])
+        w0 = tf.gather(W, indices=0, axis=0)
+        r0 = tf.gather(R, indices=0, axis=0)
+        b0 = tf.gather(B, indices=0, axis=0)
+        reverse_weight = tf.reshape(tf.convert_to_tensor(w0), shape=[1, hidden_size, input_size])
+        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(r0), shape=[1, hidden_size, hidden_size])
+        reverse_bias_W = tf.reshape(tf.slice(b0, [0], [hidden_size]), shape=[1, hidden_size])
+        reverse_bias_R = tf.reshape(tf.slice(b0, [hidden_size], [hidden_size]), shape=[1, hidden_size])
 
-        reverse_bias = reverse_bias_W + reverse_bias_R
+        reverse_bias = tf.add(reverse_bias_W, reverse_bias_R)
         rW_i = reverse_weight
         rR_i = reverse_recurrence_weight
         rB_i = reverse_bias
@@ -636,28 +664,38 @@ def make_node(
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        output, hidden_state = reverse_lstm(X, initial_state=backward_initial_state)
-        output = tf.reverse(output, axis=[1])
-        output = tf.expand_dims(output, axis=1)
-        hidden_state = tf.expand_dims(hidden_state, axis=0)
+        reverse_result = cast(
+            Tuple[Any, Any],
+            reverse_lstm(X, initial_state=backward_initial_state),
+        )
+        rev_output, rev_hidden_state = reverse_result
+        rev_output_reversed = tf.reverse(rev_output, axis=[1])
+        output = tf.expand_dims(rev_output_reversed, axis=1)
+        hidden_state = tf.expand_dims(rev_hidden_state, axis=0)
 
     elif direction == 'bidirectional':
-        forward_weight = tf.reshape(tf.convert_to_tensor(W[0]), shape=[1, hidden_size, input_size])
-        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[0]), shape=[1, hidden_size, hidden_size])
-        forward_bias_W = tf.reshape(tf.convert_to_tensor(B[0][:hidden_size]), shape=[1, hidden_size])
-        forward_bias_R = tf.reshape(tf.convert_to_tensor(B[0][hidden_size:hidden_size*2]), shape=[1, hidden_size])
-        forward_bias = forward_bias_W + forward_bias_R
+        w0 = tf.gather(W, indices=0, axis=0)
+        r0 = tf.gather(R, indices=0, axis=0)
+        b0 = tf.gather(B, indices=0, axis=0)
+        forward_weight = tf.reshape(tf.convert_to_tensor(w0), shape=[1, hidden_size, input_size])
+        forward_recurrence_weight = tf.reshape(tf.convert_to_tensor(r0), shape=[1, hidden_size, hidden_size])
+        forward_bias_W = tf.reshape(tf.slice(b0, [0], [hidden_size]), shape=[1, hidden_size])
+        forward_bias_R = tf.reshape(tf.slice(b0, [hidden_size], [hidden_size]), shape=[1, hidden_size])
+        forward_bias = tf.add(forward_bias_W, forward_bias_R)
         fW_i = forward_weight
         fR_i = forward_recurrence_weight
         fB_i = forward_bias
         forward_kernel = tf.reshape(tf.transpose(fW_i, perm=[2, 0, 1]), shape=[input_size, -1])
         forward_recurrent_kernel = tf.reshape(tf.transpose(fR_i, perm=[2, 0, 1]), shape=[hidden_size, -1])
 
-        reverse_weight = tf.reshape(tf.convert_to_tensor(W[1]), shape=[1, hidden_size, input_size])
-        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(R[1]), shape=[1, hidden_size, hidden_size])
-        reverse_bias_W = tf.reshape(tf.convert_to_tensor(B[1][:hidden_size]), shape=[1, hidden_size])
-        reverse_bias_R = tf.reshape(tf.convert_to_tensor(B[1][hidden_size:hidden_size*2]), shape=[1, hidden_size])
-        reverse_bias = reverse_bias_W + reverse_bias_R
+        w1 = tf.gather(W, indices=1, axis=0)
+        r1 = tf.gather(R, indices=1, axis=0)
+        b1 = tf.gather(B, indices=1, axis=0)
+        reverse_weight = tf.reshape(tf.convert_to_tensor(w1), shape=[1, hidden_size, input_size])
+        reverse_recurrence_weight = tf.reshape(tf.convert_to_tensor(r1), shape=[1, hidden_size, hidden_size])
+        reverse_bias_W = tf.reshape(tf.slice(b1, [0], [hidden_size]), shape=[1, hidden_size])
+        reverse_bias_R = tf.reshape(tf.slice(b1, [hidden_size], [hidden_size]), shape=[1, hidden_size])
+        reverse_bias = tf.add(reverse_bias_W, reverse_bias_R)
         rW_i = reverse_weight
         rR_i = reverse_recurrence_weight
         rB_i = reverse_bias
@@ -693,10 +731,16 @@ def make_node(
             go_backwards=True,
             enable_rnn_unroll=enable_rnn_unroll,
         )
-        forward_output, forward_h = \
-            forward_lstm(X, initial_state=forward_initial_state)
-        reverse_output, reverse_h = \
-            reverse_lstm(X, initial_state=backward_initial_state)
+        forward_result = cast(
+            Tuple[Any, Any],
+            forward_lstm(X, initial_state=forward_initial_state),
+        )
+        reverse_result = cast(
+            Tuple[Any, Any],
+            reverse_lstm(X, initial_state=backward_initial_state),
+        )
+        forward_output, forward_h = forward_result
+        reverse_output, reverse_h = reverse_result
         output = tf.concat(
             values=[
                 tf.expand_dims(forward_output, axis=1),
@@ -711,6 +755,7 @@ def make_node(
             ],
             axis=0,
         )
+    assert output is not None and hidden_state is not None
 
     if len(output.shape) == 4:
         output = tf.transpose(output, perm=[2,1,0,3])

@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -34,13 +35,15 @@ def _type_proto_to_spec(type_proto):
                 dims.append(dim.dim_value)
             else:
                 dims.append(None)
-        return tf.TensorSpec(shape=dims, dtype=tf_dtype)
+        tensor_spec = cast(Any, tf.TensorSpec)
+        return tensor_spec(shape=dims, dtype=tf_dtype)
 
     if hasattr(type_proto, 'sequence_type') and type_proto.HasField('sequence_type'):
         elem_spec = _type_proto_to_spec(type_proto.sequence_type.elem_type)
         if isinstance(elem_spec, tf.TensorSpec):
             elem_shape = list(elem_spec.shape)
-            return tf.RaggedTensorSpec(
+            ragged_tensor_spec = cast(Any, tf.RaggedTensorSpec)
+            return ragged_tensor_spec(
                 shape=[None] + elem_shape,
                 dtype=elem_spec.dtype,
                 ragged_rank=1,
@@ -55,7 +58,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Optional
 

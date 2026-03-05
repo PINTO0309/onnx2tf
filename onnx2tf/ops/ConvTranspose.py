@@ -1,3 +1,4 @@
+from typing import Any, List, Optional, cast
 import sys
 import random
 random.seed(0)
@@ -28,7 +29,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ConvTranspose
 
@@ -40,7 +41,7 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
+    graph_node_input = graph_node.inputs[0]
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     before_op_output_shape_trans = \
@@ -77,7 +78,7 @@ def make_node(
         normalized_shape = []
         for dim in shape:
             if hasattr(dim, 'value'):
-                dim = dim.value
+                dim = cast(Any, dim).value
             if isinstance(dim, np.generic):
                 dim = dim.item()
             if isinstance(dim, str):
@@ -133,6 +134,9 @@ def make_node(
     # Param replacement - OP replacement
     op_rep_params = kwargs.get('op_rep_params', [])
     output_shape_ = None
+    strides_ = None
+    padding_ = 'SAME'
+    dilations_ = None
     for op_rep_param in op_rep_params:
         if op_rep_param['param_target'] == 'op':
             output_shape_ = op_rep_param.get('output_shape', None)
@@ -169,9 +173,11 @@ def make_node(
             and len(pads) == (2 * spatial_size) \
             and all(graph_node_input_shape[i + 2] is not None for i in range(spatial_size))
         if can_estimate_output_shape:
+            weight_shape_onnx = _normalize_shape(graph_node.inputs[1].shape)
+            output_channels = weight_shape_onnx[0] if weight_shape_onnx is not None and len(weight_shape_onnx) > 0 else None
             graph_node_output_shape = \
-                [graph_node_input_shape[0]] + [graph_node.inputs[1].shape[0]] + \
-                [ (strides[i] * (graph_node_input_shape[i+2] - 1) + dilations[i] * (kernel_shape[i] - 1) + \
+                [graph_node_input_shape[0]] + [output_channels] + \
+                [ (strides[i] * (int(cast(Any, graph_node_input_shape[i+2])) - 1) + dilations[i] * (kernel_shape[i] - 1) + \
                     1 + output_padding[i] - pads[2*i] - pads[2*i+1]) for i in range(spatial_size)]
         else:
             weight_shape_onnx = _normalize_shape(graph_node.inputs[1].shape)
@@ -288,6 +294,7 @@ def make_node(
 
     # deal with grouped convolution (TF-Lite does not support grouped transposed convolution)
     group = graph_node.attrs.get('group', 1)
+    bias_splits = []
     if group == 1:
         input_tensor_splits = [input_tensor]
         weight_splits = [input_weights]
@@ -295,17 +302,26 @@ def make_node(
         if input_bias is not None:
             bias_splits = [input_bias]
     else:
-        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        input_tensor_splits = cast(
+            List[Any],
+            tf.split(input_tensor, num_or_size_splits=group, axis=-1),
+        )
+        weight_splits = cast(
+            List[Any],
+            tf.split(input_weights, num_or_size_splits=group, axis=-1),
+        )
 
         if input_bias is not None:
-            bias_splits = tf.split(input_bias, num_or_size_splits=group, axis=-1)
+            bias_splits = cast(
+                List[Any],
+                tf.split(input_bias, num_or_size_splits=group, axis=-1),
+            )
 
     conv_rs = None
     convolved = []
     for i, (input_tensor_split, weight_split) in enumerate(zip(input_tensor_splits, weight_splits)):
         if output_shape_ is None:
-            split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]]
+            split_conv_output_shape = tf_output_shape[:-1] + [weight_split.shape[spatial_size]] if tf_output_shape is not None else None
             # Normal ConvTranspose
             try:
                 conv_rs = conv_func(
@@ -329,14 +345,14 @@ def make_node(
                             conv_rs = conv_func(
                                 input=transpose_with_flexing_deterrence(
                                     input_tensor=input_tensor_split,
-                                    perm=tensor_1_candidate_for_transposition,
+                                    perm=list(tensor_1_candidate_for_transposition),
                                     **kwargs,
                                 ),
                                 filters=transpose_with_flexing_deterrence(
                                     input_tensor=weight_split \
                                         if not isinstance(weight_split, np.ndarray) \
                                             else tf.convert_to_tensor(weight_split),
-                                    perm=tensor_2_candidate_for_transposition,
+                                    perm=list(tensor_2_candidate_for_transposition),
                                     **kwargs,
                                 ),
                                 output_shape=split_conv_output_shape,
@@ -355,6 +371,8 @@ def make_node(
 
         else:
             # OP replacement
+            if strides_ is None or dilations_ is None:
+                raise ValueError(f'ConvTranspose replacement requires strides and dilations. node.name: {graph_node.name}')
             conv_rs = conv_func(
                 input=input_tensor_split,
                 filters=weight_split \
@@ -368,6 +386,8 @@ def make_node(
 
         # add split bias to combined convolution for 1d and 2d
         if input_bias is not None and spatial_size != 3:
+            if group == 1:
+                bias_splits = [input_bias]
             conv_rs = tf.add(conv_rs, bias_splits[i])
 
         convolved.append(conv_rs)
@@ -381,10 +401,16 @@ def make_node(
             conv_rs = tf.add(conv_rs, input_bias)
 
     if pad_mode == "VALID" and output_shape_ is None:
+        assert conv_rs is not None
+        conv_rs = tf.convert_to_tensor(conv_rs)
+        conv_rs_shape = conv_rs.shape
+        conv_rs_shape_list = conv_rs_shape.as_list() if conv_rs_shape.rank is not None else None
         # remove pads
         # Add slice if needed
         # pads = [1,2,3,4,5,6] -> [begin0,begin1,begin2,end0,end1,end2]
-        if max(pads) > 0 and None not in conv_rs.shape[1:input_tensor_rank-1]:
+        if max(pads) > 0 \
+            and conv_rs_shape_list is not None \
+            and all(dim is not None for dim in conv_rs_shape_list[1:input_tensor_rank-1]):
             # Cut padding sections from the front and back of each sparsal dimension
             begin_ = \
                 [0] \
@@ -395,7 +421,7 @@ def make_node(
             end_ = \
                 [0] \
                 + [
-                    conv_rs.shape[conv_idx+1] - pads[pad_idx] \
+                    (int(cast(Any, conv_rs_shape[conv_idx+1])) if isinstance(conv_rs_shape[conv_idx+1], int) else 0) - pads[pad_idx] \
                         for conv_idx, pad_idx in enumerate(range(spatial_size, spatial_size*2))
                 ] \
                 + [0]

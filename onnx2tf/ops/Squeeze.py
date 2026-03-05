@@ -1,3 +1,4 @@
+from typing import Any
 import copy
 import random
 random.seed(0)
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Squeeze
 
@@ -60,7 +61,7 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     input_tensor_shape = input_tensor.shape
     tensor_rank = len(input_tensor_shape) \
-        if input_tensor_shape != tf.TensorShape(None) else 1
+        if not (isinstance(input_tensor_shape, tf.TensorShape) and input_tensor_shape.rank is None) else 1
     input_nhwc = False
     if isinstance(graph_node_input_1, gs.Variable):
         input_nhwc = tf_layers_dict.get(graph_node_input_1.name, {}).get('nhwc', False)

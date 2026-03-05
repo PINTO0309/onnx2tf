@@ -184,14 +184,14 @@ def _extract_sample_from_test_data_nhwc(
         target_h = int(expected_shape[2]) if int(expected_shape[2]) > 0 else sample.shape[1]
         target_w = int(expected_shape[3]) if int(expected_shape[3]) > 0 else sample.shape[2]
         if sample.shape[1] != target_h or sample.shape[2] != target_w:
-            sample = tf.image.resize(sample, [target_h, target_w]).numpy()
+            sample = np.asarray(tf.image.resize(sample, [target_h, target_w]))
         sample = np.transpose(sample, [0, 3, 1, 2])
     # ONNX input is NHWC
     elif expected_shape[3] == 3:
         target_h = int(expected_shape[1]) if int(expected_shape[1]) > 0 else sample.shape[1]
         target_w = int(expected_shape[2]) if int(expected_shape[2]) > 0 else sample.shape[2]
         if sample.shape[1] != target_h or sample.shape[2] != target_w:
-            sample = tf.image.resize(sample, [target_h, target_w]).numpy()
+            sample = np.asarray(tf.image.resize(sample, [target_h, target_w]))
     else:
         raise ValueError(
             "test_data_nhwc_path can only be used for 3-channel image inputs. "
@@ -250,6 +250,8 @@ def evaluate_split_manifest_outputs(
         raise ValueError("Final split partition has no declared outputs.")
 
     has_quantized_outputs = False
+    ref_interpreter: Optional[Any] = None
+    onnx_session: Optional[Any] = None
     if reference_mode == "unsplit_tflite":
         if reference_tflite_path is None:
             raise ValueError("reference_tflite_path is required for reference_mode='unsplit_tflite'.")
@@ -345,6 +347,8 @@ def evaluate_split_manifest_outputs(
         )
 
         if reference_mode == "unsplit_tflite":
+            if ref_interpreter is None:
+                raise ValueError("Reference interpreter is not initialized.")
             ref_outputs = _run_tflite_model(
                 interpreter=ref_interpreter,
                 model_input_names=onnx_input_names,
@@ -353,6 +357,8 @@ def evaluate_split_manifest_outputs(
                 compare_mode=resolved_compare_mode,
             )
         else:
+            if onnx_session is None:
+                raise ValueError("ONNX session is not initialized.")
             onnx_outputs = onnx_session.run(onnx_output_names, sample_inputs)
             onnx_outputs_map = {
                 name: value for name, value in zip(onnx_output_names, onnx_outputs)

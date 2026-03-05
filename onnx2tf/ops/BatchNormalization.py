@@ -22,7 +22,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
 )
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, cast
 
 
 @print_node_info
@@ -32,7 +32,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """BatchNormalization
 
@@ -45,13 +45,14 @@ def make_node(
         optype, shape, dtype, tensorflow graph
     """
     # Inputs
-    X: gs.Variable = graph_node.inputs[0]
+    X = graph_node.inputs[0]
     scale = graph_node.inputs[1]
     B = graph_node.inputs[2]
     input_mean = graph_node.inputs[3]
     input_var = graph_node.inputs[4]
     # Outputs
     Y: gs.Variable = graph_node.outputs[0]
+    y_shape_for_transpose = Y.shape if Y.shape is not None and None not in Y.shape and Y.shape != [] else None
     if len(graph_node.outputs) > 1:
         graph_node.outputs = [graph_node.outputs[0]]
 
@@ -93,7 +94,7 @@ def make_node(
     nhwc: bool = tf_layers_dict[X.name]['nhwc'] \
         if isinstance(X, gs.Variable) and 'nhwc' in tf_layers_dict[X.name].keys() else False
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -172,7 +173,7 @@ def make_node(
         if not nhwc \
             and graph_node.outputs[0].shape is not None \
             and sum([1 if isinstance(s, str) else 0 for s in graph_node.outputs[0].shape]) == 0 \
-            and np.prod(graph_node.outputs[0].shape) != np.prod(tf_layers_dict[Y.name]['tf_node'].shape) \
+            and np.prod(cast(Any, graph_node.outputs[0].shape)) != np.prod(cast(Any, tf_layers_dict[Y.name]['tf_node'].shape)) \
             and (
                 (mean.shape is not None and len(mean.shape) == 1) \
                     or (var.shape is not None and len(var.shape) == 1) \
@@ -285,11 +286,12 @@ def make_node(
     if graph_node_input_1_shape is not None:
 
         # Get the output tensor of one previous OP of TensorFlow only once
+        tf_model_inputs: List[Any] = []
+        val_model: Any = None
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(
                 tf_layers_dict=tf_layers_dict,
             )
-            val_model = None
             if not isinstance(input_tensor, np.ndarray):
                 val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
@@ -307,7 +309,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -316,8 +318,10 @@ def make_node(
                     )
             except Exception as ex:
                 pass
-            del val_model
+            if val_model is not None:
+                del val_model
 
+        onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
         # Get np.ndarray for validation
         validation_data = None
         if not disable_strict_mode:
@@ -328,7 +332,6 @@ def make_node(
                     validation_data = copy.deepcopy(input_tensor)
 
             # Get ONNX inference results
-            onnx_tensor_infos = None
             if onnx_tensor_infos_for_validation is not None \
                 and onnx_tensor_infos_for_validation.get(Y.name, None) is not None:
                 onnx_tensor_infos = {
@@ -372,60 +375,52 @@ def make_node(
                                         transpose_with_flexing_deterrence(
                                             input_tensor=mean,
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ) if not isinstance(mean, np.ndarray) else \
                                         transpose_with_flexing_deterrence(
                                             input_tensor=tf.convert_to_tensor(mean),
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ),
                                     variance=\
                                         transpose_with_flexing_deterrence(
                                             input_tensor=var,
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ) if not isinstance(var, np.ndarray) else \
                                         transpose_with_flexing_deterrence(
                                             input_tensor=tf.convert_to_tensor(var),
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ),
                                     offset=\
                                         transpose_with_flexing_deterrence(
                                             input_tensor=offset,
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ) if not isinstance(offset, np.ndarray) else \
                                         transpose_with_flexing_deterrence(
                                             input_tensor=tf.convert_to_tensor(offset),
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ),
                                     scale=\
                                         transpose_with_flexing_deterrence(
                                             input_tensor=scale,
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ) if not isinstance(scale, np.ndarray) else \
                                         transpose_with_flexing_deterrence(
                                             input_tensor=tf.convert_to_tensor(scale),
                                             perm=min_abs_err_perm_1,
-                                            output_shape=Y.shape \
-                                                if None not in Y.shape and Y.shape != [] else None,
+                                            output_shape=y_shape_for_transpose,
                                             **kwargs,
                                         ),
                                     variance_epsilon=epsilon,
@@ -433,7 +428,7 @@ def make_node(
                             ],
                         )
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = \
+                        tf_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=[
@@ -484,60 +479,52 @@ def make_node(
                                 transpose_with_flexing_deterrence(
                                     input_tensor=mean,
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ) if not isinstance(mean, np.ndarray) else \
                                 transpose_with_flexing_deterrence(
                                     input_tensor=tf.convert_to_tensor(mean),
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ),
                             variance=\
                                 transpose_with_flexing_deterrence(
                                     input_tensor=var,
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ) if not isinstance(var, np.ndarray) else \
                                 transpose_with_flexing_deterrence(
                                     input_tensor=tf.convert_to_tensor(var),
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ),
                             offset=\
                                 transpose_with_flexing_deterrence(
                                     input_tensor=offset,
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ) if not isinstance(offset, np.ndarray) else \
                                 transpose_with_flexing_deterrence(
                                     input_tensor=tf.convert_to_tensor(offset),
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ),
                             scale=\
                                 transpose_with_flexing_deterrence(
                                     input_tensor=scale,
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ) if not isinstance(scale, np.ndarray) else \
                                 transpose_with_flexing_deterrence(
                                     input_tensor=tf.convert_to_tensor(scale),
                                     perm=min_abs_err_perm_1,
-                                    output_shape=Y.shape \
-                                        if None not in Y.shape and Y.shape != [] else None,
+                                    output_shape=y_shape_for_transpose,
                                     **kwargs,
                                 ),
                             variance_epsilon=epsilon,

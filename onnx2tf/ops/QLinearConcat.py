@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -24,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """QLinearConcat
 
@@ -44,7 +45,7 @@ def make_node(
         if shape is None:
             return None
         if isinstance(shape, tf.TensorShape):
-            if shape == tf.TensorShape(None):
+            if shape.rank is None:
                 return None
             return shape.rank
         if hasattr(shape, 'rank'):
@@ -105,7 +106,7 @@ def make_node(
                 return None
         normalized_shape = []
         for dim in shape:
-            if hasattr(dim, 'value'):
+            if not isinstance(dim, (int, type(None))) and hasattr(dim, 'value'):
                 dim = dim.value
             if isinstance(dim, np.generic):
                 dim = dim.item()
@@ -281,7 +282,7 @@ def make_node(
 
     def _shape_list(tensor):
         shape = getattr(tensor, 'shape', None)
-        if shape is None or shape == tf.TensorShape(None):
+        if shape is None or (isinstance(shape, tf.TensorShape) and shape.rank is None):
             return None
         shape = list(shape)
         normalized = []
@@ -349,7 +350,7 @@ def make_node(
         ranks = []
         shapes = []
         for val in values:
-            if val.shape is None or val.shape == tf.TensorShape(None):
+            if val.shape is None or (isinstance(val.shape, tf.TensorShape) and val.shape.rank is None):
                 return None
             shape_list = list(val.shape)
             ranks.append(len(shape_list))
@@ -480,7 +481,7 @@ def make_node(
                 raise
 
     output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
-    if output_tensor_shape != tf.TensorShape(None):
+    if not (isinstance(output_tensor_shape, tf.TensorShape) and output_tensor_shape.rank is None):
         output_tensor_rank = len(output_tensor_shape)
         if graph_node.outputs[0].shape is not None \
             and axis != 0 \
@@ -496,8 +497,11 @@ def make_node(
                                 axis=dummy_axis,
                                 name=graph_node.name,
                             )
-                        dummy_output_shape = dummy_concat_tensor.shape
-                        if shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
+                        dummy_output_shape = getattr(dummy_concat_tensor, 'shape', None)
+                        if dummy_output_shape is not None and shape_is_equal_ignore_order(
+                            list(graph_node.outputs[0].shape),
+                            list(dummy_output_shape),
+                        ):
                             matched_axes.append(dummy_axis)
                     except:
                         pass

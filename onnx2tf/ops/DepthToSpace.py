@@ -21,7 +21,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
 )
-from typing import List, Dict, Any
+from typing import List, Dict, Any, cast
 
 
 @print_node_info
@@ -31,7 +31,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """DepthToSpace
 
@@ -122,7 +122,7 @@ def make_node(
                 name=graph_node.name,
         )
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -137,13 +137,16 @@ def make_node(
         and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_1_shape]) == 0:
 
         tensor_rank = len(graph_node_input_1_shape)
+        min_abs_err_perm_1: List[int] = [idx for idx in range(tensor_rank)]
+        tf_model_inputs: List[Any] = []
+        val_model: Any = None
+        onnx_tensor_infos: Dict[str, np.ndarray] | None = None
 
         # Get the output tensor of one previous OP of TensorFlow only once
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(
                 tf_layers_dict=tf_layers_dict,
             )
-            val_model = None
             if not isinstance(input_tensor, np.ndarray):
                 val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
@@ -161,7 +164,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -182,7 +185,6 @@ def make_node(
                     validation_data = copy.deepcopy(input_tensor)
 
             # Get ONNX inference results
-            onnx_tensor_infos = None
             if onnx_tensor_infos_for_validation is not None \
                 and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                 onnx_tensor_infos = {
@@ -226,7 +228,7 @@ def make_node(
                                 ],
                             )
                         elif mode == "CRD":
-                            input_shape = input.shape
+                            input_shape = cast(Any, input).shape
                             batch, channel = input_shape[0], input_shape[-1]
                             height, width = input_shape[1], input_shape[2]
                             csize = channel // (blocksize**2)
@@ -253,7 +255,7 @@ def make_node(
                             )
 
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = \
+                        tf_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=[

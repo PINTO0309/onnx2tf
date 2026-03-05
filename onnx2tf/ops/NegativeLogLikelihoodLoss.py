@@ -1,3 +1,4 @@
+from typing import Any, cast
 import sys
 import random
 random.seed(0)
@@ -22,7 +23,9 @@ from onnx2tf.utils.logging import *
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -46,7 +49,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """NegativeLogLikelihoodLoss
 
@@ -146,17 +149,20 @@ def make_node(
         )
 
     # Generation of TF OP
-    input_tensor = _as_tensor(input_tensor)
-    target_tensor = _as_tensor(target_tensor)
+    input_tensor = cast(tf.Tensor, _as_tensor(input_tensor))
+    target_tensor = cast(tf.Tensor, _as_tensor(target_tensor))
     if weight_tensor is not None:
-        weight_tensor = _as_tensor(weight_tensor)
+        weight_tensor = cast(tf.Tensor, _as_tensor(weight_tensor))
 
     log_prob = input_tensor
     log_prob, _ = _move_class_to_last(log_prob, class_axis)
 
     depth = log_prob.shape[-1]
     if depth is None:
-        depth = tf.shape(log_prob)[-1]
+        depth = tf.gather(
+            tf.shape(log_prob, out_type=tf.int32),
+            indices=tf.subtract(tf.rank(log_prob), 1),
+        )
     depth = tf.cast(depth, tf.int32)
 
     labels = tf.cast(target_tensor, tf.int32)

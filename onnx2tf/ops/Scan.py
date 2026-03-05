@@ -1,3 +1,4 @@
+from typing import Any, cast
 import re
 import sys
 import random
@@ -43,7 +44,9 @@ def _to_tf_dtype(dtype):
 def _as_tensor(value):
     if isinstance(value, np.ndarray):
         return tf.convert_to_tensor(value)
-    if isinstance(value, (np.generic, int, float, bool, str, bytes)):
+    if isinstance(value, np.generic):
+        return tf.convert_to_tensor(value.item())
+    if isinstance(value, (int, float, bool, str, bytes)):
         return tf.convert_to_tensor(value)
     return value
 
@@ -52,12 +55,12 @@ def _shape_invariant(value):
     try:
         shape = value.shape
     except Exception:
-        return tf.TensorShape(None)
+        return tf.TensorShape(cast(Any, None))
     if shape is None:
-        return tf.TensorShape(None)
+        return tf.TensorShape(cast(Any, None))
     if isinstance(shape, tf.TensorShape):
         if shape.rank is None:
-            return tf.TensorShape(None)
+            return tf.TensorShape(cast(Any, None))
         return tf.TensorShape([None for _ in range(shape.rank)])
     return tf.TensorShape([None for _ in range(len(shape))])
 
@@ -76,7 +79,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Scan
 
@@ -255,7 +258,11 @@ def make_node(
         sys.exit(1)
 
     # Determine sequence length from the first scan input
-    sequence_length = tf.shape(scan_input_tensors[0])[converted_scan_input_axes[0]]
+    first_scan_input = cast(tf.Tensor, scan_input_tensors[0])
+    sequence_length = tf.gather(
+        tf.shape(first_scan_input, out_type=tf.int32),
+        indices=int(converted_scan_input_axes[0]),
+    )
     sequence_length = tf.cast(sequence_length, tf.int32)
 
     scan_outputs_init = []
@@ -274,7 +281,7 @@ def make_node(
                 element_shape=elem_shape,
             )
         )
-    scan_outputs_shapes = [tf.TensorShape(None) for _ in scan_outputs_init]
+    scan_outputs_shapes = [tf.TensorShape(cast(Any, None)) for _ in scan_outputs_init]
 
     state_shapes = [_shape_invariant(v) for v in state_values]
     iter_cnt_init = tf.constant(0, dtype=tf.int32)
@@ -285,7 +292,7 @@ def make_node(
             axis = converted_scan_input_axes[i]
             direction = int(scan_input_directions[i])
             if direction == 1:
-                idx = sequence_length - 1 - iter_cnt
+                idx = tf.subtract(tf.subtract(sequence_length, 1), iter_cnt)
             else:
                 idx = iter_cnt
             scan_elems.append(
@@ -350,14 +357,14 @@ def make_node(
         for i, ta in enumerate(scan_outputs_vals):
             direction = int(scan_output_directions[i])
             if direction == 1:
-                write_idx = sequence_length - 1 - iter_cnt
+                write_idx = tf.subtract(tf.subtract(sequence_length, 1), iter_cnt)
             else:
                 write_idx = iter_cnt
             updated_scan_outputs.append(
                 ta.write(write_idx, scan_out_elems[i])
             )
 
-        return [iter_cnt + 1, new_state_vals, updated_scan_outputs]
+        return [tf.add(iter_cnt, 1), new_state_vals, updated_scan_outputs]
 
     def condition(iter_cnt, state_vals, scan_outputs_vals):
         return tf.less(iter_cnt, sequence_length)
@@ -383,8 +390,9 @@ def make_node(
     for i, ta in enumerate(scan_outputs_final):
         out_tensor = ta.stack()
         out_rank = out_tensor.shape.rank
-        if out_rank is None and scan_outputs[i].shape is not None:
-            out_rank = len(scan_outputs[i].shape)
+        scan_output_shape = scan_outputs[i].shape
+        if out_rank is None and scan_output_shape is not None:
+            out_rank = len(scan_output_shape)
         axis = int(scan_output_axes[i])
         if out_rank is not None:
             axis = axis if axis >= 0 else axis + out_rank

@@ -33,7 +33,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """GridSample
 
@@ -60,7 +60,7 @@ def make_node(
     graph_node_input_2 = get_constant_or_variable(
         graph_node.inputs[1],
         False \
-            if hasattr(graph_node.inputs[1], 'values') \
+            if isinstance(graph_node.inputs[1], gs.Constant) \
                 and isinstance(graph_node.inputs[1].values, np.ndarray) \
                     else before_op_output_shape_trans,
     )
@@ -705,7 +705,7 @@ def make_node(
                     )
 
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = \
+                    tf_tensor_infos: Dict[Any, Any] = \
                         dummy_tf_inference(
                             model=val_model,
                             inputs=[

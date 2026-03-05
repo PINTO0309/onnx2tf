@@ -5,7 +5,7 @@ np.random.seed(0)
 import tensorflow as tf
 import tf_keras
 import onnx2tf.gs as gs
-from typing import List
+from typing import List, Any
 from onnx2tf.utils.logging import *
 from onnx2tf.utils.common_functions import (
     print_node_info,
@@ -20,7 +20,7 @@ def make_node(
     keep_ncw_or_nchw_or_ncdhw_input_names: List[str],
     keep_nwc_or_nhwc_or_ndhwc_input_names: List[str],
     keep_shape_absolutely_input_names: List[str],
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """
 
@@ -60,7 +60,8 @@ def make_node(
     batch_size = kwargs.get('batch_size', None)
     graph_input_name = kwargs.get('subgraph_input_name', graph_input.name)
 
-    shape = graph_input.shape
+    graph_input_shape = graph_input.shape
+    shape: List[Any] = list(graph_input_shape) if graph_input_shape is not None else []
     dtype = graph_input.dtype if graph_input.dtype != np.float16 else np.float32
 
     # Overwrite batch or shapes
@@ -79,25 +80,25 @@ def make_node(
     if keep_shape_absolutely_input_names and graph_input_name in keep_shape_absolutely_input_names:
         absolutely_keep = True
     else:
-        if graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        if graph_input_shape is not None and len(shape) in [3, 4, 5] \
             and keep_ncw_or_nchw_or_ncdhw_input_names:
             if graph_input_name in keep_ncw_or_nchw_or_ncdhw_input_names:
                 ncw_nchw_ncdhw_keep = True
             else:
                 ncw_nchw_ncdhw_keep = False
-        elif graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        elif graph_input_shape is not None and len(shape) in [3, 4, 5] \
             and not keep_ncw_or_nchw_or_ncdhw_input_names:
             ncw_nchw_ncdhw_keep = False
         else:
             ncw_nchw_ncdhw_keep = True
 
-        if graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        if graph_input_shape is not None and len(shape) in [3, 4, 5] \
             and keep_nwc_or_nhwc_or_ndhwc_input_names:
             if graph_input_name in keep_nwc_or_nhwc_or_ndhwc_input_names:
                 nwc_nhwc_ndhwc_keep = True
             else:
                 nwc_nhwc_ndhwc_keep = False
-        elif graph_input.shape != tf.TensorShape(None) and len(graph_input.shape) in [3, 4, 5] \
+        elif graph_input_shape is not None and len(shape) in [3, 4, 5] \
             and not keep_nwc_or_nhwc_or_ndhwc_input_names:
             nwc_nhwc_ndhwc_keep = False
         else:
@@ -122,7 +123,7 @@ def make_node(
         force_input_boundary_transpose = False
 
     tf_input_shape = None
-    if graph_input.shape != tf.TensorShape(None) and len(shape) == 3:
+    if graph_input_shape is not None and len(shape) == 3:
         # 3D
         if force_input_boundary_transpose:
             tf_layers_dict[graph_input_name]['tf_node'] = \
@@ -160,7 +161,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,1,2]
 
-    elif graph_input.shape != tf.TensorShape(None) and len(shape) == 4:
+    elif graph_input_shape is not None and len(shape) == 4:
         # 4D
         if force_input_boundary_transpose:
             tf_layers_dict[graph_input_name]['tf_node'] = \
@@ -201,7 +202,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,1,2,3]
 
-    elif graph_input.shape != tf.TensorShape(None) and len(shape) == 5:
+    elif graph_input_shape is not None and len(shape) == 5:
         # 5D
         if force_input_boundary_transpose:
             tf_layers_dict[graph_input_name]['tf_node'] = \
@@ -245,7 +246,7 @@ def make_node(
             ]
             tf_layers_dict[graph_input_name]['ncw_nchw_ncdhw_perm'] = [0,1,2,3,4]
 
-    elif graph_input.shape != tf.TensorShape(None) and len(shape) > 0:
+    elif graph_input_shape is not None and len(shape) > 0:
         # Except scalar, 4D and 5D
         if ncw_nchw_ncdhw_keep \
             and keep_ncw_or_nchw_or_ncdhw_input_names \
@@ -253,7 +254,7 @@ def make_node(
             error_msg = f'' +\
                 Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input_shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
 
@@ -263,7 +264,7 @@ def make_node(
             error_msg = f'' +\
                 Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input_shape}'
             print(error_msg)
             assert not nwc_nhwc_ndhwc_keep, error_msg
 
@@ -289,7 +290,7 @@ def make_node(
             error_msg = f''+\
                 Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_ncw_or_nchw_or_ncdhw_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input_shape}'
             print(error_msg)
             assert not ncw_nchw_ncdhw_keep, error_msg
 
@@ -299,18 +300,18 @@ def make_node(
             error_msg = f'' +\
                 Color.RED(f'ERROR:') + ' ' +\
                 f'The keep_nwc_or_nhwc_or_ndhwc_input_names parameter only supports 3D/4D/5D input. ' +\
-                f'INPUT name: {graph_input_name} input_shape: {graph_input.shape}'
+                f'INPUT name: {graph_input_name} input_shape: {graph_input_shape}'
             print(error_msg)
             assert not nwc_nhwc_ndhwc_keep, error_msg
 
         tf_layers_dict[graph_input_name]['tf_node'] = \
             tf_keras.Input(
-                shape=shape if graph_input.shape != tf.TensorShape(None) else [None],
+                shape=shape if graph_input_shape is not None else [None],
                 name=graph_input_name,
                 dtype=dtype,
             )
         tf_layers_dict[graph_input_name]['op'] = tf_layers_dict[graph_input_name]['tf_node']
-        tf_input_shape = shape if graph_input.shape != tf.TensorShape(None) else [None]
+        tf_input_shape = shape if graph_input_shape is not None else [None]
 
     # The output_shape_trans stores the result of determining
     output_shape_trans = False

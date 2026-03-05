@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -25,7 +26,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """TopK
 
@@ -141,6 +142,8 @@ def make_node(
     )
 
     if axis != (tensor_rank-1):
+        if perm is None:
+            perm = [idx for idx in range(tensor_rank)]
         perm = [perm.index(idx) for idx in range(tensor_rank)]
         topked_values = \
             transpose_with_flexing_deterrence(

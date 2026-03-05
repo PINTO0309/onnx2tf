@@ -1,3 +1,4 @@
+from typing import Any
 import sys
 import random
 random.seed(0)
@@ -107,7 +108,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """DeformConv
 

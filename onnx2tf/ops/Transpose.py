@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Transpose
 
@@ -181,7 +182,16 @@ def make_node(
         'nwc_nhwc_ndhwc_keep': nwc_nhwc_ndhwc_keep,
     }
 
-    perm = list(perm) if perm is not None else None
+    if isinstance(perm, np.ndarray):
+        perm = list(perm)
+    elif isinstance(perm, tuple):
+        perm = list(perm)
+    elif isinstance(perm, list):
+        pass
+    elif perm is not None:
+        perm = [int(perm)]
+    else:
+        perm = [idx for idx in range(len(input_tensor_shape))]
 
     if not enable_space_to_depth:
         # Transpose
@@ -203,9 +213,7 @@ def make_node(
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             transpose_with_flexing_deterrence(
                 input_tensor=input_tensor,
-                perm=perm \
-                    if not isinstance(perm, np.ndarray) \
-                        else tf.convert_to_tensor(perm),
+                perm=perm,
                 output_shape=output_shape,
                 name=graph_node.name,
                 **kwargs,

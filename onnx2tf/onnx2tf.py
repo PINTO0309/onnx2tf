@@ -1000,7 +1000,7 @@ def fuse_expanded_qdq_to_qdq(
             shape=output_var.shape,
         )
         q_node = gs.Node(
-            op="QuantizeLinear",
+            op="QuantizeLinear" ,
             name=f"{mul2_node.name}_QuantizeLinear",
             inputs=[x, scale_const, zero_const],
             outputs=[quant_out],

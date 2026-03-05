@@ -34,7 +34,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ReduceMin
 
@@ -112,7 +112,7 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input_1.name].keys() else False
     }
 
-    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -122,6 +122,8 @@ def make_node(
     if onnx_tensor_infos_for_validation is not None \
         and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         # Get the output tensor of one previous OP of TensorFlow only once
+        tf_model_inputs: List[Any] = []
+        val_model: Any = None
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(tf_layers_dict=tf_layers_dict)
             val_model = None
@@ -139,7 +141,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -172,7 +174,7 @@ def make_node(
             # Shape Unmatch Error Mitigation Measures
             # Search for and transpose shapes that do not cause shape unmatch errors
             min_abs_err = sys.maxsize
-            min_abs_err_axes: List[int] = None
+            min_abs_err_axes: List[int] = []
             if isinstance(axes, list):
                 min_abs_err_axes = copy.deepcopy(axes)
             elif isinstance(axes, int):
@@ -182,10 +184,11 @@ def make_node(
             else:
                 min_abs_err_axes = axes
 
-            check_axes_tuples: List[Tuple] = list(itertools.combinations(list(range(tensor_rank)), len(axes)))
-            if tuple(axes) in check_axes_tuples:
-                check_axes_tuples.remove(tuple(axes))
-                check_axes_tuples.insert(0, tuple(axes))
+            axes_for_check = axes if isinstance(axes, list) else ([axes] if isinstance(axes, int) else list(axes))
+            check_axes_tuples: List[Tuple] = list(itertools.combinations(list(range(tensor_rank)), len(axes_for_check)))
+            if tuple(axes_for_check) in check_axes_tuples:
+                check_axes_tuples.remove(tuple(axes_for_check))
+                check_axes_tuples.insert(0, tuple(axes_for_check))
             check_axes = [list(check_axes_tuple) for check_axes_tuple in check_axes_tuples]
 
             # Verify that the output shape matches that of ONNX
@@ -197,7 +200,7 @@ def make_node(
                 target_onnx_output: np.ndarray = onnx_tensor_infos[graph_node.outputs[0].name]
                 target_onnx_output_shape = target_onnx_output.shape
             else:
-                target_onnx_output_shape = onnx_output_shape
+                target_onnx_output_shape = tuple(onnx_output_shape) if onnx_output_shape is not None else ()
 
             # Search for the axis with the smallest error
             for check_axis in check_axes:
@@ -223,16 +226,16 @@ def make_node(
                     ],
                 )
 
-                onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in target_onnx_output_shape])
+                onnx_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in target_onnx_output_shape])
                 val_model_output_shapes = list(val_model.output.shape)
-                val_model_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in val_model_output_shapes])
+                val_model_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in val_model_output_shapes])
                 if onnx_output_shape_prod != val_model_output_shape_prod:
                     del input
                     del val_model
                     continue
 
                 # TF dummy inference
-                tf_tensor_infos: Dict[Any] = \
+                tf_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=[

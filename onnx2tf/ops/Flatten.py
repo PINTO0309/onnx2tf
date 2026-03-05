@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -29,7 +30,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Flatten
 
@@ -113,8 +114,8 @@ def make_node(
 
     # Brute-force transpose to match ONNX dummy inference outputs when available.
     onnx_tensor_infos_for_validation = kwargs.get('onnx_tensor_infos_for_validation', None)
-    test_data_nhwc: np.ndarray = kwargs.get('test_data_nhwc', None)
-    custom_input_op_name_np_data_path: str = kwargs.get('custom_input_op_name_np_data_path', None)
+    test_data_nhwc: Any = kwargs.get('test_data_nhwc', None)
+    custom_input_op_name_np_data_path: Any = kwargs.get('custom_input_op_name_np_data_path', None)
     disable_strict_mode: bool = kwargs.get('disable_strict_mode', False)
     if not disable_strict_mode \
         and onnx_tensor_infos_for_validation is not None \
@@ -206,7 +207,12 @@ def make_node(
         and axis == input_tensor_rank - 1 \
         and isinstance(graph_node_output.shape[0], str):
         try:
-            dim_prod = int(np.prod(graph_node_output.shape[1:]))
+            dim_prod = int(
+                np.prod(
+                    [dim for dim in graph_node_output.shape[1:] if isinstance(dim, int)],
+                    dtype=np.int64,
+                )
+            )
             cal_shape = (-1, dim_prod)
         except:
             cal_shape = (1, -1)
@@ -235,14 +241,14 @@ def make_node(
 
     # If the output geometry is clear, overwrite with ONNX output geometry
     has_undefined_outputshape = output_shape is None
-    if not has_undefined_outputshape:
+    if output_shape is not None:
         has_none_outputshape = None in output_shape
         has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
         has_undefined_outputshape = has_none_outputshape or has_str_outputshape
     cal_shape = cal_shape if has_undefined_outputshape else output_shape
     input_tensor = transpose_with_flexing_deterrence(
         input_tensor=input_tensor,
-        perm=list(perm) if perm is not None else None,
+        perm=list(perm),
         **kwargs,
     )
 

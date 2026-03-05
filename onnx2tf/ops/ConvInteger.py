@@ -25,7 +25,7 @@ from onnx2tf.utils.common_functions import (
     get_tf_model_inputs,
     onnx_tf_tensor_validation,
 )
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, cast
 from onnx2tf.utils.logging import *
 
 INF_INDEX_VALUE: int = 4294967296
@@ -34,7 +34,7 @@ INF_INDEX_VALUE: int = 4294967296
 def _apply_zero_point(base, zero_point):
     base = tf.cast(base, tf.float32)
     zero_point = tf.cast(zero_point, tf.float32)
-    return base - zero_point
+    return tf.subtract(base, zero_point)
 
 
 @print_node_info
@@ -43,7 +43,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ConvInteger
 
@@ -110,8 +110,8 @@ def make_node(
         if isinstance(x_zero_point, gs.Variable) else x_zero_point
     w_zero_point = tf_layers_dict[w_zero_point.name]['tf_node'] \
         if isinstance(w_zero_point, gs.Variable) else w_zero_point
-    w_zero_point_shape = w_zero_point.shape
-    w_zero_point_rank = len(w_zero_point_shape)
+    w_zero_point_shape = w_zero_point.shape if w_zero_point is not None else None
+    w_zero_point_rank = len(w_zero_point_shape) if w_zero_point_shape is not None else 0
 
     # Apply x_zero_point first
     input_tensor = _apply_zero_point(input_tensor, x_zero_point) \
@@ -127,24 +127,28 @@ def make_node(
         process_shape = [1] + [input_weights.shape[i] for i in range(1, len(input_weights.shape))]
         for i in range(input_weights.shape[0]):
             out_tensor = _apply_zero_point(input_weights[i], w_zero_point[i])
-        tensor_list.append(tf.reshape(out_tensor, process_shape))
+            tensor_list.append(tf.reshape(out_tensor, process_shape))
         input_weights = tf.concat(tensor_list, 0)
 
+    input_tensor = tf.convert_to_tensor(input_tensor)
+    input_weights = tf.convert_to_tensor(input_weights)
     input_tensor_shape = input_tensor.shape
     input_tensor_rank = len(input_tensor_shape)
     spatial_size = input_tensor_rank - 2
     input_weights_shape = input_weights.shape
     auto_pad = graph_node.attrs.get('auto_pad', 'NOTSET')
     dilations = graph_node.attrs.get('dilations', [1] * spatial_size)
-    group = graph_node.attrs.get('group', 1)
+    group = int(graph_node.attrs.get('group', 1))
     pads = graph_node.attrs.get('pads', [0, 0] * spatial_size)
     strides = graph_node.attrs.get('strides', [1] * spatial_size)
 
     disable_group_convolution: bool = kwargs['disable_group_convolution']
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
+    onnx_tensor_infos: Optional[Dict[str, np.ndarray]] = None
+    validation_data = None
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {
@@ -204,11 +208,12 @@ def make_node(
         else:
             all_axes_same = True
             # Get the output tensor of one previous OP of TensorFlow only once
+            tf_model_inputs: List[Any] = []
+            val_model: Any = None
             if not disable_strict_mode:
                 tf_model_inputs = get_tf_model_inputs(
                     tf_layers_dict=tf_layers_dict,
                 )
-                val_model = None
                 if not isinstance(input_tensor, np.ndarray):
                     val_model = tf_keras.Model(
                         inputs=tf_model_inputs,
@@ -226,7 +231,7 @@ def make_node(
             tf_pre_tensor_infos = {}
             if not disable_strict_mode:
                 try:
-                    tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_pre_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
                         test_data_nhwc=test_data_nhwc,
@@ -234,10 +239,10 @@ def make_node(
                     )
                 except Exception as ex:
                     pass
-                del val_model
+                if val_model is not None:
+                    del val_model
 
             # Get np.ndarray for validation
-            validation_data = None
             if not disable_strict_mode:
                 if len(tf_pre_tensor_infos) == 1:
                     if not isinstance(input_tensor, np.ndarray):
@@ -246,7 +251,6 @@ def make_node(
                         validation_data = copy.deepcopy(input_tensor)
 
                 # Get ONNX inference results
-                onnx_tensor_infos = None
                 if onnx_tensor_infos_for_validation is not None \
                     and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                     onnx_tensor_infos = {
@@ -279,6 +283,7 @@ def make_node(
         if pads_axes_opposite_same \
             and input_tensor_rank >=2 \
             and graph_node.inputs[0].shape is not None \
+            and output_tensor_shape is not None \
             and graph_node.inputs[0].shape[2:] == output_tensor_shape[2:]:
             pad_mode = "SAME"
         elif pads != [0, 0] * spatial_size:
@@ -324,7 +329,14 @@ def make_node(
         depthwise = bool(group == input_tensor_shape[-1])
 
     if depthwise is True:
-        depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
+        depthwise_channels = input_weights_shape[3]
+        depthwise_channels_i = int(depthwise_channels) if isinstance(depthwise_channels, int) else 1
+        depthwise_filter_shape = [
+            input_weights_shape[0],
+            input_weights_shape[1],
+            -1,
+            depthwise_channels_i // int(group),
+        ]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
     input_weights = input_weights \
@@ -352,7 +364,7 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf_keras.initializers.constant(input_weights),
+                kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                 name=graph_node.name,
             )(input_tensor)
 
@@ -366,13 +378,19 @@ def make_node(
                 dilation_rate=dilations,
                 groups=group,
                 use_bias=False,
-                kernel_initializer=tf_keras.initializers.constant(input_weights),
+                kernel_initializer=cast(Any, tf_keras.initializers.constant(cast(Any, input_weights))),
                 name=graph_node.name,
             )(input_tensor)
 
     def sep_conv_nobias(input_tensor, input_weights, pad_mode, strides, dilations):
-        input_tensor_splits = tf.split(input_tensor, num_or_size_splits=group, axis=-1)
-        weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
+        input_tensor_splits = cast(
+            List[Any],
+            tf.split(input_tensor, num_or_size_splits=group, axis=-1),
+        )
+        weight_splits = cast(
+            List[Any],
+            tf.split(input_weights, num_or_size_splits=group, axis=-1),
+        )
         return \
             tf.concat(
                 values=[
@@ -493,7 +511,7 @@ def make_node(
 
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(input_tensor_rank)]
+    min_abs_err_perm_1: List[int] = [idx for idx in range(input_tensor_rank)]
 
     if not disable_strict_mode and all_axes_same:
         if onnx_tensor_infos is not None and validation_data is not None:
@@ -575,7 +593,7 @@ def make_node(
                         ],
                     )
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=[
                             input,

@@ -1,3 +1,4 @@
+from typing import Any, Tuple, cast
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """RoiAlign
 
@@ -133,7 +134,7 @@ def make_node(
             sampling_ratio,
             adaptive_ratio,
         ):
-            x0, y0, x1, y1 = tf.split(boxes, 4, axis=1)
+            x0, y0, x1, y1 = cast(Tuple[Any, Any, Any, Any], tf.split(boxes, 4, axis=1))
             if not adaptive_ratio:
                 crop_shape = (
                     crop_size[0] * sampling_ratio,
@@ -167,7 +168,14 @@ def make_node(
                 nh = (roi_height - 1) / tf.cast(image_shape[0] - 1, dtype=tf.float32)
             return tf.concat([ny0, nx0, ny0 + nh, nx0 + nw], axis=1)
 
-        image_shape = tf.shape(image)[1:3]
+        image_dynamic_shape = tf.shape(image, out_type=tf.int32)
+        image_shape = cast(
+            Tuple[Any, Any],
+            (
+                tf.gather(image_dynamic_shape, indices=1),
+                tf.gather(image_dynamic_shape, indices=2),
+            ),
+        )
         boxes = transform_fpcoor_for_tf(
             boxes=boxes,
             image_shape=image_shape,

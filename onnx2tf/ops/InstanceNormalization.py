@@ -24,6 +24,32 @@ from typing import Any, Dict
 from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
+def _instance_norm(
+    *,
+    x: Any,
+    scale: Any,
+    mean: Any,
+    variance: Any,
+    epsilon: Any,
+    bias: Any,
+) -> tf.Tensor:
+    x_tensor = tf.convert_to_tensor(x)
+    calc_dtype = x_tensor.dtype
+    scale_tensor = tf.cast(tf.convert_to_tensor(scale), dtype=calc_dtype)
+    mean_tensor = tf.cast(tf.convert_to_tensor(mean), dtype=calc_dtype)
+    variance_tensor = tf.cast(tf.convert_to_tensor(variance), dtype=calc_dtype)
+    epsilon_tensor = tf.cast(tf.convert_to_tensor(epsilon), dtype=calc_dtype)
+    bias_tensor = tf.cast(tf.convert_to_tensor(bias), dtype=calc_dtype)
+    normalized = tf.math.multiply(
+        scale_tensor,
+        tf.math.subtract(x_tensor, mean_tensor),
+    )
+    return tf.math.add(
+        tf.math.multiply(normalized, tf.math.rsqrt(tf.math.add(variance_tensor, epsilon_tensor))),
+        bias_tensor,
+    )
+
+
 @print_node_info
 @inverted_operation_enable_disable
 @get_replacement_parameter
@@ -31,7 +57,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """InstanceNormalization
 
@@ -102,7 +128,7 @@ def make_node(
     epsilon = graph_node.attrs.get('epsilon', 1e-05)
     epsilon = tf.convert_to_tensor(epsilon, dtype=tf.float32)
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -119,6 +145,9 @@ def make_node(
                 and 'nhwc' in tf_layers_dict[graph_node_input.name].keys() else False
     }
 
+    tf_model_inputs: list[Any] = []
+    val_model: Any = None
+    onnx_tensor_infos: Dict[str, np.ndarray] | None = None
     if onnx_tensor_infos_for_validation is not None \
         and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         # Get the output tensor of one previous OP of TensorFlow only once
@@ -126,7 +155,6 @@ def make_node(
             tf_model_inputs = get_tf_model_inputs(
                 tf_layers_dict=tf_layers_dict,
             )
-            val_model = None
             if not isinstance(input_tensor, np.ndarray):
                 val_model = tf_keras.Model(
                     inputs=tf_model_inputs,
@@ -144,7 +172,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+                tf_pre_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                     model=val_model,
                     inputs=tf_model_inputs,
                     test_data_nhwc=test_data_nhwc,
@@ -164,7 +192,6 @@ def make_node(
                     validation_data = copy.deepcopy(input_tensor)
 
             # Get ONNX inference results
-            onnx_tensor_infos = None
             if onnx_tensor_infos_for_validation is not None \
                 and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                 onnx_tensor_infos = {
@@ -186,7 +213,7 @@ def make_node(
 
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(input_tensor_rank)]
+    min_abs_err_perm_1: list[int] = [idx for idx in range(input_tensor_rank)]
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
 
     if not disable_strict_mode:
@@ -214,11 +241,18 @@ def make_node(
                             input,
                         ],
                         outputs=[
-                            scale * (input - mean) * tf.math.rsqrt(variance + epsilon) + B
+                            _instance_norm(
+                                x=input,
+                                scale=scale,
+                                mean=mean,
+                                variance=variance,
+                                epsilon=epsilon,
+                                bias=B,
+                            )
                         ],
                     )
                     # TF dummy inference
-                    tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    tf_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                         model=val_model,
                         inputs=[
                             input,
@@ -264,7 +298,14 @@ def make_node(
         input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
         mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
-            scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
+            _instance_norm(
+                x=input_tensor,
+                scale=scale,
+                mean=mean,
+                variance=variance,
+                epsilon=epsilon,
+                bias=B,
+            )
     except Exception as e:
         # Workaround for inconsistent "C" position
         input_tensor_rank = len(input_tensor.shape)
@@ -275,7 +316,14 @@ def make_node(
             input_tensor = tf.transpose(a=input_tensor, perm=perm)
             mean, variance = tf.nn.moments(input_tensor, axes=axes, keepdims=True)
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
-                scale * (input_tensor - mean) * tf.math.rsqrt(variance + epsilon) + B
+                _instance_norm(
+                    x=input_tensor,
+                    scale=scale,
+                    mean=mean,
+                    variance=variance,
+                    epsilon=epsilon,
+                    bias=B,
+                )
         else:
             raise
 

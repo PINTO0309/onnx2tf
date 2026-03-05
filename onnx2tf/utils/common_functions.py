@@ -32,12 +32,12 @@ import onnx2tf.gs as gs
 try:
     import onnxruntime as ort
 except Exception as ex:
-    pass
+    ort = None
 from onnx2tf.utils.logging import *
 from onnx2tf.utils.tempdir_cleanup import (
     make_managed_tempdir,
 )
-from typing import Any, List, Optional, Union, Tuple, Dict
+from typing import Any, List, Optional, Union, Tuple, Dict, cast
 from functools import wraps
 from collections import namedtuple
 from onnx2tf.utils.enums import (
@@ -227,8 +227,8 @@ def replace_parameter(
     value_before_replacement: Any,
     param_target: str,
     param_name: str,
-    **kwargs: Dict,
-):
+    **kwargs: Any,
+) -> Any:
     """Replace attributes, INPUT constants, and INPUT initializers with the specified values.
 
     Parameters
@@ -283,8 +283,8 @@ def pre_process_transpose(
     value_before_transpose: Any,
     param_target: str,
     param_name: str,
-    **kwargs: Dict,
-):
+    **kwargs: Any,
+) -> Any:
     """Add Transpose as a post-processing step for Reshape OP.
 
     Parameters
@@ -319,9 +319,9 @@ def post_process_transpose(
     value_before_transpose: Any,
     param_target: str,
     param_name: str,
-    graph_node: gs.Node = None,
-    **kwargs: Dict,
-):
+    graph_node: Optional[gs.Node] = None,
+    **kwargs: Any,
+) -> Any:
     """Add Transpose as a post-processing step for Reshape OP.
 
     Parameters
@@ -386,13 +386,13 @@ def make_tf_node_info(**kwargs):
     tf_node_info: dict
     """
     tf_node_info = {}
-    node_info: dict = kwargs.get('node_info', None)
+    node_info: Optional[dict] = kwargs.get('node_info', None)
     if node_info is not None:
         tf_op_type = node_info.get('tf_op_type', None)
         tf_node_info['tf_op_type'] = \
             tf_op_type.__name__ if hasattr(tf_op_type, '__name__') else \
             tf_op_type if isinstance(tf_op_type, str) else ''
-        tf_attrs: dict = node_info.get('tf_attrs', None)
+        tf_attrs: Optional[dict] = node_info.get('tf_attrs', None)
         if tf_attrs is not None:
             tf_node_info['tf_attrs'] = {
                 attr_key: {
@@ -401,7 +401,7 @@ def make_tf_node_info(**kwargs):
                     'val': attr_val,
                 } for attr_key, attr_val in tf_attrs.items()
             }
-        tf_inputs: dict = node_info.get('tf_inputs', None)
+        tf_inputs: Optional[dict] = node_info.get('tf_inputs', None)
         if tf_inputs is not None:
             tf_node_info['tf_inputs'] = {
                 input_key: {
@@ -416,7 +416,7 @@ def make_tf_node_info(**kwargs):
                             or isinstance(input_val, float) else None,
                 } for input_key, input_val in tf_inputs.items()
             }
-        tf_outputs: dict = node_info.get('tf_outputs', None)
+        tf_outputs: Optional[dict] = node_info.get('tf_outputs', None)
         if tf_outputs is not None:
             tf_node_info['tf_outputs'] = {
                 output_key: {
@@ -439,10 +439,10 @@ def print_node_info(func):
     def print_wrapper_func(*args, **kwargs):
         if kwargs.get('suppress_log', False):
             return func(*args, **kwargs)
-        input_onnx_file_path: str = kwargs.get('input_onnx_file_path', None)
-        graph_input: gs.Variable = kwargs.get('graph_input', None)
-        graph_node: gs.Variable = kwargs.get('graph_node', None)
-        tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
+        input_onnx_file_path: Optional[str] = kwargs.get('input_onnx_file_path', None)
+        graph_input: Optional[gs.Variable] = kwargs.get('graph_input', None)
+        graph_node: Optional[gs.Node] = kwargs.get('graph_node', None)
+        tf_layers_dict: Optional[dict] = kwargs.get('tf_layers_dict', None)
         if get_log_level() <= LOG_LEVELS['debug']:
             if graph_input is not None:
                 debug(
@@ -482,7 +482,7 @@ def print_node_info(func):
             if get_log_level() <= LOG_LEVELS['debug']:
                 if graph_node is not None and tf_layers_dict is not None:
                     for idx, graph_node_output in enumerate(graph_node.outputs):
-                        tf_layer_info: dict = tf_layers_dict.get(graph_node_output.name, None)
+                        tf_layer_info: Optional[dict] = tf_layers_dict.get(graph_node_output.name, None)
                         if tf_layer_info is not None:
                             tf_node_info = tf_layer_info.get('tf_node_info', None)
                             if tf_node_info is not None:
@@ -561,28 +561,27 @@ def inverted_operation_enable_disable(func):
         True: Transpose the input tensor from NCHW to NHWC and so on
         False: No transposition
         """
-        graph_node = kwargs.get('graph_node', None)
-        tf_layers_dict = kwargs.get('tf_layers_dict', None)
+        graph_node: Optional[gs.Node] = kwargs.get('graph_node', None)
+        tf_layers_dict: Optional[dict] = kwargs.get('tf_layers_dict', None)
         batch_size = kwargs.get('batch_size', None)
+        if graph_node is None or tf_layers_dict is None:
+            return result
         output_shape_trans = False
         inherited_output_shape_trans = False
-        if graph_node is not None and tf_layers_dict is not None:
-            for graph_node_input in graph_node.inputs:
-                inherited_output_shape_trans = (
-                    inherited_output_shape_trans
-                    or bool(
-                        tf_layers_dict.get(graph_node_input.name, {}).get(
-                            'before_op_output_shape_trans',
-                            False,
-                        )
+        for graph_node_input in graph_node.inputs:
+            inherited_output_shape_trans = (
+                inherited_output_shape_trans
+                or bool(
+                    tf_layers_dict.get(graph_node_input.name, {}).get(
+                        'before_op_output_shape_trans',
+                        False,
                     )
                 )
+            )
         # Some dynamic-shape ops (notably Resize) rely on NCHW-based 1D constants
         # such as scales/sizes. If ONNX shape metadata is completely unknown, keep
         # inherited transposition state only for these ops.
-        inherit_when_unknown_shape = bool(
-            graph_node is not None and graph_node.op in {'Resize'}
-        )
+        inherit_when_unknown_shape = bool(graph_node.op in {'Resize'})
         for graph_node_output in graph_node.outputs:
             onnx_node_output: gs.Variable = graph_node_output
             onnx_node_output_shape = onnx_node_output.shape
@@ -807,8 +806,8 @@ def check_cuda_enabled() -> bool:
 
 def convert_axis(
     *,
-    axis: int,
-    tensor_rank: int,
+    axis: Any,
+    tensor_rank: Any,
     before_op_output_shape_trans: bool,
 ) -> int:
     """Convert axis from NCW to NWC or NCHW to NHWC or NCDHW to NDHWC.
@@ -1001,13 +1000,15 @@ def pre_explicit_broadcast(
             input_tensor_2 = tf.squeeze(input_tensor_2)
             reversed_input_tensor_1_shape = []
             if isinstance(input_tensor_1_shape, list):
-                reversed_input_tensor_1_shape = input_tensor_1_shape.reverse()
+                reversed_input_tensor_1_shape = input_tensor_1_shape[::-1]
             elif isinstance(input_tensor_1_shape, tuple):
                 reversed_input_tensor_1_shape = list(input_tensor_1_shape[::-1])
             elif isinstance(input_tensor_1_shape, np.ndarray):
                 reversed_input_tensor_1_shape = input_tensor_1_shape[::-1].tolist()
             elif isinstance(input_tensor_1_shape, tf.TensorShape):
-                reversed_input_tensor_1_shape = list(input_tensor_1_shape[::-1])
+                tensor_shape_list = input_tensor_1_shape.as_list()
+                if tensor_shape_list is not None:
+                    reversed_input_tensor_1_shape = tensor_shape_list[::-1]
             expand_count = reversed_input_tensor_1_shape.index(squeezed_input_tensor_2_shape[0])
             for _ in range(expand_count):
                 input_tensor_2 = tf.expand_dims(
@@ -1024,13 +1025,15 @@ def pre_explicit_broadcast(
                 input_tensor_1 = tf.squeeze(input_tensor_1)
                 reversed_input_tensor_2_shape = []
                 if isinstance(input_tensor_2_shape, list):
-                    reversed_input_tensor_2_shape = input_tensor_2_shape.reverse()
+                    reversed_input_tensor_2_shape = input_tensor_2_shape[::-1]
                 elif isinstance(input_tensor_2_shape, tuple):
                     reversed_input_tensor_2_shape = list(input_tensor_2_shape[::-1])
                 elif isinstance(input_tensor_2_shape, np.ndarray):
                     reversed_input_tensor_2_shape = input_tensor_2_shape[::-1].tolist()
                 elif isinstance(input_tensor_2_shape, tf.TensorShape):
-                    reversed_input_tensor_2_shape = list(input_tensor_2_shape[::-1])
+                    tensor_shape_list = input_tensor_2_shape.as_list()
+                    if tensor_shape_list is not None:
+                        reversed_input_tensor_2_shape = tensor_shape_list[::-1]
                 expand_count = reversed_input_tensor_2_shape.index(squeezed_input_tensor_1_shape[0])
                 for _ in range(expand_count):
                     input_tensor_1 = tf.expand_dims(
@@ -1060,7 +1063,7 @@ def explicit_broadcast(
     const_or_var_1: Any,
     const_or_var_2: Any,
     graph_node: Optional[gs.Node] = None,
-    tf_layers_dict: dict = None,
+    tf_layers_dict: Optional[dict] = None,
 ) -> Tuple[Any, Any]:
     """Of the two tensors in the argument, the one with the lower dimensionality
     is broadcast to match the one with the higher dimensionality.
@@ -1098,6 +1101,7 @@ def explicit_broadcast(
     graph_node_input_name2 = None
     graph_node_input_shape1 = []
     graph_node_input_shape2 = []
+    graph_node_op: Optional[str] = graph_node.op if graph_node is not None else None
     if graph_node is not None:
         graph_node_input_name1 = graph_node.inputs[0].name
         graph_node_input_name2 = graph_node.inputs[1].name
@@ -1198,7 +1202,7 @@ def explicit_broadcast(
         and None not in const_or_var_2.shape \
         and sum([0 if isinstance(dim, str) else 1 for dim in const_or_var_2.shape]) == len(const_or_var_2.shape) \
         and len(const_or_var_2.shape) == 1 \
-        and graph_node.op == 'BatchNormalization':
+        and graph_node_op == 'BatchNormalization':
 
         const_or_var_2_shape_dim = const_or_var_2.shape[0]
         for idx, shape_for_judging_skip_processing_1_dim in enumerate(shape_for_judging_skip_processing_1[::-1]):
@@ -1209,7 +1213,7 @@ def explicit_broadcast(
 
     # Swap: len(const_or_var_1.shape) > len(const_or_var_2.shape)
     swapped = 0
-    if len(const_or_var_1.shape) < len(const_or_var_2.shape) and not graph_node.op in ['Sub', 'Div', 'Mod']:
+    if len(const_or_var_1.shape) < len(const_or_var_2.shape) and graph_node_op not in ['Sub', 'Div', 'Mod']:
         const_or_var_1, const_or_var_2 = const_or_var_2, const_or_var_1
         graph_node_input_name1, graph_node_input_name2 = graph_node_input_name2, graph_node_input_name1
         graph_node_input_shape1, graph_node_input_shape2 = graph_node_input_shape2, graph_node_input_shape1
@@ -1277,7 +1281,7 @@ def explicit_broadcast(
         transpose_perm = [0] + [i+2 for i in range(len(const_or_var_1.shape)-2)] + [1]
 
         if isinstance(const_or_var_2, np.ndarray):
-            const_or_var_2: np.ndarray = const_or_var_2.transpose(transpose_perm)
+            const_or_var_2 = const_or_var_2.transpose(transpose_perm)
 
         elif isinstance(const_or_var_2, tf.Tensor) \
             or (
@@ -1288,7 +1292,7 @@ def explicit_broadcast(
                 and tf_layers_dict is not None \
                 and graph_node_input_name2 in tf_layers_dict \
                 and tf_layers_dict[graph_node_input_name2]['optype'] == 'Input':
-                const_or_var_2: np.ndarray = tf.transpose(
+                const_or_var_2 = tf.transpose(
                     a=const_or_var_2,
                     perm=transpose_perm
                 )
@@ -1306,7 +1310,7 @@ def explicit_broadcast(
 def tf_shape(
     *,
     input_tensor: tf.Tensor,
-    dtype: tf.dtypes=tf.int64,
+    dtype: tf.dtypes.DType = tf.int64,
 ) -> Any:
     """Helper function returning the shape of a Tensor.
 
@@ -1391,7 +1395,7 @@ def upsampling3d_bilinear(
     w = new_size[2]
     # Dpeth (height x width)
     resized_list = []
-    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(input_tensor, axis=1))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bilinear(
@@ -1405,7 +1409,7 @@ def upsampling3d_bilinear(
     stack_img_hw = tf.stack(resized_list, axis=1)
     # Width (depth x Height)
     resized_list = []
-    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(stack_img_hw, axis=3))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bilinear(
@@ -1433,7 +1437,7 @@ def upsampling3d_bicubic(
 
     # Dpeth (height x width)
     resized_list = []
-    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(input_tensor, axis=1))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
@@ -1447,7 +1451,7 @@ def upsampling3d_bicubic(
     stack_img_hw = tf.stack(resized_list, axis=1)
     # Width (depth x Height)
     resized_list = []
-    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(stack_img_hw, axis=3))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_bicubic(
@@ -1475,7 +1479,7 @@ def upsampling3d_nearest(
 
     # Dpeth (height x width)
     resized_list = []
-    unstack_img_list = tf.unstack(input_tensor, axis=1)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(input_tensor, axis=1))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
@@ -1489,7 +1493,7 @@ def upsampling3d_nearest(
     stack_img_hw = tf.stack(resized_list, axis=1)
     # Width (depth x Height)
     resized_list = []
-    unstack_img_list = tf.unstack(stack_img_hw, axis=3)
+    unstack_img_list = cast(List[tf.Tensor], tf.unstack(stack_img_hw, axis=3))
     for img in unstack_img_list:
         resized_list.append(
             tf.compat.v1.image.resize_nearest_neighbor(
@@ -1506,7 +1510,7 @@ def upsampling3d_nearest(
 
 def _nnapi_scalar(
     value,
-    dtype: tf.dtypes,
+    dtype: tf.dtypes.DType,
 ) -> Any:
     """Scalar to constant of 1D array.
 
@@ -1530,10 +1534,10 @@ def alternative_argmax(
     *,
     input_tensor,
     axis: int = -1,
-    output_type: tf.dtypes = tf.dtypes.float32,
-    name: str = None,
+    output_type: tf.dtypes.DType = tf.dtypes.float32,
+    name: Optional[str] = None,
     keepdims: bool = False,
-    epsilon: float = None,
+    epsilon: Optional[float] = None,
     replace_argmax_to_reducemax_and_indices_is_int64: bool = False,
     replace_argmax_to_reducemax_and_indices_is_float32: bool = False,
 ) -> Any:
@@ -1679,8 +1683,8 @@ def alternative_fused_argmax(
     input_tensor,
     original_shape,
     axis: int = -1,
-    output_type: tf.dtypes = tf.dtypes.float32,
-    name: str = None,
+    output_type: tf.dtypes.DType = tf.dtypes.float32,
+    name: Optional[str] = None,
     keepdims: bool = True,
     replace_argmax_to_fused_argmax_and_indices_is_int64: bool = False,
     replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
@@ -2157,14 +2161,16 @@ def calc_pads_pooling(
         pads = np.zeros([spatial_size * 2], np.int64)
     else:
         pads = tf.zeros([spatial_size * 2], tf.int64)
+    padding_is_explicit = isinstance(padding, list)
+    padding_is_same = isinstance(padding, str) and padding.lower().startswith("same")
 
     # check for explicit padding
-    if type(padding) is list:
+    if padding_is_explicit:
         pads += calc_pads_explicit_pooling(
             padding=padding,
             spatial_size=spatial_size,
         )
-    elif padding.lower().startswith("same"):
+    elif padding_is_same:
         pads += calc_pads_same_pooling(
             kernel_shape=kernel_shape,
             strides=strides,
@@ -2176,7 +2182,7 @@ def calc_pads_pooling(
 
     # when padding is set to SAME, ceil_mode will not do anything
     # because output sizes will be multiple of the strides
-    if ceil_mode and (type(padding) is list or not padding.lower().startswith("same")):
+    if ceil_mode and (padding_is_explicit or not padding_is_same):
         new_spatial_shape = [
             in_spatial_shape[i] + pads[i * 2] + pads[i * 2 + 1]
             for i in range(spatial_size)
@@ -2282,10 +2288,14 @@ def tf_product(
                     [3 0]
                     [3 1]]
     """
-    tile_a = tf.tile(a, [1, tf.shape(b)[0]])
+    b_shape = cast(tf.Tensor, tf.shape(b, out_type=tf.int32))
+    a_shape = cast(tf.Tensor, tf.shape(a, out_type=tf.int32))
+    b_dim0 = tf.gather(b_shape, 0)
+    a_dim0 = tf.gather(a_shape, 0)
+    tile_a = tf.tile(a, [1, b_dim0])
     tile_a = tf.expand_dims(tile_a, 2)
     tile_a = tf.reshape(tile_a, [-1, 1])
-    b = tf.tile(b, [tf.shape(a)[0], 1])
+    b = tf.tile(b, [a_dim0, 1])
     b = tf.concat([tile_a, b], axis=1)
     return b
 
@@ -2320,6 +2330,7 @@ def remove_dilations(
     # output tensor after the loop below is executed
     output_shape = [0] * (spatial_size + 2)
     output_shape[0] = input_shape[0]
+    gather_ind: Optional[Any] = None
 
     for dim in range(spatial_size - 1, -1, -1):
         filter_size = (kernel_shape[dim] - 1) * dilations[dim] + 1
@@ -2349,6 +2360,8 @@ def remove_dilations(
         else:
             # "combine" current dimension indices with the previous dimensions
             # using cartesian product
+            if gather_ind is None:
+                raise ValueError('gather_ind must be initialized before tf_product.')
             gather_ind = tf_product(
                 a=dim_ind,
                 b=gather_ind,
@@ -2364,6 +2377,8 @@ def remove_dilations(
     channel_ind = tf.range(channels_count, dtype=tf.int64)
     # convert to column vector
     channel_ind = tf.expand_dims(channel_ind, 1)
+    if gather_ind is None:
+        raise ValueError('gather_ind is not initialized. spatial_size must be >= 1.')
     # "combine" channel indices with the result from the loop
     gather_ind = tf_product(
         a=gather_ind,
@@ -2485,7 +2500,7 @@ def disable_unnecessary_transpose(
     graph_node_input_2: Any,
     input_tensor_1: Any,
     input_tensor_2: Any,
-    **kwargs: Dict,
+    **kwargs: Any,
 ) -> Tuple[Any, Any, Any, Any]:
     """Remove unnecessary Transpose to NHWC.
 
@@ -2588,7 +2603,7 @@ def shape_unmatched_special_avoidance_workaround(
     input_tensor_1: Any,
     input_tensor_2: Any,
     tf_layers_dict: Dict,
-    **kwargs: Dict,
+    **kwargs: Any,
 ) -> Tuple[Any, Any]:
     """Force correction of the shape mismatch between input X and input Y to NHWC format
     only if the output of the immediately preceding OP is definitively NHWC.
@@ -2982,22 +2997,22 @@ def calc_output_shape_conv_transpose(
 
 def replace_max_values_negative_values(
     *,
-    input_tensor_shape: np.asarray,
-    index_list: np.asarray,
-    axes: np.asarray,
-) -> List[int]:
+    input_tensor_shape: Union[np.ndarray, List[Optional[int]], Tuple[Optional[int], ...]],
+    index_list: List[Any],
+    axes: Optional[Any],
+) -> List[Any]:
     """Replacement of maximum index value and negative index value for ONNX.
     For Slice OP.
 
     Parameters
     ----------
-    input_tensor_shape: np.asarray
+    input_tensor_shape: Union[np.ndarray, List[Optional[int]], Tuple[Optional[int], ...]]
         INPUT Node Shape
 
-    index_list: np.asarray
+    index_list: List[int]
         Index list of starts or ends of Slice OP
 
-    axes: np.asarray
+    axes: Optional[Union[np.ndarray, List[int], Tuple[int, ...]]]
         Slice OP axes
 
     Returns
@@ -3075,9 +3090,9 @@ def transpose_with_flexing_deterrence(
     *,
     input_tensor: Any,
     perm: List[int],
-    output_shape: List[int] = None,
-    name: str = None,
-    **kwargs: Dict,
+    output_shape: Optional[List[Union[int, str, None]]] = None,
+    name: Optional[str] = None,
+    **kwargs: Any,
 ) -> Any:
     """Transpose tensors of 7 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -3128,11 +3143,17 @@ def transpose_with_flexing_deterrence(
 
     if disable_suppression_flextranspose:
         # Normal Transpose
-        tensor_after_transposition = tf.transpose(
-            a=input_tensor,
-            perm=perm,
-            name=name,
-        )
+        if name is not None:
+            tensor_after_transposition = tf.transpose(
+                a=input_tensor,
+                perm=perm,
+                name=name,
+            )
+        else:
+            tensor_after_transposition = tf.transpose(
+                a=input_tensor,
+                perm=perm,
+            )
     else:
         # Special Transpose
         # https://zenn.dev/pinto0309/scraps/cfb59856ac0453
@@ -3448,11 +3469,17 @@ def transpose_with_flexing_deterrence(
 
         else:
             # Normal Transpose
-            tensor_after_transposition = tf.transpose(
-                a=input_tensor,
-                perm=perm,
-                name=name,
-            )
+            if name is not None:
+                tensor_after_transposition = tf.transpose(
+                    a=input_tensor,
+                    perm=perm,
+                    name=name,
+                )
+            else:
+                tensor_after_transposition = tf.transpose(
+                    a=input_tensor,
+                    perm=perm,
+                )
 
     return tensor_after_transposition
 
@@ -3460,17 +3487,17 @@ def transpose_with_flexing_deterrence(
 def stridedslice_with_flexing_deterrence(
     *,
     input_tensor: Any,
-    begin: List[int],
-    end: List[int],
-    strides: List[int],
-    begin_mask: List[int],
-    end_mask: List[int],
-    ignore_axes: List[int],
-    compression_defult_value: int,
-    onnx_slice_dims_count: int,
-    output_shape: List[int] = None,
-    name: str = None,
-    **kwargs: Dict,
+    begin: Any,
+    end: Any,
+    strides: Any,
+    begin_mask: Any,
+    end_mask: Any,
+    ignore_axes: Any,
+    compression_defult_value: Any,
+    onnx_slice_dims_count: Any,
+    output_shape: Optional[List[Union[int, str, None]]] = None,
+    name: Optional[str] = None,
+    **kwargs: Any,
 ) -> Any:
     """StridedSlice tensors of 6 or more dimensions while suppressing the transformation to FlexTranspose.
     Suppress FlexTranspose generation only if the enable_suppression_flextranspose option is enabled when the tool is started.
@@ -3489,10 +3516,10 @@ def stridedslice_with_flexing_deterrence(
     strides: List[int]
         strides
 
-    begin_mask: List[int]
+    begin_mask: int
         begin_mask
 
-    end_mask: List[int]
+    end_mask: int
         end_mask
 
     ignore_axes: List[int]
@@ -3610,8 +3637,8 @@ def stridedslice_with_flexing_deterrence(
                         begin=tf.convert_to_tensor(begin_),
                         end=tf.convert_to_tensor(end_),
                         strides=tf.convert_to_tensor(strides_),
-                        begin_mask=tf.convert_to_tensor(begin_mask_),
-                        end_mask=tf.convert_to_tensor(end_mask_),
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
                         name=name,
                     )
                 tensor_after_stridedslice = \
@@ -3830,25 +3857,16 @@ def stridedslice_with_flexing_deterrence(
                     [idx for idx in range(input_tensor_rank) \
                         if idx not in sorted_minimum_idxs_correction]
                 )
-                begin_ = None
-                if hasattr(begin, 'numpy'):
-                    begin_ = begin.numpy()
-                elif isinstance(begin, int):
-                    begin_ = np.asarray([begin])
-                else:
-                    begin_ = np.asarray(begin)
-                if hasattr(end, 'numpy'):
-                    end_ = end.numpy()
-                elif isinstance(end, int):
-                    end_ = np.asarray([end])
-                else:
-                    end_ = np.asarray(end)
-                if hasattr(strides, 'numpy'):
-                    strides_ = strides.numpy()
-                elif isinstance(strides, int):
-                    strides_ = np.asarray([strides])
-                else:
-                    strides_ = np.asarray(strides)
+                def _to_numpy_array(value: Any) -> np.ndarray:
+                    if isinstance(value, int):
+                        return np.asarray([value])
+                    if tf.is_tensor(value) and hasattr(value, 'numpy'):
+                        return np.asarray(cast(Any, value).numpy())
+                    return np.asarray(value)
+
+                begin_ = _to_numpy_array(begin)
+                end_ = _to_numpy_array(end)
+                strides_ = _to_numpy_array(strides)
                 begin_mask_bit = np.asarray(list(reversed([int(val) for val in list(bin(begin_mask)[2:].zfill(len(begin_)))])))
                 end_mask_bit = np.asarray(list(reversed([int(val) for val in list(bin(end_mask)[2:].zfill(len(begin_)))])))
 
@@ -4059,7 +4077,7 @@ def dummy_onnx_inference(
     onnx_graph: onnx.ModelProto,
     output_names: List[str],
     test_data_nhwc: Optional[np.ndarray] = None,
-    custom_input_op_name_np_data_path: Optional[str] = None,
+    custom_input_op_name_np_data_path: Optional[Any] = None,
     tf_layers_dict: Optional[Dict] = None,
     use_cuda: bool = False,
     disable_strict_mode: bool = False,
@@ -4084,8 +4102,9 @@ def dummy_onnx_inference(
     test_data_nhwc: Optional[np.ndarray]
         Test Image Data
 
-    custom_input_op_name_np_data_path: Optional[str]
-        Path to Numpy file for custom data used for dummy inference
+    custom_input_op_name_np_data_path: Optional[List[List[str]]]
+        Custom input numpy mapping used for dummy inference.
+        Format: [[input_name, npy_path], ...]
 
     tf_layers_dict: Optional[Dict]
         TensorFlow Model Structure Dictionary.
@@ -4129,6 +4148,8 @@ def dummy_onnx_inference(
         shape_hints = _DEFAULT_DUMMY_SHAPE_HINTS
     if value_hints is None:
         value_hints = _DEFAULT_DUMMY_VALUE_HINTS
+    if ort is None:
+        raise ImportError('onnxruntime is required for dummy_onnx_inference.')
 
     # Separate onnx at specified output_names position
     domain: str = onnx_graph.domain
@@ -4140,43 +4161,38 @@ def dummy_onnx_inference(
     gs_graph = gs.import_onnx(onnx_graph)
 
     # reduce all axes except batch axis
-    for i, node in enumerate(gs_graph.nodes):
+    for node in gs_graph.nodes:
+        input_shape = node.inputs[0].shape if len(node.inputs) > 0 else None
+        input_rank = len(input_shape) if input_shape is not None else 0
+        default_axes = [axis for axis in range(1, input_rank)] if input_rank > 1 else [0]
         if gs_graph.opset <= 17 \
-            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+            and node.op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
             and 'axes' not in node.attrs:
-            gs_graph.nodes[i].attrs['axes'] = [
-                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
-            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+            node.attrs['axes'] = default_axes
 
         elif gs_graph.opset > 17 \
-            and gs_graph.nodes[i].op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
-            and len(gs_graph.nodes[i].inputs) == 1:
-            const_axes = [
-                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
-            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
-            gs_graph.nodes[i].inputs.append(
+            and node.op in ['ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd'] \
+            and len(node.inputs) == 1:
+            const_axes = default_axes
+            node.inputs.append(
                 gs.Constant(
-                    f'{gs_graph.nodes[i].name}_axes',
+                    f'{node.name}_axes',
                     values=np.asarray(const_axes, dtype=np.int64)
                 )
             )
 
         elif gs_graph.opset <= 12 \
-            and gs_graph.nodes[i].op in ['ReduceSum'] \
+            and node.op in ['ReduceSum'] \
             and 'axes' not in node.attrs:
-            gs_graph.nodes[i].attrs['axes'] = [
-                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
-            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
+            node.attrs['axes'] = default_axes
 
         elif gs_graph.opset > 12 \
-            and gs_graph.nodes[i].op in ['ReduceSum'] \
-            and len(gs_graph.nodes[i].inputs) == 1:
-            const_axes = [
-                i for i in range(1, len(gs_graph.nodes[i].inputs[0].shape))
-            ] if len(gs_graph.nodes[i].inputs[0].shape) > 1 else [0]
-            gs_graph.nodes[i].inputs.append(
+            and node.op in ['ReduceSum'] \
+            and len(node.inputs) == 1:
+            const_axes = default_axes
+            node.inputs.append(
                 gs.Constant(
-                    f'{gs_graph.nodes[i].name}_axes',
+                    f'{node.name}_axes',
                     values=np.asarray(const_axes, dtype=np.int64)
                 )
             )
@@ -4335,7 +4351,8 @@ def dummy_onnx_inference(
         )
         serialized_graph = tmp_onnx_path
     sess_options = ort.SessionOptions()
-    sess_options.intra_op_num_threads = psutil.cpu_count(logical=True) - 1
+    logical_cpu_count = psutil.cpu_count(logical=True) or 1
+    sess_options.intra_op_num_threads = max(1, logical_cpu_count - 1)
     if bool(ort_disable_graph_optimization):
         try:
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
@@ -4370,19 +4387,26 @@ def dummy_onnx_inference(
         )
     onnx_inputs = gs_graph.inputs
     input_names: List[str] = [inp.name for inp in onnx_inputs]
-    input_sizes: List[int] = [inp.shape for inp in onnx_inputs]
+    input_sizes: List[List[Optional[Union[int, str]]]] = [
+        list(inp.shape) if inp.shape is not None else []
+            for inp in onnx_inputs
+    ]
 
     if shape_hints is None:
+        first_input_batch_dim: Optional[int] = None
+        if len(input_sizes) > 0 and len(input_sizes[0]) > 0:
+            first_dim = input_sizes[0][0]
+            if isinstance(first_dim, int):
+                first_input_batch_dim = first_dim
         new_input_sizes = []
         for input_size in input_sizes:
             new_input_size = []
             for idx, dim in enumerate(input_size):
-                if idx == 0 and input_sizes[0][0] is not None \
-                    and not isinstance(input_sizes[0][0], str) \
+                if idx == 0 and first_input_batch_dim is not None \
                     and len(input_sizes[0]) == len(input_size) \
                     and (dim is None or isinstance(dim, str)):
                     # Batch size assignment for input OPs
-                    new_input_size.append(input_sizes[0][0])
+                    new_input_size.append(first_input_batch_dim)
                 elif dim is None or isinstance(dim, str):
                     # Fixed and assigned 1
                     new_input_size.append(1)
@@ -4411,6 +4435,13 @@ def dummy_onnx_inference(
                         updated_shape[j] = hint_dim
                 input_sizes[i] = updated_shape
 
+    input_sizes = [
+        [
+            int(dim) if not isinstance(dim, str) and dim is not None else 1
+                for dim in input_size
+        ] for input_size in input_sizes
+    ]
+
     input_dtypes: List[Any] = [inp.dtype for inp in onnx_inputs]
     input_size_map = {
         name: tuple(size) for name, size in zip(input_names, input_sizes)
@@ -4425,13 +4456,13 @@ def dummy_onnx_inference(
             numpy_file_path = str(param[1])
             custom_input_data: np.ndarray = np.load(numpy_file_path)
             # NHWC -> NCHW
-            input_op_info: Dict = (
+            input_op_info: Optional[Dict[str, Any]] = (
                 tf_layers_dict.get(input_op_name, None)
                 if isinstance(tf_layers_dict, dict)
                 else None
             )
             if input_op_info is not None:
-                ncw_nchw_ncdhw_perm: List = input_op_info.get('ncw_nchw_ncdhw_perm', None)
+                ncw_nchw_ncdhw_perm: Optional[List[int]] = input_op_info.get('ncw_nchw_ncdhw_perm', None)
                 if ncw_nchw_ncdhw_perm is not None:
                     expected_shape = input_size_map.get(
                         input_op_name,
@@ -4454,41 +4485,42 @@ def dummy_onnx_inference(
 
     else:
         for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            input_shape = tuple(dim if isinstance(dim, int) else 1 for dim in input_size)
+            np_input_dtype = np.dtype(input_dtype)
             hint_value = value_hints_dict.get(
                 input_name,
                 default_value if has_default else None,
             )
             if hint_value is not None:
                 input_datas[input_name] = np.full(
-                    input_size,
+                    input_shape,
                     hint_value,
-                    dtype=input_dtype,
+                    dtype=np_input_dtype,
                 )
             elif test_data_nhwc is None:
-                np_input_dtype = np.dtype(input_dtype)
                 # Keep index-like integer inputs in-range friendly for ops such
                 # as Gather/GatherND during dummy inference.
                 if np.issubdtype(np_input_dtype, np.integer) or np.issubdtype(
                     np_input_dtype, np.bool_
                 ):
                     input_datas[input_name] = np.zeros(
-                        input_size,
-                        dtype=input_dtype,
+                        input_shape,
+                        dtype=np_input_dtype,
                     )
                 else:
                     input_datas[input_name] = np.ones(
-                        input_size,
-                        dtype=input_dtype,
+                        input_shape,
+                        dtype=np_input_dtype,
                     )
             else:
                 input_datas[input_name] = \
                     tf.transpose(
                         a=tf.image.resize(
                             images=test_data_nhwc,
-                            size=[input_size[2],input_size[3]],
+                            size=[input_shape[2], input_shape[3]],
                         ),
                         perm=[0,3,1,2],
-                    ).numpy().astype(input_dtype)
+                    ).numpy().astype(np_input_dtype)
 
     if input_datas_for_validation is not None:
         input_datas_for_validation.update(input_datas)
@@ -4534,10 +4566,10 @@ def dummy_onnx_inference(
 
     output_names_order = [out.name for out in gs_graph.outputs]
     if use_memmap_outputs:
-        output_shapes = []
+        output_shapes: List[List[int]] = []
         for out in gs_graph.outputs:
             shape = out.shape
-            if shape is None or any(not isinstance(s, (int, np.integer)) for s in shape):
+            if shape is None:
                 if tmp_onnx_path:
                     os.remove(tmp_onnx_path)
                     os.remove(tmp_onnx_external_weights_path)
@@ -4545,7 +4577,18 @@ def dummy_onnx_inference(
                     'onnxruntime output memmap requires static output shapes. ' +
                     'Provide --shape_hints or reduce validation outputs.'
                 )
-            output_shapes.append([int(s) for s in shape])
+            normalized_shape: List[int] = []
+            for dim in shape:
+                if not isinstance(dim, (int, np.integer)):
+                    if tmp_onnx_path:
+                        os.remove(tmp_onnx_path)
+                        os.remove(tmp_onnx_external_weights_path)
+                    raise Exception(
+                        'onnxruntime output memmap requires static output shapes. ' +
+                        'Provide --shape_hints or reduce validation outputs.'
+                    )
+                normalized_shape.append(int(dim))
+            output_shapes.append(normalized_shape)
 
         memmap_dir = ort_output_memmap_dir
         if memmap_dir is None:
@@ -4629,16 +4672,17 @@ def dummy_onnx_inference(
     if tmp_onnx_path:
         os.remove(tmp_onnx_path)
         os.remove(tmp_onnx_external_weights_path)
-    return outputs
+    normalized_outputs: List[np.ndarray] = [np.asarray(output) for output in outputs]
+    return normalized_outputs
 
 
 def dummy_tf_inference(
     *,
     model: tf_keras.Model,
-    inputs: List[tf_keras.Input],
+    inputs: List[Any],
     test_data_nhwc: Optional[np.ndarray] = None,
-    verification_datas: Optional[List[np.ndarray]] = None,
-    custom_input_op_name_np_data_path: Optional[str] = None,
+    verification_datas: Optional[List[Any]] = None,
+    custom_input_op_name_np_data_path: Optional[Any] = None,
     shape_hints: Optional[List[str]] = None,
     value_hints: Optional[List[str]] = None,
     input_datas_for_validation: Optional[Dict[str, np.ndarray]] = None,
@@ -4654,8 +4698,8 @@ def dummy_tf_inference(
     model: tf_keras.Model
         Keras model
 
-    inputs: List[tf_keras.Input]
-        List of tf_keras.Input
+    inputs: List[Any]
+        List of tf_keras.Input results
 
     test_data_nhwc: Optional[np.ndarray]
         Test Image Data
@@ -4663,8 +4707,9 @@ def dummy_tf_inference(
     verification_datas: Optional[List[np.ndarray]]
         Test Data
 
-    custom_input_op_name_np_data_path
-        Path to Numpy file for custom data used for dummy inference
+    custom_input_op_name_np_data_path: Optional[List[List[str]]]
+        Custom input numpy mapping used for dummy inference.
+        Format: [[input_name, npy_path], ...]
 
     value_hints: Optional[List[str]]
         Value hints for dummy inference input tensors.
@@ -4685,22 +4730,29 @@ def dummy_tf_inference(
         value_hints = _DEFAULT_DUMMY_VALUE_HINTS
 
     input_names: List[str] = [inp.name for inp in inputs]
-    input_sizes: List[int] = [inp.shape for inp in inputs]
-    input_size_map = {name: size for name, size in zip(input_names, input_sizes)}
+    input_sizes: List[List[Optional[Union[int, str]]]] = [
+        list(inp.shape) if inp.shape is not None else []
+            for inp in inputs
+    ]
     input_index_map = {name: i for i, name in enumerate(input_names)}
 
     if shape_hints is None:
+        first_input_batch_dim: Optional[int] = None
+        if len(input_sizes) > 0 and len(input_sizes[0]) > 0:
+            first_dim = input_sizes[0][0]
+            if isinstance(first_dim, int):
+                first_input_batch_dim = first_dim
         new_input_sizes = []
         for input_size in input_sizes:
             new_input_size = []
             for idx, dim in enumerate(input_size):
-                if idx == 0 and input_sizes[0][0] is not None \
+                if idx == 0 and first_input_batch_dim is not None \
                     and len(input_sizes[0]) == len(input_size) \
                     and len(input_size) >= 2 \
-                    and dim is None:
+                    and (dim is None or isinstance(dim, str)):
                     # Batch size assignment for input OPs
-                    new_input_size.append(input_sizes[0][0])
-                elif dim is None:
+                    new_input_size.append(first_input_batch_dim)
+                elif dim is None or isinstance(dim, str):
                     # Fixed and assigned 1
                     new_input_size.append(1)
                 else:
@@ -4757,6 +4809,12 @@ def dummy_tf_inference(
 
                 input_sizes[i] = updated_shape
 
+    input_sizes = [
+        [dim if isinstance(dim, int) else 1 for dim in input_size]
+            for input_size in input_sizes
+    ]
+    input_size_map = {name: tuple(size) for name, size in zip(input_names, input_sizes)}
+
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     input_datas = {}
     value_hints_dict, default_value, has_default = _parse_value_hints(value_hints)
@@ -4776,16 +4834,15 @@ def dummy_tf_inference(
                 continue
             custom_input_data = np.load(numpy_file_path)
             input_size = input_sizes[idx]
-            input_dtype = input_dtypes[idx] if idx < len(input_dtypes) else np.float32
+            input_shape = [dim if isinstance(dim, int) else 1 for dim in input_size]
+            input_dtype = input_dtypes[idx] if idx < len(input_dtypes) else tf.float32
 
-            tf_batch_size = input_size[0]
+            tf_batch_size = input_shape[0] if len(input_shape) > 0 else 1
             cdata_batch_size = custom_input_data.shape[0]
             if isinstance(tf_batch_size, int) and tf_batch_size != cdata_batch_size and cdata_batch_size > 1:
                 custom_input_data = custom_input_data[0:tf_batch_size, ...]
-            elif tf_batch_size is None and cdata_batch_size > 1:
-                custom_input_data = custom_input_data[0:1, ...]
 
-            if list(custom_input_data.shape) != input_size:
+            if list(custom_input_data.shape) != input_shape:
                 auto_split_input = (
                     'onnx2tf_split_' in numpy_file_path
                     or os.path.basename(numpy_file_path).startswith('part_')
@@ -4794,13 +4851,13 @@ def dummy_tf_inference(
                     warn(
                         'Auto-split custom input shape does not match TF input shape. '
                         f'input_name={input_name} '
-                        f'tf_shape={input_size} '
+                        f'tf_shape={input_shape} '
                         f'numpy_shape={list(custom_input_data.shape)} '
                         f'path={numpy_file_path} '
                         'Fallback to dummy input for this tensor.'
                     )
                     input_datas[input_names[idx]] = np.ones(
-                        input_size,
+                        input_shape,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
                     continue
@@ -4816,61 +4873,69 @@ def dummy_tf_inference(
     else:
         if verification_datas is None:
             for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+                input_shape = tuple(dim if isinstance(dim, int) else 1 for dim in input_size)
                 hint_value = value_hints_dict.get(
                     input_name,
                     default_value if has_default else None,
                 )
                 if hint_value is not None:
                     input_datas[input_name] = np.full(
-                        input_size,
+                        input_shape,
                         hint_value,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
                 elif test_data_nhwc is None:
                     input_datas[input_name] = np.ones(
-                        input_size,
+                        input_shape,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
                 else:
+                    assert test_data_nhwc is not None
                     input_datas[input_name] = \
-                        tf.image.resize(
-                            images=test_data_nhwc,
-                            size=[input_size[1],input_size[2]],
-                        ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+                        np.asarray(
+                            tf.image.resize(
+                                images=test_data_nhwc,
+                                size=[input_shape[1], input_shape[2]],
+                            )
+                        ).astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
         else:
             for input_name, input_size, input_dtype, verification_data \
                 in zip(input_names, input_sizes, input_dtypes, verification_datas):
+                input_shape = [dim if isinstance(dim, int) else 1 for dim in input_size]
 
                 if verification_data is not None:
-                    verification_data = verification_data.numpy() \
-                        if hasattr(verification_data, "numpy") else verification_data
-                    if len(input_size) != len(verification_data.shape):
+                    verification_data = np.asarray(verification_data)
+                    if len(input_shape) != len(verification_data.shape):
                         if len(verification_data.shape) <= 1:
                             input_datas[input_name] = verification_data
                         else:
-                            input_datas[input_name] = verification_data.reshape(input_size)
+                            input_datas[input_name] = verification_data.reshape(input_shape)
                     else:
                         input_datas[input_name] = verification_data
                 else:
                     input_datas[input_name] = np.ones(
-                        input_size,
+                        input_shape,
                         dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
                     )
 
     if prefilled_input_datas:
         for input_name, input_data in prefilled_input_datas.items():
-            expected = None
+            expected_shape: Optional[Tuple[int, ...]] = None
             if input_name in input_datas:
-                expected = input_datas[input_name].shape
+                expected_shape = tuple(int(dim) for dim in input_datas[input_name].shape)
             elif input_name in input_size_map:
-                expected = input_size_map[input_name]
+                expected_shape = tuple(
+                    dim if isinstance(dim, int) else 1
+                        for dim in input_size_map[input_name]
+                )
             else:
                 continue
             data = input_data
             try:
-                if expected is not None and tuple(data.shape) != tuple(expected):
-                    if data.size == np.prod(expected):
-                        data = data.reshape(expected)
+                if expected_shape is not None and tuple(data.shape) != expected_shape:
+                    expected_size = int(np.prod(np.asarray(expected_shape, dtype=np.int64)))
+                    if data.size == expected_size:
+                        data = data.reshape(expected_shape)
                     else:
                         continue
                 target_dtype = None
@@ -4968,9 +5033,23 @@ def dummy_tf_inference(
     if not isinstance(outputs, list):
         outputs = [outputs]
 
-    tf_output_dict = {
-        tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)
-    }
+    model_outputs = list(model.outputs) if model.outputs is not None else []
+    if len(model_outputs) == len(outputs):
+        tf_output_dict = {
+            tensor.name: np.asarray(output) for tensor, output in zip(model_outputs, outputs)
+        }
+    else:
+        model_output_names = list(getattr(model, 'output_names', []))
+        if len(model_output_names) == len(outputs):
+            tf_output_dict = {
+                output_name: np.asarray(output) \
+                    for output_name, output in zip(model_output_names, outputs)
+            }
+        else:
+            tf_output_dict = {
+                f'output_{idx}': np.asarray(output) \
+                    for idx, output in enumerate(outputs)
+            }
 
     return tf_output_dict
 
@@ -4980,7 +5059,7 @@ def onnx_tf_tensor_validation(
     output_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
     rtol: float=1e-05,
     atol: float=1e-05,
-) -> Dict[str, List]:
+) -> Dict[Tuple[str, str], List[Any]]:
     """Check if the ONNX tensor and the TF tensor are approximate.
 
     Parameters
@@ -5001,10 +5080,10 @@ def onnx_tf_tensor_validation(
 
     Returns
     ----------
-    check_results: Dict[str, List[np.ndarray, int, float|int], str]
+    check_results: Dict[Tuple[str, str], List[Any]]
         Tensor Comparison Results
         {
-            onnx_output_name: [
+            (onnx_output_name, tf_output_name): [
                 onnx_tensor,
                 matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched),
                 max_abs_err,
@@ -5012,7 +5091,7 @@ def onnx_tf_tensor_validation(
             ]
         }
     """
-    check_results = {
+    check_results: Dict[Tuple[str, str], List[Any]] = {
         k: [v[0], False, 0.0, ""] \
             for k, v in output_pairs.items()
     }
@@ -5166,7 +5245,6 @@ def download_test_image_data() -> np.ndarray:
     else:
         with open(LOCAL_FILE_PATH, 'rb') as test_sample_images_npy_file:
             test_sample_images_npy = test_sample_images_npy_file.read()
-    test_image_data = None
     with io.BytesIO(test_sample_images_npy) as f:
         test_image_data: np.ndarray = np.load(f)
     return test_image_data
@@ -5176,7 +5254,7 @@ def broadcast_for_gpu_delegate(
     *,
     input_tensor_1: Any,
     input_tensor_2: Any,
-    **kwargs: Dict,
+    **kwargs: Any,
 ):
     """Tensor broadcast when optimizing to GPU Delegate.
     'MUL requires one tensor that not less than second in all dimensions.'
@@ -5358,7 +5436,7 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, input_tensor):
             error_msg = Color.RED(f'ERROR:') + ' ' + f'Wrong padding calculation.'
             assert same_output_shape == padded_valid_output_shape, error_msg
 
-            same_pads.append(axis_pads // 2)
+            same_pads.append(tf.math.floordiv(axis_pads, 2))
             # pads to end more for odd number padding
             if axis_pads % 2:
                 same_pads_end.append(axis_pads // 2 + 1)
@@ -5369,13 +5447,52 @@ def calc_tf_pooling_pads(input_shape, kernel, strides, input_tensor):
 
     else:
         # calculate how much padding is needed except batch and channel dimension
-        input_shape_tensor = tf.shape(input_tensor)[1:-1]
+        input_shape_tensor_full = cast(tf.Tensor, tf.shape(input_tensor, out_type=tf.int32))
+        input_shape_tensor = cast(
+            List[tf.Tensor],
+            tf.unstack(input_shape_tensor_full, num=len(input_shape)),
+        )[1:-1]
         for i, k, s in zip(input_shape_tensor, kernel, strides):
-            same_output_shape = tf.cast(tf.math.floor((i - 1) / s) + 1, dtype=tf.int32)
-            axis_pads = tf.cast(tf.math.maximum((same_output_shape - 1) * s + k - i, 0), dtype=tf.int32)
-            padded_valid_output_shape = tf.cast(tf.math.floor((i + axis_pads - k) / s) + 1, dtype=tf.int32)
+            kernel_t = tf.cast(k, dtype=tf.int32)
+            stride_t = tf.cast(s, dtype=tf.int32)
+            same_output_shape = tf.cast(
+                tf.math.add(
+                    tf.math.floordiv(
+                        tf.math.subtract(i, 1),
+                        stride_t,
+                    ),
+                    1,
+                ),
+                dtype=tf.int32,
+            )
+            axis_pads = tf.cast(
+                tf.math.maximum(
+                    tf.math.add(
+                        tf.math.multiply(
+                            tf.math.subtract(same_output_shape, 1),
+                            stride_t,
+                        ),
+                        tf.math.subtract(kernel_t, i),
+                    ),
+                    0,
+                ),
+                dtype=tf.int32,
+            )
+            padded_valid_output_shape = tf.cast(
+                tf.math.add(
+                    tf.math.floordiv(
+                        tf.math.subtract(
+                            tf.math.add(i, axis_pads),
+                            kernel_t,
+                        ),
+                        stride_t,
+                    ),
+                    1,
+                ),
+                dtype=tf.int32,
+            )
 
-            same_pads.append(axis_pads // 2)
+            same_pads.append(tf.math.floordiv(axis_pads, 2))
 
             # pads to end more for odd number padding
             mod_padding = tf.math.mod(axis_pads, 2)
@@ -5608,9 +5725,10 @@ def rewrite_tflite_inout_opname(
             resolved_indices: List[int] = []
             used_tensor_indices: set[int] = set()
             for onnx_shape in onnx_shapes:
-                if any(isinstance(item, str) for item in onnx_shape):
+                if any((not isinstance(item, int)) for item in onnx_shape):
                     return None
-                onnx_shape_product = int(np.prod(onnx_shape))
+                numeric_onnx_shape = [int(item) for item in onnx_shape]
+                onnx_shape_product = int(np.prod(np.asarray(numeric_onnx_shape, dtype=np.int64)))
                 candidate_indices = [
                     tensor_index
                     for tensor_index in tflite_shape_product_to_indices.get(onnx_shape_product, [])
@@ -5832,7 +5950,7 @@ def rewrite_tflite_inout_opname(
 def make_tf_partial_model_inputs(
     *,
     input_tensors: List[Any],
-) -> List[tf_keras.Input]:
+) -> Optional[List[Any]]:
     """Generate input OPs for TensorFlow subgraph generation.
 
     Parameters
@@ -5842,8 +5960,8 @@ def make_tf_partial_model_inputs(
 
     Returns
     -------
-    inputs: List[tf_keras.Input]
-        List of tf_keras.Input
+    inputs: List[Any]
+        List of tf_keras.Input results
     """
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
@@ -5865,7 +5983,7 @@ def make_tf_partial_model_inputs(
                     if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
             )
 
-    inputs: List[tf_keras.Input] = []
+    inputs: List[Any] = []
     input = None
     for idx, input_shape in enumerate(tf_partial_model_input_shapes):
         if isinstance(input_shape, list) and len(input_shape) == 0:
@@ -6000,6 +6118,8 @@ def merge_two_consecutive_identical_ops_into_one(
                     if workaround_exec_flg:
                         next_graph_node_o = graph_node.o()
                         next_graph_node_o_op = next_graph_node_o.op
+                        next_graph_node_input_1: Optional[Any] = None
+                        next_graph_node_input_2: Optional[Any] = None
                         if next_graph_node_o_op in ['Mul', 'Div']:
                             next_graph_node_input_1 = get_constant_or_variable(
                                 next_graph_node_o.inputs[0],
@@ -6133,6 +6253,8 @@ def merge_two_consecutive_identical_ops_into_one(
                     if workaround_exec_flg:
                         next_graph_node_o = graph_node.o()
                         next_graph_node_o_op = next_graph_node_o.op
+                        next_graph_node_input_1: Optional[Any] = None
+                        next_graph_node_input_2: Optional[Any] = None
                         if next_graph_node_o_op in ['Mul', 'Div']:
                             next_graph_node_input_1 = get_constant_or_variable(
                                 next_graph_node_o.inputs[0],
@@ -6147,10 +6269,10 @@ def merge_two_consecutive_identical_ops_into_one(
                             if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_1 / next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_1).dtype) / (input_tensor_1 / next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 / next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_1).dtype) / (input_tensor_2 / next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
@@ -6166,10 +6288,10 @@ def merge_two_consecutive_identical_ops_into_one(
                             elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_1 / next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_2).dtype) / (input_tensor_1 / next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 / next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_2).dtype) / (input_tensor_2 / next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
@@ -6200,10 +6322,10 @@ def merge_two_consecutive_identical_ops_into_one(
                             if isinstance(next_graph_node_input_1, np.ndarray) or hasattr(next_graph_node_input_1, 'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_1 * next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_1).dtype) / (input_tensor_1 * next_graph_node_input_1)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_1.dtype) / (input_tensor_2 * next_graph_node_input_1)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_1).dtype) / (input_tensor_2 * next_graph_node_input_1)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
@@ -6219,10 +6341,10 @@ def merge_two_consecutive_identical_ops_into_one(
                             elif isinstance(next_graph_node_input_2, np.ndarray) or hasattr(next_graph_node_input_2, 'numpy'):
                                 if isinstance(input_tensor_1, np.ndarray) or hasattr(input_tensor_1, 'numpy'):
                                     input_tensor_1 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_1 * next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_2).dtype) / (input_tensor_1 * next_graph_node_input_2)
                                 elif isinstance(input_tensor_2, np.ndarray) or hasattr(input_tensor_2, 'numpy'):
                                     input_tensor_2 = \
-                                        np.asarray(1.0, dtype=next_graph_node_input_2.dtype) / (input_tensor_2 * next_graph_node_input_2)
+                                        np.asarray(1.0, dtype=cast(Any, next_graph_node_input_2).dtype) / (input_tensor_2 * next_graph_node_input_2)
                                 tf_layers_dict[graph_node_output.name]['merge_div'] = True
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.math.multiply(
@@ -6355,6 +6477,8 @@ def merge_two_consecutive_identical_ops_into_one(
                     if workaround_exec_flg:
                         next_graph_node_o = graph_node.o()
                         next_graph_node_o_op = next_graph_node_o.op
+                        next_graph_node_input_1: Optional[Any] = None
+                        next_graph_node_input_2: Optional[Any] = None
                         if next_graph_node_o_op in ['Sub', 'Add']:
                             next_graph_node_input_1 = get_constant_or_variable(
                                 next_graph_node_o.inputs[0],
@@ -6488,6 +6612,8 @@ def merge_two_consecutive_identical_ops_into_one(
                     if workaround_exec_flg:
                         next_graph_node_o = graph_node.o()
                         next_graph_node_o_op = next_graph_node_o.op
+                        next_graph_node_input_1: Optional[Any] = None
+                        next_graph_node_input_2: Optional[Any] = None
                         if next_graph_node_o_op in ['Sub', 'Add']:
                             next_graph_node_input_1 = get_constant_or_variable(
                                 next_graph_node_o.inputs[0],
@@ -6574,7 +6700,7 @@ def merge_two_consecutive_identical_ops_into_one(
 
 
 def deterring_shape_corruption_due_to_broadcast(
-    graph_node_output_shape: List,
+    graph_node_output_shape: Optional[List[Union[int, str, None]]],
     input_tensor_1: Any,
     input_tensor_2: Any,
 ):
@@ -6623,6 +6749,7 @@ def deterring_shape_corruption_due_to_broadcast(
 
     # Perform dummy calculations to find out
     # the total number of tf tensor elements after the calculation
+    dummy_tensor: Optional[Any] = None
     try:
         dummy_tensor = input_tensor_1 * input_tensor_2
     except Exception as ex1:
@@ -6648,6 +6775,8 @@ def deterring_shape_corruption_due_to_broadcast(
                 continue
             break
 
+    if dummy_tensor is None:
+        return input_tensor_1, input_tensor_2
     dummy_tensor_elements = np.prod(dummy_tensor.shape)
 
     # If the total number of output elements in ONNX matches the total number of
@@ -6671,6 +6800,8 @@ def deterring_shape_corruption_due_to_broadcast(
                 dummy_tensor = \
                     tf.transpose(a=input_tensor_1, perm=input_tensor_1_shape_perm) \
                         * tf.transpose(a=input_tensor_2, perm=input_tensor_2_shape_perm)
+                if dummy_tensor is None:
+                    continue
                 dummy_tensor_elements = np.prod(dummy_tensor.shape)
                 if onnx_output_elements == dummy_tensor_elements \
                     and graph_node_output_shape == list(dummy_tensor.shape):
@@ -6703,9 +6834,9 @@ def acquisition_of_validation_data(
     input_tensor_1: Any,
     input_tensor_2: Any,
     graph_node_output: gs.Variable,
-    tf_layers_dict: Dict,
-    **kwargs: Dict,
-) -> Tuple[Dict, np.ndarray, np.ndarray]:
+    tf_layers_dict: Dict[Any, Any],
+    **kwargs: Any,
+) -> Tuple[Dict[str, np.ndarray], Any, Any]:
     """Acquisition of Validation Data.
 
     Parameters
@@ -6727,11 +6858,11 @@ def acquisition_of_validation_data(
     total_perm_combination_list: List[List[int]]
         Shape transposition pattern perms
     """
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = \
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = \
         kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = \
         kwargs['test_data_nhwc']
-    custom_input_op_name_np_data_path: str = \
+    custom_input_op_name_np_data_path: Optional[Any] = \
         kwargs['custom_input_op_name_np_data_path']
     tf_input_cache: Optional[Dict[str, np.ndarray]] = \
         kwargs.get('tf_input_cache', None)
@@ -6781,7 +6912,7 @@ def acquisition_of_validation_data(
     #   If one of input.1 or input.2 is np.ndarray, tf_pre_tensor_infos is 1 case
     tf_pre_tensor_infos = {}
     try:
-        tf_pre_tensor_infos: Dict[Any] = dummy_tf_inference(
+        tf_pre_tensor_infos: Dict[str, np.ndarray] = dummy_tf_inference(
             model=val_model,
             inputs=tf_model_inputs,
             test_data_nhwc=test_data_nhwc,
@@ -6793,8 +6924,8 @@ def acquisition_of_validation_data(
     del val_model
 
     # Get np.ndarray for validation
-    validation_data_1 = None
-    validation_data_2 = None
+    validation_data_1: Optional[np.ndarray] = None
+    validation_data_2: Optional[np.ndarray] = None
     if len(tf_pre_tensor_infos) == 2:
         validation_data_1 = list(tf_pre_tensor_infos.values())[0]
         validation_data_2 = list(tf_pre_tensor_infos.values())[1]
@@ -6807,7 +6938,7 @@ def acquisition_of_validation_data(
             validation_data_2 = list(tf_pre_tensor_infos.values())[0]
 
     # Get ONNX inference results
-    onnx_tensor_infos = {}
+    onnx_tensor_infos: Dict[str, np.ndarray] = {}
     if onnx_tensor_infos_for_validation is not None \
         and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
         onnx_tensor_infos = {
@@ -6868,7 +6999,7 @@ def correction_process_for_accuracy_errors(
     input_tensor_2: Any,
     tf_func: Any,
     np_func: Any,
-    graph_node_output_shape: List,
+    graph_node_output_shape: Optional[List[Union[int, str, None]]],
     graph_node_output: gs.Variable,
     tf_layers_dict: Dict,
     **kwargs,
@@ -6903,7 +7034,7 @@ def correction_process_for_accuracy_errors(
     input_tensor_2: Any
         TensorFlow tensor after accuracy check and accuracy correction
     """
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     onnx_tensor_infos = None
     validation_data_1 = None
     validation_data_2 = None
@@ -6923,9 +7054,9 @@ def correction_process_for_accuracy_errors(
             # No accuracy correction is performed, but only unmatching of output shapes is avoided.
             tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
             tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
-            min_abs_err_perm_1 = [i for i in range(len(input_tensor_1.shape))]
+            min_abs_err_perm_1: List[int] = [i for i in range(len(input_tensor_1.shape))]
             pre_min_abs_err_perm_1 = min_abs_err_perm_1
-            min_abs_err_perm_2 = [i for i in range(len(input_tensor_2.shape))]
+            min_abs_err_perm_2: List[int] = [i for i in range(len(input_tensor_2.shape))]
             pre_min_abs_err_perm_2 = min_abs_err_perm_2
             test_output_shape = graph_node_output_shape
             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
@@ -6936,8 +7067,8 @@ def correction_process_for_accuracy_errors(
                         test_result_tensor = np_func(test_tensor_1, test_tensor_2)
                         test_result_tensor_shape = list(test_result_tensor.shape)
                         if test_result_tensor_shape == test_output_shape:
-                            min_abs_err_perm_1 = tensor_1_candidate_for_transposition
-                            min_abs_err_perm_2 = tensor_2_candidate_for_transposition
+                            min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
+                            min_abs_err_perm_2 = list(tensor_2_candidate_for_transposition)
                             break
                     except Exception as ex1:
                         pass
@@ -6988,18 +7119,18 @@ def correction_process_for_accuracy_errors(
                             )
                         # Perform simple accuracy verification
                         # Terminate when the error is less than 1e-3
-                        if onnx_tensor_infos:
+                        if onnx_tensor_infos and validation_data_1 is not None and validation_data_2 is not None:
                             min_abs_err = sys.maxsize
-                            min_abs_err_perm_1: int = [idx for idx in range(len(validation_data_1.shape))]
-                            min_abs_err_perm_2: int = [idx for idx in range(len(validation_data_2.shape))]
+                            min_abs_err_perm_1: List[int] = [idx for idx in range(len(validation_data_1.shape))]
+                            min_abs_err_perm_2: List[int] = [idx for idx in range(len(validation_data_2.shape))]
                             tensor_1_candidate_for_transpositions = \
-                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=validation_data_1.shape)
+                                obtaining_an_inverted_pattern_for_brute_force_validation(tensor_shape=list(validation_data_1.shape))
                             tensor_2_candidate_for_transpositions = \
                                 list(itertools.permutations(range(len(validation_data_2.shape))))
                             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                                 for tensor_2_candidate_for_transposition in tensor_2_candidate_for_transpositions:
                                     try:
-                                        tf_tensor_infos: Dict[Any] = \
+                                        tf_tensor_infos: Dict[str, np.ndarray] = \
                                             {
                                                 'dummy_result': \
                                                     np_func(
@@ -7237,8 +7368,8 @@ def _is_output_nhwc_assumed(
 
 
 def shape_is_equal_ignore_order(
-    shape_list_1: List[int],
-    shape_list_2: List[int],
+    shape_list_1: List[Any],
+    shape_list_2: List[Any],
 ) -> bool:
     """Verify that all axis size combinations match.
 
@@ -7282,14 +7413,14 @@ def define_reduceXXX(
     if tf_func == 'ReduceL1':
         reduced_tensor = tf.norm(
             tensor=target_input_tensor,
-            ord=1,
+            ord=cast(Any, 1),
             axis=axes,
             keepdims=target_keepdims,
         )
     elif tf_func == 'ReduceL2':
         reduced_tensor = tf.norm(
             tensor=target_input_tensor,
-            ord=2,
+            ord=cast(Any, 2),
             axis=axes,
             keepdims=target_keepdims,
         )
@@ -7365,4 +7496,7 @@ def check_has_external_data(input_onnx_file_path: str) -> bool:
                 elif a.type == onnx.AttributeProto.GRAPHS:
                     for sg in a.graphs:
                         yield from iter_tensors_in_graph(sg)
-    return any(uses_external_data(t) for t in iter_tensors_in_graph(model.graph))
+    return any(
+        isinstance(t, onnx.TensorProto) and uses_external_data(t)
+        for t in iter_tensors_in_graph(model.graph)
+    )

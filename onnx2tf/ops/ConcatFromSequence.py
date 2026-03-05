@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -18,7 +19,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """ConcatFromSequence
 
@@ -30,7 +31,7 @@ def make_node(
     tf_layers_dict: dict
         optype, shape, dtype, tensorflow graph
     """
-    graph_node_input: gs.Variable = graph_node.inputs[0]
+    graph_node_input = graph_node.inputs[0]
     graph_node_output: gs.Variable = graph_node.outputs[0]
 
     input_sequence = tf_layers_dict[graph_node_input.name]['tf_node']
@@ -43,15 +44,17 @@ def make_node(
 
     axis = graph_node.attrs.get('axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
+    output_rank = len(shape) if shape is not None else 0
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(shape),
+        tensor_rank=output_rank,
+        before_op_output_shape_trans=True,
     )
     new_axis = graph_node.attrs.get('new_axis', 0)
     # NCHW->NHWC, NCDHW->NDHWC
     new_axis = convert_axis(
         axis=new_axis,
-        tensor_rank=len(shape),
+        tensor_rank=output_rank,
         before_op_output_shape_trans=True,
     )
 
@@ -82,11 +85,11 @@ def make_node(
         cond_less,
         body_concat, [i_min, i_max, input_tensor, axis, t],
         shape_invariants=[
-            tf.TensorShape(None),
+            tf.TensorShape(cast(Any, None)),
             i_max.get_shape(),
             input_tensor.get_shape(),
-            tf.TensorShape(None),
-            tf.TensorShape(None)
+            tf.TensorShape(cast(Any, None)),
+            tf.TensorShape(cast(Any, None))
         ],
         parallel_iterations=1,
     )

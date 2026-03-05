@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Compress
 
@@ -57,10 +58,15 @@ def make_node(
     dtype = graph_node_output.dtype
 
     axis = graph_node.attrs.get('axis', 0)
+    tensor_rank = len(shape) if shape is not None else (
+        len(graph_node_input_1.shape)
+        if isinstance(graph_node_input_1, gs.Variable) and graph_node_input_1.shape is not None
+        else 0
+    )
     # NCHW->NHWC, NCDHW->NDHWC
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(shape),
+        tensor_rank=tensor_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 

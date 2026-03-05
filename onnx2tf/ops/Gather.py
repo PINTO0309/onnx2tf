@@ -5,7 +5,7 @@ np.random.seed(0)
 import tensorflow as tf
 import tf_keras
 import onnx2tf.gs as gs
-from typing import List
+from typing import List, Any
 from onnx2tf.utils.common_functions import (
     get_replacement_parameter,
     replace_parameter,
@@ -27,7 +27,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Gather
 
@@ -258,7 +258,7 @@ def make_node(
             int_check_sum = sum(
                 [
                     1 for dim in simple_indices \
-                        if (isinstance(dim, int) or isinstance(dim, np.int32) or isinstance(dim, np.int64)) and dim >= 0
+                        if isinstance(dim, (int, np.integer)) and dim >= 0
                 ]
             )
             if len(simple_indices) == int_check_sum:
@@ -373,7 +373,8 @@ def make_node(
             maximum_number_of_elements = input_tensor.shape[axis]
             indices_values = indices_values + maximum_number_of_elements
         elif tf_keras.backend.is_keras_tensor(indices_values) \
-            and indices_values.shape == tf.TensorShape(None):
+            and isinstance(getattr(indices_values, 'shape', None), tf.TensorShape) \
+            and getattr(indices_values, 'shape').rank is None:
             indices_values = tf.reshape(indices_values, [-1])
 
         tf_layers_dict[graph_node_output.name]['tf_node'] = \

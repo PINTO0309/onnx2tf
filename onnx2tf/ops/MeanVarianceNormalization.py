@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MeanVarianceNormalization
 
@@ -100,7 +101,10 @@ def make_node(
         keepdims=True,
     )
     tf_layers_dict[graph_node_output.name]['tf_node'] = \
-        (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+        tf.math.divide(
+            tf.math.subtract(input_tensor, mean),
+            tf.sqrt(tf.math.add(variance, mvn_epsilon)),
+        )
 
     # Post-process transpose
     tf_layers_dict[graph_node_output.name]['tf_node'] = post_process_transpose(

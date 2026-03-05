@@ -26,7 +26,7 @@ from onnx2tf.utils.common_functions import (
     acquisition_of_validation_data,
     get_tf_model_inputs,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, cast
 
 
 @print_node_info
@@ -36,7 +36,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Concat
 
@@ -79,7 +79,7 @@ def make_node(
         normalized_shape = []
         for dim in shape:
             if hasattr(dim, 'value'):
-                dim = dim.value
+                dim = cast(Any, dim).value
             if isinstance(dim, np.generic):
                 dim = dim.item()
             normalized_shape.append(dim)
@@ -210,6 +210,7 @@ def make_node(
         param_name='axis',
         **kwargs,
     )
+    axis = int(axis) if axis is not None else 0
 
     # NHWC judgement
     nhwc_judge = True
@@ -274,8 +275,7 @@ def make_node(
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
     values = [
-        value if value.shape != tf.TensorShape(None) \
-            and len(value.shape) > 0 else tf.reshape(value, [1]) for value in values
+        value if getattr(value.shape, 'rank', None) not in (None, 0) else tf.reshape(value, [1]) for value in values
     ]
 
     def _infer_concat_axis_runtime(values, fallback_axis):
@@ -283,20 +283,23 @@ def make_node(
             return fallback_axis
         shapes = [tf.shape(v) for v in values]
         shapes = tf.stack(shapes)
-        equal_mask = tf.reduce_all(tf.equal(shapes, shapes[0]), axis=0)
+        first_shape = tf.gather(shapes, indices=0, axis=0)
+        equal_mask = tf.reduce_all(tf.equal(shapes, first_shape), axis=0)
         diff_mask = tf.cast(tf.logical_not(equal_mask), tf.int32)
         candidate_count = tf.reduce_sum(diff_mask)
         axis_from_diff = tf.argmax(diff_mask, axis=0, output_type=tf.int32)
         fallback_axis_tensor = tf.cast(fallback_axis, tf.int32)
         is_single = tf.cast(tf.equal(candidate_count, 1), tf.int32)
-        return axis_from_diff * is_single + fallback_axis_tensor * (1 - is_single)
+        return axis_from_diff * is_single + fallback_axis_tensor * tf.subtract(1, is_single)
 
     axis_is_dynamic = False
     if len(values) > 0:
         all_none = True
         for value in values:
-            if value.shape is not None and value.shape != tf.TensorShape(None):
-                if not all([s is None for s in value.shape]):
+            value_shape = getattr(value, 'shape', None)
+            value_shape_list = value_shape.as_list() if value_shape is not None and value_shape.rank is not None else None
+            if value_shape_list is not None:
+                if not all([s is None for s in value_shape_list]):
                     all_none = False
                     break
         if all_none:
@@ -306,13 +309,16 @@ def make_node(
     # Generation of TF OP
     tf_type = None
     if simple_resize:
-        target_input: gs.Variable = None
+        target_input: Optional[gs.Variable] = None
         for graph_node_input in graph_node.inputs:
             if graph_node_input.name in tf_layers_dict \
                 and 'simple_resize' in tf_layers_dict[graph_node_input.name] \
-                and tf_layers_dict[graph_node_input.name]['simple_resize'] == True:
+                and tf_layers_dict[graph_node_input.name]['simple_resize'] == True \
+                and isinstance(graph_node_input, gs.Variable):
                 target_input = graph_node_input
                 break
+        if target_input is None:
+            raise ValueError(f'Concat simple_resize target input not found. node.name: {graph_node.name}')
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.slice(
                 tf_layers_dict[target_input.name]['simple_resize_shape_op'],
@@ -322,16 +328,18 @@ def make_node(
         tf_type = tf.slice
 
     elif simple_resize2 and len(values) >= 2:
-        target_input: np.ndarray = np.array([], dtype=np.int64)
+        target_input_np: np.ndarray = np.array([], dtype=np.int64)
         target_spartial_size: int = 0
         for cat_value in values:
             if hasattr(cat_value, 'numpy'):
-                target_input = np.append(target_input, cat_value.numpy())
+                target_input_np = np.append(target_input_np, cast(Any, cat_value).numpy())
             elif not hasattr(cat_value, 'numpy') and cat_value.shape is not None:
-                target_spartial_size = cat_value.shape[0] - 2
-        if target_spartial_size == len(target_input):
-            target_input = np.asarray([1] + [i for i in target_input] + [1])
-        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.convert_to_tensor(target_input)
+                shape0 = cat_value.shape[0]
+                if shape0 is not None:
+                    target_spartial_size = int(shape0) - 2
+        if target_spartial_size == len(target_input_np):
+            target_input_np = np.asarray([1] + [i for i in target_input_np] + [1])
+        tf_layers_dict[graph_node_output.name]['tf_node'] = tf.convert_to_tensor(target_input_np)
         tf_type = tf.constant
 
     else:
@@ -340,7 +348,7 @@ def make_node(
 
         def _get_static_shape(tensor):
             shape = getattr(tensor, 'shape', None)
-            if shape is None or shape == tf.TensorShape(None):
+            if shape is None or shape.rank is None:
                 return None
             return [_normalize_dim(dim) for dim in list(shape)]
 
@@ -417,7 +425,7 @@ def make_node(
             # normal concat attempt
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.concat(
-                    values=values,
+                    values=cast(List[Any], values),
                     axis=axis_for_concat,
                     name=graph_node.name,
                 )
@@ -520,7 +528,7 @@ def make_node(
                 if matched:
                     break
 
-            if succeed:
+            if succeed and chosen_tensor is not None and chosen_axis is not None and chosen_values is not None:
                 tf_layers_dict[graph_node_output.name]['tf_node'] = chosen_tensor
                 axis = chosen_axis
                 values = chosen_values
@@ -534,7 +542,7 @@ def make_node(
         # https://github.com/PINTO0309/onnx2tf/issues/473
         if not axis_is_dynamic:
             output_tensor_shape = tf_layers_dict[graph_node_output.name]['tf_node'].shape
-            if output_tensor_shape != tf.TensorShape(None):
+            if output_tensor_shape.rank is not None:
                 output_tensor_rank = len(output_tensor_shape)
                 if graph_node.outputs[0].shape is not None \
                     and axis != 0 \
@@ -548,12 +556,13 @@ def make_node(
                             try:
                                 dummy_concat_tensor = \
                                     tf.concat(
-                                        values=values,
+                                        values=cast(List[Any], values),
                                         axis=dummy_axis,
                                         name=graph_node.name,
                                     )
-                                dummy_output_shape = dummy_concat_tensor.shape
-                                if shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
+                                dummy_output_shape = getattr(dummy_concat_tensor, 'shape', None)
+                                if dummy_output_shape is not None \
+                                    and shape_is_equal_ignore_order(list(graph_node.outputs[0].shape), list(dummy_output_shape)):
                                     matched_axes.append(dummy_axis)
                             except:
                                 pass
@@ -561,7 +570,7 @@ def make_node(
                         if len(matched_axes) == 1:
                             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                 tf.concat(
-                                    values=values,
+                                    values=cast(List[Any], values),
                                     axis=matched_axes[0],
                                     name=graph_node.name,
                                 )
@@ -573,7 +582,7 @@ def make_node(
                                 and onnx_axis in matched_axes:
                                 tf_layers_dict[graph_node_output.name]['tf_node'] = \
                                     tf.concat(
-                                        values=values,
+                                        values=cast(List[Any], values),
                                         axis=onnx_axis,
                                         name=graph_node.name,
                                     )
@@ -588,7 +597,7 @@ def make_node(
             target_perms: List[List],
             target_name: str,
             axis: int,
-            **kwargs: Dict,
+            **kwargs: Any,
         ):
             cat_tensors = [
                 transpose_with_flexing_deterrence(
@@ -606,10 +615,11 @@ def make_node(
                     name=target_name,
                 )
 
-        onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+        onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
         test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
         custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
         disable_strict_mode: bool = kwargs['disable_strict_mode']
+        values = cast(List[Any], values)
 
         if len(values) == 2 \
             and len(values[0].shape) == len(values[1].shape) \
@@ -632,8 +642,8 @@ def make_node(
                 )
 
             min_abs_err = sys.maxsize
-            min_abs_err_perm_1: int = [idx for idx in range(len(input_tensor_1.shape))]
-            min_abs_err_perm_2: int = [idx for idx in range(len(input_tensor_2.shape))]
+            min_abs_err_perm_1: List[int] = [idx for idx in range(len(input_tensor_1.shape))]
+            min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2.shape))]
 
             tensor_1_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_1.shape))))
             tensor_2_candidate_for_transpositions = list(itertools.permutations(range(len(input_tensor_2.shape))))
@@ -668,9 +678,16 @@ def make_node(
                         # Verify that the output shape matches that of ONNX
                         # If the combination of each value of a dimension is not correct,
                         # invalidate the normal processing judgment.
-                        onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
-                        concat_output_shapes = list(dummy_concat.shape)
-                        concat_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in concat_output_shapes])
+                        onnx_shape_for_prod = list(onnx_output_shape) if onnx_output_shape is not None else []
+                        onnx_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in onnx_shape_for_prod])
+                        dummy_concat_shape = getattr(dummy_concat, 'shape', None)
+                        if dummy_concat_shape is None:
+                            del input_1
+                            del input_2
+                            del dummy_concat
+                            continue
+                        concat_output_shapes = list(dummy_concat_shape)
+                        concat_output_shape_prod = np.prod([int(dim) if isinstance(dim, int) else -1 for dim in concat_output_shapes])
                         if onnx_output_shape_prod != concat_output_shape_prod:
                             del input_1
                             del input_2
@@ -693,7 +710,7 @@ def make_node(
                                 )
 
                                 # TF dummy inference
-                                tf_tensor_infos: Dict[Any] = \
+                                tf_tensor_infos: Dict[Any, Any] = \
                                     dummy_tf_inference(
                                         model=val_model,
                                         inputs=[
@@ -751,7 +768,7 @@ def make_node(
                     target_input_tensors=[input_tensor_1, input_tensor_2],
                     target_perms=[min_abs_err_perm_1, min_abs_err_perm_2],
                     target_name=graph_node.name,
-                    axis=axis,
+                    axis=int(axis),
                     **kwargs
                 )
 
@@ -787,7 +804,7 @@ def make_node(
                 # TF dummy inference
                 tf_pre_tensor_infos = {}
                 try:
-                    tf_pre_tensor_infos: Dict[Any] = \
+                    tf_pre_tensor_infos: Dict[Any, Any] = \
                         dummy_tf_inference(
                             model=val_model,
                             inputs=tf_model_inputs,
@@ -811,7 +828,7 @@ def make_node(
                     del onnx_tensor_infos_for_validation
 
                 min_abs_err = sys.maxsize
-                min_abs_err_axis: int = axis
+                min_abs_err_axis: int = int(axis)
 
                 if onnx_tensor_infos is not None and validation_datas is not None and validation_datas != []:
                     check_axes = reversed([idx for idx in range(len(shape_for_validation))])
@@ -840,7 +857,7 @@ def make_node(
                             ],
                         )
                         # TF dummy inference
-                        tf_tensor_infos: Dict[Any] = \
+                        tf_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=inputs,
@@ -877,7 +894,7 @@ def make_node(
                     del inputs
                     tf_layers_dict[graph_node_output.name]['tf_node'] = \
                         define_concat(
-                            target_input_tensors=values,
+                            target_input_tensors=cast(List[Any], values),
                             target_perms=[target_perm for _ in values],
                             target_name=graph_node.name,
                             axis=min_abs_err_axis,

@@ -32,7 +32,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Expand
 
@@ -71,7 +71,7 @@ def make_node(
     input_tensor_shape = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -148,13 +148,15 @@ def make_node(
     if tf_type == 'Expand':
         graph_node_input_1_shape = graph_node_input_1.shape
         graph_node_input_2_shape = graph_node_input_2.shape
+        tf_model_inputs: List[Any] = []
+        val_model: Any = None
+        onnx_tensor_infos: Dict[str, np.ndarray] | None = None
 
         # Get the output tensor of one previous OP of TensorFlow only once
         if not disable_strict_mode:
             tf_model_inputs = get_tf_model_inputs(
                 tf_layers_dict=tf_layers_dict,
             )
-            val_model = None
             if not isinstance(input_tensor, np.ndarray):
                 expand_shape = []
                 if not isinstance(input_tensor_shape, np.ndarray):
@@ -175,7 +177,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -207,7 +209,6 @@ def make_node(
                     validation_data_2 = copy.deepcopy(input_tensor_shape)
 
             # Get ONNX inference results
-            onnx_tensor_infos = None
             if onnx_tensor_infos_for_validation is not None \
                 and onnx_tensor_infos_for_validation.get(graph_node_output.name, None) is not None:
                 onnx_tensor_infos = {
@@ -273,7 +274,7 @@ def make_node(
                                 )
                                 a=0
                                 # TF dummy inference
-                                tf_tensor_infos: Dict[Any] = \
+                                tf_tensor_infos: Dict[Any, Any] = \
                                     dummy_tf_inference(
                                         model=val_model,
                                         inputs=[
@@ -326,7 +327,7 @@ def make_node(
                     transpose_with_flexing_deterrence(
                         input_tensor=input_tensor,
                         perm=min_abs_err_perm_1,
-                        output_shape=input_tensor_shape \
+                        output_shape=list(input_tensor.shape) \
                             if None not in input_tensor.shape and input_tensor.shape != [] else None,
                         **kwargs,
                     )

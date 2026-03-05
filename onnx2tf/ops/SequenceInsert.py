@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SequenceInsert
 
@@ -102,7 +103,7 @@ def make_node(
     output_seq = None
     if input_sequence.shape[0] is not None:
         if input_sequence.shape[0] == 0:
-            output_seq = tf.RaggedTensor.from_tensor(input_tensor)
+            output_seq = cast(Any, tf.RaggedTensor).from_tensor(input_tensor)
         else:
             s1 = input_sequence[:position]
             s2 = input_sequence[position:]
@@ -113,7 +114,7 @@ def make_node(
                 x=input_sequence.bounding_shape(axis=0),
                 y=0,
             ),
-            lambda: tf.RaggedTensor.from_tensor(input_tensor),
+            lambda: cast(Any, tf.RaggedTensor).from_tensor(input_tensor),
             lambda: tf.concat(
                 [
                     input_sequence[:position],

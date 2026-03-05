@@ -3290,24 +3290,23 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         ctx.ensure_tensor(pads_input_name)
         pads_vector_name = pads_input_name
         pads_dtype = str(ctx.get_tensor_dtype(pads_vector_name)).upper()
-        if pads_dtype != "INT32":
-            pads_vector_name_i32 = ctx.add_intermediate_tensor(
-                f"{output_name}_pads_i32",
-                dtype="INT32",
-                shape=[int(input_rank * 2)],
+        pads_vector_name_i32 = ctx.add_intermediate_tensor(
+            f"{output_name}_pads_i32",
+            dtype="INT32",
+            shape=[int(input_rank * 2)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[pads_vector_name],
+                outputs=[pads_vector_name_i32],
+                options={
+                    "inDataType": pads_dtype,
+                    "outDataType": "INT32",
+                },
             )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="CAST",
-                    inputs=[pads_vector_name],
-                    outputs=[pads_vector_name_i32],
-                    options={
-                        "inDataType": pads_dtype,
-                        "outDataType": "INT32",
-                    },
-                )
-            )
-            pads_vector_name = pads_vector_name_i32
+        )
+        pads_vector_name = pads_vector_name_i32
 
         pads_2xrank_name = ctx.add_intermediate_tensor(
             f"{output_name}_pads_2xrank",
@@ -4209,9 +4208,11 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
     output_shape = [int(v) if int(v) > 0 else 1 for v in output_shape_signature]
     output_tensor.shape_signature = [int(v) for v in output_shape_signature]
     output_tensor.shape = [int(v) for v in output_shape]
+    # Keep runtime-driven placeholder cases dynamic (empty newShape), but
+    # preserve explicit flatten intent when output signature is already stable.
     reshape_options_shape = (
         []
-        if any(int(v) < 0 for v in output_shape_signature)
+        if bool(use_inferred_signature)
         else [int(v) for v in output_shape_signature]
     )
     shape_const = ctx.add_const_tensor(

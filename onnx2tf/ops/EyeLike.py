@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """EyeLike
 
@@ -76,7 +77,7 @@ def make_node(
         if isinstance(dtype, np.dtype) else dtype
 
     # Generation of TF OP
-    if None not in input_tensor_shape:
+    if input_tensor_shape is not None and all(dim is not None for dim in input_tensor_shape):
         max_eye_shape_ub = input_tensor_shape[1] \
             if offset > 0 else input_tensor_shape[0]
         max_eye_shape_lb = input_tensor_shape[0] \

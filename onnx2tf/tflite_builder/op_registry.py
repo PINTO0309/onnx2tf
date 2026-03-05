@@ -2985,10 +2985,21 @@ def _normalize_axes_for_rank(
 
 
 def _validate_reduce(node: Any, ctx: Any) -> None:
-    _ = (node, ctx)
-    # Builder-side reduce rank/axis resolution handles dynamic/placeholder ranks
-    # more robustly than pre-validation in control-flow-heavy graphs.
-    return
+    # Reduce axes must be compile-time constant in flatbuffer_direct.
+    # Keep rank/axis normalization in builder-side logic, but fail early in
+    # coverage/dispatch checks when non-constant axes input is provided.
+    if len(node.inputs) >= 2 and str(node.inputs[1].name) != "":
+        axes_arr = ctx.get_constant_array(node.inputs[1].name)
+        if axes_arr is None:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message=(
+                    "Reduce axes input must be constant in flatbuffer_direct. "
+                    f"op={node.name}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
 
 
 def _validate_cumsum(node: Any, ctx: Any) -> None:

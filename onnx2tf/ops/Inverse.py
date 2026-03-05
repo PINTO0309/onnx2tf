@@ -1,3 +1,4 @@
+from typing import Any, Optional, cast
 import random
 random.seed(0)
 import numpy as np
@@ -22,10 +23,11 @@ def _build_pseudo_inverse_2x2(
     *,
     x: tf.Tensor,
 ) -> tf.Tensor:
-    a00 = x[..., 0:1, 0:1]
-    a01 = x[..., 0:1, 1:2]
-    a10 = x[..., 1:2, 0:1]
-    a11 = x[..., 1:2, 1:2]
+    x_any = cast(Any, x)
+    a00 = x_any[..., 0:1, 0:1]
+    a01 = x_any[..., 0:1, 1:2]
+    a10 = x_any[..., 1:2, 0:1]
+    a11 = x_any[..., 1:2, 1:2]
 
     det = a00 * a11 - a01 * a10
     row0 = tf.concat([a11, -a01], axis=-1)
@@ -41,15 +43,16 @@ def _build_pseudo_inverse_3x3(
     *,
     x: tf.Tensor,
 ) -> tf.Tensor:
-    a00 = x[..., 0:1, 0:1]
-    a01 = x[..., 0:1, 1:2]
-    a02 = x[..., 0:1, 2:3]
-    a10 = x[..., 1:2, 0:1]
-    a11 = x[..., 1:2, 1:2]
-    a12 = x[..., 1:2, 2:3]
-    a20 = x[..., 2:3, 0:1]
-    a21 = x[..., 2:3, 1:2]
-    a22 = x[..., 2:3, 2:3]
+    x_any = cast(Any, x)
+    a00 = x_any[..., 0:1, 0:1]
+    a01 = x_any[..., 0:1, 1:2]
+    a02 = x_any[..., 0:1, 2:3]
+    a10 = x_any[..., 1:2, 0:1]
+    a11 = x_any[..., 1:2, 1:2]
+    a12 = x_any[..., 1:2, 2:3]
+    a20 = x_any[..., 2:3, 0:1]
+    a21 = x_any[..., 2:3, 1:2]
+    a22 = x_any[..., 2:3, 2:3]
 
     c00 = a11 * a22 - a12 * a21
     c01 = a12 * a20 - a10 * a22
@@ -86,12 +89,13 @@ def _build_pseudo_inverse(
     rank = len(shape)
     if rank < 2:
         return tf.linalg.inv(input=x, name=op_name)
-    rows = shape[-2]
-    cols = shape[-1]
+    shape_dims = cast(Any, shape)
+    rows = cast(Optional[int], tf.compat.dimension_value(shape_dims[-2]))
+    cols = cast(Optional[int], tf.compat.dimension_value(shape_dims[-1]))
     if rows is None or cols is None or rows != cols:
         return tf.linalg.inv(input=x, name=op_name)
 
-    n = int(rows)
+    n = rows
     if n == 2:
         return _build_pseudo_inverse_2x2(x=x)
     if n == 3:
@@ -106,7 +110,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Inverse
 

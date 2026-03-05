@@ -1,3 +1,4 @@
+from typing import Any, List, cast
 import sys
 import random
 random.seed(0)
@@ -26,7 +27,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """SplitToSequence
 
@@ -73,9 +74,10 @@ def make_node(
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
 
     axis = graph_node.attrs.get('axis', 0)
+    input_rank = len(graph_node_input_1.shape) if graph_node_input_1.shape is not None else len(input_tensor.shape)
     axis = convert_axis(
         axis=axis,
-        tensor_rank=len(graph_node_input_1.shape),
+        tensor_rank=input_rank,
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
     keepdims = bool(graph_node.attrs.get('keepdims', 1))
@@ -99,10 +101,13 @@ def make_node(
                 f'graph_node.name: {graph_node.name} split.shape: {split_shape}'
             )
             sys.exit(1)
-        split_inputs = tf.split(
-            value=input_tensor,
-            num_or_size_splits=split_sizes,
-            axis=axis,
+        split_inputs = cast(
+            List[Any],
+            tf.split(
+                value=input_tensor,
+                num_or_size_splits=split_sizes,
+                axis=axis,
+            ),
         )
 
     else:
@@ -111,10 +116,13 @@ def make_node(
             input=[1],
             multiples=tf.reshape(input_tensor_shape[axis], [1])
         )
-        split_inputs = tf.split(
-            value=input_tensor,
-            num_or_size_splits=split_sizes,
-            axis=axis,
+        split_inputs = cast(
+            List[Any],
+            tf.split(
+                value=input_tensor,
+                num_or_size_splits=split_sizes,
+                axis=axis,
+            ),
         )
         if not keepdims:
             split_inputs = [
@@ -128,10 +136,11 @@ def make_node(
     input_sequence = tf.ragged.constant([], dtype=output_dtype)
 
     # insert tensors at the end of sequence
+    output_seq: Any = input_sequence
     for i in range(len(split_inputs)):
         input_tensor = tf.expand_dims(split_inputs[i], 0)
-        if input_sequence.shape[0] == 0:
-            output_seq = tf.RaggedTensor.from_tensor(input_tensor)
+        if i == 0:
+            output_seq = cast(Any, tf.RaggedTensor).from_tensor(input_tensor)
         else:
             output_seq = tf.concat([input_sequence, input_tensor], axis=0)
         input_sequence = output_seq

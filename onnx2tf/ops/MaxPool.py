@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -32,7 +33,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """MaxPool
 
@@ -57,9 +58,11 @@ def make_node(
     shape_1 = graph_node_output_1.shape
     dtype_1 = graph_node_output_1.dtype
 
-    graph_node_output_2 = None
+    graph_node_output_2: Any = None
+    shape_2 = None
+    dtype_2 = None
     if len(graph_node.outputs) > 1:
-        graph_node_output_2: gs.Variable = graph_node.outputs[1]
+        graph_node_output_2 = graph_node.outputs[1]
         shape_2 = graph_node_output_2.shape
         dtype_2 = graph_node_output_2.dtype
 
@@ -283,7 +286,7 @@ def make_node(
         # https://github.com/PINTO0309/onnx2tf/issues/444
         # Implemented a workaround to deal with the problem that padding with the minimum value causes
         # the output error of `MaxPool2D` to be maximized only when quantizing with INT8 quantization.
-        padded_tensor = tf.pad(
+        padded_tensor = cast(Any, tf.pad)(
             tensor=input_tensor,
             paddings=tf_pads,
             mode='CONSTANT',

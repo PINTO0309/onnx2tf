@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -23,7 +24,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Trilu
 
@@ -66,15 +67,32 @@ def make_node(
         )
         k = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
             if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+    k_value = 0
     if k is not None:
-        if k > tensor_shape[-1]:
-            k = tensor_shape[-1]
-        elif k < 0 - tensor_shape[-2]:
-            k = 0 - tensor_shape[-2]
-    else:
-        k = tf.constant(0, dtype=tf.int64)
-    k = tf.convert_to_tensor(k, dtype=tf.int64)
-    keep_triangle = tf.constant(-1, dtype=k.dtype)
+        if isinstance(k, np.ndarray):
+            if k.size > 0:
+                k_value = int(k.reshape(-1)[0])
+        elif isinstance(k, np.generic):
+            k_value = int(k.item())
+        elif tf.is_tensor(k):
+            k_static = tf.get_static_value(k)
+            if isinstance(k_static, np.ndarray):
+                if k_static.size > 0:
+                    k_value = int(k_static.reshape(-1)[0])
+            elif isinstance(k_static, np.generic):
+                k_value = int(k_static.item())
+            elif isinstance(k_static, (int, np.integer)):
+                k_value = int(k_static)
+        elif isinstance(k, (int, np.integer)):
+            k_value = int(k)
+
+    if isinstance(tensor_shape[-1], int) and k_value > tensor_shape[-1]:
+        k_value = int(tensor_shape[-1])
+    if isinstance(tensor_shape[-2], int) and k_value < -int(tensor_shape[-2]):
+        k_value = -int(tensor_shape[-2])
+
+    k = int(k_value)
+    keep_triangle = -1
 
     upper = bool(graph_node.attrs.get('upper', 1))
 

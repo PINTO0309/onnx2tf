@@ -21,7 +21,7 @@ from onnx2tf.utils.common_functions import (
     acquisition_of_validation_data,
     transpose_with_flexing_deterrence,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence, cast
 
 
 @print_node_info
@@ -31,7 +31,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Tile
 
@@ -118,17 +118,17 @@ def make_node(
     # Shape Unmatch Error Mitigation Measures
     # Search for and transpose shapes that do not cause shape unmatch errors
     min_abs_err = sys.maxsize
-    min_abs_err_perm_1: int = [idx for idx in range(len(input_tensor_1.shape))]
-    min_abs_err_perm_2: int = [idx for idx in range(len(input_tensor_2.shape))]
+    min_abs_err_perm_1: List[int] = [idx for idx in range(len(input_tensor_1.shape))]
+    min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2.shape))]
 
     def define_tile(
         *,
         target_input_tensor_1: Any,
-        target_perm_1: List,
+        target_perm_1: List[int],
         target_input_tensor_2: Any,
-        target_perm_2: List,
+        target_perm_2: List[int],
         target_name: str,
-        **kwargs: Dict,
+        **kwargs: Any,
     ):
         multiples = None
         if not isinstance(target_input_tensor_2, np.ndarray):
@@ -200,9 +200,20 @@ def make_node(
                     # Verify that the output shape matches that of ONNX
                     # If the combination of each value of a dimension is not correct,
                     # invalidate the normal processing judgment.
-                    onnx_output_shape_prod = np.prod([dim if not isinstance(dim, str) else -1 for dim in onnx_output_shape])
+                    onnx_output_shape_for_prod = [
+                        dim if isinstance(dim, int) else -1
+                        for dim in (onnx_output_shape or [])
+                    ]
+                    onnx_output_shape_prod = int(
+                        np.prod(onnx_output_shape_for_prod, dtype=np.int64)
+                    )
                     tile_output_shapes = list(dummy_tile.shape)
-                    tile_output_shape_prod = np.prod([dim if dim is not None else -1 for dim in tile_output_shapes])
+                    tile_output_shape_prod = int(
+                        np.prod(
+                            [dim if isinstance(dim, int) else -1 for dim in tile_output_shapes],
+                            dtype=np.int64,
+                        )
+                    )
                     if onnx_output_shape_prod != tile_output_shape_prod:
                         del input_1
                         del input_2
@@ -224,7 +235,7 @@ def make_node(
                             )
 
                             # TF dummy inference
-                            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                            tf_tensor_infos: Dict[Any, Any] = dummy_tf_inference(
                                 model=val_model,
                                 inputs=[
                                     input_1,
@@ -286,12 +297,22 @@ def make_node(
             )
     else:
         # Dynamic Tensor
+        multiples_tensor: tf.Tensor
+        if isinstance(input_tensor_2, (np.ndarray, list, tuple)):
+            multiples_tensor = tf.convert_to_tensor(
+                [int(dim) for dim in cast(Sequence[Any], input_tensor_2)]
+            )
+        else:
+            multiples_tensor = tf.cast(
+                input_tensor_2 if not isinstance(input_tensor_2, np.ndarray) else tf.convert_to_tensor(input_tensor_2),
+                dtype=tf.int32,
+            )
         tf_layers_dict[graph_node_output.name]['tf_node'] = \
             tf.tile(
                 input=input_tensor_1 \
                     if not isinstance(input_tensor_1, np.ndarray) \
                         else tf.convert_to_tensor(input_tensor_1),
-                multiples=tf.convert_to_tensor([dim for dim in input_tensor_2]),
+                multiples=multiples_tensor,
             )
 
     # Post-process transpose
@@ -316,4 +337,3 @@ def make_node(
                 },
             }
         )
-

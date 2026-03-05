@@ -23,7 +23,7 @@ from onnx2tf.utils.common_functions import (
     dummy_tf_inference,
     onnx_tf_tensor_validation,
 )
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, cast
 
 
 def _as_static_int_list(shape_like: Any) -> List[int] | None:
@@ -124,7 +124,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Reshape
 
@@ -172,14 +172,22 @@ def make_node(
     # If Reshape's shape contains zeros, get the deformed shape from the output shape
     if isinstance(reshape_shape, list) and reshape_shape.count(0) > 0:
         before_tensor_shapes = tf.shape(tf_layers_dict[graph_node_input_1.name]['tf_node'])
-        new_shape = [before_tensor_shapes[idx] if isinstance(s, str) else int(s) for idx, s in enumerate(output_shape)]
+        output_shape_list = output_shape if output_shape is not None else []
+        new_shape = [
+            tf.gather(before_tensor_shapes, indices=idx) if isinstance(s, str) or s is None else int(s)
+            for idx, s in enumerate(output_shape_list)
+        ]
         reshape_shape = new_shape
     elif isinstance(reshape_shape, np.ndarray) and np.count_nonzero(reshape_shape == 0) > 0:
         before_tensor_shapes = tf.shape(tf_layers_dict[graph_node_input_1.name]['tf_node'])
-        new_shape = [before_tensor_shapes[idx] if isinstance(s, str) else int(s) for idx, s in enumerate(output_shape)]
+        output_shape_list = output_shape if output_shape is not None else []
+        new_shape = [
+            tf.gather(before_tensor_shapes, indices=idx) if isinstance(s, str) or s is None else int(s)
+            for idx, s in enumerate(output_shape_list)
+        ]
         reshape_shape = new_shape
 
-    onnx_tensor_infos_for_validation: Dict[str: np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
@@ -219,8 +227,8 @@ def make_node(
                 transposed_tensor = \
                     transpose_with_flexing_deterrence(
                         input_tensor=input_tensor,
-                        perm=list(perm) if perm is not None else None,
-                        output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
+                        perm=list(perm),
+                        output_shape=cast(Any, transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None),
                         name=graph_node.name,
                         **kwargs,
                     )
@@ -231,28 +239,28 @@ def make_node(
                 transposed_tensor = \
                     transpose_with_flexing_deterrence(
                         input_tensor=input_tensor,
-                        perm=list(perm) if perm is not None else None,
-                        output_shape=transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None,
+                        perm=list(perm),
+                        output_shape=cast(Any, transposed_tensor_output_shape if None not in transposed_tensor_output_shape else None),
                         name=graph_node.name,
                         **kwargs,
                     )
             except:
                 transposed_tensor = input_tensor
 
-        test_data = None
+        test_data: Any = None
         if not isinstance(input_tensor, np.ndarray):
             if not isinstance(graph_node_input_1, np.ndarray) \
                 and graph_node_input_1.name in tf_layers_dict \
                 and 'verification_data' in tf_layers_dict[graph_node_input_1.name].keys():
-                test_data: np.ndarray = tf_layers_dict[graph_node_input_1.name]['verification_data']
-                test_data = test_data.transpose(list(perm) if perm is not None else None)
+                test_data = tf_layers_dict[graph_node_input_1.name]['verification_data']
+                test_data = test_data.transpose(list(perm))
             elif isinstance(graph_node_input_1, np.ndarray):
-                test_data: np.ndarray = input_tensor
-                test_data = test_data.transpose(list(perm) if perm is not None else None)
+                test_data = input_tensor
+                test_data = test_data.transpose(list(perm))
             else:
                 test_data = None
         else:
-            test_data = input_tensor.transpose(list(perm) if perm is not None else None)
+            test_data = input_tensor.transpose(list(perm))
 
         if isinstance(reshape_shape, np.ndarray):
             perm_shape = [
@@ -306,8 +314,9 @@ def make_node(
         # Reshape
         has_undefined_outputshape = output_shape is None
         if not has_undefined_outputshape:
-            has_none_outputshape = None in output_shape
-            has_str_outputshape = True in [True for dim in output_shape if isinstance(dim, str)]
+            output_shape_list = cast(List[Any], output_shape)
+            has_none_outputshape = None in output_shape_list
+            has_str_outputshape = True in [True for dim in output_shape_list if isinstance(dim, str)]
             has_undefined_outputshape = has_none_outputshape or has_str_outputshape
         final_shape = transposed_reshape_shape \
             if (has_undefined_outputshape or shape_replaced_flg) else output_shape
@@ -373,10 +382,11 @@ def make_node(
                 block_size = final_shape[3] if isinstance(final_shape[3], int) else None
 
                 if channel_size is not None \
+                    and isinstance(block_size, int) \
                     and block_size == final_shape[5]:
 
-                    transpose_node: gs.Node = None
-                    reshape_node: gs.Node = None
+                    transpose_node: Optional[gs.Node] = None
+                    reshape_node: Optional[gs.Node] = None
                     consumer_count = 0
                     while True:
                         try:
@@ -385,7 +395,7 @@ def make_node(
                         except:
                             break
 
-                    if consumer_count == 1:
+                    if consumer_count == 1 and transpose_node is not None:
                         if transpose_node.op == 'Transpose':
                             perm: List[int] = transpose_node.attrs.get('perm', [])
                             if perm == [0, 1, 3, 5, 2, 4]:
@@ -399,12 +409,12 @@ def make_node(
                                         break
 
                                 if consumer_count == 1:
-                                    if reshape_node.op == 'Reshape' \
+                                    if reshape_node is not None and reshape_node.op == 'Reshape' \
                                         and reshape_node.outputs[0].shape is not None \
                                         and len(reshape_node.outputs[0].shape) == 4 \
                                         and isinstance(reshape_node.outputs[0].shape[1], int) \
                                         and sum([0 if isinstance(dim, int) else 1 for dim in reshape_node.outputs[0].shape]) == 0 \
-                                        and channel_size * block_size ** 2 == reshape_node.outputs[0].shape[1]:
+                                        and channel_size * int(block_size) ** 2 == reshape_node.outputs[0].shape[1]:
 
                                         # Save the name of the OP set to be replaced to SpaceToDepth
                                         # Transpose, Reshape
@@ -424,10 +434,11 @@ def make_node(
 
         if not enable_space_to_depth:
             # Reshape
+            final_shape_for_reshape = final_shape if final_shape is not None else tf.shape(transposed_tensor)
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 tf.reshape(
                     tensor=transposed_tensor,
-                    shape=final_shape,
+                    shape=cast(Any, final_shape_for_reshape),
                     name=graph_node.name,
                 )
 
@@ -444,11 +455,12 @@ def make_node(
                 and sum([1 if isinstance(s, str) else 0 for s in graph_node_input_1_shape]) == 0:
 
                 # Get the output tensor of one previous OP of TensorFlow only once
+                tf_model_inputs: List[Any] = []
+                val_model: Any = None
                 if not disable_strict_mode:
                     tf_model_inputs = get_tf_model_inputs(
                         tf_layers_dict=tf_layers_dict,
                     )
-                    val_model = None
                     if not isinstance(transposed_tensor, np.ndarray):
                         val_model = tf_keras.Model(
                             inputs=tf_model_inputs,
@@ -466,7 +478,7 @@ def make_node(
                 tf_pre_tensor_infos = {}
                 if not disable_strict_mode:
                     try:
-                        tf_pre_tensor_infos: Dict[Any] = \
+                        tf_pre_tensor_infos: Dict[Any, Any] = \
                             dummy_tf_inference(
                                 model=val_model,
                                 inputs=tf_model_inputs,
@@ -475,8 +487,10 @@ def make_node(
                             )
                     except Exception as ex:
                         pass
-                    del val_model
+                    if val_model is not None:
+                        del val_model
 
+                onnx_tensor_infos = None
                 # Get np.ndarray for validation
                 validation_data = None
                 if not disable_strict_mode:
@@ -526,6 +540,7 @@ def make_node(
                                     name='dummy_input',
                                     dtype=validation_data.dtype,
                                 )
+                                shape_for_candidate = final_shape if final_shape is not None else tf.shape(input)
                                 val_model = tf_keras.Model(
                                     inputs=[
                                         input,
@@ -533,13 +548,13 @@ def make_node(
                                     outputs=[
                                         tf.reshape(
                                             tensor=tf.transpose(a=input, perm=tensor_1_candidate_for_transposition),
-                                            shape=final_shape,
+                                            shape=cast(Any, shape_for_candidate),
                                             name=graph_node.name,
                                         )
                                     ],
                                 )
                                 # TF dummy inference
-                                tf_tensor_infos: Dict[Any] = \
+                                tf_tensor_infos: Dict[Any, Any] = \
                                     dummy_tf_inference(
                                         model=val_model,
                                         inputs=[
@@ -582,6 +597,7 @@ def make_node(
                             except Exception as ex:
                                 pass
                         transposed_tensor_shape = list(tf.transpose(a=transposed_tensor, perm=min_abs_err_perm_1).shape)
+                        reshape_shape_for_retry = final_shape if final_shape is not None else tf.shape(transposed_tensor)
                         tf_layers_dict[graph_node_output.name]['tf_node'] = \
                             tf.reshape(
                                 tensor=transpose_with_flexing_deterrence(
@@ -591,7 +607,7 @@ def make_node(
                                         if None not in transposed_tensor_shape and transposed_tensor_shape != [] else None,
                                     **kwargs,
                                 ),
-                                shape=final_shape,
+                                shape=cast(Any, reshape_shape_for_retry),
                                 name=graph_node.name,
                             )
                         tf_type = tf.reshape
@@ -600,15 +616,16 @@ def make_node(
             # SpaceToDepth
             # ONNX: 1,3,32,4,32,4 -> 1,3,4,4,32,32 -> 1,48,32,32
             # TF  : 1,32,4,32,4,3 -> 1,32,32,4,4,3 -> 1,32,32,48
+            final_shape_list = cast(List[Any], final_shape)
             input_tensor = tf.reshape(
                 tensor=input_tensor,
                 shape=[
-                    final_shape[0],
-                    final_shape[2],
-                    final_shape[3],
-                    final_shape[4],
-                    final_shape[5],
-                    final_shape[1],
+                    final_shape_list[0],
+                    final_shape_list[2],
+                    final_shape_list[3],
+                    final_shape_list[4],
+                    final_shape_list[5],
+                    final_shape_list[1],
                 ],
                 name=graph_node.name,
             )

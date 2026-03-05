@@ -63,7 +63,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Softmax
 
@@ -114,10 +114,12 @@ def make_node(
                 and 'nwc_nhwc_ndhwc_keep' in tf_layers_dict[graph_node_input.name].keys() else False,
     }
 
-    onnx_tensor_infos_for_validation: Dict[str:np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
+    onnx_tensor_infos_for_validation: Dict[str, np.ndarray] = kwargs['onnx_tensor_infos_for_validation']
     test_data_nhwc: np.ndarray = kwargs['test_data_nhwc']
     custom_input_op_name_np_data_path: str = kwargs['custom_input_op_name_np_data_path']
     disable_strict_mode: bool = kwargs['disable_strict_mode']
+    tf_model_inputs: list[Any] = []
+    val_model: Any = None
     onnx_tensor_infos = None
     validation_data = None
 
@@ -162,7 +164,7 @@ def make_node(
         tf_pre_tensor_infos = {}
         if not disable_strict_mode:
             try:
-                tf_pre_tensor_infos: Dict[Any] = \
+                tf_pre_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=tf_model_inputs,
@@ -269,7 +271,7 @@ def make_node(
                     ],
                 )
                 # TF dummy inference
-                tf_tensor_infos: Dict[Any] = \
+                tf_tensor_infos: Dict[Any, Any] = \
                     dummy_tf_inference(
                         model=val_model,
                         inputs=[
@@ -321,8 +323,7 @@ def make_node(
             idx if idx != min_abs_err_axis else tensor_rank - 1
             for idx in range(min_abs_err_axis + 1)
         ] + [idx for idx in range(min_abs_err_axis, tensor_rank - 1)]
-        transpose_output_shape = np.asarray(
-            input_tensor.shape)[flex_deterrent_perm]
+        transpose_output_shape = list(np.asarray(input_tensor.shape)[flex_deterrent_perm])
         input_tensor = transpose_with_flexing_deterrence(
             input_tensor=input_tensor,
             perm=flex_deterrent_perm,

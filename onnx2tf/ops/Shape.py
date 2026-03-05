@@ -4,7 +4,7 @@ import numpy as np
 np.random.seed(0)
 import tensorflow as tf
 import onnx2tf.gs as gs
-from typing import List
+from typing import List, Any
 from onnx2tf.utils.common_functions import (
     get_constant_or_variable,
     print_node_info,
@@ -25,7 +25,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Shape
 
@@ -176,7 +176,7 @@ def make_node(
                                 break
                         consumer_count_total += consumer_count
                     if consumer_count_total == 2:
-                        target_concat_node: gs.Node = None
+                        target_concat_node: Any = None
                         simple_resize_concat: bool = True
                         for consumer_node in consumer_nodes:
                             if target_concat_node is None \
@@ -239,7 +239,7 @@ def make_node(
                             break
                     consumer_count_total += consumer_count
                 if consumer_count_total == 1:
-                    target_concat_node: gs.Node = None
+                    target_concat_node: Any = None
                     simple_resize_concat: bool = True
                     for consumer_node in consumer_nodes:
                         if target_concat_node is None \

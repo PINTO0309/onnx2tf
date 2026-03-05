@@ -1,3 +1,4 @@
+from typing import Any
 import random
 random.seed(0)
 import numpy as np
@@ -22,7 +23,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Dropout
 
@@ -76,6 +77,7 @@ def make_node(
     seed = graph_node.attrs.get('seed', None)
     is_test = bool(graph_node.attrs.get('is_test', 0))
     ratio = graph_node.attrs.get('ratio', ratio)
+    ratio = 0.5 if ratio is None else ratio
 
     if opset < 7 and not is_test:
         ratio = 1.0 - ratio

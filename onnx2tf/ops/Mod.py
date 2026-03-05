@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -30,7 +31,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Mod
 
@@ -152,26 +153,28 @@ def make_node(
         is_scalar_1 = False
         is_scalar_2 = False
         is_scalar_1_rank = tf.rank(input_tensor_1) == 0
-        if hasattr(is_scalar_1_rank, 'numpy'):
-            is_scalar_1 = is_scalar_1_rank.numpy()
+        is_scalar_1_numpy = getattr(is_scalar_1_rank, 'numpy', None)
+        if callable(is_scalar_1_numpy):
+            is_scalar_1 = is_scalar_1_numpy()
         is_scalar_2_rank = tf.rank(input_tensor_2) == 0
-        if hasattr(is_scalar_2_rank, 'numpy'):
-            is_scalar_2 = is_scalar_2_rank.numpy()
+        is_scalar_2_numpy = getattr(is_scalar_2_rank, 'numpy', None)
+        if callable(is_scalar_2_numpy):
+            is_scalar_2 = is_scalar_2_numpy()
 
         if (is_scalar_1 or is_scalar_2) and graph_node.i().op == 'Gemm':
             pass
         elif (is_scalar_1 or is_scalar_2) and graph_node.i().op != 'Gemm':
-            first_tensor = None
-            second_tensor = None
+            first_tensor: Any = input_tensor_1
+            second_tensor: Any = input_tensor_2
             if is_scalar_1:
                 first_tensor = input_tensor_2
                 second_tensor = input_tensor_1
             elif is_scalar_2:
                 first_tensor = input_tensor_1
                 second_tensor = input_tensor_2
-            tmp_result = tf.math.mod(first_tensor, second_tensor)
+            tmp_result = tf.math.mod(cast(Any, first_tensor), cast(Any, second_tensor))
             tmp_result_shape = tmp_result.shape
-            if first_tensor.shape == tmp_result_shape:
+            if cast(Any, first_tensor).shape == tmp_result_shape:
                 pass
             else:
                 input_tensor_1, input_tensor_2 = \

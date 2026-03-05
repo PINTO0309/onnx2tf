@@ -1,3 +1,4 @@
+from typing import Any, cast
 import random
 random.seed(0)
 import numpy as np
@@ -96,7 +97,7 @@ def make_node(
     *,
     graph_node: gs.Node,
     tf_layers_dict: dict,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Constant
 
@@ -136,7 +137,7 @@ def make_node(
         if "value" in graph_node.attrs:
             attr_value = graph_node.attrs["value"]
             value = attr_value.values \
-                if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(attr_value)
+                if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(cast(Any, attr_value))
             const_dtype = NUMPY_DTYPES_TO_TF_DTYPES[attr_value.dtype] \
                 if attr_value.dtype in NUMPY_DTYPES_TO_TF_DTYPES else attr_value.dtype
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
@@ -199,7 +200,7 @@ def make_node(
             if "value" in graph_node.attrs:
                 attr_value = graph_node.attrs["value"]
                 value = attr_value.values \
-                    if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(attr_value)
+                    if isinstance(attr_value, gs.Constant) and hasattr(attr_value, 'values') else numpy_helper.to_array(cast(Any, attr_value))
                 const_dtype = NUMPY_DTYPES_TO_TF_DTYPES[attr_value.dtype] \
                     if attr_value.dtype in NUMPY_DTYPES_TO_TF_DTYPES else attr_value.dtype
                 tf_layers_dict[graph_node_output.name]['tf_node'] = \

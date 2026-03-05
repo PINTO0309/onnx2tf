@@ -423,6 +423,8 @@ def plan_contiguous_partitions_by_size(
                 )
         else:
             end_op_index = best_end
+            if best_size is None:
+                raise ValueError("Internal error: best_size is None while best_end is resolved.")
             estimated_size = int(best_size)
 
         partition_ranges.append(
