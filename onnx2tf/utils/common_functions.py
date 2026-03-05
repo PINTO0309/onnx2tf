@@ -6745,7 +6745,10 @@ def deterring_shape_corruption_due_to_broadcast(
         return input_tensor_1, input_tensor_2
 
     # Calculate the total number of elements in the onnx tensor
-    onnx_output_elements = np.prod(graph_node_output_shape)
+    numeric_graph_node_output_shape = cast(List[int], graph_node_output_shape)
+    onnx_output_elements = int(
+        np.prod(np.asarray(numeric_graph_node_output_shape, dtype=np.int64))
+    )
 
     # Perform dummy calculations to find out
     # the total number of tf tensor elements after the calculation
@@ -6804,7 +6807,7 @@ def deterring_shape_corruption_due_to_broadcast(
                     continue
                 dummy_tensor_elements = np.prod(dummy_tensor.shape)
                 if onnx_output_elements == dummy_tensor_elements \
-                    and graph_node_output_shape == list(dummy_tensor.shape):
+                    and numeric_graph_node_output_shape == list(dummy_tensor.shape):
                     input_tensor_1_final_perm = input_tensor_1_shape_perm
                     input_tensor_2_final_perm = input_tensor_2_shape_perm
                     break
@@ -7047,8 +7050,14 @@ def correction_process_for_accuracy_errors(
                     np.ones(input_tensor_1.shape, dtype=np.float32),
                     np.ones(input_tensor_2.shape, dtype=np.float32),
                 )
-                if np.prod(list(dummy_tensor.shape)) == np.prod(graph_node_output_shape):
-                    return input_tensor_1, input_tensor_2
+                if graph_node_output_shape is not None \
+                    and None not in graph_node_output_shape \
+                    and sum([1 for dim in graph_node_output_shape if isinstance(dim, str)]) == 0:
+                    numeric_graph_node_output_shape = cast(List[int], graph_node_output_shape)
+                    if int(np.prod(list(dummy_tensor.shape))) == int(
+                        np.prod(np.asarray(numeric_graph_node_output_shape, dtype=np.int64))
+                    ):
+                        return input_tensor_1, input_tensor_2
             except:
                 pass
             # No accuracy correction is performed, but only unmatching of output shapes is avoided.
@@ -7083,7 +7092,7 @@ def correction_process_for_accuracy_errors(
     else:
         del onnx_tensor_infos_for_validation
     if graph_node_output_shape is not None:
-        onnx_output_shape = [dim if not isinstance(dim, str) else -1 for dim in graph_node_output_shape]
+        onnx_output_shape = [dim if isinstance(dim, int) else -1 for dim in graph_node_output_shape]
         onnx_output_same_shape_counts = collections.Counter(onnx_output_shape)
         if sum([1 if dim > 1 and cnt > 1 else 0 for dim, cnt in onnx_output_same_shape_counts.items()]) >= 1:
             # Generate dummy op

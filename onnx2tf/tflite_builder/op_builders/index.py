@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -176,7 +176,7 @@ def _add_reshape_operator(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
-    options = {
+    options: dict[str, Any] = {
         "newShape": [int(v) for v in list(new_shape)],
     }
     if bool(preserve_dynamic_shape):
@@ -609,6 +609,7 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             gather_indices_signature = [int(v) for v in runtime_indices_signature]
 
     gather_output_name = output_name
+    gather_output_signature: list[int] = []
     if bool(scalar_indices_semantics) and input_rank > 1:
         gather_output_signature = (
             [int(v) for v in input_signature[:int(axis)]]
@@ -639,6 +640,16 @@ def build_gather_op(node: Any, ctx: Any) -> None:
     )
 
     if gather_output_name != output_name:
+        if len(gather_output_signature) == 0:
+            gather_output_tensor = ctx.model_ir.tensors.get(gather_output_name, None)
+            if gather_output_tensor is not None:
+                gather_output_signature = (
+                    [int(v) for v in list(gather_output_tensor.shape_signature)]
+                    if gather_output_tensor.shape_signature is not None
+                    else [int(v) for v in list(gather_output_tensor.shape)]
+                )
+            if len(gather_output_signature) == 0:
+                gather_output_signature = [1]
         reshape_target_signature = (
             [int(v) for v in list(output_tensor.shape_signature)]
             if output_tensor.shape_signature is not None
@@ -743,6 +754,14 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
         if indices_tensor is not None and indices_tensor.shape_signature is not None
         else [int(v) for v in indices_shape]
     )
+    indices_runtime_signature = [int(v) for v in indices_signature]
+    # Non-constant GatherND indices can remain data-dependent at runtime
+    # even when current static metadata is concrete. Keep gather-prefix dims
+    # dynamic in shape_signature to avoid hard-coding downstream reshape shapes.
+    if indices_tensor is None or indices_tensor.data is None:
+        for dim_idx in range(max(len(indices_runtime_signature) - 1, 0)):
+            if int(indices_runtime_signature[dim_idx]) > 0:
+                indices_runtime_signature[dim_idx] = -1
 
     indices_for_gather_nd = indices_name
     indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
@@ -754,9 +773,9 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
         )
         cast_output_tensor = ctx.model_ir.tensors.get(indices_for_gather_nd, None)
         if cast_output_tensor is not None:
-            cast_output_tensor.shape_signature = [int(v) for v in indices_signature]
+            cast_output_tensor.shape_signature = [int(v) for v in indices_runtime_signature]
             cast_output_tensor.shape = [
-                int(v) if int(v) >= 0 else 1 for v in indices_signature
+                int(v) if int(v) >= 0 else 1 for v in indices_runtime_signature
             ]
         ctx.add_operator(
             OperatorIR(
@@ -778,13 +797,13 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
     if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
         ctx.dtype_map[str(output_name)] = params_dtype
     inferred_output_signature: Optional[list[int]] = None
-    if len(indices_signature) >= 1:
+    if len(indices_runtime_signature) >= 1:
         gather_dims = int(indices_shape[-1]) if len(indices_shape) > 0 else -1
-        if len(indices_signature) > 0 and int(indices_signature[-1]) > 0:
-            gather_dims = int(indices_signature[-1])
+        if len(indices_runtime_signature) > 0 and int(indices_runtime_signature[-1]) > 0:
+            gather_dims = int(indices_runtime_signature[-1])
         if gather_dims > 0 and gather_dims <= len(params_signature):
             inferred_output_signature = (
-                [int(v) for v in indices_signature[:-1]]
+                [int(v) for v in indices_runtime_signature[:-1]]
                 + [int(v) for v in params_signature[gather_dims:]]
             )
     if inferred_output_signature is None:

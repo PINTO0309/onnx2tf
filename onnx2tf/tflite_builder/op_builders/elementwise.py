@@ -202,15 +202,20 @@ def _sanitize_where_arithmetic_operand_if_constant_nonfinite(
     if not bool(np.any(~np.isfinite(data))):
         return str(operand_name)
 
-    np_dtype = np.float16 if str(output_dtype).upper() == "FLOAT16" else np.float32
-    finfo = np.finfo(np_dtype)
-    sanitized = np.nan_to_num(
-        data.astype(np_dtype, copy=False),
-        nan=0.0,
-        posinf=finfo.max,
-        neginf=finfo.min,
-    )
-    return ctx.add_const_tensor(base_name, np.asarray(sanitized, dtype=np_dtype))
+    if str(output_dtype).upper() == "FLOAT16":
+        finfo = np.finfo(np.float16)
+        data_f16 = data.astype(np.float16, copy=False)
+        sanitized = np.where(np.isnan(data_f16), np.float16(0.0), data_f16)
+        sanitized = np.where(np.isposinf(sanitized), np.float16(finfo.max), sanitized)
+        sanitized = np.where(np.isneginf(sanitized), np.float16(finfo.min), sanitized)
+        return ctx.add_const_tensor(base_name, np.asarray(sanitized, dtype=np.float16))
+
+    finfo = np.finfo(np.float32)
+    data_f32 = data.astype(np.float32, copy=False)
+    sanitized = np.where(np.isnan(data_f32), np.float32(0.0), data_f32)
+    sanitized = np.where(np.isposinf(sanitized), np.float32(finfo.max), sanitized)
+    sanitized = np.where(np.isneginf(sanitized), np.float32(finfo.min), sanitized)
+    return ctx.add_const_tensor(base_name, np.asarray(sanitized, dtype=np.float32))
 
 
 def _add_ones_like_tensor(
@@ -381,14 +386,19 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
 
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
     float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
+    logical_binary_ops = {"LOGICAL_AND", "LOGICAL_OR", "LOGICAL_XOR"}
     normalized_input_dtypes = [
         _normalize_binary_dtype(str(ctx.get_tensor_dtype(name)).upper())
         for name in input_names
     ]
     target_dtype = _normalize_binary_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
+    if str(op_type).upper() in logical_binary_ops:
+        target_dtype = "BOOL"
     if len(normalized_input_dtypes) > 0 and any(dt != target_dtype for dt in normalized_input_dtypes):
         unique_input_dtypes = set(normalized_input_dtypes)
-        if len(unique_input_dtypes) == 1:
+        if str(op_type).upper() in logical_binary_ops:
+            target_dtype = "BOOL"
+        elif len(unique_input_dtypes) == 1:
             target_dtype = normalized_input_dtypes[0]
         elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
             target_dtype = "INT32"

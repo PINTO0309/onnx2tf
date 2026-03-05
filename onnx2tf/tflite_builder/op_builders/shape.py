@@ -4654,7 +4654,7 @@ def _add_reshape_operator(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
-    options = {"newShape": [int(v) for v in list(new_shape)]}
+    options: dict[str, Any] = {"newShape": [int(v) for v in list(new_shape)]}
     if bool(preserve_dynamic_shape):
         options["preserveDynamicShape"] = True
         output_tensor = ctx.model_ir.tensors.get(output_name, None)
@@ -4916,6 +4916,8 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     ]
 
     image_rank = int(len(image_shape))
+    out_d = 1
+    d = 1
     if image_rank == 4:
         n, c, h, w = [int(v) for v in image_shape]
         out_n, out_c, out_h, out_w = [int(v) for v in output_shape]

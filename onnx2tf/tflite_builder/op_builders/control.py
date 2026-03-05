@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -83,6 +84,28 @@ _IF_GENERIC_BRANCH_SAFE_OPS = {
     "Sqrt",
     "LSTM",
 }
+
+
+@dataclass
+class _WrappedIO:
+    name: str
+
+
+@dataclass
+class _WrappedBranchNode:
+    name: str
+    op: str
+    attrs: Dict[str, Any]
+    inputs: List[_WrappedIO]
+    outputs: List[_WrappedIO]
+
+
+@dataclass
+class _GraphNodeList:
+    node: List[Any]
+    value_info: List[Any] = field(default_factory=list)
+    input: List[Any] = field(default_factory=list)
+    output: List[Any] = field(default_factory=list)
 
 
 def is_supported_if_nms_guard_pattern(node: Any) -> bool:
@@ -500,7 +523,7 @@ def _wrap_node(
     *,
     input_name_remap: Optional[Dict[str, str]] = None,
     output_name_remap: Optional[Dict[str, str]] = None,
-) -> Any:
+) -> _WrappedBranchNode:
     remap_in = input_name_remap if isinstance(input_name_remap, dict) else {}
     remap_out = output_name_remap if isinstance(output_name_remap, dict) else {}
     attrs: Dict[str, Any] = {}
@@ -509,24 +532,20 @@ def _wrap_node(
         if converted is not None:
             attrs[str(attr.name)] = converted
 
-    wrapped = type("BranchNode", (), {})()
-    wrapped.name = str(node_proto.name) if str(node_proto.name) != "" else str(node_proto.op_type)
-    wrapped.op = str(node_proto.op_type)
-    wrapped.attrs = attrs
-    wrapped.inputs = [
-        type(
-            "In",
-            (),
-            {"name": (remap_in.get(str(name), str(name)) if str(name) != "" else "")},
-        )
-        for name in node_proto.input
-    ]
-    wrapped.outputs = [
-        type("Out", (), {"name": remap_out.get(str(name), str(name))})
-        for name in node_proto.output
-        if str(name) != ""
-    ]
-    return wrapped
+    return _WrappedBranchNode(
+        name=str(node_proto.name) if str(node_proto.name) != "" else str(node_proto.op_type),
+        op=str(node_proto.op_type),
+        attrs=attrs,
+        inputs=[
+            _WrappedIO(name=(remap_in.get(str(name), str(name)) if str(name) != "" else ""))
+            for name in node_proto.input
+        ],
+        outputs=[
+            _WrappedIO(name=remap_out.get(str(name), str(name)))
+            for name in node_proto.output
+            if str(name) != ""
+        ],
+    )
 
 
 def _np_dtype_from_tflite_dtype(tflite_dtype: str) -> np.dtype:
@@ -1542,18 +1561,17 @@ def _emit_where_mux(
     ctx.ensure_tensor(else_name)
     ctx.ensure_tensor(output_name, dtype=output_dtype, shape=output_shape)
 
-    where_node = type("IfWhereNode", (), {})()
-    where_node.name = node_name
-    where_node.op = "Where"
-    where_node.attrs = {}
-    where_node.inputs = [
-        type("In", (), {"name": str(cond_name)}),
-        type("In", (), {"name": str(then_name)}),
-        type("In", (), {"name": str(else_name)}),
-    ]
-    where_node.outputs = [
-        type("Out", (), {"name": str(output_name)}),
-    ]
+    where_node = _WrappedBranchNode(
+        name=node_name,
+        op="Where",
+        attrs={},
+        inputs=[
+            _WrappedIO(name=str(cond_name)),
+            _WrappedIO(name=str(then_name)),
+            _WrappedIO(name=str(else_name)),
+        ],
+        outputs=[_WrappedIO(name=str(output_name))],
+    )
     dispatch_node(where_node, ctx)
 
 
@@ -1716,8 +1734,7 @@ def _build_if_nested_reducemin_add_branch_mux(node: Any, ctx: Any) -> None:
         ctx=ctx,
     )
 
-    else_prelude_graph = type("IfElsePreludeGraph", (), {})()
-    else_prelude_graph.node = list(else_graph.node[:3])
+    else_prelude_graph = _GraphNodeList(node=list(else_graph.node[:3]))
     _lower_graph_nodes(
         graph=else_prelude_graph,
         ctx=ctx,
@@ -2095,8 +2112,15 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
     body_graph = node.attrs["body"]
     _ensure_graph_initializers(body_graph, ctx)
 
-    trip_count = int(_loop_const_trip_count(node, ctx))
-    cond_initial = bool(_loop_const_cond(node, ctx))
+    trip_count_opt = _loop_const_trip_count(node, ctx)
+    cond_initial_opt = _loop_const_cond(node, ctx)
+    if trip_count_opt is None or cond_initial_opt is None:
+        raise NotImplementedError(
+            "Loop static-unroll requires constant trip_count and cond. "
+            f"node={node.name}"
+        )
+    trip_count = int(trip_count_opt)
+    cond_initial = bool(cond_initial_opt)
     state_input_names = [str(v.name) for v in node.inputs[2:]]
     state_output_names = [str(v.name) for v in node.outputs]
     state_count = int(len(state_input_names))

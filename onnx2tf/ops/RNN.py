@@ -248,7 +248,16 @@ class CustomRNN(Layer):
         )
 
     def call(self, inputs, initial_state=None):
-        outputs, h = self.rnn(inputs, initial_state=initial_state)
+        use_initial_state = True
+        if initial_state is None:
+            use_initial_state = False
+        elif isinstance(initial_state, (list, tuple)) and len(initial_state) == 0:
+            use_initial_state = False
+
+        if use_initial_state:
+            outputs, h = self.rnn(inputs, initial_state=initial_state)
+        else:
+            outputs, h = self.rnn(inputs)
         return outputs, h
 
 

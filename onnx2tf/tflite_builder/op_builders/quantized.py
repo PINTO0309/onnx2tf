@@ -1122,6 +1122,7 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         and weight_in_channels_per_group == 1
         and (out_channels % group) == 0
     )
+    depth_multiplier = 1
 
     if is_depthwise:
         # For ONNX depthwise-style QLinearConv, logical input channels are `group`.
@@ -1527,6 +1528,7 @@ def build_conv_integer_op(node: Any, ctx: Any) -> None:
         and weight_in_channels_per_group == 1
         and (out_channels % group) == 0
     )
+    depth_multiplier = 1
 
     if is_depthwise:
         depth_multiplier = out_channels // group

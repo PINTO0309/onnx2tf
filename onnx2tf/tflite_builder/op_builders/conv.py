@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+
+
+@dataclass
+class _PseudoIO:
+    name: str
+
+
+@dataclass
+class _PseudoNode:
+    name: str
+    op: str
+    attrs: dict[str, Any]
+    inputs: list[_PseudoIO]
+    outputs: list[_PseudoIO]
 
 
 def _normalize_spatial_pair(values: Any, *, default: int, label: str, node_name: str) -> list[int]:
@@ -119,14 +134,14 @@ def _make_pseudo_node(
     input_names: list[str],
     output_name: str,
     attrs: dict[str, Any],
-) -> Any:
-    pseudo = type("Node", (), {})()
-    pseudo.name = str(base_node.name)
-    pseudo.op = str(base_node.op)
-    pseudo.attrs = dict(attrs)
-    pseudo.inputs = [type("In", (), {"name": str(name)}) for name in input_names]
-    pseudo.outputs = [type("Out", (), {"name": str(output_name)})]
-    return pseudo
+) -> _PseudoNode:
+    return _PseudoNode(
+        name=str(base_node.name),
+        op=str(base_node.op),
+        attrs=dict(attrs),
+        inputs=[_PseudoIO(name=str(name)) for name in input_names],
+        outputs=[_PseudoIO(name=str(output_name))],
+    )
 
 
 def _decode_attr_string(value: Any, default: str) -> str:
@@ -342,13 +357,21 @@ def _add_fusedconv_activation_op(
                 )
             )
             return
+        if min_value is None or max_value is None:
+            raise NotImplementedError(
+                "FusedConv Clip min/max bound resolution failed unexpectedly. "
+                f"op={node.name} min_value={min_value} max_value={max_value}"
+            )
+        assert min_value is not None and max_value is not None
+        min_value_f = float(min_value)
+        max_value_f = float(max_value)
         min_const = ctx.add_const_tensor(
             f"{node.name}_fusedconv_clip_min",
-            np.asarray(float(min_value), dtype=np.float32),
+            np.asarray(min_value_f, dtype=np.float32),
         )
         max_const = ctx.add_const_tensor(
             f"{node.name}_fusedconv_clip_max",
-            np.asarray(float(max_value), dtype=np.float32),
+            np.asarray(max_value_f, dtype=np.float32),
         )
         maxed_name = _add_same_shape_tensor(
             ctx,

@@ -4,6 +4,7 @@ import math
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
+from numpy.typing import DTypeLike
 
 from onnx2tf.tflite_builder.ir import OperatorIR
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
@@ -101,11 +102,10 @@ def _add_reshape_operator(
         f"{output_name}_reshape_shape",
         np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
     )
-    options = {
+    options: dict[str, Any] = {
         "newShape": [int(v) for v in list(new_shape)],
+        **({"preserveDynamicShape": True} if bool(preserve_dynamic_shape) else {}),
     }
-    if bool(preserve_dynamic_shape):
-        options["preserveDynamicShape"] = True
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
@@ -549,7 +549,7 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         hidden_size,
     )
 
-    def _add_const(suffix: str, values: np.ndarray, dtype: np.dtype = np.float32) -> str:
+    def _add_const(suffix: str, values: np.ndarray, dtype: DTypeLike = np.dtype(np.float32)) -> str:
         return ctx.add_const_tensor(
             f"{node.name}_{suffix}",
             np.asarray(values, dtype=dtype),
