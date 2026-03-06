@@ -11,7 +11,7 @@ Migrate from the default `tf_converter` backend to `flatbuffer_direct` in contro
 |Optimization behavior|TF-path accumulated rewrites/heuristics|Direct preprocess + strict dispatch constraints|
 |Failure model|Many patterns absorbed by TF conversion|Explicit failure with `reason_code`|
 |Custom op path|Implicitly minimized by TF path|Explicit opt-in + allowlist|
-|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter`|
+|Fallback|N/A|N/A (no fallback)|
 
 ## Recommended rollout
 1. Keep baseline CI on `--tflite_backend tf_converter`.
@@ -55,16 +55,15 @@ python -m onnx2tf.onnx2tf \
   --report_op_coverage
 ```
 
-### Stage 3: Safety-net fallback for production jobs
+### Stage 3: Production strict-fail operation
 ```bash
 python -m onnx2tf.onnx2tf \
   -i model.onnx \
   -o out \
-  --tflite_backend flatbuffer_direct \
-  --flatbuffer_direct_fallback_to_tf_converter
+  --tflite_backend flatbuffer_direct
 ```
 
-When direct export fails, conversion falls back to `tf_converter` and warning logs are emitted.
+When direct export fails, conversion stops with an explicit error. Use `tf_converter` explicitly if fallback behavior is required operationally.
 
 ## Preprocess scope in direct path
 `flatbuffer_direct` applies staged preprocess rules before lowering:
@@ -101,7 +100,7 @@ Behavior:
 ## Known limitations and mitigation
 |Symptom (`reason_code`)|Cause|Mitigation|
 |:-|:-|:-|
-|`unsupported_onnx_op`|No direct builtin/custom path|Use `tf_converter`, fallback, or model rewrite|
+|`unsupported_onnx_op`|No direct builtin/custom path|Use `tf_converter` or model rewrite|
 |`requires_constant_input`|Dynamic axes/perm/shape where constants are required|Pre-fold graph (`onnxsim`) or rewrite to constants|
 |`unsupported_attribute_value`|Direct constraints unmet (axis/rank/mode)|Adjust exporter flags or rewrite subgraph|
 |`custom_op_candidate_disabled`|Custom candidate encountered while custom mode disabled|Enable custom ops only if runtime supports them|

@@ -1157,7 +1157,7 @@ def convert(
     eval_split_fail_on_threshold: Optional[bool] = False,
     auto_split_tflite_by_size: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
-    flatbuffer_direct_fallback_to_tf_converter: Optional[bool] = False,
+    flatbuffer_direct_output_saved_model: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
     flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
@@ -1330,9 +1330,9 @@ def convert(
         Generate ONNX OP coverage report (`*_op_coverage_report.json`) with
         machine-readable unsupported reasons for flatbuffer_direct backend.
 
-    flatbuffer_direct_fallback_to_tf_converter: Optional[bool]
-        When flatbuffer_direct conversion fails, fallback to tf_converter path
-        instead of failing immediately.
+    flatbuffer_direct_output_saved_model: Optional[bool]
+        Export SavedModel directly from flatbuffer_direct ModelIR (float32 path)
+        without tf_converter fallback.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1804,8 +1804,8 @@ def convert(
     eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
     auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
     report_op_coverage = bool(report_op_coverage)
-    flatbuffer_direct_fallback_to_tf_converter = bool(
-        flatbuffer_direct_fallback_to_tf_converter
+    flatbuffer_direct_output_saved_model = bool(
+        flatbuffer_direct_output_saved_model
     )
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
     replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
@@ -1930,9 +1930,14 @@ def convert(
             'report_op_coverage currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
-    if flatbuffer_direct_fallback_to_tf_converter and tflite_backend != 'flatbuffer_direct':
+    if flatbuffer_direct_output_saved_model and tflite_backend != 'flatbuffer_direct':
         error(
-            'flatbuffer_direct_fallback_to_tf_converter currently supports only tflite_backend="flatbuffer_direct".'
+            'flatbuffer_direct_output_saved_model currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if flatbuffer_direct_output_saved_model and disable_model_save:
+        error(
+            'flatbuffer_direct_output_saved_model cannot be used with disable_model_save=True.'
         )
         sys.exit(1)
     if flatbuffer_direct_allow_custom_ops and tflite_backend != 'flatbuffer_direct':
@@ -1946,6 +1951,9 @@ def convert(
     )
     run_onnx_tflite_output_check = bool(
         eval_with_onnx or auto_eval_with_onnx_from_cotof
+    )
+    run_saved_model_inference_check = bool(
+        check_onnx_tf_outputs_elementwise_close_full
     )
     run_flatbuffer_direct_op_error_report = bool(
         check_onnx_tf_outputs_elementwise_close_full
@@ -2111,6 +2119,585 @@ def convert(
                 f'pass={report["evaluation_pass"]}'
             )
         )
+
+    def _run_saved_model_inference_check(
+        *,
+        saved_model_path: Optional[str],
+        float32_tflite_path: Optional[str] = None,
+        source_label: str,
+    ) -> None:
+        if not run_saved_model_inference_check:
+            return
+        report_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_saved_model_validation_report.json',
+        )
+        report: Dict[str, Any] = {
+            'schema_version': 1,
+            'source_label': str(source_label),
+            'saved_model_path': (
+                str(saved_model_path)
+                if saved_model_path is not None
+                else None
+            ),
+            'float32_tflite_path': (
+                str(float32_tflite_path)
+                if float32_tflite_path is not None
+                else None
+            ),
+            'inference': {
+                'status': 'not_run',
+                'reason': '',
+                'outputs': [],
+            },
+            'comparison': {
+                'status': 'not_run',
+                'reason': '',
+                'pass': None,
+                'matched': 0,
+                'total': 0,
+                'max_abs': None,
+                'unmatched_outputs': [],
+            },
+            'overall_pass': False,
+        }
+
+        def _write_saved_model_validation_report() -> None:
+            try:
+                os.makedirs(output_folder_path, exist_ok=True)
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    json.dump(report, f, ensure_ascii=False, indent=2)
+                info(
+                    Color.GREEN(
+                        'SavedModel validation report output complete! '
+                        f'({report_path})'
+                    )
+                )
+            except Exception as report_ex:
+                warn(
+                    'SavedModel validation report output failed. '
+                    f'path={report_path} reason={report_ex}'
+                )
+
+        def _normalize_input_name(name: str) -> str:
+            normalized = str(name).split(':')[0]
+            if normalized.startswith('serving_default_'):
+                normalized = normalized[len('serving_default_'):]
+            return normalized
+
+        def _normalize_input_name_variants(name: str) -> List[str]:
+            base = _normalize_input_name(name)
+            variants: List[str] = []
+            for candidate in [
+                base,
+                base.replace('.', '_'),
+                base.replace('/', '_'),
+                base.replace('-', '_'),
+                base.replace('.', '_').replace('/', '_').replace('-', '_'),
+                re.sub(r'[^0-9A-Za-z_]+', '_', base),
+            ]:
+                normalized_candidate = str(candidate).strip('_')
+                if normalized_candidate == '':
+                    continue
+                if normalized_candidate not in variants:
+                    variants.append(normalized_candidate)
+            return variants
+
+        def _candidate_signature_input_names(
+            *,
+            input_key: str,
+            tensor_spec: tf.TensorSpec,
+        ) -> List[str]:
+            candidates: List[str] = []
+            for candidate in [str(input_key), str(getattr(tensor_spec, 'name', ''))]:
+                normalized_candidate = str(candidate).strip()
+                if normalized_candidate == '':
+                    continue
+                if normalized_candidate not in candidates:
+                    candidates.append(normalized_candidate)
+            return candidates
+
+        def _fallback_shape_from_tensor_spec(
+            tensor_spec: tf.TensorSpec,
+        ) -> List[int]:
+            shape_list = tensor_spec.shape.as_list()
+            fallback_shape: List[int] = []
+            for axis, dim_value in enumerate(shape_list):
+                if dim_value is None:
+                    fallback_shape.append(1 if axis == 0 else 16)
+                else:
+                    fallback_shape.append(int(dim_value))
+            return fallback_shape
+
+        def _cast_array_for_tensor_spec(
+            value: np.ndarray,
+            tensor_spec: tf.TensorSpec,
+        ) -> np.ndarray:
+            casted = np.asarray(value)
+            target_dtype = np.dtype(tensor_spec.dtype.as_numpy_dtype)
+            if casted.dtype != target_dtype:
+                if np.issubdtype(target_dtype, np.bool_):
+                    casted = (casted.astype(np.float32) > 0.0).astype(np.bool_)
+                else:
+                    casted = casted.astype(target_dtype)
+
+            expected_shape = tuple(_fallback_shape_from_tensor_spec(tensor_spec))
+            if tuple(casted.shape) != expected_shape:
+                if casted.size == int(np.prod(expected_shape, dtype=np.int64)):
+                    casted = casted.reshape(expected_shape)
+                else:
+                    raise ValueError(
+                        'SavedModel input shape mismatch. '
+                        f'input_name={tensor_spec.name} '
+                        f'expected={expected_shape} actual={tuple(casted.shape)}'
+                    )
+            return casted
+
+        def _adapt_input_layout_for_saved_model_spec(
+            value: np.ndarray,
+            tensor_spec: tf.TensorSpec,
+        ) -> np.ndarray:
+            shape_signature = []
+            for dim in tensor_spec.shape.as_list():
+                if dim is None:
+                    shape_signature.append(-1)
+                else:
+                    shape_signature.append(int(dim))
+            return _adapt_input_layout_for_tflite_input(
+                np.asarray(value),
+                {
+                    'shape_signature': shape_signature,
+                    'shape': shape_signature,
+                },
+            )
+
+        inference_exception: Optional[BaseException] = None
+        try:
+            if saved_model_path is None or not os.path.exists(str(saved_model_path)):
+                raise RuntimeError('SavedModel path is unavailable.')
+
+            try:
+                from onnx2tf.tflite_builder.accuracy_evaluator import (
+                    _adapt_input_layout_for_tflite_input,
+                    _align_output_layout_for_compare,
+                    _build_eval_inputs_for_sample,
+                    _build_tflite_detail_map,
+                    _collect_onnx_input_specs,
+                    _create_tflite_interpreter,
+                    _load_custom_input_data,
+                    _normalize_tensor_name,
+                    _quantize_for_tflite_input,
+                    _resize_tflite_inputs_if_needed,
+                )
+            except Exception as import_ex:
+                raise RuntimeError('Evaluator helpers are unavailable.') from import_ex
+
+            module = tf.saved_model.load(saved_model_path)
+            signature_fn = module.signatures.get('serving_default', None)
+            if signature_fn is None:
+                raise RuntimeError(
+                    'serving_default signature is missing in generated SavedModel. '
+                    f'available_signatures={list(module.signatures.keys())}'
+                )
+            signature_inputs = signature_fn.structured_input_signature[1]
+            if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
+                raise RuntimeError(
+                    'SavedModel serving_default signature has no inputs.'
+                )
+
+            onnx_graph_for_eval = _prepare_onnx_graph_for_runtime_checks(
+                source_onnx_graph=onnx_graph,
+            )
+            if onnx_graph_for_eval is None:
+                raise RuntimeError(
+                    'ONNX graph is unavailable for SavedModel inference check.'
+                )
+            input_specs = _collect_onnx_input_specs(onnx_graph_for_eval)
+            custom_inputs = _load_custom_input_data(
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            )
+            rng = np.random.default_rng(0)
+            prepared_inputs = _build_eval_inputs_for_sample(
+                input_specs=input_specs,
+                custom_inputs=custom_inputs,
+                sample_index=0,
+                rng=rng,
+            )
+            prepared_inputs_by_normalized: Dict[str, np.ndarray] = {}
+            for input_name, input_value in prepared_inputs.items():
+                for normalized_name in _normalize_input_name_variants(input_name):
+                    if normalized_name not in prepared_inputs_by_normalized:
+                        prepared_inputs_by_normalized[normalized_name] = input_value
+
+            serving_inputs: Dict[str, tf.Tensor] = {}
+            selected_inputs_by_normalized: Dict[str, np.ndarray] = {}
+            for input_name, tensor_spec in signature_inputs.items():
+                signature_input_candidates = _candidate_signature_input_names(
+                    input_key=input_name,
+                    tensor_spec=tensor_spec,
+                )
+                selected_value = prepared_inputs.get(input_name, None)
+                if selected_value is None:
+                    for signature_input_name in signature_input_candidates:
+                        selected_value = prepared_inputs.get(signature_input_name, None)
+                        if selected_value is not None:
+                            break
+                if selected_value is None:
+                    for signature_input_name in signature_input_candidates:
+                        for normalized_name in _normalize_input_name_variants(
+                            signature_input_name
+                        ):
+                            selected_value = prepared_inputs_by_normalized.get(
+                                normalized_name,
+                                None,
+                            )
+                            if selected_value is not None:
+                                break
+                        if selected_value is not None:
+                            break
+                if selected_value is None:
+                    fallback_shape = tuple(
+                        _fallback_shape_from_tensor_spec(tensor_spec)
+                    )
+                    fallback_dtype = np.dtype(tensor_spec.dtype.as_numpy_dtype)
+                    selected_value = np.zeros(
+                        fallback_shape,
+                        dtype=fallback_dtype,
+                    )
+                selected_value = _adapt_input_layout_for_saved_model_spec(
+                    selected_value,
+                    tensor_spec,
+                )
+                casted_value = _cast_array_for_tensor_spec(
+                    selected_value,
+                    tensor_spec,
+                )
+                for signature_input_name in signature_input_candidates:
+                    for normalized_name in _normalize_input_name_variants(
+                        signature_input_name
+                    ):
+                        selected_inputs_by_normalized[normalized_name] = np.asarray(
+                            casted_value
+                        )
+                serving_inputs[input_name] = tf.convert_to_tensor(
+                    casted_value,
+                    dtype=tensor_spec.dtype,
+                )
+
+            with tf.device('/CPU:0'):
+                outputs = signature_fn(**serving_inputs)
+            output_keys = []
+            output_arrays: Dict[str, np.ndarray] = {}
+            if isinstance(outputs, dict):
+                output_keys = list(outputs.keys())
+                for output_name, output_value in outputs.items():
+                    if hasattr(output_value, 'numpy'):
+                        output_arrays[str(output_name)] = np.asarray(output_value.numpy())
+                    else:
+                        output_arrays[str(output_name)] = np.asarray(output_value)
+            report['inference']['status'] = 'passed'
+            report['inference']['reason'] = ''
+            report['inference']['outputs'] = [str(v) for v in output_keys]
+            info(
+                Color.GREEN(
+                    'SavedModel inference check complete! '
+                    f'source={source_label} path={saved_model_path} '
+                    f'outputs={output_keys}'
+                )
+            )
+
+            if (
+                float32_tflite_path is None
+                or not os.path.exists(str(float32_tflite_path))
+            ):
+                report['comparison']['status'] = 'failed'
+                report['comparison']['reason'] = 'float32_tflite_path_unavailable'
+                report['comparison']['pass'] = False
+                warn(
+                    'SavedModel/TFLite output comparison failed because '
+                    f'float32 TFLite path is unavailable. source={source_label}'
+                )
+            else:
+                try:
+                    onnx_input_names = [name for name, _, _ in input_specs]
+                    onnx_output_names = [
+                        str(output.name)
+                        for output in onnx_graph_for_eval.graph.output
+                    ]
+                    interpreter = _create_tflite_interpreter(
+                        model_path=float32_tflite_path,
+                    )
+                    interpreter.allocate_tensors()
+                    tflite_input_details = interpreter.get_input_details()
+                    tflite_output_details = interpreter.get_output_details()
+                    tflite_input_map = _build_tflite_detail_map(
+                        onnx_names=onnx_input_names,
+                        tflite_details=tflite_input_details,
+                    )
+                    tflite_output_map = _build_tflite_detail_map(
+                        onnx_names=onnx_output_names,
+                        tflite_details=tflite_output_details,
+                    )
+
+                    comparison_inputs_by_onnx_name: Dict[str, np.ndarray] = {}
+                    for input_name in onnx_input_names:
+                        selected_input_value = None
+                        for normalized_input_name in _normalize_input_name_variants(
+                            input_name
+                        ):
+                            if normalized_input_name in selected_inputs_by_normalized:
+                                selected_input_value = np.asarray(
+                                    selected_inputs_by_normalized[
+                                        normalized_input_name
+                                    ]
+                                )
+                                break
+                        if selected_input_value is None:
+                            selected_input_value = np.asarray(prepared_inputs[input_name])
+                        comparison_inputs_by_onnx_name[input_name] = selected_input_value
+                    adapted_inputs = {
+                        input_name: _adapt_input_layout_for_tflite_input(
+                            comparison_inputs_by_onnx_name[input_name],
+                            tflite_input_map[input_name],
+                        )
+                        for input_name in onnx_input_names
+                    }
+                    if _resize_tflite_inputs_if_needed(
+                        interpreter=interpreter,
+                        onnx_input_names=onnx_input_names,
+                        tflite_input_map=tflite_input_map,
+                        adapted_inputs=adapted_inputs,
+                    ):
+                        interpreter.allocate_tensors()
+                        tflite_input_details = interpreter.get_input_details()
+                        tflite_output_details = interpreter.get_output_details()
+                        tflite_input_map = _build_tflite_detail_map(
+                            onnx_names=onnx_input_names,
+                            tflite_details=tflite_input_details,
+                        )
+                        tflite_output_map = _build_tflite_detail_map(
+                            onnx_names=onnx_output_names,
+                            tflite_details=tflite_output_details,
+                        )
+                        adapted_inputs = {
+                            input_name: _adapt_input_layout_for_tflite_input(
+                                comparison_inputs_by_onnx_name[input_name],
+                                tflite_input_map[input_name],
+                            )
+                            for input_name in onnx_input_names
+                        }
+
+                    for input_name in onnx_input_names:
+                        input_detail = tflite_input_map[input_name]
+                        interpreter.set_tensor(
+                            input_detail['index'],
+                            _quantize_for_tflite_input(
+                                adapted_inputs[input_name],
+                                input_detail,
+                            ),
+                        )
+                    interpreter.invoke()
+
+                    saved_output_names = list(output_arrays.keys())
+                    saved_output_by_normalized = {
+                        _normalize_tensor_name(output_name): output_value
+                        for output_name, output_value in output_arrays.items()
+                    }
+                    used_saved_output_names: set[str] = set()
+                    comparison_total = int(len(onnx_output_names))
+                    comparison_matched = 0
+                    max_abs = 0.0
+                    unmatched_output_names: List[str] = []
+
+                    for output_index, output_name in enumerate(onnx_output_names):
+                        tflite_detail = tflite_output_map[output_name]
+                        tflite_value = np.asarray(
+                            interpreter.get_tensor(tflite_detail['index'])
+                        )
+                        selected_saved_output_name = None
+                        saved_value = output_arrays.get(output_name, None)
+                        if saved_value is not None:
+                            selected_saved_output_name = str(output_name)
+                        if saved_value is None:
+                            normalized_output_name = _normalize_tensor_name(output_name)
+                            saved_value = saved_output_by_normalized.get(
+                                normalized_output_name,
+                                None,
+                            )
+                            if saved_value is not None:
+                                selected_saved_output_name = next(
+                                    (
+                                        name
+                                        for name in saved_output_names
+                                        if _normalize_tensor_name(name) == normalized_output_name
+                                    ),
+                                    None,
+                                )
+                        if saved_value is None:
+                            tflite_output_name = str(tflite_detail.get('name', ''))
+                            saved_value = output_arrays.get(tflite_output_name, None)
+                            if saved_value is not None:
+                                selected_saved_output_name = str(tflite_output_name)
+                        if saved_value is None:
+                            normalized_tflite_name = _normalize_tensor_name(
+                                str(tflite_detail.get('name', ''))
+                            )
+                            saved_value = saved_output_by_normalized.get(
+                                normalized_tflite_name,
+                                None,
+                            )
+                            if saved_value is not None:
+                                selected_saved_output_name = next(
+                                    (
+                                        name
+                                        for name in saved_output_names
+                                        if _normalize_tensor_name(name) == normalized_tflite_name
+                                    ),
+                                    None,
+                                )
+                        if saved_value is None and output_index < len(saved_output_names):
+                            candidate_output_name = str(saved_output_names[output_index])
+                            saved_value = output_arrays[candidate_output_name]
+                            selected_saved_output_name = candidate_output_name
+                        if saved_value is None:
+                            best_candidate_name = None
+                            best_candidate_value = None
+                            best_candidate_score = None
+                            tflite_shape = tuple(tflite_value.shape)
+                            tflite_flat = np.asarray(tflite_value, dtype=np.float64).reshape(-1)
+                            for candidate_output_name in saved_output_names:
+                                if candidate_output_name in used_saved_output_names:
+                                    continue
+                                candidate_value = np.asarray(
+                                    output_arrays[candidate_output_name]
+                                )
+                                if tuple(candidate_value.shape) != tflite_shape:
+                                    continue
+                                candidate_flat = np.asarray(
+                                    candidate_value,
+                                    dtype=np.float64,
+                                ).reshape(-1)
+                                if candidate_flat.size != tflite_flat.size:
+                                    continue
+                                with np.errstate(invalid='ignore'):
+                                    diff = np.abs(candidate_flat - tflite_flat)
+                                    if diff.size == 0:
+                                        score = 0.0
+                                    elif np.any(np.isfinite(diff)):
+                                        score = float(np.nanmax(diff))
+                                    else:
+                                        score = float('inf')
+                                if best_candidate_score is None or score < best_candidate_score:
+                                    best_candidate_name = str(candidate_output_name)
+                                    best_candidate_value = candidate_value
+                                    best_candidate_score = score
+                            if best_candidate_value is not None:
+                                saved_value = np.asarray(best_candidate_value)
+                                selected_saved_output_name = best_candidate_name
+                        if saved_value is None:
+                            unmatched_output_names.append(str(output_name))
+                            continue
+                        if selected_saved_output_name is not None:
+                            used_saved_output_names.add(str(selected_saved_output_name))
+
+                        saved_value_np = np.asarray(saved_value)
+                        try:
+                            aligned_tflite_value, _, _ = _align_output_layout_for_compare(
+                                onnx_output=saved_value_np,
+                                tflite_output=tflite_value,
+                                rtol=float(eval_rtol),
+                                atol=float(eval_atol),
+                            )
+                        except Exception:
+                            if tuple(saved_value_np.shape) != tuple(tflite_value.shape):
+                                unmatched_output_names.append(str(output_name))
+                                continue
+                            aligned_tflite_value = np.asarray(tflite_value)
+
+                        if bool(
+                            np.allclose(
+                                saved_value_np,
+                                aligned_tflite_value,
+                                rtol=float(eval_rtol),
+                                atol=float(eval_atol),
+                                equal_nan=True,
+                            )
+                        ):
+                            comparison_matched += 1
+                        else:
+                            unmatched_output_names.append(str(output_name))
+
+                        saved_flat = np.asarray(saved_value_np, dtype=np.float64).reshape(-1)
+                        tflite_flat = np.asarray(aligned_tflite_value, dtype=np.float64).reshape(-1)
+                        if saved_flat.size > 0 and tflite_flat.size > 0:
+                            with np.errstate(invalid='ignore'):
+                                local_diff = np.abs(saved_flat - tflite_flat)
+                                if np.any(np.isfinite(local_diff)):
+                                    local_max_abs = float(np.nanmax(local_diff))
+                                else:
+                                    local_max_abs = 0.0
+                            if local_max_abs > max_abs:
+                                max_abs = local_max_abs
+
+                    comparison_pass = (
+                        int(comparison_matched) == int(comparison_total)
+                        and len(unmatched_output_names) == 0
+                    )
+                    report['comparison']['status'] = 'passed' if comparison_pass else 'failed'
+                    report['comparison']['reason'] = '' if comparison_pass else 'output_mismatch'
+                    report['comparison']['pass'] = bool(comparison_pass)
+                    report['comparison']['matched'] = int(comparison_matched)
+                    report['comparison']['total'] = int(comparison_total)
+                    report['comparison']['max_abs'] = float(max_abs)
+                    report['comparison']['unmatched_outputs'] = sorted(
+                        set(str(v) for v in unmatched_output_names)
+                    )
+
+                    comparison_message = (
+                        'SavedModel/TFLite output comparison complete! '
+                        f'source={source_label} '
+                        f'tflite={float32_tflite_path} '
+                        f'pass={comparison_pass} '
+                        f'matched={comparison_matched}/{comparison_total} '
+                        f'max_abs={max_abs:.6g}'
+                    )
+                    if comparison_pass:
+                        info(Color.GREEN(comparison_message))
+                    else:
+                        warn(
+                            Color.YELLOW(
+                                comparison_message
+                                + f' unmatched_outputs={sorted(set(unmatched_output_names))}'
+                            )
+                        )
+                except Exception as compare_ex:
+                    report['comparison']['status'] = 'failed'
+                    report['comparison']['reason'] = f'runtime_comparison_failed: {compare_ex}'
+                    report['comparison']['pass'] = False
+                    warn(
+                        'SavedModel/TFLite output comparison failed because runtime comparison failed. '
+                        f'source={source_label} tflite={float32_tflite_path} reason={compare_ex}'
+                    )
+        except Exception as ex:
+            inference_exception = ex
+            report['inference']['status'] = 'failed'
+            report['inference']['reason'] = str(ex)
+            report['comparison']['status'] = 'skipped'
+            report['comparison']['reason'] = 'inference_failed'
+            report['comparison']['pass'] = False
+
+        report['overall_pass'] = bool(
+            report['inference']['status'] == 'passed'
+            and report['comparison']['status'] == 'passed'
+            and bool(report['comparison'].get('pass', False))
+        )
+        _write_saved_model_validation_report()
+
+        if inference_exception is not None:
+            raise RuntimeError(
+                'SavedModel inference check failed. '
+                f'source={source_label} path={saved_model_path} reason={inference_exception}'
+            ) from inference_exception
 
     def _run_flatbuffer_direct_op_error_report(
         *,
@@ -2998,7 +3585,7 @@ def convert(
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'auto_split_tflite_by_size': auto_split_tflite_by_size,
                     'report_op_coverage': report_op_coverage,
-                    'flatbuffer_direct_fallback_to_tf_converter': flatbuffer_direct_fallback_to_tf_converter,
+                    'flatbuffer_direct_output_saved_model': flatbuffer_direct_output_saved_model,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
                     'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
@@ -3422,7 +4009,6 @@ def convert(
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
-    flatbuffer_direct_fast_path_failed_after_fallback = False
     flatbuffer_direct_fast_path_blockers = []
     if auto_split_model:
         flatbuffer_direct_fast_path_blockers.append('auto_split_model')
@@ -3464,6 +4050,7 @@ def convert(
                             enable_accumulation_type_float16=enable_accumulation_type_float16,
                             auto_split_tflite_by_size=auto_split_tflite_by_size,
                             report_op_coverage=report_op_coverage,
+                            output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                             flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                             flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                             keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -3529,39 +4116,19 @@ def convert(
             if direct_error is not None:
                 raise direct_error
         except Exception as ex:
-            if not flatbuffer_direct_fallback_to_tf_converter:
-                raise
-            warn(
-                Color.YELLOW(
-                    'flatbuffer_direct fast path failed. '
-                    'Falling back to tf_converter path. '
-                    f'reason={ex}'
-                )
-            )
-            skipped_direct_features = []
-            if report_op_coverage:
-                skipped_direct_features.append('report_op_coverage')
-            if auto_split_tflite_by_size:
-                skipped_direct_features.append('auto_split_tflite_by_size')
-            if eval_with_onnx:
-                skipped_direct_features.append('eval_with_onnx')
-            if eval_split_models:
-                skipped_direct_features.append('eval_split_models')
-            if flatbuffer_direct_allow_custom_ops:
-                skipped_direct_features.append('flatbuffer_direct_allow_custom_ops')
-            if len(skipped_direct_features) > 0:
-                warn(
-                    Color.YELLOW(
-                        'Direct-only features are skipped in fallback mode: '
-                        f'{", ".join(skipped_direct_features)}'
-                    )
-                )
-            flatbuffer_direct_fast_path_failed_after_fallback = True
-            direct_outputs = None
+            raise RuntimeError(
+                'flatbuffer_direct fast path failed.'
+            ) from ex
 
         if direct_outputs is not None:
             info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
             info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+            if 'saved_model_path' in direct_outputs:
+                info(
+                    Color.GREEN(
+                        f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                    )
+                )
             if auto_split_tflite_by_size:
                 if 'split_plan_report_path' not in direct_outputs:
                     raise RuntimeError(
@@ -3691,6 +4258,11 @@ def convert(
                 tflite_paths=direct_eval_paths,
                 source_label='flatbuffer_direct',
                 contains_custom_ops=direct_contains_custom_ops,
+            )
+            _run_saved_model_inference_check(
+                saved_model_path=direct_outputs.get('saved_model_path', None),
+                float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                source_label='flatbuffer_direct',
             )
             if eval_split_models:
                 if 'split_manifest_path' not in direct_outputs:
@@ -4196,6 +4768,7 @@ def convert(
                                     enable_accumulation_type_float16=enable_accumulation_type_float16,
                                     auto_split_tflite_by_size=auto_split_tflite_by_size,
                                     report_op_coverage=report_op_coverage,
+                                    output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                     flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                     flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                     keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -4262,6 +4835,12 @@ def convert(
                     if direct_error is not None:
                         raise direct_error
                     if direct_outputs is not None:
+                        if 'saved_model_path' in direct_outputs:
+                            info(
+                                Color.GREEN(
+                                    f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                                )
+                            )
                         direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
                         _log_flatbuffer_direct_custom_op_summary(
                             direct_outputs=direct_outputs,
@@ -4295,16 +4874,14 @@ def convert(
                             source_label='flatbuffer_direct',
                             contains_custom_ops=direct_contains_custom_ops,
                         )
-                    return None
-                except Exception as direct_ex:
-                    if not flatbuffer_direct_fallback_to_tf_converter:
-                        raise direct_ex
-                    warn(
-                        Color.YELLOW(
-                            'flatbuffer_direct-only conversion attempt failed after TF conversion failure. '
-                            f'reason={direct_ex}'
+                        _run_saved_model_inference_check(
+                            saved_model_path=direct_outputs.get('saved_model_path', None),
+                            float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                            source_label='flatbuffer_direct',
                         )
-                    )
+                    return None
+                except Exception:
+                    raise
             # Re-raise the original error
             raise ex
 
@@ -4596,7 +5173,7 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
-        if tflite_backend == 'flatbuffer_direct' and not flatbuffer_direct_fast_path_failed_after_fallback:
+        if tflite_backend == 'flatbuffer_direct':
             direct_outputs = None
             try:
                 from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
@@ -4623,6 +5200,7 @@ def convert(
                                 enable_accumulation_type_float16=enable_accumulation_type_float16,
                                 auto_split_tflite_by_size=auto_split_tflite_by_size,
                                 report_op_coverage=report_op_coverage,
+                                output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                 flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                 flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -4688,38 +5266,19 @@ def convert(
                 if direct_error is not None:
                     raise direct_error
             except Exception as ex:
-                if not flatbuffer_direct_fallback_to_tf_converter:
-                    raise
-                warn(
-                    Color.YELLOW(
-                        'flatbuffer_direct conversion failed. '
-                        'Falling back to tf_converter path. '
-                        f'reason={ex}'
-                    )
-                )
-                skipped_direct_features = []
-                if report_op_coverage:
-                    skipped_direct_features.append('report_op_coverage')
-                if auto_split_tflite_by_size:
-                    skipped_direct_features.append('auto_split_tflite_by_size')
-                if eval_with_onnx:
-                    skipped_direct_features.append('eval_with_onnx')
-                if eval_split_models:
-                    skipped_direct_features.append('eval_split_models')
-                if flatbuffer_direct_allow_custom_ops:
-                    skipped_direct_features.append('flatbuffer_direct_allow_custom_ops')
-                if len(skipped_direct_features) > 0:
-                    warn(
-                        Color.YELLOW(
-                            'Direct-only features are skipped in fallback mode: '
-                            f'{", ".join(skipped_direct_features)}'
-                        )
-                    )
-                direct_outputs = None
+                raise RuntimeError(
+                    'flatbuffer_direct conversion failed.'
+                ) from ex
 
             if direct_outputs is not None:
                 info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
                 info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
+                if 'saved_model_path' in direct_outputs:
+                    info(
+                        Color.GREEN(
+                            f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                        )
+                    )
                 if auto_split_tflite_by_size:
                     if 'split_plan_report_path' not in direct_outputs:
                         raise RuntimeError(
@@ -4858,6 +5417,11 @@ def convert(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',
                     contains_custom_ops=direct_contains_custom_ops,
+                )
+                _run_saved_model_inference_check(
+                    saved_model_path=direct_outputs.get('saved_model_path', None),
+                    float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                    source_label='flatbuffer_direct',
                 )
                 if eval_split_models:
                     if 'split_manifest_path' not in direct_outputs:
@@ -6014,10 +6578,11 @@ def main():
             'Currently available only with --tflite_backend flatbuffer_direct.'
     )
     parser.add_argument(
-        '--flatbuffer_direct_fallback_to_tf_converter',
+        '-fdosm',
+        '--flatbuffer_direct_output_saved_model',
         action='store_true',
         help=\
-            'Fallback to tf_converter when flatbuffer_direct conversion fails.'
+            'Output SavedModel directly from flatbuffer_direct ModelIR (float32).'
     )
     parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
@@ -6773,7 +7338,7 @@ def main():
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         auto_split_tflite_by_size=args.auto_split_tflite_by_size,
         report_op_coverage=args.report_op_coverage,
-        flatbuffer_direct_fallback_to_tf_converter=args.flatbuffer_direct_fallback_to_tf_converter,
+        flatbuffer_direct_output_saved_model=args.flatbuffer_direct_output_saved_model,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,

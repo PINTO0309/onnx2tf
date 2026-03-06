@@ -176,7 +176,6 @@ def _convert(
     eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
     report_op_coverage: bool = False,
-    flatbuffer_direct_fallback_to_tf_converter: bool = False,
     flatbuffer_direct_allow_custom_ops: bool = False,
     flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
     auto_split_max_size: str | int | None = None,
@@ -207,7 +206,6 @@ def _convert(
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
         report_op_coverage=report_op_coverage,
-        flatbuffer_direct_fallback_to_tf_converter=flatbuffer_direct_fallback_to_tf_converter,
         flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         auto_split_max_size=auto_split_max_size,
@@ -31761,30 +31759,6 @@ def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
             r["onnx_op"] == "Einsum" and r["dispatch_mode"] == "builtin"
             for r in report["graph_node_reports"]
         )
-
-
-@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
-def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        model = _make_elu_model()
-        model_path = _save_model(tmpdir, "elu_fallback", model)
-        out_dir = os.path.join(tmpdir, "out")
-        _convert(
-            model_path,
-            out_dir,
-            "flatbuffer_direct",
-            flatbuffer_direct_fallback_to_tf_converter=True,
-            report_op_coverage=True,
-        )
-
-        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float32.tflite"))
-        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float16.tflite"))
-        report_path = os.path.join(out_dir, "elu_fallback_op_coverage_report.json")
-        assert os.path.isfile(report_path)
-        with open(report_path, "r", encoding="utf-8") as f:
-            report = json.load(f)
-        assert report["conversion_error"] is None
-        assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")

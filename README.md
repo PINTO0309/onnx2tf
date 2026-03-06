@@ -304,8 +304,15 @@ Fast path is intentionally disabled (falls back to the legacy TF-graph path) whe
 - `--output_tfv1_pb`
 - `--disable_model_save`
 
-If direct export fails and `--flatbuffer_direct_fallback_to_tf_converter` is set, conversion continues via the TF converter path.
-In that fallback mode, direct-only features (`--report_op_coverage`, `--auto_split_tflite_by_size`, etc.) are skipped by design.
+If direct export fails, conversion stops with an explicit error.
+
+SavedModel direct export from `flatbuffer_direct` ModelIR is available with
+`--flatbuffer_direct_output_saved_model`.
+This option has strict constraints:
+
+- `--tflite_backend flatbuffer_direct` is required
+- `--disable_model_save` cannot be combined
+- `CUSTOM` ops are rejected with an explicit error
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
 |:-:|:-:|
@@ -591,7 +598,8 @@ Notes:
 |Failure behavior|Often absorbed by TF-side graph lowering|Explicit `reason_code`-based failure on unsupported patterns|
 |Custom op handling|Typically avoided by TF-side replacement when possible|Opt-in only (`--flatbuffer_direct_allow_custom_ops`) with allowlist|
 |Diagnostics|Standard conversion logs|`*_op_coverage_report.json` (`dispatch_mode`, `unsupported_reason_counts`, `custom_op_policy`, `preprocess_report`)|
-|Fallback|N/A|`--flatbuffer_direct_fallback_to_tf_converter` available (falls back to TF converter path when direct export fails)|
+|Fallback|N/A|N/A (no fallback)|
+|SavedModel direct output|Generated from TF conversion path|Optional `--flatbuffer_direct_output_saved_model` from float32 ModelIR (no fallback, `CUSTOM` unsupported)|
 
 ### flatbuffer_direct preprocess absorption scope
 
@@ -619,7 +627,7 @@ Notes:
 
 |Symptom (`reason_code`)|Meaning|Recommended action|
 |:-|:-|:-|
-|`unsupported_onnx_op`|No direct builtin/custom path for the node|Use `--tflite_backend tf_converter`, or enable `--flatbuffer_direct_fallback_to_tf_converter`|
+|`unsupported_onnx_op`|No direct builtin/custom path for the node|Use `--tflite_backend tf_converter` or rewrite/export the model to supported patterns|
 |`requires_constant_input`|Node requires compile-time constant input (e.g., axes/perm/shape)|Pre-fold ONNX graph (`onnxsim`) or rewrite model to constantize the input|
 |`unsupported_attribute_value`|Attribute/rank/value not accepted by direct builtin constraints|Adjust ONNX export options or rewrite offending subgraph before conversion|
 |`custom_op_candidate_disabled`|Op is in custom-candidate set but custom lowering is disabled|Enable `--flatbuffer_direct_allow_custom_ops` when runtime supports the custom op|
@@ -2056,11 +2064,31 @@ optional arguments:
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-    12. Optional fallback:
-       `--flatbuffer_direct_fallback_to_tf_converter` falls back to tf_converter when direct export fails.
-       In fallback mode, direct-only features are skipped (`--report_op_coverage`, `--auto_split_tflite_by_size`, `--eval_with_onnx`, `--eval_split_models`, custom-op direct lowering settings).
-    13. Migration guide:
+    12. Migration guide:
        See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
+    13. SavedModel direct export from ModelIR:
+       `--flatbuffer_direct_output_saved_model` exports `saved_model.pb`/`variables`/`assets`
+       from float32 ModelIR in the direct path.
+       This option requires `--tflite_backend flatbuffer_direct`, cannot be combined with
+       `--disable_model_save`,
+       and fails explicitly if `CUSTOM` ops are present.
+
+  -fdosm, --flatbuffer_direct_output_saved_model
+    Output SavedModel directly from flatbuffer_direct ModelIR (float32).
+    Available only with --tflite_backend flatbuffer_direct.
+    Cannot be used with --disable_model_save.
+    Fails explicitly if CUSTOM ops are present.
+    When used with -cotof, also outputs `<model_name>_saved_model_validation_report.json`
+    in the output directory (inference status + SavedModel/TFLite comparison metrics).
+
+Bulk runner utility (for `tflite2sm-plan.md`):
+
+```bash
+onnx2tf-tflite2sm-bulk -l tflite2sm-plan.md -o tflite2sm_bulk_report
+```
+
+This utility executes models in listed order (including duplicates), records `missing_model`,
+supports `--resume`, and generates `bulk_status.json` / `bulk_summary.json` / `bulk_summary.md`.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
@@ -2544,6 +2572,7 @@ convert(
   output_weights: Optional[bool] = False,
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
+  flatbuffer_direct_output_saved_model: Optional[bool] = False,
   tflite_backend: Optional[str] = 'tf_converter',
   quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
   quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -2657,6 +2686,14 @@ convert(
       limited integer quantization, and limited int16-activation variants.
       When the direct fast path is active, TensorFlow per-node conversion is skipped.
       In that case, `convert()` may return `None` (TFLite artifacts are still generated).
+
+    flatbuffer_direct_output_saved_model: Optional[bool]
+      Output SavedModel directly from flatbuffer_direct ModelIR (float32).
+      Requires `tflite_backend="flatbuffer_direct"`.
+      Cannot be combined with `disable_model_save=True`.
+      Fails explicitly if `CUSTOM` ops are present.
+      When used with `check_onnx_tf_outputs_elementwise_close_full=True`,
+      `<model_name>_saved_model_validation_report.json` is generated.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.
