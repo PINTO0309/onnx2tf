@@ -39,6 +39,23 @@ _IF_NMS_GUARD_ELSE_OPS_SIMPLE = [
     "Squeeze",
 ]
 
+_IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE = [
+    "ReduceMax",
+    "Cast",
+    "Unsqueeze",
+    "Unsqueeze",
+    "Unsqueeze",
+    "Add",
+    "Mul",
+    "Slice",
+    "Unsqueeze",
+    "Add",
+    "Unsqueeze",
+    "NonMaxSuppression",
+    "Gather",
+    "Squeeze",
+]
+
 
 _IF_GENERIC_BRANCH_SAFE_OPS = {
     "Add",
@@ -121,6 +138,8 @@ def is_supported_if_nms_guard_pattern(node: Any) -> bool:
         return False
     else_ops = [str(n.op_type) for n in else_graph.node]
     if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
+        return True
+    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
         return True
     if else_ops != _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
         return False
@@ -1141,6 +1160,15 @@ def _cast_to_dtype_for_if(
     return casted_name
 
 
+def _normalize_where_mux_dtype(dtype: str) -> str:
+    dt = str(dtype).upper()
+    if dt == "INT64":
+        return "INT32"
+    if dt == "UINT64":
+        return "UINT32"
+    return dt
+
+
 def _reshape_if_tensor_to_vector(
     *,
     tensor_name: str,
@@ -1645,7 +1673,14 @@ def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
         ctx.ensure_tensor(output_name)
         ctx.ensure_tensor(then_output_name)
         ctx.ensure_tensor(else_output_name)
-        expected_output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+        expected_output_dtype = _normalize_where_mux_dtype(
+            str(ctx.get_tensor_dtype(output_name)).upper()
+        )
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor is not None:
+            output_tensor.dtype = expected_output_dtype
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(output_name)] = expected_output_dtype
 
         then_output_name = _cast_to_dtype_for_if(
             tensor_name=then_output_name,
@@ -1706,7 +1741,14 @@ def _build_if_nested_reducemin_add_branch_mux(node: Any, ctx: Any) -> None:
     output_name = node.outputs[0].name
     ctx.ensure_tensor(cond_name)
     ctx.ensure_tensor(output_name)
-    expected_output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    expected_output_dtype = _normalize_where_mux_dtype(
+        str(ctx.get_tensor_dtype(output_name)).upper()
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = expected_output_dtype
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = expected_output_dtype
     expected_output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
 
     then_graph = node.attrs["then_branch"]
@@ -1841,6 +1883,9 @@ def build_if_op(node: Any, ctx: Any) -> None:
         if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
             unsqueeze_scores_idx = 3
             nms_idx = 9
+        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
+            unsqueeze_scores_idx = 4
+            nms_idx = 11
         elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
             unsqueeze_scores_idx = 2
             nms_idx = 8
@@ -2392,6 +2437,7 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
     body_trip_out = f"{node.name}_while_trip_out"
     body_cond_out = f"{node.name}_while_cond_out"
     body_state_out_names = [f"{node.name}_while_state_{idx}_out" for idx in range(state_count)]
+    body_state_out_raw_names = [f"{node.name}_while_state_{idx}_out_raw" for idx in range(state_count)]
 
     for tensor_name, dtype_name, shape in [
         (body_iter_in, iter_dtype, []),
@@ -2448,7 +2494,7 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
             if out_name == onnx_body_cond_output_name:
                 mapped_name = str(body_cond_out)
             elif out_name in onnx_body_state_output_names:
-                mapped_name = str(body_state_out_names[onnx_body_state_output_names.index(out_name)])
+                mapped_name = str(body_state_out_raw_names[onnx_body_state_output_names.index(out_name)])
             else:
                 mapped_name = _make_unique_tensor_name(
                     base_name=f"{node.name}_while_body_{out_name}",
@@ -2462,13 +2508,10 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
             body_output_remap[out_name] = mapped_name
             body_input_remap[out_name] = mapped_name
 
-    for idx, state_output_name in enumerate(onnx_body_state_output_names):
-        body_output_remap[state_output_name] = body_state_out_names[idx]
-
     body_ctx.ensure_tensor(body_cond_out, dtype="BOOL", shape=[])
-    for idx, state_out_name in enumerate(body_state_out_names):
+    for idx, state_out_raw_name in enumerate(body_state_out_raw_names):
         body_ctx.ensure_tensor(
-            state_out_name,
+            state_out_raw_name,
             dtype=str(ctx.get_tensor_dtype(state_input_names[idx])).upper(),
             shape=[int(v) for v in ctx.get_tensor_shape(state_input_names[idx])],
         )
@@ -2497,15 +2540,48 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
         )
         produced_tensor_names.add(str(body_cond_out))
     for idx, state_out_name in enumerate(body_state_out_names):
-        if str(state_out_name) in produced_tensor_names:
-            continue
-        fallback_state_src = body_input_remap.get(onnx_body_state_output_names[idx], body_state_in_names[idx])
-        _emit_tensor_alias_via_reshape(
-            src_name=str(fallback_state_src),
-            dst_name=state_out_name,
-            alias_base_name=f"{node.name}_while_state_passthrough_{idx}",
-            ctx=body_ctx,
+        state_out_raw_name = str(body_state_out_raw_names[idx])
+        expected_dtype = str(ctx.get_tensor_dtype(state_input_names[idx])).upper()
+        expected_shape = [int(v) for v in ctx.get_tensor_shape(state_input_names[idx])]
+
+        if state_out_raw_name not in produced_tensor_names:
+            fallback_state_src = body_input_remap.get(
+                onnx_body_state_output_names[idx],
+                body_state_in_names[idx],
+            )
+            _emit_tensor_alias_via_reshape(
+                src_name=str(fallback_state_src),
+                dst_name=state_out_raw_name,
+                alias_base_name=f"{node.name}_while_state_passthrough_raw_{idx}",
+                ctx=body_ctx,
+            )
+            produced_tensor_names.add(state_out_raw_name)
+
+        actual_dtype = str(body_ctx.get_tensor_dtype(state_out_raw_name)).upper()
+        body_ctx.ensure_tensor(
+            state_out_name,
+            dtype=expected_dtype,
+            shape=expected_shape,
         )
+        if actual_dtype != expected_dtype:
+            body_ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[state_out_raw_name],
+                    outputs=[state_out_name],
+                    options={
+                        "inDataType": actual_dtype,
+                        "outDataType": expected_dtype,
+                    },
+                )
+            )
+        else:
+            _emit_tensor_alias_via_reshape(
+                src_name=state_out_raw_name,
+                dst_name=state_out_name,
+                alias_base_name=f"{node.name}_while_state_passthrough_{idx}",
+                ctx=body_ctx,
+            )
         produced_tensor_names.add(str(state_out_name))
 
     body_subgraph.inputs = [body_iter_in, body_trip_in, body_cond_in] + body_state_in_names

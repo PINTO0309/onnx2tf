@@ -271,6 +271,28 @@ def _make_reduce_min_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_cumprod_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    axis = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="cumprod_axis")
+    node = helper.make_node(
+        "CumProd",
+        ["x", "cumprod_axis"],
+        ["y"],
+        name="CumProdNode",
+        exclusive=0,
+        reverse=0,
+    )
+    graph = helper.make_graph(
+        [node],
+        "cumprod_graph",
+        [x],
+        [y],
+        initializer=[axis],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_layer_normalization_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8, 16])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 16])
@@ -626,6 +648,19 @@ def test_op_coverage_reduce_min_builtin_dispatch() -> None:
     assert report["graph_summary"]["custom_lowered_nodes"] == 0
     assert report["graph_custom_ops"] == []
     assert report["graph_node_reports"][0]["onnx_op"] == "ReduceMin"
+    assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
+
+
+def test_op_coverage_cumprod_builtin_dispatch() -> None:
+    report = build_op_coverage_report(
+        onnx_graph=_make_cumprod_model(),
+        output_file_name="cumprod_builtin_snapshot",
+    )
+    assert report["unsupported_reason_counts"] == {}
+    assert report["graph_summary"]["unsupported_nodes"] == 0
+    assert report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert report["graph_custom_ops"] == []
+    assert report["graph_node_reports"][0]["onnx_op"] == "CumProd"
     assert report["graph_node_reports"][0]["dispatch_mode"] == "builtin"
 
 

@@ -19,12 +19,17 @@ def _prefer_int32_indices_output_dtype(
     dtype = str(requested_dtype).upper()
     if dtype == "INT32":
         return "INT32"
+    if dtype == "UINT32":
+        return "UINT32"
+    preferred_dtype = "INT32"
+    if dtype == "UINT64":
+        preferred_dtype = "UINT32"
     tensor = ctx.model_ir.tensors.get(tensor_name, None)
     if tensor is not None:
-        tensor.dtype = "INT32"
+        tensor.dtype = preferred_dtype
     if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
-        ctx.dtype_map[str(tensor_name)] = "INT32"
-    return "INT32"
+        ctx.dtype_map[str(tensor_name)] = preferred_dtype
+    return preferred_dtype
 
 
 def _infer_pool_output_hw(
@@ -710,9 +715,15 @@ def _build_maxpool1d_op(
         )
     kernel_1d = int(kernel_raw[0])
     stride_1d = int(strides_raw[0])
-    if int(kernel_1d) not in [1, 2] or int(stride_1d) != int(kernel_1d):
+    if int(kernel_1d) <= 0 or int(stride_1d) <= 0:
         raise NotImplementedError(
-            "MaxPool1D lowering currently supports kernel/stride [1]/[1] or [2]/[2]. "
+            "MaxPool1D lowering requires positive kernel/stride. "
+            f"op={node.name} kernel={kernel_raw} strides={strides_raw}"
+        )
+    if indices_output_name is not None and int(stride_1d) != int(kernel_1d):
+        raise NotImplementedError(
+            "MaxPool1D lowering with indices currently supports non-overlapping windows only "
+            "(kernel==stride). "
             f"op={node.name} kernel={kernel_raw} strides={strides_raw}"
         )
 
@@ -725,7 +736,11 @@ def _build_maxpool1d_op(
     pad_left, pad_right = _normalize_1d_pads(raw_pads)
     if auto_pad == "VALID":
         pad_left, pad_right = 0, 0
-    if int(kernel_1d) == 1 and (int(pad_left) != 0 or int(pad_right) != 0):
+    if (
+        indices_output_name is not None
+        and int(kernel_1d) == 1
+        and (int(pad_left) != 0 or int(pad_right) != 0)
+    ):
         raise NotImplementedError(
             "MaxPool1D kernel=1/stride=1 with indices currently supports zero pads only. "
             f"op={node.name} pads={[pad_left, pad_right]}"

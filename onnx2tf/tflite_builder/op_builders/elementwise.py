@@ -27,6 +27,32 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         dst.shape_signature = list(src_signature)
 
 
+def _sync_shape_signature_from_src(
+    *,
+    ctx: Any,
+    src_tensor_name: str,
+    dst_tensor_name: str,
+) -> None:
+    """
+    Force shape/signature sync for shape-preserving unary ops.
+
+    Some preprocess rewrites insert synthetic tensors whose stale shape_map can
+    conflict with runtime topology. For unary ops that preserve shape exactly,
+    source tensor metadata is the authoritative shape.
+    """
+    ctx.ensure_tensor(src_tensor_name)
+    ctx.ensure_tensor(dst_tensor_name)
+    src = ctx.model_ir.tensors[src_tensor_name]
+    dst = ctx.model_ir.tensors[dst_tensor_name]
+    src_signature = (
+        list(src.shape_signature)
+        if src.shape_signature is not None
+        else list(src.shape)
+    )
+    dst.shape = [int(v) for v in list(src.shape)]
+    dst.shape_signature = [int(v) for v in list(src_signature)]
+
+
 def _tensor_shape_and_signature(
     *,
     tensor_name: str,
@@ -380,11 +406,14 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
 
     def _normalize_binary_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
-        if dt in {"INT64", "UINT64", "UINT32"}:
+        if dt == "INT64":
             return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
         return dt
 
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
     float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
     logical_binary_ops = {"LOGICAL_AND", "LOGICAL_OR", "LOGICAL_XOR"}
     comparison_binary_ops = {
@@ -403,6 +432,13 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     requested_output_dtype = _normalize_binary_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
     input_target_dtype = requested_output_dtype
     output_target_dtype = requested_output_dtype
+
+    def _promote_integer_target_dtype() -> str:
+        raw_dtypes = [str(ctx.get_tensor_dtype(name)).upper() for name in input_names]
+        if len(raw_dtypes) > 0 and all(dt in unsigned_integer_dtypes for dt in raw_dtypes):
+            return "UINT32"
+        return "INT32"
+
     if upper_op_type in logical_binary_ops:
         input_target_dtype = "BOOL"
         output_target_dtype = "BOOL"
@@ -422,8 +458,12 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         elif upper_op_type in comparison_binary_ops:
             if len(unique_input_dtypes) == 1:
                 input_target_dtype = normalized_input_dtypes[0]
+                # LiteRT comparison kernels do not accept FLOAT64. Normalize
+                # homogeneous float64 comparisons to FLOAT32.
+                if input_target_dtype == "FLOAT64":
+                    input_target_dtype = "FLOAT32"
             elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
-                input_target_dtype = "INT32"
+                input_target_dtype = _promote_integer_target_dtype()
             elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
                 input_target_dtype = "FLOAT32"
             else:
@@ -434,7 +474,7 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         elif len(unique_input_dtypes) == 1:
             input_target_dtype = normalized_input_dtypes[0]
         elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
-            input_target_dtype = "INT32"
+            input_target_dtype = _promote_integer_target_dtype()
         elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
             input_target_dtype = "FLOAT32"
         else:
@@ -926,10 +966,69 @@ def build_mod_op(node: Any, ctx: Any) -> None:
     if len(input_names) > 0:
         _propagate_shape(ctx, input_names[0], output_name)
 
+    lhs_name = input_names[0]
+    rhs_name = input_names[1]
+    lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
+    rhs_dtype = str(ctx.get_tensor_dtype(rhs_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+
+    def _normalize_mod_dtype(dtype: str) -> str:
+        dt = str(dtype).upper()
+        if dt == "INT64":
+            return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
+        return dt
+
+    integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
+    float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
+    lhs_norm = _normalize_mod_dtype(lhs_dtype)
+    rhs_norm = _normalize_mod_dtype(rhs_dtype)
+    out_norm = _normalize_mod_dtype(output_dtype)
+
+    target_dtype = out_norm
+    if lhs_norm == rhs_norm:
+        target_dtype = lhs_norm
+    elif lhs_dtype in integer_dtypes and rhs_dtype in integer_dtypes:
+        if lhs_dtype in unsigned_integer_dtypes and rhs_dtype in unsigned_integer_dtypes:
+            target_dtype = "UINT32"
+        else:
+            target_dtype = "INT32"
+    elif lhs_dtype in float_dtypes and rhs_dtype in float_dtypes:
+        target_dtype = "FLOAT32"
+    else:
+        raise NotImplementedError(
+            "Mod input dtypes must be compatible in flatbuffer_direct. "
+            f"op={node.name} lhs_dtype={lhs_dtype} rhs_dtype={rhs_dtype} output_dtype={output_dtype}"
+        )
+
+    lhs_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=lhs_name,
+        dst_dtype=target_dtype,
+        base_name=f"{output_name}_mod_lhs_cast",
+    )
+    rhs_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=rhs_name,
+        dst_dtype=target_dtype,
+        base_name=f"{output_name}_mod_rhs_cast",
+    )
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = str(target_dtype)
+        src_tensor = ctx.model_ir.tensors.get(lhs_name, None)
+        if src_tensor is not None:
+            output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = str(target_dtype)
+
     ctx.add_operator(
         OperatorIR(
             op_type="FLOOR_MOD",
-            inputs=input_names,
+            inputs=[lhs_name, rhs_name],
             outputs=[output_name],
         )
     )
@@ -1050,16 +1149,93 @@ def build_hardsigmoid_op(node: Any, ctx: Any) -> None:
     )
 
 
+def _is_integer_dtype(dtype: str) -> bool:
+    return str(dtype).upper() in {
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }
+
+
+def _harmonize_unary_input_output_dtype(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+) -> str:
+    """
+    Ensure unary builtin runtime dtype compatibility.
+
+    TFLite unary kernels such as SIGN require input/output dtypes to match.
+    When upstream shape/index lowering normalizes INT64->INT32, ONNX metadata
+    may still declare unary outputs as INT64. In integer-only mismatch cases,
+    align output dtype to runtime input dtype.
+    """
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype == output_dtype:
+        return str(input_name)
+
+    if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
+        output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+        if output_tensor is not None:
+            output_tensor.dtype = str(input_dtype)
+            src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+            if src_tensor is not None:
+                output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(output_name)] = str(input_dtype)
+        return str(input_name)
+
+    cast_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{node.op_type.lower()}_input_cast",
+        dtype=output_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
+    )
+    src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+    cast_tensor = ctx.model_ir.tensors.get(str(cast_name), None)
+    if src_tensor is not None and cast_tensor is not None:
+        cast_tensor.shape_signature = (
+            [int(v) for v in list(src_tensor.shape_signature)]
+            if src_tensor.shape_signature is not None
+            else [int(v) for v in list(src_tensor.shape)]
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[cast_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+    return str(cast_name)
+
+
 def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    runtime_input_name = _harmonize_unary_input_output_dtype(
+        node=node,
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
-            inputs=[input_name],
+            inputs=[runtime_input_name],
             outputs=[output_name],
         )
     )
@@ -1609,20 +1785,26 @@ def build_where_op(node: Any, ctx: Any) -> None:
 
     def _normalize_where_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
-        if dt in {"INT64", "UINT64", "UINT32"}:
+        if dt == "INT64":
             return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
         return dt
 
     normalized_output_dtype = _normalize_where_dtype(output_dtype)
     normalized_x_dtype = _normalize_where_dtype(x_dtype)
     normalized_y_dtype = _normalize_where_dtype(y_dtype)
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
     where_target_dtype = normalized_output_dtype
     if normalized_x_dtype != where_target_dtype or normalized_y_dtype != where_target_dtype:
         if normalized_x_dtype == normalized_y_dtype:
             where_target_dtype = normalized_x_dtype
         elif x_dtype in integer_dtypes and y_dtype in integer_dtypes:
-            where_target_dtype = "INT32"
+            if x_dtype in unsigned_integer_dtypes and y_dtype in unsigned_integer_dtypes:
+                where_target_dtype = "UINT32"
+            else:
+                where_target_dtype = "INT32"
         else:
             raise NotImplementedError(
                 "Where input dtypes must be compatible in flatbuffer_direct. "
@@ -3006,6 +3188,11 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
 
     input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)
@@ -3065,6 +3252,11 @@ def build_logsoftmax_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
 
     input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)

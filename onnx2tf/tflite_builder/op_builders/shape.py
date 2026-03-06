@@ -70,6 +70,8 @@ def _prefer_int32_index_output_dtype(
     dtype = str(requested_dtype).upper()
     if dtype == "INT32":
         return "INT32"
+    if dtype == "UINT32":
+        return "UINT32"
     if dtype == "INT64":
         tensor = ctx.model_ir.tensors.get(tensor_name, None)
         if tensor is not None:
@@ -77,6 +79,13 @@ def _prefer_int32_index_output_dtype(
         if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
             ctx.dtype_map[str(tensor_name)] = "INT32"
         return "INT32"
+    if dtype == "UINT64":
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.dtype = "UINT32"
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(tensor_name)] = "UINT32"
+        return "UINT32"
     return dtype
 
 
@@ -1765,11 +1774,14 @@ def build_concat_op(node: Any, ctx: Any) -> None:
 
     def _normalize_concat_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
-        if dt in {"INT64", "UINT64", "UINT32"}:
+        if dt == "INT64":
             return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
         return dt
 
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
     normalized_input_dtypes = [
         _normalize_concat_dtype(str(ctx.get_tensor_dtype(name)).upper())
         for name in input_names
@@ -1781,7 +1793,11 @@ def build_concat_op(node: Any, ctx: Any) -> None:
         if len(unique_input_dtypes) == 1:
             concat_dtype = normalized_input_dtypes[0]
         elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
-            concat_dtype = "INT32"
+            raw_dtypes = [str(ctx.get_tensor_dtype(name)).upper() for name in input_names]
+            if len(raw_dtypes) > 0 and all(dt in unsigned_integer_dtypes for dt in raw_dtypes):
+                concat_dtype = "UINT32"
+            else:
+                concat_dtype = "INT32"
         else:
             raise NotImplementedError(
                 "Concat input dtypes must be compatible in flatbuffer_direct. "
@@ -4569,7 +4585,8 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
 
 def _resolve_resize_flags(node: Any) -> tuple[str, str, bool, bool]:
     mode = str(node.attrs.get("mode", "nearest")).lower()
-    ctm = str(node.attrs.get("coordinate_transformation_mode", "half_pixel")).lower()
+    default_ctm = "asymmetric" if str(getattr(node, "op", "")) == "Upsample" else "half_pixel"
+    ctm = str(node.attrs.get("coordinate_transformation_mode", default_ctm)).lower()
     align_corners = bool(ctm == "align_corners")
     half_pixel_centers = bool(ctm in {"half_pixel", "pytorch_half_pixel"})
     if mode == "nearest" and ctm == "asymmetric":
@@ -4979,6 +4996,14 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             f"GridSample supports rank-4/5 tensors in flatbuffer_direct. op={node.name} image_shape={image_shape}"
         )
     align_corners = bool(int(node.attrs.get("align_corners", 0)))
+    padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
+    use_border_padding = padding_mode == "border"
+    flattened_axis_size_2d = int(w * h) if use_border_padding else int((w + 2) * (h + 2))
+    flattened_axis_size_3d = (
+        int(d * h * w)
+        if use_border_padding
+        else int((d + 2) * (h + 2) * (w + 2))
+    )
 
     image_dtype = str(ctx.get_tensor_dtype(image_name)).upper()
     grid_dtype = str(ctx.get_tensor_dtype(grid_name)).upper()
@@ -5193,7 +5218,7 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             gathered_name=gathered_name,
             tag=tag,
             spatial_shape=[int(out_h), int(out_w)],
-            flattened_axis_size=int((w + 2) * (h + 2)),
+            flattened_axis_size=int(flattened_axis_size_2d),
         )
         return gathered_name
 
@@ -5291,38 +5316,52 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
                 gathered_name=gathered_name,
                 tag=tag,
                 spatial_shape=[int(out_d), int(out_h), int(out_w)],
-                flattened_axis_size=int((d + 2) * (h + 2) * (w + 2)),
+                flattened_axis_size=int(flattened_axis_size_3d),
             )
             return gathered_name
 
-        paddings_name = ctx.add_const_tensor(
-            f"{output_name}_gridsample_paddings",
-            np.asarray([[0, 0], [0, 0], [1, 1], [1, 1], [1, 1]], dtype=np.int32),
-        )
-        image_padded_name = ctx.add_intermediate_tensor(
-            f"{output_name}_gridsample_image_padded",
-            dtype=compute_dtype,
-            shape=[int(n), int(c), int(d + 2), int(h + 2), int(w + 2)],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="PAD",
-                inputs=[image_compute_name, paddings_name],
-                outputs=[image_padded_name],
+        if use_border_padding:
+            image_flat_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gridsample_image_flat",
+                dtype=compute_dtype,
+                shape=[int(n), int(c), int(d * h * w)],
             )
-        )
-        image_flat_name = ctx.add_intermediate_tensor(
-            f"{output_name}_gridsample_image_flat",
-            dtype=compute_dtype,
-            shape=[int(n), int(c), int((d + 2) * (h + 2) * (w + 2))],
-        )
-        _add_reshape_operator(
-            ctx=ctx,
-            input_name=image_padded_name,
-            output_name=image_flat_name,
-            new_shape=[-1, int(c), int((d + 2) * (h + 2) * (w + 2))],
-            preserve_dynamic_shape=True,
-        )
+            _add_reshape_operator(
+                ctx=ctx,
+                input_name=image_compute_name,
+                output_name=image_flat_name,
+                new_shape=[-1, int(c), int(d * h * w)],
+                preserve_dynamic_shape=True,
+            )
+        else:
+            paddings_name = ctx.add_const_tensor(
+                f"{output_name}_gridsample_paddings",
+                np.asarray([[0, 0], [0, 0], [1, 1], [1, 1], [1, 1]], dtype=np.int32),
+            )
+            image_padded_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gridsample_image_padded",
+                dtype=compute_dtype,
+                shape=[int(n), int(c), int(d + 2), int(h + 2), int(w + 2)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="PAD",
+                    inputs=[image_compute_name, paddings_name],
+                    outputs=[image_padded_name],
+                )
+            )
+            image_flat_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gridsample_image_flat",
+                dtype=compute_dtype,
+                shape=[int(n), int(c), int((d + 2) * (h + 2) * (w + 2))],
+            )
+            _add_reshape_operator(
+                ctx=ctx,
+                input_name=image_padded_name,
+                output_name=image_flat_name,
+                new_shape=[-1, int(c), int((d + 2) * (h + 2) * (w + 2))],
+                preserve_dynamic_shape=True,
+            )
 
         grid_x_name = ctx.add_intermediate_tensor(
             f"{output_name}_gridsample_grid_x",
@@ -5383,9 +5422,18 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         w_const = _add_float_const(f"{output_name}_gridsample_w", float(w))
         h_const = _add_float_const(f"{output_name}_gridsample_h", float(h))
         d_const = _add_float_const(f"{output_name}_gridsample_d", float(d))
-        w_pad_max_const = _add_float_const(f"{output_name}_gridsample_w_pad_max", float(w + 1))
-        h_pad_max_const = _add_float_const(f"{output_name}_gridsample_h_pad_max", float(h + 1))
-        d_pad_max_const = _add_float_const(f"{output_name}_gridsample_d_pad_max", float(d + 1))
+        w_index_max_const = _add_float_const(
+            f"{output_name}_gridsample_w_index_max",
+            float(w - 1 if use_border_padding else w + 1),
+        )
+        h_index_max_const = _add_float_const(
+            f"{output_name}_gridsample_h_index_max",
+            float(h - 1 if use_border_padding else h + 1),
+        )
+        d_index_max_const = _add_float_const(
+            f"{output_name}_gridsample_d_index_max",
+            float(d - 1 if use_border_padding else d + 1),
+        )
         x_scale_const = _add_float_const(
             f"{output_name}_gridsample_x_scale",
             float((w - 1) * 0.5 if align_corners else w * 0.5),
@@ -5504,15 +5552,26 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             dtype=compute_dtype,
             shape=[int(n), int(out_d), int(out_h), int(out_w), 1],
         )
-        _add_binary_op("MAXIMUM", x_name, neg_one_const, x_clip_low_name)
-        _add_binary_op("MINIMUM", x_clip_low_name, w_const, x_clip_name)
-        _add_binary_op("MAXIMUM", y_name, neg_one_const, y_clip_low_name)
-        _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
-        _add_binary_op("MAXIMUM", z_name, neg_one_const, z_clip_low_name)
-        _add_binary_op("MINIMUM", z_clip_low_name, d_const, z_clip_name)
-        _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
-        _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
-        _add_binary_op("ADD", z_clip_name, one_const, z_shift_name)
+        if use_border_padding:
+            _add_binary_op("MAXIMUM", x_name, zero_const, x_clip_low_name)
+            _add_binary_op("MINIMUM", x_clip_low_name, w_index_max_const, x_clip_name)
+            _add_binary_op("MAXIMUM", y_name, zero_const, y_clip_low_name)
+            _add_binary_op("MINIMUM", y_clip_low_name, h_index_max_const, y_clip_name)
+            _add_binary_op("MAXIMUM", z_name, zero_const, z_clip_low_name)
+            _add_binary_op("MINIMUM", z_clip_low_name, d_index_max_const, z_clip_name)
+            x_shift_name = x_clip_name
+            y_shift_name = y_clip_name
+            z_shift_name = z_clip_name
+        else:
+            _add_binary_op("MAXIMUM", x_name, neg_one_const, x_clip_low_name)
+            _add_binary_op("MINIMUM", x_clip_low_name, w_const, x_clip_name)
+            _add_binary_op("MAXIMUM", y_name, neg_one_const, y_clip_low_name)
+            _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
+            _add_binary_op("MAXIMUM", z_name, neg_one_const, z_clip_low_name)
+            _add_binary_op("MINIMUM", z_clip_low_name, d_const, z_clip_name)
+            _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
+            _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
+            _add_binary_op("ADD", z_clip_name, one_const, z_shift_name)
 
         x0_name = ctx.add_intermediate_tensor(
             f"{output_name}_gridsample_x0",
@@ -5612,17 +5671,17 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             shape=[int(n), int(out_d), int(out_h), int(out_w), 1],
         )
         _add_binary_op("MAXIMUM", x0_name, zero_const, x0_clip_low_name)
-        _add_binary_op("MINIMUM", x0_clip_low_name, w_pad_max_const, x0_clip_name)
+        _add_binary_op("MINIMUM", x0_clip_low_name, w_index_max_const, x0_clip_name)
         _add_binary_op("MAXIMUM", x1_name, zero_const, x1_clip_low_name)
-        _add_binary_op("MINIMUM", x1_clip_low_name, w_pad_max_const, x1_clip_name)
+        _add_binary_op("MINIMUM", x1_clip_low_name, w_index_max_const, x1_clip_name)
         _add_binary_op("MAXIMUM", y0_name, zero_const, y0_clip_low_name)
-        _add_binary_op("MINIMUM", y0_clip_low_name, h_pad_max_const, y0_clip_name)
+        _add_binary_op("MINIMUM", y0_clip_low_name, h_index_max_const, y0_clip_name)
         _add_binary_op("MAXIMUM", y1_name, zero_const, y1_clip_low_name)
-        _add_binary_op("MINIMUM", y1_clip_low_name, h_pad_max_const, y1_clip_name)
+        _add_binary_op("MINIMUM", y1_clip_low_name, h_index_max_const, y1_clip_name)
         _add_binary_op("MAXIMUM", z0_name, zero_const, z0_clip_low_name)
-        _add_binary_op("MINIMUM", z0_clip_low_name, d_pad_max_const, z0_clip_name)
+        _add_binary_op("MINIMUM", z0_clip_low_name, d_index_max_const, z0_clip_name)
         _add_binary_op("MAXIMUM", z1_name, zero_const, z1_clip_low_name)
-        _add_binary_op("MINIMUM", z1_clip_low_name, d_pad_max_const, z1_clip_name)
+        _add_binary_op("MINIMUM", z1_clip_low_name, d_index_max_const, z1_clip_name)
 
         dx_name = ctx.add_intermediate_tensor(
             f"{output_name}_gridsample_dx",
@@ -5730,11 +5789,14 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         z1_4d = _squeeze_last_dim_3d(z1_i_name, "z1", "INT32")
         linear_width_const = ctx.add_const_tensor(
             f"{output_name}_gridsample_linear_width",
-            np.asarray(int(w + 2), dtype=np.int32),
+            np.asarray(int(w if use_border_padding else w + 2), dtype=np.int32),
         )
         linear_plane_const = ctx.add_const_tensor(
             f"{output_name}_gridsample_linear_plane",
-            np.asarray(int((h + 2) * (w + 2)), dtype=np.int32),
+            np.asarray(
+                int((h * w) if use_border_padding else ((h + 2) * (w + 2))),
+                dtype=np.int32,
+            ),
         )
         idx000_name = _build_linear_index_3d(z0_4d, y0_4d, x0_4d, "idx000")
         idx001_name = _build_linear_index_3d(z0_4d, y0_4d, x1_4d, "idx001")
@@ -6020,36 +6082,50 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
         return
 
-    # zeros-padding fast path (same idea as tf backend): pad by 1 on H/W to
-    # eliminate explicit in-bound mask ops and gather zeros from border.
-    paddings_name = ctx.add_const_tensor(
-        f"{output_name}_gridsample_paddings",
-        np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int32),
-    )
-    image_padded_name = ctx.add_intermediate_tensor(
-        f"{output_name}_gridsample_image_padded",
-        dtype=compute_dtype,
-        shape=[int(n), int(c), int(h + 2), int(w + 2)],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="PAD",
-            inputs=[image_compute_name, paddings_name],
-            outputs=[image_padded_name],
+    if use_border_padding:
+        image_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_image_flat",
+            dtype=compute_dtype,
+            shape=[int(n), int(c), int(h * w)],
         )
-    )
-    image_flat_name = ctx.add_intermediate_tensor(
-        f"{output_name}_gridsample_image_flat",
-        dtype=compute_dtype,
-        shape=[int(n), int(c), int((h + 2) * (w + 2))],
-    )
-    _add_reshape_operator(
-        ctx=ctx,
-        input_name=image_padded_name,
-        output_name=image_flat_name,
-        new_shape=[-1, int(c), int((h + 2) * (w + 2))],
-        preserve_dynamic_shape=True,
-    )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=image_compute_name,
+            output_name=image_flat_name,
+            new_shape=[-1, int(c), int(h * w)],
+            preserve_dynamic_shape=True,
+        )
+    else:
+        # zeros-padding fast path (same idea as tf backend): pad by 1 on H/W to
+        # eliminate explicit in-bound mask ops and gather zeros from border.
+        paddings_name = ctx.add_const_tensor(
+            f"{output_name}_gridsample_paddings",
+            np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int32),
+        )
+        image_padded_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_image_padded",
+            dtype=compute_dtype,
+            shape=[int(n), int(c), int(h + 2), int(w + 2)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="PAD",
+                inputs=[image_compute_name, paddings_name],
+                outputs=[image_padded_name],
+            )
+        )
+        image_flat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_image_flat",
+            dtype=compute_dtype,
+            shape=[int(n), int(c), int((h + 2) * (w + 2))],
+        )
+        _add_reshape_operator(
+            ctx=ctx,
+            input_name=image_padded_name,
+            output_name=image_flat_name,
+            new_shape=[-1, int(c), int((h + 2) * (w + 2))],
+            preserve_dynamic_shape=True,
+        )
 
     grid_x_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_grid_x",
@@ -6098,8 +6174,14 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     neg_one_const = _add_float_const(f"{output_name}_gridsample_neg_one", -1.0)
     w_const = _add_float_const(f"{output_name}_gridsample_w", float(w))
     h_const = _add_float_const(f"{output_name}_gridsample_h", float(h))
-    w_pad_max_const = _add_float_const(f"{output_name}_gridsample_w_pad_max", float(w + 1))
-    h_pad_max_const = _add_float_const(f"{output_name}_gridsample_h_pad_max", float(h + 1))
+    w_index_max_const = _add_float_const(
+        f"{output_name}_gridsample_w_index_max",
+        float(w - 1 if use_border_padding else w + 1),
+    )
+    h_index_max_const = _add_float_const(
+        f"{output_name}_gridsample_h_index_max",
+        float(h - 1 if use_border_padding else h + 1),
+    )
     x_scale_const = _add_float_const(
         f"{output_name}_gridsample_x_scale",
         float((w - 1) * 0.5 if align_corners else w * 0.5),
@@ -6180,12 +6262,20 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         dtype=compute_dtype,
         shape=[int(n), int(out_h), int(out_w), 1],
     )
-    _add_binary_op("MAXIMUM", x_name, neg_one_const, x_clip_low_name)
-    _add_binary_op("MINIMUM", x_clip_low_name, w_const, x_clip_name)
-    _add_binary_op("MAXIMUM", y_name, neg_one_const, y_clip_low_name)
-    _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
-    _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
-    _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
+    if use_border_padding:
+        _add_binary_op("MAXIMUM", x_name, zero_const, x_clip_low_name)
+        _add_binary_op("MINIMUM", x_clip_low_name, w_index_max_const, x_clip_name)
+        _add_binary_op("MAXIMUM", y_name, zero_const, y_clip_low_name)
+        _add_binary_op("MINIMUM", y_clip_low_name, h_index_max_const, y_clip_name)
+        x_shift_name = x_clip_name
+        y_shift_name = y_clip_name
+    else:
+        _add_binary_op("MAXIMUM", x_name, neg_one_const, x_clip_low_name)
+        _add_binary_op("MINIMUM", x_clip_low_name, w_const, x_clip_name)
+        _add_binary_op("MAXIMUM", y_name, neg_one_const, y_clip_low_name)
+        _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
+        _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
+        _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
 
     x0_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_x0",
@@ -6253,13 +6343,13 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         shape=[int(n), int(out_h), int(out_w), 1],
     )
     _add_binary_op("MAXIMUM", x0_name, zero_const, x0_clip_low_name)
-    _add_binary_op("MINIMUM", x0_clip_low_name, w_pad_max_const, x0_clip_name)
+    _add_binary_op("MINIMUM", x0_clip_low_name, w_index_max_const, x0_clip_name)
     _add_binary_op("MAXIMUM", x1_name, zero_const, x1_clip_low_name)
-    _add_binary_op("MINIMUM", x1_clip_low_name, w_pad_max_const, x1_clip_name)
+    _add_binary_op("MINIMUM", x1_clip_low_name, w_index_max_const, x1_clip_name)
     _add_binary_op("MAXIMUM", y0_name, zero_const, y0_clip_low_name)
-    _add_binary_op("MINIMUM", y0_clip_low_name, h_pad_max_const, y0_clip_name)
+    _add_binary_op("MINIMUM", y0_clip_low_name, h_index_max_const, y0_clip_name)
     _add_binary_op("MAXIMUM", y1_name, zero_const, y1_clip_low_name)
-    _add_binary_op("MINIMUM", y1_clip_low_name, h_pad_max_const, y1_clip_name)
+    _add_binary_op("MINIMUM", y1_clip_low_name, h_index_max_const, y1_clip_name)
 
     dx_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_dx",
@@ -6333,7 +6423,7 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     y1_3d = _squeeze_last_dim(y1_i_name, "y1", "INT32")
     linear_width_const = ctx.add_const_tensor(
         f"{output_name}_gridsample_linear_width",
-        np.asarray(int(w + 2), dtype=np.int32),
+        np.asarray(int(w if use_border_padding else w + 2), dtype=np.int32),
     )
     idx00_name = _build_linear_index(y0_3d, x0_3d, "idx00", linear_width_const)
     idx01_name = _build_linear_index(y1_3d, x0_3d, "idx01", linear_width_const)
