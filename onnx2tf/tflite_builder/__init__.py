@@ -11,7 +11,10 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     write_op_coverage_report,
     write_tensor_correspondence_report,
 )
-from onnx2tf.tflite_builder.model_writer import write_model_file
+from onnx2tf.tflite_builder.model_writer import (
+    MODEL_METADATA_ENTRIES_KEY,
+    write_model_file,
+)
 from onnx2tf.tflite_builder.quantization import (
     build_dynamic_range_quantized_model_ir,
     build_full_integer_quantized_model_ir,
@@ -182,6 +185,46 @@ def _resolve_quantization_controls(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _set_reduced_precision_support_metadata(
+    *,
+    model_ir: Any,
+    enable_accumulation_type_float16: bool,
+) -> None:
+    reduced_precision_hint = (
+        b"fp16accfp16"
+        if bool(enable_accumulation_type_float16)
+        else b"fp16accfp32"
+    )
+    metadata = getattr(model_ir, "metadata", None)
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    existing_entries_raw = metadata.get(MODEL_METADATA_ENTRIES_KEY, [])
+    if isinstance(existing_entries_raw, dict):
+        existing_entries = [existing_entries_raw]
+    elif isinstance(existing_entries_raw, (list, tuple)):
+        existing_entries = list(existing_entries_raw)
+    else:
+        existing_entries = []
+
+    preserved_entries: List[Dict[str, Any]] = []
+    for entry in existing_entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("name", "")).strip() == "reduced_precision_support":
+            continue
+        preserved_entries.append(dict(entry))
+
+    preserved_entries.append(
+        {
+            "name": "reduced_precision_support",
+            "data": reduced_precision_hint,
+        }
+    )
+    metadata[MODEL_METADATA_ENTRIES_KEY] = preserved_entries
+    model_ir.metadata = metadata
+
+
 def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     _reject_unsupported_quantization(**kwargs)
 
@@ -197,6 +240,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     )
     output_integer_quantized_tflite = bool(
         kwargs.get("output_integer_quantized_tflite", False)
+    )
+    enable_accumulation_type_float16 = bool(
+        kwargs.get("enable_accumulation_type_float16", False)
     )
     auto_split_tflite_by_size = bool(
         kwargs.get("auto_split_tflite_by_size", False)
@@ -551,6 +597,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
 
         _set_export_progress_desc("write float16 tflite")
         model_ir_fp16 = clone_model_ir_with_float16(model_ir)
+        _set_reduced_precision_support_metadata(
+            model_ir=model_ir_fp16,
+            enable_accumulation_type_float16=enable_accumulation_type_float16,
+        )
         float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
         float16_write_timing: Dict[str, Any] = {}
         write_model_file(

@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _is_integer_or_bool_dtype,
     _normalize_tensor_name,
     _quantize_for_tflite_input,
+    _resize_tflite_inputs_if_needed,
 )
 from onnx2tf.utils.tempdir_cleanup import make_managed_tempdir
 from onnx2tf.utils.common_functions import dummy_onnx_inference
@@ -642,6 +643,7 @@ def _invoke_tflite_with_onnx_inputs(
         tflite_details=tflite_input_details,
     )
 
+    adapted_inputs: Dict[str, np.ndarray] = {}
     for onnx_input_name in onnx_input_names:
         input_data = onnx_input_datas_for_validation.get(onnx_input_name)
         if input_data is None:
@@ -654,8 +656,37 @@ def _invoke_tflite_with_onnx_inputs(
                 f"input_name={onnx_input_name}"
             )
         detail = tflite_input_map[onnx_input_name]
-        adapted = _adapt_input_layout_for_tflite_input(np.asarray(input_data), detail)
-        quantized = _quantize_for_tflite_input(adapted, detail)
+        adapted_inputs[onnx_input_name] = _adapt_input_layout_for_tflite_input(
+            np.asarray(input_data),
+            detail,
+        )
+
+    if _resize_tflite_inputs_if_needed(
+        interpreter=interpreter,
+        onnx_input_names=onnx_input_names,
+        tflite_input_map=tflite_input_map,
+        adapted_inputs=adapted_inputs,
+    ):
+        interpreter.allocate_tensors()
+        tflite_input_details = interpreter.get_input_details()
+        tflite_input_map = _build_tflite_detail_map(
+            onnx_names=onnx_input_names,
+            tflite_details=tflite_input_details,
+        )
+        adapted_inputs = {
+            onnx_input_name: _adapt_input_layout_for_tflite_input(
+                np.asarray(onnx_input_datas_for_validation.get(
+                    onnx_input_name,
+                    onnx_input_datas_for_validation.get(_normalize_tensor_name(onnx_input_name)),
+                )),
+                tflite_input_map[onnx_input_name],
+            )
+            for onnx_input_name in onnx_input_names
+        }
+
+    for onnx_input_name in onnx_input_names:
+        detail = tflite_input_map[onnx_input_name]
+        quantized = _quantize_for_tflite_input(adapted_inputs[onnx_input_name], detail)
         interpreter.set_tensor(detail["index"], quantized)
     interpreter.invoke()
 

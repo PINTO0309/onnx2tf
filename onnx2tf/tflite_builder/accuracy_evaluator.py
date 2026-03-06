@@ -304,6 +304,46 @@ def _load_custom_input_data(
 def _collect_onnx_input_specs(
     onnx_graph: onnx.ModelProto,
 ) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
+    def _dynamic_dim_default() -> int:
+        raw = str(os.environ.get("ONNX2TF_EVAL_DYNAMIC_DIM_DEFAULT", "16")).strip()
+        try:
+            value = int(raw)
+        except Exception:
+            value = 16
+        return max(1, int(value))
+
+    def _resolve_dynamic_dim(
+        *,
+        rank: int,
+        axis: int,
+        known_dims: List[int],
+    ) -> int:
+        if int(axis) == 0:
+            return 1
+        default_dim = _dynamic_dim_default()
+
+        if int(rank) == 4:
+            c_first = int(known_dims[1]) if int(known_dims[1]) > 0 else -1
+            c_last = int(known_dims[3]) if int(known_dims[3]) > 0 else -1
+
+            # NCHW-like input: [N, C, H, W]
+            if c_first in (1, 3, 4) and int(axis) in (2, 3):
+                partner_axis = 3 if int(axis) == 2 else 2
+                partner = int(known_dims[partner_axis])
+                if partner > 0:
+                    return int(partner)
+                return max(16, int(default_dim))
+
+            # NHWC-like input: [N, H, W, C]
+            if c_last in (1, 3, 4) and int(axis) in (1, 2):
+                partner_axis = 2 if int(axis) == 1 else 1
+                partner = int(known_dims[partner_axis])
+                if partner > 0:
+                    return int(partner)
+                return max(16, int(default_dim))
+
+        return int(default_dim)
+
     initializer_names = {initializer.name for initializer in onnx_graph.graph.initializer}
     input_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
     for graph_input in onnx_graph.graph.input:
@@ -311,12 +351,26 @@ def _collect_onnx_input_specs(
             continue
         tensor_type = graph_input.type.tensor_type
         np_dtype = np.dtype(onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
-        shape: List[int] = []
+        raw_shape: List[int] = []
         for dim in tensor_type.shape.dim:
             if dim.HasField("dim_value") and int(dim.dim_value) > 0:
-                shape.append(int(dim.dim_value))
+                raw_shape.append(int(dim.dim_value))
             else:
-                shape.append(1)
+                raw_shape.append(0)
+
+        shape: List[int] = []
+        rank = int(len(raw_shape))
+        for axis, dim_value in enumerate(raw_shape):
+            if int(dim_value) > 0:
+                shape.append(int(dim_value))
+            else:
+                shape.append(
+                    _resolve_dynamic_dim(
+                        rank=int(rank),
+                        axis=int(axis),
+                        known_dims=[int(v) for v in list(raw_shape)],
+                    )
+                )
         input_specs.append((graph_input.name, np_dtype, tuple(shape)))
     return input_specs
 
@@ -614,6 +668,73 @@ def _adapt_input_layout_for_tflite_input(data: np.ndarray, detail: Dict[str, Any
         if all(_dim_matches(target_shape[i], candidate_shape[i]) for i in range(value.ndim)):
             return np.transpose(value, perm)
     return value
+
+
+def _shape_list_from_detail_value(value: Any) -> List[int]:
+    if value is None:
+        return []
+    try:
+        return [int(v) for v in np.asarray(value).reshape(-1).tolist()]
+    except Exception:
+        return []
+
+
+def _is_target_shape_compatible_with_detail_signature(
+    *,
+    target_shape: Sequence[int],
+    detail: Dict[str, Any],
+) -> bool:
+    target = [int(v) for v in list(target_shape)]
+    signature = _shape_list_from_detail_value(detail.get("shape_signature", None))
+    if len(signature) == 0:
+        signature = _shape_list_from_detail_value(detail.get("shape", None))
+    if len(signature) != len(target):
+        return False
+    for expected, actual in zip(signature, target):
+        if int(expected) <= 0:
+            continue
+        if int(expected) != int(actual):
+            return False
+    return True
+
+
+def _resize_tflite_inputs_if_needed(
+    *,
+    interpreter: Any,
+    onnx_input_names: Sequence[str],
+    tflite_input_map: Dict[str, Dict[str, Any]],
+    adapted_inputs: Dict[str, np.ndarray],
+) -> bool:
+    resized = False
+    for input_name in onnx_input_names:
+        detail = tflite_input_map[str(input_name)]
+        current_shape = _shape_list_from_detail_value(detail.get("shape", None))
+        target_shape = [int(v) for v in list(np.asarray(adapted_inputs[str(input_name)]).shape)]
+        if current_shape == target_shape:
+            continue
+        if not _is_target_shape_compatible_with_detail_signature(
+            target_shape=target_shape,
+            detail=detail,
+        ):
+            raise ValueError(
+                "TFLite input shape is incompatible with shape_signature. "
+                f"name={detail.get('name')} current_shape={current_shape} "
+                f"target_shape={target_shape} "
+                f"shape_signature={_shape_list_from_detail_value(detail.get('shape_signature', None))}"
+            )
+        try:
+            interpreter.resize_tensor_input(
+                int(detail["index"]),
+                [int(v) for v in list(target_shape)],
+                strict=False,
+            )
+        except TypeError:
+            interpreter.resize_tensor_input(
+                int(detail["index"]),
+                [int(v) for v in list(target_shape)],
+            )
+        resized = True
+    return bool(resized)
 
 
 def _dequantize_tflite_output(data: np.ndarray, detail: Dict[str, Any]) -> np.ndarray:
@@ -1017,15 +1138,43 @@ def evaluate_onnx_tflite_outputs(
                 for output_name, output_value in zip(onnx_output_names, onnx_outputs)
             }
 
+            adapted_inputs: Dict[str, np.ndarray] = {
+                input_name: _adapt_input_layout_for_tflite_input(
+                    onnx_inputs[input_name],
+                    tflite_input_map[input_name],
+                )
+                for input_name in onnx_input_names
+            }
+            if _resize_tflite_inputs_if_needed(
+                interpreter=interpreter,
+                onnx_input_names=onnx_input_names,
+                tflite_input_map=tflite_input_map,
+                adapted_inputs=adapted_inputs,
+            ):
+                interpreter.allocate_tensors()
+                tflite_input_details = interpreter.get_input_details()
+                tflite_output_details = interpreter.get_output_details()
+                tflite_input_map = _build_tflite_detail_map(
+                    onnx_names=onnx_input_names,
+                    tflite_details=tflite_input_details,
+                )
+                tflite_output_map = _build_tflite_detail_map(
+                    onnx_names=onnx_output_names,
+                    tflite_details=tflite_output_details,
+                )
+                adapted_inputs = {
+                    input_name: _adapt_input_layout_for_tflite_input(
+                        onnx_inputs[input_name],
+                        tflite_input_map[input_name],
+                    )
+                    for input_name in onnx_input_names
+                }
+
             for input_name in onnx_input_names:
                 detail = tflite_input_map[input_name]
-                adapted_input = _adapt_input_layout_for_tflite_input(
-                    onnx_inputs[input_name],
-                    detail,
-                )
                 interpreter.set_tensor(
                     detail["index"],
-                    _quantize_for_tflite_input(adapted_input, detail),
+                    _quantize_for_tflite_input(adapted_inputs[input_name], detail),
                 )
 
             try:
@@ -1265,15 +1414,43 @@ def _tflite_inference_worker(
             onnx_names=onnx_output_names,
             tflite_details=tflite_output_details,
         )
+        adapted_inputs: Dict[str, np.ndarray] = {
+            input_name: _adapt_input_layout_for_tflite_input(
+                onnx_inputs[input_name],
+                tflite_input_map[input_name],
+            )
+            for input_name in onnx_input_names
+        }
+        if _resize_tflite_inputs_if_needed(
+            interpreter=interpreter,
+            onnx_input_names=onnx_input_names,
+            tflite_input_map=tflite_input_map,
+            adapted_inputs=adapted_inputs,
+        ):
+            interpreter.allocate_tensors()
+            tflite_input_details = interpreter.get_input_details()
+            tflite_output_details = interpreter.get_output_details()
+            tflite_input_map = _build_tflite_detail_map(
+                onnx_names=onnx_input_names,
+                tflite_details=tflite_input_details,
+            )
+            tflite_output_map = _build_tflite_detail_map(
+                onnx_names=onnx_output_names,
+                tflite_details=tflite_output_details,
+            )
+            adapted_inputs = {
+                input_name: _adapt_input_layout_for_tflite_input(
+                    onnx_inputs[input_name],
+                    tflite_input_map[input_name],
+                )
+                for input_name in onnx_input_names
+            }
+
         for input_name in onnx_input_names:
             detail = tflite_input_map[input_name]
-            adapted_input = _adapt_input_layout_for_tflite_input(
-                onnx_inputs[input_name],
-                detail,
-            )
             interpreter.set_tensor(
                 detail["index"],
-                _quantize_for_tflite_input(adapted_input, detail),
+                _quantize_for_tflite_input(adapted_inputs[input_name], detail),
             )
         interpreter.invoke()
 

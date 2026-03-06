@@ -175,6 +175,67 @@ def _resolve_cumsum_axis(node: Any, ctx: Any, input_rank: int) -> int:
     return int(axis)
 
 
+def _is_integer_dtype(dtype: str) -> bool:
+    return str(dtype).upper() in {
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }
+
+
+def _harmonize_reduce_input_output_dtype(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+) -> str:
+    """
+    Ensure Reduce* runtime dtype consistency.
+
+    Flatbuffer-direct lowering prefers INT32 for index/control tensors. When a
+    producer has already normalized INT64 -> INT32 but ONNX metadata keeps the
+    downstream Reduce output as INT64, emitting REDUCE_* with mismatched
+    input/output dtypes can lead to corrupted values. In integer-only mismatch
+    cases, keep runtime dtype aligned to input tensor dtype.
+    """
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype == output_dtype:
+        return str(input_name)
+
+    if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
+        output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+        if output_tensor is not None:
+            output_tensor.dtype = str(input_dtype)
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(output_name)] = str(input_dtype)
+        return str(input_name)
+
+    cast_input_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{node.op_type.lower()}_input_cast",
+        dtype=output_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[cast_input_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+    return str(cast_input_name)
+
+
 def build_cumsum_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -203,15 +264,308 @@ def build_cumsum_op(node: Any, ctx: Any) -> None:
     )
 
 
-def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
+def _set_scalar_tensor_metadata(ctx: Any, tensor_name: str) -> None:
+    tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None:
+        return
+    tensor.shape = []
+    tensor.shape_signature = []
+
+
+def build_cumprod_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
 
-    input_shape = ctx.get_tensor_shape(input_name)
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 1:
+        raise NotImplementedError(
+            f"CumProd requires rank>=1 input. op={node.name} input_shape={input_shape}"
+        )
+    if any(int(v) <= 0 for v in input_shape):
+        raise NotImplementedError(
+            "CumProd builtin lowering requires static positive input shape in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape}"
+        )
+
+    axis = _resolve_cumsum_axis(node=node, ctx=ctx, input_rank=len(input_shape))
+    axis_size = int(input_shape[axis])
+    exclusive = bool(int(node.attrs.get("exclusive", 0)))
+    reverse = bool(int(node.attrs.get("reverse", 0)))
+
+    working_input_name = str(input_name)
+    reverse_axis_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_reverse_axis",
+        np.asarray([int(axis)], dtype=np.int32),
+    )
+    if reverse:
+        reverse_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_cumprod_reverse_input",
+            dtype=input_dtype,
+            shape=[int(v) for v in input_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="REVERSE_V2",
+                inputs=[working_input_name, reverse_axis_name],
+                outputs=[reverse_input_name],
+            )
+        )
+        working_input_name = str(reverse_input_name)
+
+    zero_scalar_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_range_start",
+        np.asarray(0, dtype=np.int32),
+    )
+    limit_scalar_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_range_limit",
+        np.asarray(axis_size, dtype=np.int32),
+    )
+    one_scalar_i32_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_range_delta",
+        np.asarray(1, dtype=np.int32),
+    )
+    _set_scalar_tensor_metadata(ctx, zero_scalar_name)
+    _set_scalar_tensor_metadata(ctx, limit_scalar_name)
+    _set_scalar_tensor_metadata(ctx, one_scalar_i32_name)
+
+    range_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_range",
+        dtype="INT32",
+        shape=[int(axis_size)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RANGE",
+            inputs=[zero_scalar_name, limit_scalar_name, one_scalar_i32_name],
+            outputs=[range_name],
+        )
+    )
+
+    row_shape = [int(axis_size), 1]
+    col_shape = [1, int(axis_size)]
+    row_shape_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_row_shape",
+        np.asarray(row_shape, dtype=np.int32),
+    )
+    col_shape_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_col_shape",
+        np.asarray(col_shape, dtype=np.int32),
+    )
+    row_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_row_indices",
+        dtype="INT32",
+        shape=[int(v) for v in row_shape],
+    )
+    col_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_col_indices",
+        dtype="INT32",
+        shape=[int(v) for v in col_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[range_name, row_shape_name],
+            outputs=[row_name],
+            options={"newShape": [int(v) for v in row_shape]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[range_name, col_shape_name],
+            outputs=[col_name],
+            options={"newShape": [int(v) for v in col_shape]},
+        )
+    )
+
+    mask_2d_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_mask_2d",
+        dtype="BOOL",
+        shape=[int(axis_size), int(axis_size)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LESS" if exclusive else "LESS_EQUAL",
+            inputs=[row_name, col_name],
+            outputs=[mask_2d_name],
+        )
+    )
+
+    rank = int(len(input_shape))
+    expanded_shape = (
+        [int(v) for v in input_shape[: axis + 1]]
+        + [1]
+        + [int(v) for v in input_shape[axis + 1 :]]
+    )
+    full_shape = (
+        [int(v) for v in input_shape[:axis]]
+        + [int(axis_size), int(axis_size)]
+        + [int(v) for v in input_shape[axis + 1 :]]
+    )
+
+    input_expand_shape_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_input_expand_shape",
+        np.asarray(expanded_shape, dtype=np.int32),
+    )
+    tiled_input_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_input_tiled",
+        dtype=input_dtype,
+        shape=[int(v) for v in full_shape],
+    )
+    expanded_input_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_input_expanded",
+        dtype=input_dtype,
+        shape=[int(v) for v in expanded_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[working_input_name, input_expand_shape_name],
+            outputs=[expanded_input_name],
+            options={"newShape": [int(v) for v in expanded_shape]},
+        )
+    )
+    input_tile_multiples = [1 for _ in range(rank + 1)]
+    input_tile_multiples[axis + 1] = int(axis_size)
+    input_tile_multiples_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_input_tile_multiples",
+        np.asarray(input_tile_multiples, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TILE",
+            inputs=[expanded_input_name, input_tile_multiples_name],
+            outputs=[tiled_input_name],
+        )
+    )
+
+    mask_expand_shape = (
+        [1 for _ in range(axis)]
+        + [int(axis_size), int(axis_size)]
+        + [1 for _ in range(rank - axis - 1)]
+    )
+    mask_expand_shape_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_mask_expand_shape",
+        np.asarray(mask_expand_shape, dtype=np.int32),
+    )
+    expanded_mask_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_mask_expanded",
+        dtype="BOOL",
+        shape=[int(v) for v in mask_expand_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[mask_2d_name, mask_expand_shape_name],
+            outputs=[expanded_mask_name],
+            options={"newShape": [int(v) for v in mask_expand_shape]},
+        )
+    )
+    mask_tile_multiples = (
+        [int(v) for v in input_shape[:axis]]
+        + [1, 1]
+        + [int(v) for v in input_shape[axis + 1 :]]
+    )
+    mask_tile_multiples_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_mask_tile_multiples",
+        np.asarray(mask_tile_multiples, dtype=np.int32),
+    )
+    tiled_mask_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_mask_tiled",
+        dtype="BOOL",
+        shape=[int(v) for v in full_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TILE",
+            inputs=[expanded_mask_name, mask_tile_multiples_name],
+            outputs=[tiled_mask_name],
+        )
+    )
+
+    one_scalar_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_one_scalar",
+        np.asarray(1.0, dtype=np.float16 if input_dtype == "FLOAT16" else np.float32),
+    )
+    _set_scalar_tensor_metadata(ctx, one_scalar_name)
+    full_shape_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_full_shape",
+        np.asarray(full_shape, dtype=np.int32),
+    )
+    ones_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_ones",
+        dtype=input_dtype,
+        shape=[int(v) for v in full_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="FILL",
+            inputs=[full_shape_name, one_scalar_name],
+            outputs=[ones_name],
+        )
+    )
+
+    masked_values_name = ctx.add_intermediate_tensor(
+        f"{output_name}_cumprod_masked_values",
+        dtype=input_dtype,
+        shape=[int(v) for v in full_shape],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[tiled_mask_name, tiled_input_name, ones_name],
+            outputs=[masked_values_name],
+        )
+    )
+
+    reduce_axes_name = ctx.add_const_tensor(
+        f"{output_name}_cumprod_reduce_axes",
+        np.asarray([int(axis)], dtype=np.int32),
+    )
+    cumprod_core_output_name = output_name
+    if reverse:
+        cumprod_core_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_cumprod_reversed_output",
+            dtype=input_dtype,
+            shape=[int(v) for v in input_shape],
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="REDUCE_PROD",
+            inputs=[masked_values_name, reduce_axes_name],
+            outputs=[cumprod_core_output_name],
+            options={"keepDims": False},
+        )
+    )
+
+    if reverse:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="REVERSE_V2",
+                inputs=[cumprod_core_output_name, reverse_axis_name],
+                outputs=[output_name],
+            )
+        )
+
+
+def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    runtime_input_name = _harmonize_reduce_input_output_dtype(
+        node=node,
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+    )
+
+    input_shape = ctx.get_tensor_shape(runtime_input_name)
     output_shape = ctx.get_tensor_shape(output_name)
-    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_tensor = ctx.model_ir.tensors.get(runtime_input_name, None)
     input_signature = (
         [int(v) for v in list(input_tensor.shape_signature)]
         if input_tensor is not None and input_tensor.shape_signature is not None
@@ -220,7 +574,7 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
     input_rank = _resolve_reduce_input_rank(
         node=node,
         ctx=ctx,
-        input_name=input_name,
+        input_name=runtime_input_name,
         output_name=output_name,
         input_shape=[int(v) for v in list(input_shape)],
         output_shape=[int(v) for v in list(output_shape)],
@@ -246,7 +600,7 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
-                inputs=[input_name, shape_const],
+                inputs=[runtime_input_name, shape_const],
                 outputs=[output_name],
                 options={"newShape": [int(v) for v in output_shape]},
             )
@@ -261,7 +615,7 @@ def build_reduce_op(node: Any, ctx: Any, op_type: str) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
-            inputs=[input_name, axes_const],
+            inputs=[runtime_input_name, axes_const],
             outputs=[output_name],
             options={"keepDims": keepdims},
         )

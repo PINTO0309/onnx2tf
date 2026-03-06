@@ -37,6 +37,7 @@ from onnx2tf.tflite_builder.op_builders.elementwise import (
 )
 from onnx2tf.tflite_builder.op_builders.shape import (
     build_cast_op,
+    build_castlike_op,
     build_concat_op,
     build_constant_of_shape_op,
     build_depth_to_space_op,
@@ -87,6 +88,7 @@ from onnx2tf.tflite_builder.op_builders.recurrent import (
     build_rnn_op,
 )
 from onnx2tf.tflite_builder.op_builders.reduce import (
+    build_cumprod_op,
     build_cumsum_op,
     build_global_average_pool_op,
     build_global_max_pool_op,
@@ -105,6 +107,7 @@ from onnx2tf.tflite_builder.op_builders.index import (
     build_scatter_elements_op,
     build_nonzero_op,
     build_scatter_nd_op,
+    build_unique_op,
     build_non_max_suppression_op,
     build_one_hot_op,
     build_topk_op,
@@ -185,6 +188,7 @@ __all__ = [
     "build_unary_op",
     "build_where_op",
     "build_cast_op",
+    "build_castlike_op",
     "build_concat_op",
     "build_constant_of_shape_op",
     "build_depth_to_space_op",
@@ -225,6 +229,7 @@ __all__ = [
     "build_lstm_op",
     "build_multi_head_attention_op",
     "build_rnn_op",
+    "build_cumprod_op",
     "build_cumsum_op",
     "build_reduce_l1_op",
     "build_reduce_l2_op",
@@ -241,6 +246,7 @@ __all__ = [
     "build_scatter_elements_op",
     "build_nonzero_op",
     "build_scatter_nd_op",
+    "build_unique_op",
     "build_non_max_suppression_op",
     "build_one_hot_op",
     "build_topk_op",

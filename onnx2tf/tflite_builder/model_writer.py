@@ -11,6 +11,8 @@ from onnx2tf.tflite_builder.opcodes import build_operator_codes, operator_code_k
 from onnx2tf.tflite_builder.signature_builder import build_signature_defs
 from onnx2tf.tflite_builder.tensor_buffer_builder import build_tensors_and_buffers
 
+MODEL_METADATA_ENTRIES_KEY = "__tflite_model_metadata_entries__"
+
 
 def _enum(schema_tflite: Dict[str, Any], enum_name: str, item_name: str) -> int:
     return int(getattr(schema_tflite[enum_name], item_name))
@@ -214,6 +216,13 @@ def _build_gather_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> 
 def _build_scatter_nd_options(schema_tflite: Dict[str, Any], _op: OperatorIR) -> Tuple[int, object]:
     options = schema_tflite["ScatterNdOptionsT"]()
     return _enum(schema_tflite, "BuiltinOptions", "ScatterNdOptions"), options
+
+
+def _build_unique_options(schema_tflite: Dict[str, Any], op: OperatorIR) -> Tuple[int, object]:
+    options = schema_tflite["UniqueOptionsT"]()
+    idx_out_dtype = str(op.options.get("idxOutType", "INT32")).upper()
+    options.idxOutType = _enum(schema_tflite, "TensorType", idx_out_dtype)
+    return _enum(schema_tflite, "BuiltinOptions", "UniqueOptions"), options
 
 
 def _build_non_max_suppression_v4_options(
@@ -552,6 +561,8 @@ def _build_builtin_options(
         return _build_gather_nd_options(schema_tflite, op)
     if op.op_type == "SCATTER_ND":
         return _build_scatter_nd_options(schema_tflite, op)
+    if op.op_type == "UNIQUE":
+        return _build_unique_options(schema_tflite, op)
     if op.op_type == "NON_MAX_SUPPRESSION_V4":
         return _build_non_max_suppression_v4_options(schema_tflite, op)
     if op.op_type == "NON_MAX_SUPPRESSION_V5":
@@ -734,6 +745,69 @@ def _build_subgraph_tensors_and_append_buffers(
     return tensors, tensor_index_map
 
 
+def _resolve_model_metadata_entries(
+    model_ir: ModelIR,
+) -> List[Tuple[str, bytes]]:
+    if not isinstance(model_ir.metadata, dict):
+        return []
+    raw_entries = model_ir.metadata.get(MODEL_METADATA_ENTRIES_KEY, None)
+    if raw_entries is None:
+        return []
+
+    if isinstance(raw_entries, dict):
+        entry_candidates = [raw_entries]
+    elif isinstance(raw_entries, (list, tuple)):
+        entry_candidates = list(raw_entries)
+    else:
+        return []
+
+    entries: List[Tuple[str, bytes]] = []
+    for candidate in entry_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        name = str(candidate.get("name", "")).strip()
+        if name == "":
+            continue
+        raw_data = candidate.get("data", b"")
+        if raw_data is None:
+            data = b""
+        elif isinstance(raw_data, bytes):
+            data = raw_data
+        elif isinstance(raw_data, bytearray):
+            data = bytes(raw_data)
+        else:
+            data = str(raw_data).encode("utf-8")
+        entries.append((name, data))
+
+    # Keep declaration order stable while allowing later duplicates to override.
+    resolved_by_name: Dict[str, bytes] = {}
+    ordered_names: List[str] = []
+    for name, data in entries:
+        if name not in resolved_by_name:
+            ordered_names.append(name)
+        resolved_by_name[name] = data
+    return [(name, resolved_by_name[name]) for name in ordered_names]
+
+
+def _build_model_metadata_table_and_append_buffers(
+    *,
+    schema_tflite: Dict[str, Any],
+    model_ir: ModelIR,
+    global_buffer_table: List[object],
+) -> List[object]:
+    metadata_table: List[object] = []
+    for name, data in _resolve_model_metadata_entries(model_ir):
+        metadata_buffer = schema_tflite["BufferT"]()
+        metadata_buffer.data = bytes(data)
+        global_buffer_table.append(metadata_buffer)
+
+        metadata_obj = schema_tflite["MetadataT"]()
+        metadata_obj.name = str(name)
+        metadata_obj.buffer = int(len(global_buffer_table) - 1)
+        metadata_table.append(metadata_obj)
+    return metadata_table
+
+
 def _build_serialization_tables(
     *,
     schema_tflite: Dict[str, Any],
@@ -796,12 +870,18 @@ def _build_serialization_tables(
             input_names=model_ir.inputs,
             output_names=model_ir.outputs,
         )
+    metadata = _build_model_metadata_table_and_append_buffers(
+        schema_tflite=schema_tflite,
+        model_ir=model_ir,
+        global_buffer_table=buffers,
+    )
 
     return {
         "operator_codes": operator_codes,
         "subgraphs": serialized_subgraphs,
         "buffers": buffers,
         "signature_defs": signature_defs,
+        "metadata": metadata,
     }
 
 
@@ -825,6 +905,8 @@ def build_model_object(
     model.buffers = tables["buffers"]
     if with_signature_defs:
         model.signatureDefs = tables["signature_defs"]
+    if len(tables["metadata"]) > 0:
+        model.metadata = tables["metadata"]
     return model
 
 
@@ -1271,6 +1353,24 @@ def _pack_signature_def(
     return int(schema_tflite["SignatureDefEnd"](builder))
 
 
+def _pack_metadata(
+    *,
+    schema_tflite: Dict[str, Any],
+    builder: flatbuffers.Builder,
+    metadata: object,
+) -> int:
+    name_offset = _pack_string(builder, getattr(metadata, "name", None))
+
+    schema_tflite["MetadataStart"](builder)
+    if name_offset > 0:
+        schema_tflite["MetadataAddName"](builder, name_offset)
+    schema_tflite["MetadataAddBuffer"](
+        builder,
+        int(getattr(metadata, "buffer", 0)),
+    )
+    return int(schema_tflite["MetadataEnd"](builder))
+
+
 def _pack_model(
     *,
     schema_tflite: Dict[str, Any],
@@ -1280,6 +1380,7 @@ def _pack_model(
     subgraphs: List[object],
     buffers: List[object],
     signature_defs: List[object],
+    metadata: List[object],
 ) -> int:
     operator_code_offsets = [
         _pack_operator_code(
@@ -1313,6 +1414,14 @@ def _pack_model(
         )
         for signature_def in signature_defs
     ]
+    metadata_offsets = [
+        _pack_metadata(
+            schema_tflite=schema_tflite,
+            builder=builder,
+            metadata=metadata_entry,
+        )
+        for metadata_entry in metadata
+    ]
 
     operator_codes_offset = _pack_uoffset_vector(
         builder=builder,
@@ -1335,6 +1444,11 @@ def _pack_model(
         start_vector_fn=schema_tflite["ModelStartSignatureDefsVector"],
         offsets=signature_def_offsets,
     )
+    metadata_offset = _pack_uoffset_vector(
+        builder=builder,
+        start_vector_fn=schema_tflite["ModelStartMetadataVector"],
+        offsets=metadata_offsets,
+    )
 
     schema_tflite["ModelStart"](builder)
     schema_tflite["ModelAddVersion"](builder, 3)
@@ -1348,6 +1462,8 @@ def _pack_model(
         schema_tflite["ModelAddBuffers"](builder, buffers_offset)
     if signature_defs_offset > 0:
         schema_tflite["ModelAddSignatureDefs"](builder, signature_defs_offset)
+    if metadata_offset > 0:
+        schema_tflite["ModelAddMetadata"](builder, metadata_offset)
     return int(schema_tflite["ModelEnd"](builder))
 
 
@@ -1407,6 +1523,7 @@ def _serialize_model_with_direct_builder(
         subgraphs=tables["subgraphs"],
         buffers=tables["buffers"],
         signature_defs=tables["signature_defs"],
+        metadata=tables["metadata"],
     )
     builder.Finish(model_offset, file_identifier=b"TFL3")
     t3 = time.perf_counter()

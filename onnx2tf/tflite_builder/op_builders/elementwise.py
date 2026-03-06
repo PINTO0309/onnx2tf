@@ -27,6 +27,32 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         dst.shape_signature = list(src_signature)
 
 
+def _sync_shape_signature_from_src(
+    *,
+    ctx: Any,
+    src_tensor_name: str,
+    dst_tensor_name: str,
+) -> None:
+    """
+    Force shape/signature sync for shape-preserving unary ops.
+
+    Some preprocess rewrites insert synthetic tensors whose stale shape_map can
+    conflict with runtime topology. For unary ops that preserve shape exactly,
+    source tensor metadata is the authoritative shape.
+    """
+    ctx.ensure_tensor(src_tensor_name)
+    ctx.ensure_tensor(dst_tensor_name)
+    src = ctx.model_ir.tensors[src_tensor_name]
+    dst = ctx.model_ir.tensors[dst_tensor_name]
+    src_signature = (
+        list(src.shape_signature)
+        if src.shape_signature is not None
+        else list(src.shape)
+    )
+    dst.shape = [int(v) for v in list(src.shape)]
+    dst.shape_signature = [int(v) for v in list(src_signature)]
+
+
 def _tensor_shape_and_signature(
     *,
     tensor_name: str,
@@ -380,47 +406,96 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
 
     def _normalize_binary_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
-        if dt in {"INT64", "UINT64", "UINT32"}:
+        if dt == "INT64":
             return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
         return dt
 
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
     float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
     logical_binary_ops = {"LOGICAL_AND", "LOGICAL_OR", "LOGICAL_XOR"}
+    comparison_binary_ops = {
+        "EQUAL",
+        "NOT_EQUAL",
+        "GREATER",
+        "GREATER_EQUAL",
+        "LESS",
+        "LESS_EQUAL",
+    }
+    upper_op_type = str(op_type).upper()
     normalized_input_dtypes = [
         _normalize_binary_dtype(str(ctx.get_tensor_dtype(name)).upper())
         for name in input_names
     ]
-    target_dtype = _normalize_binary_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
-    if str(op_type).upper() in logical_binary_ops:
-        target_dtype = "BOOL"
-    if len(normalized_input_dtypes) > 0 and any(dt != target_dtype for dt in normalized_input_dtypes):
+    requested_output_dtype = _normalize_binary_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
+    input_target_dtype = requested_output_dtype
+    output_target_dtype = requested_output_dtype
+
+    def _promote_integer_target_dtype() -> str:
+        raw_dtypes = [str(ctx.get_tensor_dtype(name)).upper() for name in input_names]
+        if len(raw_dtypes) > 0 and all(dt in unsigned_integer_dtypes for dt in raw_dtypes):
+            return "UINT32"
+        return "INT32"
+
+    if upper_op_type in logical_binary_ops:
+        input_target_dtype = "BOOL"
+        output_target_dtype = "BOOL"
+    elif upper_op_type in comparison_binary_ops:
+        output_target_dtype = "BOOL"
+
+    if (
+        len(normalized_input_dtypes) > 0
+        and (
+            upper_op_type in comparison_binary_ops
+            or any(dt != input_target_dtype for dt in normalized_input_dtypes)
+        )
+    ):
         unique_input_dtypes = set(normalized_input_dtypes)
-        if str(op_type).upper() in logical_binary_ops:
-            target_dtype = "BOOL"
+        if upper_op_type in logical_binary_ops:
+            input_target_dtype = "BOOL"
+        elif upper_op_type in comparison_binary_ops:
+            if len(unique_input_dtypes) == 1:
+                input_target_dtype = normalized_input_dtypes[0]
+                # LiteRT comparison kernels do not accept FLOAT64. Normalize
+                # homogeneous float64 comparisons to FLOAT32.
+                if input_target_dtype == "FLOAT64":
+                    input_target_dtype = "FLOAT32"
+            elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
+                input_target_dtype = _promote_integer_target_dtype()
+            elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
+                input_target_dtype = "FLOAT32"
+            else:
+                raise NotImplementedError(
+                    "Comparison op input dtypes must be compatible in flatbuffer_direct. "
+                    f"op={node.name} op_type={op_type} input_dtypes={normalized_input_dtypes}"
+                )
         elif len(unique_input_dtypes) == 1:
-            target_dtype = normalized_input_dtypes[0]
+            input_target_dtype = normalized_input_dtypes[0]
         elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
-            target_dtype = "INT32"
+            input_target_dtype = _promote_integer_target_dtype()
         elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
-            target_dtype = "FLOAT32"
+            input_target_dtype = "FLOAT32"
         else:
             raise NotImplementedError(
                 "Binary op input dtypes must be compatible in flatbuffer_direct. "
                 f"op={node.name} op_type={op_type} input_dtypes={normalized_input_dtypes} "
-                f"output_dtype={target_dtype}"
+                f"output_dtype={output_target_dtype}"
             )
+    if upper_op_type not in comparison_binary_ops and upper_op_type not in logical_binary_ops:
+        output_target_dtype = input_target_dtype
 
     casted_input_names: list[str] = []
     for idx, name in enumerate(input_names):
         input_dtype = str(ctx.get_tensor_dtype(name)).upper()
         normalized_input_dtype = _normalize_binary_dtype(input_dtype)
-        if normalized_input_dtype == target_dtype and input_dtype == target_dtype:
+        if normalized_input_dtype == input_target_dtype and input_dtype == input_target_dtype:
             casted_input_names.append(name)
             continue
         cast_name = ctx.add_intermediate_tensor(
-            f"{output_name}_{op_type.lower()}_input{idx}_{target_dtype.lower()}",
-            dtype=target_dtype,
+            f"{output_name}_{op_type.lower()}_input{idx}_{input_target_dtype.lower()}",
+            dtype=input_target_dtype,
             shape=[int(v) for v in ctx.get_tensor_shape(name)],
         )
         src_tensor = ctx.model_ir.tensors.get(name, None)
@@ -438,7 +513,7 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
                 outputs=[cast_name],
                 options={
                     "inDataType": input_dtype,
-                    "outDataType": target_dtype,
+                    "outDataType": input_target_dtype,
                 },
             )
         )
@@ -446,13 +521,13 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
 
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     if output_tensor is not None:
-        output_tensor.dtype = target_dtype
+        output_tensor.dtype = output_target_dtype
         if len(casted_input_names) > 0:
             ref_tensor = ctx.model_ir.tensors.get(casted_input_names[0], None)
             if ref_tensor is not None:
                 output_tensor.quantization = _clone_quantization(ref_tensor.quantization)
     if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
-        ctx.dtype_map[str(output_name)] = target_dtype
+        ctx.dtype_map[str(output_name)] = output_target_dtype
 
     options = {"fusedActivationFunction": "NONE"}
     ctx.add_operator(
@@ -891,10 +966,69 @@ def build_mod_op(node: Any, ctx: Any) -> None:
     if len(input_names) > 0:
         _propagate_shape(ctx, input_names[0], output_name)
 
+    lhs_name = input_names[0]
+    rhs_name = input_names[1]
+    lhs_dtype = str(ctx.get_tensor_dtype(lhs_name)).upper()
+    rhs_dtype = str(ctx.get_tensor_dtype(rhs_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+
+    def _normalize_mod_dtype(dtype: str) -> str:
+        dt = str(dtype).upper()
+        if dt == "INT64":
+            return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
+        return dt
+
+    integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
+    float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
+    lhs_norm = _normalize_mod_dtype(lhs_dtype)
+    rhs_norm = _normalize_mod_dtype(rhs_dtype)
+    out_norm = _normalize_mod_dtype(output_dtype)
+
+    target_dtype = out_norm
+    if lhs_norm == rhs_norm:
+        target_dtype = lhs_norm
+    elif lhs_dtype in integer_dtypes and rhs_dtype in integer_dtypes:
+        if lhs_dtype in unsigned_integer_dtypes and rhs_dtype in unsigned_integer_dtypes:
+            target_dtype = "UINT32"
+        else:
+            target_dtype = "INT32"
+    elif lhs_dtype in float_dtypes and rhs_dtype in float_dtypes:
+        target_dtype = "FLOAT32"
+    else:
+        raise NotImplementedError(
+            "Mod input dtypes must be compatible in flatbuffer_direct. "
+            f"op={node.name} lhs_dtype={lhs_dtype} rhs_dtype={rhs_dtype} output_dtype={output_dtype}"
+        )
+
+    lhs_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=lhs_name,
+        dst_dtype=target_dtype,
+        base_name=f"{output_name}_mod_lhs_cast",
+    )
+    rhs_name = _cast_tensor_if_needed(
+        ctx=ctx,
+        src_name=rhs_name,
+        dst_dtype=target_dtype,
+        base_name=f"{output_name}_mod_rhs_cast",
+    )
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = str(target_dtype)
+        src_tensor = ctx.model_ir.tensors.get(lhs_name, None)
+        if src_tensor is not None:
+            output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = str(target_dtype)
+
     ctx.add_operator(
         OperatorIR(
             op_type="FLOOR_MOD",
-            inputs=input_names,
+            inputs=[lhs_name, rhs_name],
             outputs=[output_name],
         )
     )
@@ -1015,16 +1149,93 @@ def build_hardsigmoid_op(node: Any, ctx: Any) -> None:
     )
 
 
+def _is_integer_dtype(dtype: str) -> bool:
+    return str(dtype).upper() in {
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }
+
+
+def _harmonize_unary_input_output_dtype(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+) -> str:
+    """
+    Ensure unary builtin runtime dtype compatibility.
+
+    TFLite unary kernels such as SIGN require input/output dtypes to match.
+    When upstream shape/index lowering normalizes INT64->INT32, ONNX metadata
+    may still declare unary outputs as INT64. In integer-only mismatch cases,
+    align output dtype to runtime input dtype.
+    """
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype == output_dtype:
+        return str(input_name)
+
+    if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
+        output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+        if output_tensor is not None:
+            output_tensor.dtype = str(input_dtype)
+            src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+            if src_tensor is not None:
+                output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+            ctx.dtype_map[str(output_name)] = str(input_dtype)
+        return str(input_name)
+
+    cast_name = ctx.add_intermediate_tensor(
+        f"{output_name}_{node.op_type.lower()}_input_cast",
+        dtype=output_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
+    )
+    src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+    cast_tensor = ctx.model_ir.tensors.get(str(cast_name), None)
+    if src_tensor is not None and cast_tensor is not None:
+        cast_tensor.shape_signature = (
+            [int(v) for v in list(src_tensor.shape_signature)]
+            if src_tensor.shape_signature is not None
+            else [int(v) for v in list(src_tensor.shape)]
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[cast_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
+    return str(cast_name)
+
+
 def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    runtime_input_name = _harmonize_unary_input_output_dtype(
+        node=node,
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
-            inputs=[input_name],
+            inputs=[runtime_input_name],
             outputs=[output_name],
         )
     )
@@ -1574,20 +1785,26 @@ def build_where_op(node: Any, ctx: Any) -> None:
 
     def _normalize_where_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
-        if dt in {"INT64", "UINT64", "UINT32"}:
+        if dt == "INT64":
             return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
         return dt
 
     normalized_output_dtype = _normalize_where_dtype(output_dtype)
     normalized_x_dtype = _normalize_where_dtype(x_dtype)
     normalized_y_dtype = _normalize_where_dtype(y_dtype)
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
     where_target_dtype = normalized_output_dtype
     if normalized_x_dtype != where_target_dtype or normalized_y_dtype != where_target_dtype:
         if normalized_x_dtype == normalized_y_dtype:
             where_target_dtype = normalized_x_dtype
         elif x_dtype in integer_dtypes and y_dtype in integer_dtypes:
-            where_target_dtype = "INT32"
+            if x_dtype in unsigned_integer_dtypes and y_dtype in unsigned_integer_dtypes:
+                where_target_dtype = "UINT32"
+            else:
+                where_target_dtype = "INT32"
         else:
             raise NotImplementedError(
                 "Where input dtypes must be compatible in flatbuffer_direct. "
@@ -2821,16 +3038,28 @@ def build_clip_op(node: Any, ctx: Any) -> None:
     clip_max = _get_clip_bound_value(node.attrs.get("max", None), float("inf"))
     min_arr = None
     max_arr = None
+    min_name_dynamic = None
+    max_name_dynamic = None
     if len(node.inputs) >= 2:
-        min_const = ctx.get_constant_array(node.inputs[1].name)
+        min_name = str(node.inputs[1].name)
+        if min_name != "":
+            ctx.ensure_tensor(min_name)
+        min_const = ctx.get_constant_array(min_name)
         if min_const is not None:
             min_arr = np.asarray(min_const, dtype=clip_np_dtype)
             clip_min = _get_clip_bound_value(min_arr, clip_min)
+        elif min_name != "":
+            min_name_dynamic = min_name
     if len(node.inputs) >= 3:
-        max_const = ctx.get_constant_array(node.inputs[2].name)
+        max_name = str(node.inputs[2].name)
+        if max_name != "":
+            ctx.ensure_tensor(max_name)
+        max_const = ctx.get_constant_array(max_name)
         if max_const is not None:
             max_arr = np.asarray(max_const, dtype=clip_np_dtype)
             clip_max = _get_clip_bound_value(max_arr, clip_max)
+        elif max_name != "":
+            max_name_dynamic = max_name
 
     if min_arr is None and np.isfinite(clip_min):
         min_arr = np.asarray(clip_min, dtype=clip_np_dtype)
@@ -2866,13 +3095,23 @@ def build_clip_op(node: Any, ctx: Any) -> None:
         output_dtype = ctx.get_tensor_dtype(output_name)
         output_shape = ctx.get_tensor_shape(output_name)
         current_name = input_name
-        if min_arr is not None:
-            min_name = ctx.add_const_tensor(
-                f"{node.name}_clip_min",
-                np.asarray(min_arr, dtype=clip_np_dtype),
+        has_max_bound = (max_arr is not None) or (max_name_dynamic is not None)
+        if min_arr is not None or min_name_dynamic is not None:
+            min_name = (
+                ctx.add_const_tensor(
+                    f"{node.name}_clip_min",
+                    np.asarray(min_arr, dtype=clip_np_dtype),
+                )
+                if min_arr is not None
+                else _cast_tensor_if_needed(
+                    ctx=ctx,
+                    src_name=str(min_name_dynamic),
+                    dst_dtype=input_dtype,
+                    base_name=f"{node.name}_clip_min_cast",
+                )
             )
             min_output_name = output_name
-            if max_arr is not None:
+            if has_max_bound:
                 min_output_name = ctx.add_intermediate_tensor(
                     f"{node.name}_clip_min_out",
                     dtype=output_dtype,
@@ -2895,10 +3134,19 @@ def build_clip_op(node: Any, ctx: Any) -> None:
                 )
             )
             current_name = min_output_name
-        if max_arr is not None:
-            max_name = ctx.add_const_tensor(
-                f"{node.name}_clip_max",
-                np.asarray(max_arr, dtype=clip_np_dtype),
+        if max_arr is not None or max_name_dynamic is not None:
+            max_name = (
+                ctx.add_const_tensor(
+                    f"{node.name}_clip_max",
+                    np.asarray(max_arr, dtype=clip_np_dtype),
+                )
+                if max_arr is not None
+                else _cast_tensor_if_needed(
+                    ctx=ctx,
+                    src_name=str(max_name_dynamic),
+                    dst_dtype=input_dtype,
+                    base_name=f"{node.name}_clip_max_cast",
+                )
             )
             ctx.add_operator(
                 OperatorIR(
@@ -2908,7 +3156,7 @@ def build_clip_op(node: Any, ctx: Any) -> None:
                     options={},
                 )
             )
-        if min_arr is None and max_arr is None:
+        if min_arr is None and max_arr is None and min_name_dynamic is None and max_name_dynamic is None:
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
@@ -2940,6 +3188,11 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
 
     input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)
@@ -2999,6 +3252,11 @@ def build_logsoftmax_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
 
     input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)
