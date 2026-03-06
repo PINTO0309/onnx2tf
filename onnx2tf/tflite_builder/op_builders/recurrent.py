@@ -428,6 +428,7 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
     y_h_name = node.outputs[1].name if len(node.outputs) > 1 else ""
     y_c_name = node.outputs[2].name if len(node.outputs) > 2 else ""
     y_dtype = str(ctx.get_tensor_dtype(y_name))
+    y_dtype_upper = str(y_dtype).upper()
     ctx.ensure_tensor(x_name)
     ctx.ensure_tensor(y_name)
     if y_h_name != "":
@@ -883,34 +884,72 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         state_tag="c0_bw",
     )
 
+    bilstm_input_name = x_name
+    x_dtype_upper = str(ctx.get_tensor_dtype(x_name)).upper()
+    if x_dtype_upper != "FLOAT32":
+        x_shape = [int(v) for v in ctx.get_tensor_shape(x_name)]
+        bilstm_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bilstm_input_f32",
+            dtype="FLOAT32",
+            shape=[int(v) for v in list(x_shape)],
+        )
+        x_tensor = ctx.model_ir.tensors.get(x_name, None)
+        if (
+            x_tensor is not None
+            and x_tensor.shape_signature is not None
+            and len(x_tensor.shape_signature) == len(x_shape)
+        ):
+            ctx.model_ir.tensors[bilstm_input_name].shape_signature = [
+                int(v) for v in list(x_tensor.shape_signature)
+            ]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[x_name],
+                outputs=[bilstm_input_name],
+                options={
+                    "inDataType": x_dtype_upper,
+                    "outDataType": "FLOAT32",
+                },
+            )
+        )
+
     merged_output_name = ctx.add_intermediate_tensor(
         f"{y_name}_bilstm_merged",
-        dtype=y_dtype,
+        dtype="FLOAT32",
         shape=[int(seq_dim), int(batch_dim), int(hidden_size * 2)],
     )
     fw_output_name = ctx.add_intermediate_tensor(
         f"{y_name}_fw",
-        dtype=y_dtype,
+        dtype="FLOAT32",
         shape=[int(seq_dim), int(batch_dim), int(hidden_size)],
     )
     bw_output_name = ctx.add_intermediate_tensor(
         f"{y_name}_bw",
-        dtype=y_dtype,
+        dtype="FLOAT32",
         shape=[int(seq_dim), int(batch_dim), int(hidden_size)],
     )
     fw_expanded_name = ctx.add_intermediate_tensor(
         f"{y_name}_fw_expanded",
-        dtype=y_dtype,
+        dtype="FLOAT32",
         shape=[int(seq_dim), 1, int(batch_dim), int(hidden_size)],
     )
     bw_expanded_name = ctx.add_intermediate_tensor(
         f"{y_name}_bw_expanded",
-        dtype=y_dtype,
+        dtype="FLOAT32",
         shape=[int(seq_dim), 1, int(batch_dim), int(hidden_size)],
     )
 
+    y_concat_output_name = y_name
+    if y_dtype_upper != "FLOAT32":
+        y_concat_output_name = ctx.add_intermediate_tensor(
+            f"{y_name}_bilstm_f32",
+            dtype="FLOAT32",
+            shape=[int(seq_dim), int(expected_num_directions), int(batch_dim), int(hidden_size)],
+        )
+
     bidirectional_inputs = [
-        x_name,
+        bilstm_input_name,
         _add_const("fw_w_i", fw_w_i),
         _add_const("fw_w_f", fw_w_f),
         _add_const("fw_w_c", fw_w_c),
@@ -1039,13 +1078,25 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         OperatorIR(
             op_type="CONCATENATION",
             inputs=[fw_expanded_name, bw_expanded_name],
-            outputs=[y_name],
+            outputs=[y_concat_output_name],
             options={
                 "axis": 1,
                 "fusedActivationFunction": "NONE",
             },
         )
     )
+    if y_concat_output_name != y_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[y_concat_output_name],
+                outputs=[y_name],
+                options={
+                    "inDataType": "FLOAT32",
+                    "outDataType": y_dtype_upper,
+                },
+            )
+        )
     if y_h_name != "":
         fw_h_3d_name = ctx.add_intermediate_tensor(
             f"{y_h_name}_fw_3d",
