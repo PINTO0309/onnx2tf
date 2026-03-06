@@ -2863,11 +2863,21 @@ def _validate_inverse(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if row_dim not in {2, 3}:
+    if row_dim < 1:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "Inverse builtin lowering currently supports only last dims [2,2] or [3,3] "
+                "Inverse builtin lowering requires matrix dims >= 1 in flatbuffer_direct. "
+                f"input_shape={input_shape} raw_input_shape={raw_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if row_dim > 16:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Inverse builtin lowering currently supports square matrix dims up to 16x16 "
                 f"in flatbuffer_direct. input_shape={input_shape} raw_input_shape={raw_shape}"
             ),
             node_name=node.name,
@@ -3250,13 +3260,70 @@ def _validate_gather_nd(node: Any, ctx: Any) -> None:
         )
 
     batch_dims = int(node.attrs.get("batch_dims", 0))
-    if batch_dims != 0:
+    if batch_dims < 0:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
-            message=f"GatherND batch_dims must be 0. batch_dims={batch_dims}",
+            message=f"GatherND batch_dims must be >= 0. batch_dims={batch_dims}",
             node_name=node.name,
             node_op=node.op,
         )
+    if batch_dims >= len(indices_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "GatherND batch_dims must be < indices rank. "
+                f"batch_dims={batch_dims} indices_rank={len(indices_shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if batch_dims > len(params_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "GatherND batch_dims must be <= params rank. "
+                f"batch_dims={batch_dims} params_rank={len(params_shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if batch_dims > 0:
+        params_batch_shape = [int(v) for v in params_shape[:batch_dims]]
+        indices_batch_shape = [int(v) for v in indices_shape[:batch_dims]]
+        if params_batch_shape != indices_batch_shape:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "GatherND batch_dims requires params/indices batch prefix match. "
+                    f"params_batch_shape={params_batch_shape} "
+                    f"indices_batch_shape={indices_batch_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if any(int(v) <= 0 for v in params_batch_shape):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "GatherND batch_dims>0 requires static positive batch prefix dimensions "
+                    "in flatbuffer_direct. "
+                    f"params_batch_shape={params_batch_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        non_batch_indices_shape = [int(v) for v in indices_shape[batch_dims:-1]]
+        if any(int(v) < 0 for v in non_batch_indices_shape):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "GatherND batch_dims>0 requires static non-negative non-batch index dimensions "
+                    "in flatbuffer_direct. "
+                    f"indices_shape={indices_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
 
     indices_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
     supported_indices_dtypes = {
@@ -3291,12 +3358,12 @@ def _validate_gather_nd(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if k_dim > len(params_shape):
+    if k_dim > int(len(params_shape) - int(batch_dims)):
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "GatherND indices last dimension must be <= params rank. "
-                f"indices_last_dim={k_dim} params_rank={len(params_shape)}"
+                "GatherND indices last dimension must be <= params rank after batch_dims. "
+                f"indices_last_dim={k_dim} params_rank={len(params_shape)} batch_dims={batch_dims}"
             ),
             node_name=node.name,
             node_op=node.op,
@@ -6160,8 +6227,35 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
     image_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
     grid_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[1].name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(node.outputs[0].name)]
+
+    def _merge_with_raw_shape(tensor_name: str, resolved_shape: List[int]) -> List[int]:
+        raw = None
+        if hasattr(ctx, "shape_map") and isinstance(ctx.shape_map, dict):
+            raw = ctx.shape_map.get(str(tensor_name), None)
+        if raw is None:
+            return [int(v) for v in list(resolved_shape)]
+        try:
+            raw_shape = [int(v) for v in list(raw)]
+        except Exception:
+            return [int(v) for v in list(resolved_shape)]
+        if len(raw_shape) != len(resolved_shape):
+            return [int(v) for v in list(resolved_shape)]
+        merged: List[int] = []
+        for resolved_dim, raw_dim in zip(resolved_shape, raw_shape):
+            if int(raw_dim) > 0:
+                merged.append(int(raw_dim))
+            elif int(raw_dim) <= 0 and int(resolved_dim) == 1:
+                # Preserve unknown-dimension intent from ONNX shape map.
+                merged.append(-1)
+            else:
+                merged.append(int(resolved_dim))
+        return merged
+
+    image_shape = _merge_with_raw_shape(node.inputs[0].name, image_shape)
+    grid_shape = _merge_with_raw_shape(node.inputs[1].name, grid_shape)
+    output_shape = _merge_with_raw_shape(node.outputs[0].name, output_shape)
     rank = int(len(image_shape))
-    if rank not in {4, 5} or len(grid_shape) != rank or len(output_shape) != rank:
+    if rank not in {4, 5} or len(grid_shape) != rank:
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
             message=(
@@ -6171,19 +6265,9 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if any(int(v) <= 0 for v in image_shape + grid_shape + output_shape):
-        raise NodeValidationError(
-            reason_code="unsupported_input_shape",
-            message=(
-                "GridSample requires static positive dimensions in flatbuffer_direct. "
-                f"image_shape={image_shape} grid_shape={grid_shape} output_shape={output_shape}"
-            ),
-            node_name=node.name,
-            node_op=node.op,
-        )
 
     expected_grid_last_dim = 2 if rank == 4 else 3
-    if int(grid_shape[-1]) != int(expected_grid_last_dim):
+    if int(grid_shape[-1]) > 0 and int(grid_shape[-1]) != int(expected_grid_last_dim):
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
@@ -6196,10 +6280,38 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
+    if int(grid_shape[-1]) <= 0:
+        grid_shape[-1] = int(expected_grid_last_dim)
+
+    expected_output_shape = (
+        [int(image_shape[0]), int(image_shape[1]), int(grid_shape[1]), int(grid_shape[2])]
+        if rank == 4
+        else [int(image_shape[0]), int(image_shape[1]), int(grid_shape[1]), int(grid_shape[2]), int(grid_shape[3])]
+    )
+    resolved_output_shape = [int(v) for v in list(output_shape)]
+    if len(resolved_output_shape) != rank:
+        resolved_output_shape = [int(v) for v in list(expected_output_shape)]
+    else:
+        resolved_output_shape = [
+            int(expected_output_shape[idx]) if int(dim) <= 0 else int(dim)
+            for idx, dim in enumerate(resolved_output_shape)
+        ]
+
+    if any(int(v) <= 0 for v in image_shape + grid_shape + resolved_output_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GridSample requires static positive dimensions in flatbuffer_direct. "
+                f"image_shape={image_shape} grid_shape={grid_shape} "
+                f"output_shape={output_shape} resolved_output_shape={resolved_output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
     if rank == 4:
         n, c, h, w = [int(v) for v in image_shape]
-        out_n, out_c, out_h, out_w = [int(v) for v in output_shape]
+        out_n, out_c, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
             n == out_n == grid_n
@@ -6213,14 +6325,15 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
                 reason_code="unsupported_input_shape",
                 message=(
                     "GridSample input/grid/output shapes are inconsistent for built-in lowering. "
-                    f"image_shape={image_shape} grid_shape={grid_shape} output_shape={output_shape}"
+                    f"image_shape={image_shape} grid_shape={grid_shape} "
+                    f"output_shape={output_shape} resolved_output_shape={resolved_output_shape}"
                 ),
                 node_name=node.name,
                 node_op=node.op,
             )
     else:
         n, c, d, h, w = [int(v) for v in image_shape]
-        out_n, out_c, out_d, out_h, out_w = [int(v) for v in output_shape]
+        out_n, out_c, out_d, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_d, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
             n == out_n == grid_n
@@ -6236,7 +6349,8 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
                 reason_code="unsupported_input_shape",
                 message=(
                     "GridSample input/grid/output shapes are inconsistent for built-in lowering. "
-                    f"image_shape={image_shape} grid_shape={grid_shape} output_shape={output_shape}"
+                    f"image_shape={image_shape} grid_shape={grid_shape} "
+                    f"output_shape={output_shape} resolved_output_shape={resolved_output_shape}"
                 ),
                 node_name=node.name,
                 node_op=node.op,
@@ -7632,7 +7746,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "GatherND": DispatchEntry(
         onnx_op="GatherND",
-        tflite_ops=["CAST", "GATHER_ND"],
+        tflite_ops=["CAST", "RESHAPE", "RANGE", "TILE", "CONCATENATION", "GATHER_ND"],
         builder=build_gather_nd_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_gather_nd,
@@ -7702,6 +7816,8 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "NON_MAX_SUPPRESSION_V4",
             "NON_MAX_SUPPRESSION_V5",
             "SLICE",
+            "RANGE",
+            "SHAPE",
             "GATHER",
             "SUB",
             "CAST",

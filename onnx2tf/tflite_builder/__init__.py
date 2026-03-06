@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List
 
-from onnx2tf.tflite_builder.ir import clone_model_ir_with_float16
+from onnx2tf.tflite_builder.ir import (
+    clone_model_ir_with_float16,
+    clone_model_ir_with_float32,
+    optimize_redundant_transpose_operators,
+    prune_identity_cast_operators,
+)
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     build_op_coverage_report,
     build_tensor_correspondence_report,
@@ -577,11 +582,24 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             _advance_export_progress()
 
         _set_export_progress_desc("write float32 tflite")
+        model_ir_fp32 = clone_model_ir_with_float32(model_ir)
+        prune_identity_cast_operators(
+            model_ir_fp32,
+            preserve_model_outputs=True,
+        )
+        optimize_redundant_transpose_operators(
+            model_ir_fp32,
+            preserve_model_outputs=True,
+        )
+        _set_reduced_precision_support_metadata(
+            model_ir=model_ir_fp32,
+            enable_accumulation_type_float16=enable_accumulation_type_float16,
+        )
         float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
         float32_write_timing: Dict[str, Any] = {}
         write_model_file(
             schema_tflite=schema_tflite,
-            model_ir=model_ir,
+            model_ir=model_ir_fp32,
             output_tflite_path=float32_path,
             timing=float32_write_timing,
         )
@@ -597,6 +615,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
 
         _set_export_progress_desc("write float16 tflite")
         model_ir_fp16 = clone_model_ir_with_float16(model_ir)
+        optimize_redundant_transpose_operators(
+            model_ir_fp16,
+            preserve_model_outputs=True,
+        )
         _set_reduced_precision_support_metadata(
             model_ir=model_ir_fp16,
             enable_accumulation_type_float16=enable_accumulation_type_float16,

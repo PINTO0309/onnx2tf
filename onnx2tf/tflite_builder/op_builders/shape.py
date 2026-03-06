@@ -1066,7 +1066,9 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             if step == 1:
                 size[axis] = int(max(end - start, 0))
             else:
-                size[axis] = -1
+                # Keep STRIDED_SLICE lowering for step != 1, but preserve static
+                # output shape metadata when slice bounds are statically known.
+                size[axis] = int(max((max(end - start, 0) + step - 1) // step, 0))
         else:
             if start < 0 or end < 0:
                 # Keep negative indices and defer resolution to runtime via STRIDED_SLICE.
@@ -1080,10 +1082,11 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                 size[axis] = -1
             else:
                 end_for_strided[axis] = int(max(min(end, int32_max), int32_min))
-                if step == 1 and start >= 0 and end >= 0:
-                    size[axis] = int(max(end - start, 0))
-                else:
-                    size[axis] = -1
+                # Unknown input extent means runtime clipping can change the
+                # actual slice length even when start/end are non-negative.
+                # Keep this dimension dynamic instead of materializing an
+                # oversized static size from sentinel ends (e.g. INT32_MAX).
+                size[axis] = -1
             strides_for_strided[axis] = int(step)
 
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
@@ -4950,8 +4953,40 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     grid_shape = [int(v) for v in ctx.get_tensor_shape(grid_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
 
+    def _merge_with_raw_shape(tensor_name: str, resolved_shape: list[int]) -> list[int]:
+        raw = None
+        if hasattr(ctx, "shape_map") and isinstance(ctx.shape_map, dict):
+            raw = ctx.shape_map.get(str(tensor_name), None)
+        if raw is None:
+            return [int(v) for v in list(resolved_shape)]
+        try:
+            raw_shape = [int(v) for v in list(raw)]
+        except Exception:
+            return [int(v) for v in list(resolved_shape)]
+        if len(raw_shape) != len(resolved_shape):
+            return [int(v) for v in list(resolved_shape)]
+        merged: list[int] = []
+        for resolved_dim, raw_dim in zip(resolved_shape, raw_shape):
+            if int(raw_dim) > 0:
+                merged.append(int(raw_dim))
+            elif int(raw_dim) <= 0 and int(resolved_dim) == 1:
+                merged.append(-1)
+            else:
+                merged.append(int(resolved_dim))
+        return merged
+
+    image_shape = _merge_with_raw_shape(image_name, image_shape)
+    grid_shape = _merge_with_raw_shape(grid_name, grid_shape)
+    output_shape = _merge_with_raw_shape(output_name, output_shape)
+
+    image_tensor = ctx.model_ir.tensors.get(image_name, None)
     grid_tensor = ctx.model_ir.tensors.get(grid_name, None)
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    image_signature = (
+        [int(v) for v in list(image_tensor.shape_signature)]
+        if image_tensor is not None and image_tensor.shape_signature is not None
+        else list(image_shape)
+    )
     grid_signature = (
         [int(v) for v in list(grid_tensor.shape_signature)]
         if grid_tensor is not None and grid_tensor.shape_signature is not None
@@ -4983,6 +5018,61 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     ]
 
     image_rank = int(len(image_shape))
+    expected_grid_last_dim = 2 if image_rank == 4 else 3 if image_rank == 5 else 0
+    if image_rank in {4, 5} and len(grid_shape) == image_rank and int(grid_shape[-1]) <= 0:
+        grid_shape[-1] = int(expected_grid_last_dim)
+        if grid_tensor is not None:
+            grid_tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(grid_shape)]
+            grid_tensor.shape_signature = [int(v) for v in list(grid_shape)]
+        if len(grid_signature) == image_rank and int(grid_signature[-1]) <= 0:
+            grid_signature[-1] = int(expected_grid_last_dim)
+
+    if image_rank in {4, 5} and len(grid_shape) == image_rank:
+        expected_output_shape = (
+            [int(image_shape[0]), int(image_shape[1]), int(grid_shape[1]), int(grid_shape[2])]
+            if image_rank == 4
+            else [
+                int(image_shape[0]),
+                int(image_shape[1]),
+                int(grid_shape[1]),
+                int(grid_shape[2]),
+                int(grid_shape[3]),
+            ]
+        )
+        expected_output_signature = (
+            [
+                _shape_dim_from_signature(image_signature, 0, int(image_shape[0])),
+                _shape_dim_from_signature(image_signature, 1, int(image_shape[1])),
+                _shape_dim_from_signature(grid_signature, 1, int(grid_shape[1])),
+                _shape_dim_from_signature(grid_signature, 2, int(grid_shape[2])),
+            ]
+            if image_rank == 4
+            else [
+                _shape_dim_from_signature(image_signature, 0, int(image_shape[0])),
+                _shape_dim_from_signature(image_signature, 1, int(image_shape[1])),
+                _shape_dim_from_signature(grid_signature, 1, int(grid_shape[1])),
+                _shape_dim_from_signature(grid_signature, 2, int(grid_shape[2])),
+                _shape_dim_from_signature(grid_signature, 3, int(grid_shape[3])),
+            ]
+        )
+        if len(output_shape) != image_rank:
+            output_shape = [int(v) for v in list(expected_output_shape)]
+        else:
+            output_shape = [
+                int(expected_output_shape[idx]) if int(dim) <= 0 else int(dim)
+                for idx, dim in enumerate(output_shape)
+            ]
+        if len(output_signature) != image_rank:
+            output_signature = [int(v) for v in list(expected_output_signature)]
+        else:
+            output_signature = [
+                int(expected_output_signature[idx]) if int(dim) <= 0 else int(dim)
+                for idx, dim in enumerate(output_signature)
+            ]
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in list(output_shape)]
+            output_tensor.shape_signature = [int(v) for v in list(output_signature)]
+
     out_d = 1
     d = 1
     if image_rank == 4:

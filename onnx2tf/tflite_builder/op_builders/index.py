@@ -703,9 +703,9 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
 
     batch_dims = int(node.attrs.get("batch_dims", 0))
-    if batch_dims != 0:
+    if batch_dims < 0:
         raise NotImplementedError(
-            f"GatherND batch_dims != 0 is not supported in flatbuffer_direct. "
+            f"GatherND batch_dims must be >= 0 in flatbuffer_direct. "
             f"op={node.name} batch_dims={batch_dims}"
         )
 
@@ -806,10 +806,11 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
         gather_dims = int(indices_shape[-1]) if len(indices_shape) > 0 else -1
         if len(indices_runtime_signature) > 0 and int(indices_runtime_signature[-1]) > 0:
             gather_dims = int(indices_runtime_signature[-1])
-        if gather_dims > 0 and gather_dims <= len(params_signature):
+        max_gather_dims = int(len(params_signature) - int(batch_dims))
+        if gather_dims > 0 and gather_dims <= max_gather_dims:
             inferred_output_signature = (
                 [int(v) for v in indices_runtime_signature[:-1]]
-                + [int(v) for v in params_signature[gather_dims:]]
+                + [int(v) for v in params_signature[int(batch_dims) + gather_dims:]]
             )
     if inferred_output_signature is None:
         inferred_output_signature = (
@@ -841,11 +842,255 @@ def build_gather_nd_op(node: Any, ctx: Any) -> None:
         int(v) if int(v) >= 0 else 1 for v in final_output_signature
     ]
 
+    if int(batch_dims) == 0:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER_ND",
+                inputs=[params_name, indices_for_gather_nd],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    # Lower GatherND(batch_dims>0) into builtin GatherND(batch_dims=0):
+    # 1) flatten batch prefix into one axis
+    # 2) prepend generated batch-id to each index vector
+    # 3) gather_nd on reshaped params/indices
+    # 4) reshape gathered result back to ONNX output shape
+    if len(params_shape) <= int(batch_dims) or len(indices_shape) <= int(batch_dims):
+        raise NotImplementedError(
+            f"GatherND batch_dims is out of range for input ranks in flatbuffer_direct. "
+            f"op={node.name} batch_dims={batch_dims} params_shape={params_shape} indices_shape={indices_shape}"
+        )
+
+    params_batch_shape = [int(v) for v in params_shape[: int(batch_dims)]]
+    indices_batch_shape = [int(v) for v in indices_shape[: int(batch_dims)]]
+    if params_batch_shape != indices_batch_shape:
+        raise NotImplementedError(
+            "GatherND requires params/indices batch prefix match for batch_dims>0 in flatbuffer_direct. "
+            f"op={node.name} batch_dims={batch_dims} "
+            f"params_batch_shape={params_batch_shape} indices_batch_shape={indices_batch_shape}"
+        )
+    if any(int(v) <= 0 for v in params_batch_shape):
+        raise NotImplementedError(
+            "GatherND batch_dims>0 currently requires static positive batch prefix dimensions "
+            "in flatbuffer_direct. "
+            f"op={node.name} params_batch_shape={params_batch_shape}"
+        )
+    if any(int(v) < 0 for v in indices_shape[int(batch_dims) : -1]):
+        raise NotImplementedError(
+            "GatherND batch_dims>0 currently requires static non-negative non-batch index dimensions "
+            "in flatbuffer_direct. "
+            f"op={node.name} indices_shape={indices_shape}"
+        )
+
+    gather_dims = int(indices_shape[-1]) if len(indices_shape) > 0 else -1
+    if gather_dims <= 0:
+        raise NotImplementedError(
+            "GatherND requires static positive indices last dimension in flatbuffer_direct. "
+            f"op={node.name} indices_shape={indices_shape}"
+        )
+    if int(gather_dims) > int(len(params_shape) - int(batch_dims)):
+        raise NotImplementedError(
+            "GatherND indices last dimension exceeds params rank after batch_dims in flatbuffer_direct. "
+            f"op={node.name} batch_dims={batch_dims} indices_last_dim={gather_dims} params_rank={len(params_shape)}"
+        )
+
+    batch_count = int(np.prod(np.asarray(params_batch_shape, dtype=np.int64), dtype=np.int64))
+    if batch_count < 0 or batch_count > int(np.iinfo(np.int32).max):
+        raise NotImplementedError(
+            "GatherND flattened batch size is out of supported range in flatbuffer_direct. "
+            f"op={node.name} flattened_batch={batch_count}"
+        )
+
+    params_tail_shape = [int(v) for v in params_shape[int(batch_dims) :]]
+    indices_inner_shape = [int(v) for v in indices_shape[int(batch_dims) : -1]]
+
+    params_flat_shape = [int(batch_count)] + [int(v) for v in params_tail_shape]
+    params_flat_shape_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_params_flat_shape",
+        np.asarray(params_flat_shape, dtype=np.int32),
+    )
+    params_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_params_flat",
+        dtype=params_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in params_flat_shape],
+    )
+    params_flat_tensor = ctx.model_ir.tensors.get(params_flat_name, None)
+    if params_flat_tensor is not None:
+        params_flat_tensor.shape_signature = [int(v) for v in params_flat_shape]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[params_name, params_flat_shape_name],
+            outputs=[params_flat_name],
+            options={"newShape": [int(v) for v in params_flat_shape]},
+        )
+    )
+
+    indices_flat_shape = [int(batch_count)] + [int(v) for v in indices_inner_shape] + [int(gather_dims)]
+    indices_flat_shape_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_indices_flat_shape",
+        np.asarray(indices_flat_shape, dtype=np.int32),
+    )
+    indices_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_indices_flat",
+        dtype="INT32",
+        shape=[int(v) if int(v) > 0 else 1 for v in indices_flat_shape],
+    )
+    indices_flat_tensor = ctx.model_ir.tensors.get(indices_flat_name, None)
+    if indices_flat_tensor is not None:
+        indices_flat_tensor.shape_signature = (
+            [int(v) for v in indices_runtime_signature]
+            if len(indices_runtime_signature) == len(indices_flat_shape)
+            else [int(v) for v in indices_flat_shape]
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[indices_for_gather_nd, indices_flat_shape_name],
+            outputs=[indices_flat_name],
+            options={"newShape": [int(v) for v in indices_flat_shape]},
+        )
+    )
+
+    batch_range_start_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_batch_range_start",
+        np.asarray(0, dtype=np.int32),
+    )
+    batch_range_limit_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_batch_range_limit",
+        np.asarray(int(batch_count), dtype=np.int32),
+    )
+    batch_range_delta_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_batch_range_delta",
+        np.asarray(1, dtype=np.int32),
+    )
+    for scalar_name in [
+        batch_range_start_name,
+        batch_range_limit_name,
+        batch_range_delta_name,
+    ]:
+        scalar_tensor = ctx.model_ir.tensors.get(scalar_name, None)
+        if scalar_tensor is not None:
+            scalar_tensor.shape = []
+            scalar_tensor.shape_signature = []
+
+    batch_ids_1d_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_batch_ids_1d",
+        dtype="INT32",
+        shape=[int(batch_count) if int(batch_count) > 0 else 1],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RANGE",
+            inputs=[
+                batch_range_start_name,
+                batch_range_limit_name,
+                batch_range_delta_name,
+            ],
+            outputs=[batch_ids_1d_name],
+        )
+    )
+
+    batch_ids_base_shape = [int(batch_count)] + [1 for _ in indices_inner_shape] + [1]
+    batch_ids_base_shape_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_batch_ids_base_shape",
+        np.asarray(batch_ids_base_shape, dtype=np.int32),
+    )
+    batch_ids_base_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_batch_ids_base",
+        dtype="INT32",
+        shape=[int(v) if int(v) > 0 else 1 for v in batch_ids_base_shape],
+    )
+    batch_ids_base_tensor = ctx.model_ir.tensors.get(batch_ids_base_name, None)
+    if batch_ids_base_tensor is not None:
+        batch_ids_base_tensor.shape_signature = [int(v) for v in batch_ids_base_shape]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[batch_ids_1d_name, batch_ids_base_shape_name],
+            outputs=[batch_ids_base_name],
+            options={"newShape": [int(v) for v in batch_ids_base_shape]},
+        )
+    )
+
+    batch_ids_tile_multiples = [1] + [int(v) for v in indices_inner_shape] + [1]
+    batch_ids_tile_multiples_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_batch_ids_tile_multiples",
+        np.asarray(batch_ids_tile_multiples, dtype=np.int32),
+    )
+    batch_ids_tiled_shape = [int(batch_count)] + [int(v) for v in indices_inner_shape] + [1]
+    batch_ids_tiled_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_batch_ids_tiled",
+        dtype="INT32",
+        shape=[int(v) if int(v) > 0 else 1 for v in batch_ids_tiled_shape],
+    )
+    batch_ids_tiled_tensor = ctx.model_ir.tensors.get(batch_ids_tiled_name, None)
+    if batch_ids_tiled_tensor is not None:
+        batch_ids_tiled_tensor.shape_signature = [int(v) for v in batch_ids_tiled_shape]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TILE",
+            inputs=[batch_ids_base_name, batch_ids_tile_multiples_name],
+            outputs=[batch_ids_tiled_name],
+        )
+    )
+
+    indices_with_batch_shape = [int(batch_count)] + [int(v) for v in indices_inner_shape] + [int(gather_dims) + 1]
+    indices_with_batch_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_indices_with_batch",
+        dtype="INT32",
+        shape=[int(v) if int(v) > 0 else 1 for v in indices_with_batch_shape],
+    )
+    indices_with_batch_tensor = ctx.model_ir.tensors.get(indices_with_batch_name, None)
+    if indices_with_batch_tensor is not None:
+        indices_with_batch_tensor.shape_signature = [int(v) for v in indices_with_batch_shape]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=[batch_ids_tiled_name, indices_flat_name],
+            outputs=[indices_with_batch_name],
+            options={
+                "axis": int(len(indices_flat_shape) - 1),
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+
+    gather_flat_shape = (
+        [int(batch_count)]
+        + [int(v) for v in indices_inner_shape]
+        + [int(v) for v in params_tail_shape[int(gather_dims) :]]
+    )
+    gather_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_nd_flat_out",
+        dtype=params_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in gather_flat_shape],
+    )
+    gather_flat_tensor = ctx.model_ir.tensors.get(gather_flat_name, None)
+    if gather_flat_tensor is not None:
+        gather_flat_tensor.shape_signature = [int(v) for v in gather_flat_shape]
+        gather_flat_tensor.quantization = _clone_quantization(output_tensor.quantization)
     ctx.add_operator(
         OperatorIR(
             op_type="GATHER_ND",
-            inputs=[params_name, indices_for_gather_nd],
+            inputs=[params_flat_name, indices_with_batch_name],
+            outputs=[gather_flat_name],
+        )
+    )
+
+    output_shape_static = [int(v) for v in params_batch_shape + indices_inner_shape + params_tail_shape[int(gather_dims) :]]
+    output_shape_name = ctx.add_const_tensor(
+        f"{output_name}_gather_nd_output_shape",
+        np.asarray(output_shape_static, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[gather_flat_name, output_shape_name],
             outputs=[output_name],
+            options={"newShape": [int(v) for v in output_shape_static]},
         )
     )
 
@@ -4723,36 +4968,77 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             dtype="INT32",
             shape=[-1],
         )
-        valid_count_vec_name = ctx.add_intermediate_tensor(
-            f"{output_name}_nms_valid_count_vec{suffix}",
+        valid_indices_range_start_name = ctx.add_const_tensor(
+            f"{output_name}_nms_valid_indices_range_start{suffix}",
+            np.asarray(0, dtype=np.int32),
+        )
+        valid_indices_range_start_tensor = ctx.model_ir.tensors.get(
+            valid_indices_range_start_name,
+            None,
+        )
+        if valid_indices_range_start_tensor is not None:
+            valid_indices_range_start_tensor.shape = []
+            valid_indices_range_start_tensor.shape_signature = []
+        valid_indices_range_delta_name = ctx.add_const_tensor(
+            f"{output_name}_nms_valid_indices_range_delta{suffix}",
+            np.asarray(1, dtype=np.int32),
+        )
+        valid_indices_range_delta_tensor = ctx.model_ir.tensors.get(
+            valid_indices_range_delta_name,
+            None,
+        )
+        if valid_indices_range_delta_tensor is not None:
+            valid_indices_range_delta_tensor.shape = []
+            valid_indices_range_delta_tensor.shape_signature = []
+        valid_indices_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_valid_indices{suffix}",
             dtype="INT32",
-            shape=[1],
+            shape=[-1],
         )
-        valid_count_vec_shape_name = ctx.add_const_tensor(
-            f"{output_name}_nms_valid_count_vec_shape{suffix}",
-            np.asarray([1], dtype=np.int32),
+        nms_valid_count_scalar_shape_name = ctx.add_const_tensor(
+            f"{output_name}_nms_valid_count_scalar_shape{suffix}",
+            np.asarray([], dtype=np.int32),
         )
+        nms_valid_count_scalar_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_valid_count_scalar{suffix}",
+            dtype="INT32",
+            shape=[],
+        )
+        nms_valid_count_scalar_tensor = ctx.model_ir.tensors.get(nms_valid_count_scalar_name, None)
+        if nms_valid_count_scalar_tensor is not None:
+            nms_valid_count_scalar_tensor.shape = []
+            nms_valid_count_scalar_tensor.shape_signature = []
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
-                inputs=[nms_valid_count_name, valid_count_vec_shape_name],
-                outputs=[valid_count_vec_name],
-                options={"newShape": [1]},
+                inputs=[nms_valid_count_name, nms_valid_count_scalar_shape_name],
+                outputs=[nms_valid_count_scalar_name],
+                options={
+                    "newShape": [],
+                    "preserveDynamicShape": True,
+                },
             )
-        )
-        selected_indices_valid_begin_name = ctx.add_const_tensor(
-            f"{output_name}_nms_selected_indices_valid_begin{suffix}",
-            np.asarray([0], dtype=np.int32),
         )
         ctx.add_operator(
             OperatorIR(
-                op_type="SLICE",
+                op_type="RANGE",
                 inputs=[
-                    nms_selected_indices_name,
-                    selected_indices_valid_begin_name,
-                    valid_count_vec_name,
+                    valid_indices_range_start_name,
+                    nms_valid_count_scalar_name,
+                    valid_indices_range_delta_name,
                 ],
+                outputs=[valid_indices_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[nms_selected_indices_name, valid_indices_name],
                 outputs=[selected_indices_valid_name],
+                options={
+                    "axis": 0,
+                    "batchDims": 0,
+                },
             )
         )
 
@@ -4761,16 +5047,45 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
             dtype="INT32",
             shape=[-1, 1],
         )
-        selected_indices_col_shape_name = ctx.add_const_tensor(
+        selected_indices_valid_shape_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nms_selected_indices_valid_shape{suffix}",
+            dtype="INT32",
+            shape=[1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[selected_indices_valid_name],
+                outputs=[selected_indices_valid_shape_name],
+                options={"outType": "INT32"},
+            )
+        )
+        selected_indices_col_tail_dim_name = ctx.add_const_tensor(
+            f"{output_name}_nms_selected_indices_col_tail_dim{suffix}",
+            np.asarray([1], dtype=np.int32),
+        )
+        selected_indices_col_shape_name = ctx.add_intermediate_tensor(
             f"{output_name}_nms_selected_indices_col_shape{suffix}",
-            np.asarray([-1, 1], dtype=np.int32),
+            dtype="INT32",
+            shape=[2],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[selected_indices_valid_shape_name, selected_indices_col_tail_dim_name],
+                outputs=[selected_indices_col_shape_name],
+                options={
+                    "axis": 0,
+                    "fusedActivationFunction": "NONE",
+                },
+            )
         )
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
                 inputs=[selected_indices_valid_name, selected_indices_col_shape_name],
                 outputs=[selected_indices_col_name],
-                options={"newShape": [-1, 1]},
+                options={},
             )
         )
 
@@ -4811,16 +5126,45 @@ def build_non_max_suppression_op(node: Any, ctx: Any) -> None:
                 dtype="INT32",
                 shape=[-1, 1],
             )
-            class_ids_col_shape_name = ctx.add_const_tensor(
+            selected_class_ids_valid_shape_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nms_selected_class_ids_shape{suffix}",
+                dtype="INT32",
+                shape=[1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SHAPE",
+                    inputs=[selected_class_ids_valid_name],
+                    outputs=[selected_class_ids_valid_shape_name],
+                    options={"outType": "INT32"},
+                )
+            )
+            class_ids_col_tail_dim_name = ctx.add_const_tensor(
+                f"{output_name}_nms_selected_class_ids_col_tail_dim{suffix}",
+                np.asarray([1], dtype=np.int32),
+            )
+            class_ids_col_shape_name = ctx.add_intermediate_tensor(
                 f"{output_name}_nms_selected_class_ids_col_shape{suffix}",
-                np.asarray([-1, 1], dtype=np.int32),
+                dtype="INT32",
+                shape=[2],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=[selected_class_ids_valid_shape_name, class_ids_col_tail_dim_name],
+                    outputs=[class_ids_col_shape_name],
+                    options={
+                        "axis": 0,
+                        "fusedActivationFunction": "NONE",
+                    },
+                )
             )
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
                     inputs=[selected_class_ids_valid_name, class_ids_col_shape_name],
                     outputs=[class_ids_col_name],
-                    options={"newShape": [-1, 1]},
+                    options={},
                 )
             )
         elif class_id_value is not None and int(class_id_value) != 0:

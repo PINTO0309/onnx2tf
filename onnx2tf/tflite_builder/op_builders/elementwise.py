@@ -1274,9 +1274,14 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
         cols = int(rows)
     elif col_known and not row_known:
         rows = int(cols)
-    if rows != cols or rows not in {2, 3}:
+    if rows != cols or rows < 1:
         raise NotImplementedError(
-            "Inverse currently supports only square matrix last dims [2,2] or [3,3] in "
+            "Inverse currently supports only square matrix last dims [N,N] with N >= 1 in "
+            f"flatbuffer_direct. op={node.name} input_shape={input_shape} input_signature={input_signature}"
+        )
+    if rows > 16:
+        raise NotImplementedError(
+            "Inverse currently supports matrix last dims up to [16,16] in "
             f"flatbuffer_direct. op={node.name} input_shape={input_shape} input_signature={input_signature}"
         )
 
@@ -1373,6 +1378,301 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
             )
         )
         return out_name
+
+    if cols > 3:
+        np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
+        prefix_ones = [1 for _ in prefix_shape]
+        matrix_rank_shape = prefix_ones + [rows, cols]
+        row_selector_shape = prefix_ones + [rows, 1]
+
+        identity = np.eye(rows, dtype=np_dtype).reshape(matrix_rank_shape)
+        if len(prefix_shape) > 0:
+            identity = np.tile(identity, prefix_shape + [1, 1])
+        identity_name = ctx.add_const_tensor(
+            f"{compute_output_name}_inverse_identity",
+            identity.astype(np_dtype),
+        )
+
+        eps_name = _add_scalar_const(
+            ctx,
+            f"{compute_output_name}_inverse_eps",
+            float(1e-6),
+            compute_dtype,
+        )
+
+        def _slice_matrix_row(src_name: str, row: int, suffix: str) -> str:
+            begin = [0 for _ in range(rank)]
+            size = [-1 for _ in range(rank)]
+            begin[-2] = int(row)
+            size[-2] = 1
+            begin_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_begin",
+                np.asarray(begin, dtype=np.int32),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_size",
+                np.asarray(size, dtype=np.int32),
+            )
+            out_name = ctx.add_intermediate_tensor(
+                f"{compute_output_name}_inverse_{suffix}",
+                dtype=compute_dtype,
+                shape=row_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[src_name, begin_name, size_name],
+                    outputs=[out_name],
+                )
+            )
+            return out_name
+
+        def _slice_matrix_col(src_name: str, col: int, suffix: str) -> str:
+            begin = [0 for _ in range(rank)]
+            size = [-1 for _ in range(rank)]
+            begin[-1] = int(col)
+            size[-1] = 1
+            begin_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_begin",
+                np.asarray(begin, dtype=np.int32),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_size",
+                np.asarray(size, dtype=np.int32),
+            )
+            out_name = ctx.add_intermediate_tensor(
+                f"{compute_output_name}_inverse_{suffix}",
+                dtype=compute_dtype,
+                shape=prefix_shape + [rows, 1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[src_name, begin_name, size_name],
+                    outputs=[out_name],
+                )
+            )
+            return out_name
+
+        def _slice_matrix_scalar(src_name: str, row: int, col: int, suffix: str) -> str:
+            begin = [0 for _ in range(rank)]
+            size = [-1 for _ in range(rank)]
+            begin[-2] = int(row)
+            begin[-1] = int(col)
+            size[-2] = 1
+            size[-1] = 1
+            begin_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_begin",
+                np.asarray(begin, dtype=np.int32),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_{suffix}_size",
+                np.asarray(size, dtype=np.int32),
+            )
+            out_name = ctx.add_intermediate_tensor(
+                f"{compute_output_name}_inverse_{suffix}",
+                dtype=compute_dtype,
+                shape=scalar_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[src_name, begin_name, size_name],
+                    outputs=[out_name],
+                )
+            )
+            return out_name
+
+        def _binary_tensor(
+            op_type: str,
+            lhs: str,
+            rhs: str,
+            shape: list[int],
+            suffix: str,
+        ) -> str:
+            out_name = ctx.add_intermediate_tensor(
+                f"{compute_output_name}_inverse_{suffix}",
+                dtype=compute_dtype,
+                shape=shape,
+            )
+            options = (
+                {"fusedActivationFunction": "NONE"}
+                if str(op_type) in {"ADD", "SUB", "MUL", "DIV"}
+                else {}
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type=op_type,
+                    inputs=[lhs, rhs],
+                    outputs=[out_name],
+                    options=options,
+                )
+            )
+            return out_name
+
+        def _batch_matmul(lhs: str, rhs: str, suffix: str) -> str:
+            out_name = ctx.add_intermediate_tensor(
+                f"{compute_output_name}_inverse_{suffix}",
+                dtype=compute_dtype,
+                shape=matrix_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="BATCH_MATMUL",
+                    inputs=[lhs, rhs],
+                    outputs=[out_name],
+                    options={
+                        "adjX": False,
+                        "adjY": False,
+                        "asymmetricQuantizeInputs": False,
+                    },
+                )
+            )
+            return out_name
+
+        matrix_state = str(compute_input_name)
+        inverse_state = str(identity_name)
+        for row_idx in range(rows):
+            row_mask_arr = np.zeros(row_selector_shape, dtype=np_dtype)
+            row_mask_arr[..., int(row_idx), 0] = np_dtype(1.0)
+            row_mask_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_rowmask_{row_idx}",
+                row_mask_arr,
+            )
+
+            elim_mask_arr = np.ones(row_selector_shape, dtype=np_dtype)
+            elim_mask_arr[..., int(row_idx), 0] = np_dtype(0.0)
+            elim_mask_name = ctx.add_const_tensor(
+                f"{compute_output_name}_inverse_elimmask_{row_idx}",
+                elim_mask_arr,
+            )
+
+            row_a = _slice_matrix_row(matrix_state, row_idx, f"iter{row_idx}_row_a")
+            row_inv = _slice_matrix_row(inverse_state, row_idx, f"iter{row_idx}_row_inv")
+            pivot = _slice_matrix_scalar(matrix_state, row_idx, row_idx, f"iter{row_idx}_pivot")
+            pivot_safe = _binary_tensor(
+                "ADD",
+                pivot,
+                eps_name,
+                scalar_shape,
+                f"iter{row_idx}_pivot_safe",
+            )
+
+            row_a_norm = _binary_tensor(
+                "DIV",
+                row_a,
+                pivot_safe,
+                row_shape,
+                f"iter{row_idx}_row_a_norm",
+            )
+            row_inv_norm = _binary_tensor(
+                "DIV",
+                row_inv,
+                pivot_safe,
+                row_shape,
+                f"iter{row_idx}_row_inv_norm",
+            )
+
+            delta_row_a = _binary_tensor(
+                "SUB",
+                row_a_norm,
+                row_a,
+                row_shape,
+                f"iter{row_idx}_delta_row_a",
+            )
+            delta_row_inv = _binary_tensor(
+                "SUB",
+                row_inv_norm,
+                row_inv,
+                row_shape,
+                f"iter{row_idx}_delta_row_inv",
+            )
+
+            row_update_a = _batch_matmul(
+                row_mask_name,
+                delta_row_a,
+                f"iter{row_idx}_row_update_a",
+            )
+            row_update_inv = _batch_matmul(
+                row_mask_name,
+                delta_row_inv,
+                f"iter{row_idx}_row_update_inv",
+            )
+
+            matrix_norm = _binary_tensor(
+                "ADD",
+                matrix_state,
+                row_update_a,
+                matrix_shape,
+                f"iter{row_idx}_matrix_norm",
+            )
+            inverse_norm = _binary_tensor(
+                "ADD",
+                inverse_state,
+                row_update_inv,
+                matrix_shape,
+                f"iter{row_idx}_inverse_norm",
+            )
+
+            factor_col = _slice_matrix_col(
+                matrix_norm,
+                row_idx,
+                f"iter{row_idx}_factor_col",
+            )
+            factor_col_masked = _binary_tensor(
+                "MUL",
+                factor_col,
+                elim_mask_name,
+                prefix_shape + [rows, 1],
+                f"iter{row_idx}_factor_col_masked",
+            )
+
+            elim_matrix = _batch_matmul(
+                factor_col_masked,
+                row_a_norm,
+                f"iter{row_idx}_elim_matrix",
+            )
+            elim_inverse = _batch_matmul(
+                factor_col_masked,
+                row_inv_norm,
+                f"iter{row_idx}_elim_inverse",
+            )
+
+            matrix_state = _binary_tensor(
+                "SUB",
+                matrix_norm,
+                elim_matrix,
+                matrix_shape,
+                f"iter{row_idx}_matrix_state",
+            )
+            inverse_state = _binary_tensor(
+                "SUB",
+                inverse_norm,
+                elim_inverse,
+                matrix_shape,
+                f"iter{row_idx}_inverse_state",
+            )
+
+        final_shape_name = ctx.add_const_tensor(
+            f"{compute_output_name}_inverse_final_shape",
+            np.asarray(matrix_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[inverse_state, final_shape_name],
+                outputs=[compute_output_name],
+                options={"newShape": [int(v) for v in matrix_shape]},
+            )
+        )
+        _finalize_float_compute_output(
+            ctx=ctx,
+            compute_output_name=compute_output_name,
+            output_name=output_name,
+            compute_dtype=compute_dtype,
+            output_dtype=output_dtype,
+        )
+        return
 
     if cols == 2:
         a00 = _slice_matrix_entry(0, 0)
