@@ -31,9 +31,15 @@ def _try_build_generic_two_input_einsum(
     if _einsum_has_duplicate_labels(lhs) or _einsum_has_duplicate_labels(rhs) or _einsum_has_duplicate_labels(out):
         return False
 
-    # Keep the existing rank-2 matmul/fully-connected path for performance.
+    # Keep the existing rank-2 matmul/fully-connected path for pure matmul-style equations.
     if len(lhs) == 2 and len(rhs) == 2 and len(out) == 2:
-        return False
+        is_matmul_style = (
+            lhs[1] == rhs[0]
+            and out[0] == lhs[0]
+            and out[1] == rhs[1]
+        )
+        if is_matmul_style:
+            return False
 
     out_set = set(out)
     lhs_set = set(lhs)

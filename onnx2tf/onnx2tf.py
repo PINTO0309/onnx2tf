@@ -4634,6 +4634,8 @@ def convert(
                     break
             if direct_error is not None:
                 raise direct_error
+        except NotImplementedError:
+            raise
         except Exception as ex:
             raise RuntimeError(
                 'flatbuffer_direct fast path failed.'
