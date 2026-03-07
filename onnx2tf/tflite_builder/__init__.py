@@ -110,6 +110,7 @@ def _build_export_progress_labels(
     output_dynamic_range_quantized_tflite: bool,
     output_integer_quantized_tflite: bool,
     output_weights: bool,
+    output_saved_model_from_model_ir: bool,
 ) -> List[str]:
     labels: List[str] = [
         "tensor correspondence report",
@@ -121,9 +122,12 @@ def _build_export_progress_labels(
     labels.extend(
         [
             "write float32 tflite",
+            "write saved_model",
             "write float16 tflite",
         ]
     )
+    if not output_saved_model_from_model_ir:
+        labels.remove("write saved_model")
     if output_dynamic_range_quantized_tflite:
         labels.append("write dynamic range quant tflite")
     if output_integer_quantized_tflite:
@@ -245,6 +249,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     )
     output_integer_quantized_tflite = bool(
         kwargs.get("output_integer_quantized_tflite", False)
+    )
+    output_saved_model_from_model_ir = bool(
+        kwargs.get("output_saved_model_from_model_ir", False)
     )
     enable_accumulation_type_float16 = bool(
         kwargs.get("enable_accumulation_type_float16", False)
@@ -450,6 +457,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=output_integer_quantized_tflite,
         output_weights=output_weights,
+        output_saved_model_from_model_ir=output_saved_model_from_model_ir,
     )
     export_progress_total = int(len(export_progress_labels))
     export_progress_step = 0
@@ -596,6 +604,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enable_accumulation_type_float16=enable_accumulation_type_float16,
         )
         float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
+        saved_model_path = None
         float32_write_timing: Dict[str, Any] = {}
         write_model_file(
             schema_tflite=schema_tflite,
@@ -612,6 +621,17 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+
+        if output_saved_model_from_model_ir:
+            _set_export_progress_desc("write saved_model")
+            from onnx2tf.tflite_builder.saved_model_exporter import (
+                export_saved_model_from_model_ir,
+            )
+            saved_model_path = export_saved_model_from_model_ir(
+                model_ir=model_ir_fp32,
+                output_folder_path=output_folder_path,
+            )
+            _advance_export_progress()
 
         _set_export_progress_desc("write float16 tflite")
         model_ir_fp16 = clone_model_ir_with_float16(model_ir)
@@ -889,6 +909,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         "float32_tflite_path": float32_path,
         "float16_tflite_path": float16_path,
     }
+    if saved_model_path is not None:
+        outputs["saved_model_path"] = str(saved_model_path)
     if len(write_timing_report) > 0:
         outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:

@@ -362,7 +362,7 @@ def _make_einsum_nonconst_rhs_model() -> onnx.ModelProto:
 
 
 def _make_einsum_custom_candidate_model() -> onnx.ModelProto:
-    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 2])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
     z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 3])
     node = helper.make_node(
@@ -370,9 +370,24 @@ def _make_einsum_custom_candidate_model() -> onnx.ModelProto:
         ["x", "y"],
         ["z"],
         name="EinsumCustomNode",
-        equation="ij,jk->kj",
+        equation="ii,jk->kj",
     )
     graph = helper.make_graph([node], "einsum_custom_candidate_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_transposed_output_builtin_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumTransposedOutputNode",
+        equation="ij,jk->kj",
+    )
+    graph = helper.make_graph([node], "einsum_transposed_output_builtin_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -793,6 +808,20 @@ def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
     assert any(
         node["onnx_op"] == "Einsum" and node.get("dispatch_mode") == "builtin"
         for node in builtin_report["graph_node_reports"]
+    )
+
+    transposed_builtin_report = build_op_coverage_report(
+        onnx_graph=_make_einsum_transposed_output_builtin_model(),
+        output_file_name="einsum_transposed_output_builtin_snapshot",
+        allow_custom_ops=True,
+        custom_op_allowlist=["Einsum"],
+    )
+    assert transposed_builtin_report["unsupported_reason_counts"] == {}
+    assert transposed_builtin_report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert transposed_builtin_report["graph_custom_ops"] == []
+    assert any(
+        node["onnx_op"] == "Einsum" and node.get("dispatch_mode") == "builtin"
+        for node in transposed_builtin_report["graph_node_reports"]
     )
 
 

@@ -427,12 +427,24 @@ def _is_likely_image_tensor_shape(shape: Tuple[int, ...]) -> bool:
     return (c_first in (1, 3, 4)) or (c_last in (1, 3, 4))
 
 
+def _is_likely_nchw_image_tensor_shape(shape: Tuple[int, ...]) -> bool:
+    if len(shape) != 4:
+        return False
+    c_first = int(shape[1]) if int(shape[1]) > 0 else -1
+    c_last = int(shape[3]) if int(shape[3]) > 0 else -1
+    return (c_first in (1, 3, 4)) and (c_last not in (1, 3, 4))
+
+
 def _resolve_float_seeded_distribution(*, shape: Tuple[int, ...]) -> str:
     env_value = str(
         os.environ.get("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", "auto")
     ).strip().lower()
     if env_value in {"", "auto"}:
-        # Most image models expect normalized non-negative inputs.
+        # For channel-last image tensors, use non-negative inputs by default.
+        # For channel-first image tensors, use normal distribution to avoid
+        # persistent positive-bias evaluation artifacts on some models.
+        if _is_likely_nchw_image_tensor_shape(shape):
+            return "normal"
         if _is_likely_image_tensor_shape(shape):
             return "uniform_0_1"
         return "normal"

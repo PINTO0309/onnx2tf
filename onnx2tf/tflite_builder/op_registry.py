@@ -4533,8 +4533,14 @@ def _validate_einsum(node: Any, ctx: Any) -> None:
         if out == "":
             return False
         if len(lhs) == 2 and len(rhs) == 2 and len(out) == 2:
-            # Keep existing rank-2 matmul/fc validation path.
-            return False
+            # Keep the existing rank-2 matmul/fc validation path for pure matmul-style equations.
+            is_matmul_style = (
+                lhs[1] == rhs[0]
+                and out[0] == lhs[0]
+                and out[1] == rhs[1]
+            )
+            if is_matmul_style:
+                return False
         if len(set(lhs)) != len(lhs) or len(set(rhs)) != len(rhs) or len(set(out)) != len(out):
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",

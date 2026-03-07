@@ -176,7 +176,6 @@ def _convert(
     eval_split_fail_on_threshold: bool = False,
     auto_split_tflite_by_size: bool = False,
     report_op_coverage: bool = False,
-    flatbuffer_direct_fallback_to_tf_converter: bool = False,
     flatbuffer_direct_allow_custom_ops: bool = False,
     flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
     auto_split_max_size: str | int | None = None,
@@ -207,7 +206,6 @@ def _convert(
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
         auto_split_tflite_by_size=auto_split_tflite_by_size,
         report_op_coverage=report_op_coverage,
-        flatbuffer_direct_fallback_to_tf_converter=flatbuffer_direct_fallback_to_tf_converter,
         flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         auto_split_max_size=auto_split_max_size,
@@ -5926,7 +5924,7 @@ def _make_einsum_model() -> onnx.ModelProto:
 
 
 def _make_einsum_custom_model() -> onnx.ModelProto:
-    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 2])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
     z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 3])
     node = helper.make_node(
@@ -5934,9 +5932,24 @@ def _make_einsum_custom_model() -> onnx.ModelProto:
         ["x", "y"],
         ["z"],
         name="EinsumCustomNode",
-        equation="ij,jk->kj",
+        equation="ii,jk->kj",
     )
     graph = helper.make_graph([node], "einsum_custom_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_einsum_transposed_output_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Einsum",
+        ["x", "y"],
+        ["z"],
+        name="EinsumTransposedOutputNode",
+        equation="ij,jk->kj",
+    )
+    graph = helper.make_graph([node], "einsum_transposed_output_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -31764,27 +31777,33 @@ def test_flatbuffer_direct_einsum_nonconst_rhs_builtin() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
-def test_flatbuffer_direct_fallback_to_tf_converter_smoke() -> None:
+def test_flatbuffer_direct_einsum_transposed_output_builtin() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        model = _make_elu_model()
-        model_path = _save_model(tmpdir, "elu_fallback", model)
+        model = _make_einsum_transposed_output_model()
+        model_path = _save_model(tmpdir, "einsum_transposed_output_builtin", model)
         out_dir = os.path.join(tmpdir, "out")
-        _convert(
+        tflite_path = _convert(
             model_path,
             out_dir,
             "flatbuffer_direct",
-            flatbuffer_direct_fallback_to_tf_converter=True,
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["Einsum"],
             report_op_coverage=True,
         )
+        assert os.path.isfile(tflite_path)
+        custom_codes = _collect_custom_codes(tflite_path)
+        assert "ONNX_EINSUM" not in custom_codes
 
-        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float32.tflite"))
-        assert os.path.isfile(os.path.join(out_dir, "elu_fallback_float16.tflite"))
-        report_path = os.path.join(out_dir, "elu_fallback_op_coverage_report.json")
+        report_path = os.path.join(out_dir, "einsum_transposed_output_builtin_op_coverage_report.json")
         assert os.path.isfile(report_path)
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
-        assert report["conversion_error"] is None
-        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert "Einsum" not in report["graph_custom_ops"]
+        assert any(
+            r["onnx_op"] == "Einsum" and r["dispatch_mode"] == "builtin"
+            for r in report["graph_node_reports"]
+        )
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")

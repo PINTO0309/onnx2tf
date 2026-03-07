@@ -21,6 +21,7 @@ package-lock.json
 saved_model/
 node_modules/
 tmp_*/
+tflite2sm_*/
 
 .act.secrets
 .act.env
