@@ -654,8 +654,6 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - psutil==5.9.5
 - ml_dtypes==0.5.1
 - flatbuffers==25.12.19
-- Bundled TFLite schema artifacts are used for `-coion` (`--copy_onnx_input_output_names_to_tflite`).
-  No `flatbuffers-compiler`/`flatc` installation is required for normal onnx2tf conversion.
 
 ## Sample Usage
 ### 1. Install
