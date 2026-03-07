@@ -31,20 +31,12 @@ def _prefer_int32_index_output_dtype(
     requested_dtype: str,
 ) -> str:
     dtype = str(requested_dtype).upper()
-    if dtype == "INT32":
-        return "INT32"
-    if dtype == "UINT32":
-        return "UINT32"
-    # LiteRT.js cannot consume 64-bit integers; prefer 32-bit index-like outputs.
-    preferred_dtype = "INT32"
-    if dtype == "UINT64":
-        preferred_dtype = "UINT32"
     tensor = ctx.model_ir.tensors.get(tensor_name, None)
     if tensor is not None:
-        tensor.dtype = preferred_dtype
+        tensor.dtype = dtype
     if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
-        ctx.dtype_map[str(tensor_name)] = preferred_dtype
-    return preferred_dtype
+        ctx.dtype_map[str(tensor_name)] = dtype
+    return dtype
 
 
 def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:

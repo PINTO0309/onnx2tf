@@ -1153,10 +1153,8 @@ def convert(
     eval_fail_on_threshold: Optional[bool] = False,
     eval_target_tflite: Optional[str] = 'float32',
     eval_compare_mode: Optional[str] = 'auto',
-    eval_split_models: Optional[bool] = False,
-    eval_split_reference: Optional[str] = 'unsplit_tflite',
+    eval_split_models: Optional[str] = None,
     eval_split_fail_on_threshold: Optional[bool] = False,
-    auto_split_tflite_by_size: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
     flatbuffer_direct_output_saved_model: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
@@ -1232,9 +1230,12 @@ def convert(
 
     input_tflite_file_path: Optional[str]
         Input tflite file path.\n
-        If specified, run tflite-direct SavedModel export mode.\n
-        In this mode, ONNX-dependent conversion options are rejected,\n
-        and -cotof performs SavedModel vs TFLite runtime comparison.
+        If specified, run tflite-direct import mode.\n
+        In this mode, ONNX-dependent conversion options are rejected.\n
+        By default it exports SavedModel from imported ModelIR,\n
+        and `--enable_auto_split_model` can also emit split TFLite artifacts.\n
+        When used with `--flatbuffer_direct_output_saved_model` and split,\n
+        partition SavedModels are emitted instead of a single root SavedModel.
 
     onnx_graph: Optional[onnx.ModelProto]
         onnx.ModelProto.\n
@@ -1318,20 +1319,19 @@ def convert(
         "raw": compare raw TFLite output tensors.\n
         Default: "auto"
 
-    eval_split_models: Optional[bool]
+    eval_split_models: Optional[str]
         Evaluate split tflite partitions (generated from split manifest)
-        by sequential execution.
-
-    eval_split_reference: Optional[str]
-        Reference for split evaluation.\n
-        "unsplit_tflite"(default) or "onnx"
+        by sequential execution.\n
+        "unsplit_tflite" compares against the unsplit/base TFLite model.\n
+        "onnx" compares against ONNX Runtime output.\n
+        Available only with `tflite_backend="flatbuffer_direct"` and
+        `enable_auto_split_model=True`.\n
+        This writes `*_split_accuracy_report.json`.\n
+        `*_accuracy_report.json` remains the unsplit base TFLite vs ONNX report.\n
+        Default: None
 
     eval_split_fail_on_threshold: Optional[bool]
         Fail conversion when split evaluation thresholds are not satisfied.
-
-    auto_split_tflite_by_size: Optional[bool]
-        Estimate flatbuffer size and generate split planning report
-        (`*_split_plan.json`) for flatbuffer_direct backend.
 
     report_op_coverage: Optional[bool]
         Generate ONNX OP coverage report (`*_op_coverage_report.json`) with
@@ -1339,7 +1339,11 @@ def convert(
 
     flatbuffer_direct_output_saved_model: Optional[bool]
         Export SavedModel directly from flatbuffer_direct ModelIR (float32 path)
-        without tf_converter fallback.
+        without tf_converter fallback.\n
+        When used together with split output, partition SavedModels are emitted
+        instead of a single root SavedModel.\n
+        With `check_onnx_tf_outputs_elementwise_close_full=True`, onnx2tf writes
+        `<model_name>_saved_model_validation_report.json`.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1684,6 +1688,8 @@ def convert(
     enable_auto_split_model: Optional[bool]
         Force auto split regardless of the ONNX file size.\n
         The target size is controlled by auto_split_max_size.\n
+        In flatbuffer_direct, this runs the ModelIR split planner and forces\n
+        split manifest generation.\n
         Default: False
 
     auto_split_max_size: Optional[Any]
@@ -1832,10 +1838,12 @@ def convert(
     eval_fail_on_threshold = bool(eval_fail_on_threshold)
     eval_target_tflite = str(eval_target_tflite).lower() if eval_target_tflite is not None else 'float32'
     eval_compare_mode = str(eval_compare_mode).lower() if eval_compare_mode is not None else 'auto'
-    eval_split_models = bool(eval_split_models)
-    eval_split_reference = str(eval_split_reference).lower() if eval_split_reference is not None else 'unsplit_tflite'
+    eval_split_models = (
+        str(eval_split_models).strip().lower()
+        if eval_split_models is not None
+        else None
+    )
     eval_split_fail_on_threshold = bool(eval_split_fail_on_threshold)
-    auto_split_tflite_by_size = bool(auto_split_tflite_by_size)
     report_op_coverage = bool(report_op_coverage)
     flatbuffer_direct_output_saved_model = bool(
         flatbuffer_direct_output_saved_model
@@ -1875,7 +1883,7 @@ def convert(
         sys.exit(1)
     tflite_split_max_bytes = int(tflite_split_max_bytes)
     tflite_split_target_bytes = int(tflite_split_target_bytes)
-    if auto_split_tflite_by_size and auto_split_max_size_specified:
+    if enable_auto_split_model:
         tflite_split_target_bytes = int(auto_split_max_size_bytes)
         if tflite_split_max_bytes < tflite_split_target_bytes:
             tflite_split_max_bytes = tflite_split_target_bytes
@@ -1915,10 +1923,10 @@ def convert(
             f'eval_compare_mode: {eval_compare_mode}'
         )
         sys.exit(1)
-    if eval_split_reference not in ['unsplit_tflite', 'onnx']:
+    if eval_split_models not in [None, 'unsplit_tflite', 'onnx']:
         error(
-            f'eval_split_reference must be one of ["unsplit_tflite", "onnx"]. ' +
-            f'eval_split_reference: {eval_split_reference}'
+            f'eval_split_models must be one of ["unsplit_tflite", "onnx"] or None. ' +
+            f'eval_split_models: {eval_split_models}'
         )
         sys.exit(1)
     if tflite_split_max_bytes <= 0:
@@ -1943,19 +1951,14 @@ def convert(
             'eval_with_onnx currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
-    if eval_split_models and tflite_backend != 'flatbuffer_direct':
+    if eval_split_models is not None and tflite_backend != 'flatbuffer_direct':
         error(
             'eval_split_models currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
-    if eval_split_models and not auto_split_tflite_by_size:
+    if eval_split_models is not None and not enable_auto_split_model:
         error(
-            'eval_split_models=True requires auto_split_tflite_by_size=True.'
-        )
-        sys.exit(1)
-    if auto_split_tflite_by_size and tflite_backend != 'flatbuffer_direct':
-        error(
-            'auto_split_tflite_by_size currently supports only tflite_backend="flatbuffer_direct".'
+            'eval_split_models requires enable_auto_split_model=True.'
         )
         sys.exit(1)
     if report_op_coverage and tflite_backend != 'flatbuffer_direct':
@@ -2000,17 +2003,14 @@ def convert(
             ('output_dynamic_range_quantized_tflite', bool(output_dynamic_range_quantized_tflite)),
             ('output_integer_quantized_tflite', bool(output_integer_quantized_tflite)),
             ('eval_with_onnx', bool(eval_with_onnx)),
-            ('eval_split_models', bool(eval_split_models)),
-            ('auto_split_tflite_by_size', bool(auto_split_tflite_by_size)),
+            ('eval_split_models', eval_split_models),
             ('report_op_coverage', bool(report_op_coverage)),
-            ('flatbuffer_direct_output_saved_model', bool(flatbuffer_direct_output_saved_model)),
             ('flatbuffer_direct_allow_custom_ops', bool(flatbuffer_direct_allow_custom_ops)),
             (
                 'flatbuffer_direct_custom_op_allowlist',
                 bool(flatbuffer_direct_custom_op_allowlist is not None and len(flatbuffer_direct_custom_op_allowlist) > 0),
             ),
             ('check_onnx_tf_outputs_elementwise_close', bool(check_onnx_tf_outputs_elementwise_close)),
-            ('enable_auto_split_model', bool(enable_auto_split_model)),
             ('check_gpu_delegate_compatibility', bool(check_gpu_delegate_compatibility)),
             ('auto_generate_json', bool(auto_generate_json)),
             ('auto_generate_json_on_error', bool(auto_generate_json_on_error)),
@@ -2064,6 +2064,7 @@ def convert(
         tflite_paths: Dict[str, str],
         source_label: str,
         contains_custom_ops: bool = False,
+        split_manifest_path: Optional[str] = None,
     ) -> None:
         if not run_onnx_tflite_output_check:
             return
@@ -2219,6 +2220,15 @@ def convert(
                 f'pass={report["evaluation_pass"]}'
             )
         )
+        if split_manifest_path is not None and str(split_manifest_path) != '':
+            info(
+                Color.YELLOW(
+                    'Note: *_accuracy_report.json compares the unsplit base float32 TFLite '
+                    'model against ONNX even when split output is enabled. '
+                    'Use --eval_split_models {unsplit_tflite|onnx} to evaluate split '
+                    'partitions sequentially.'
+                )
+            )
 
     def _run_saved_model_tflite_direct_check(
         *,
@@ -3163,6 +3173,76 @@ def convert(
                 f'source={source_label} path={saved_model_path} reason={inference_exception}'
             ) from inference_exception
 
+    def _maybe_run_saved_model_inference_check(
+        *,
+        saved_model_path: Optional[str],
+        float32_tflite_path: Optional[str] = None,
+        source_label: str,
+    ) -> None:
+        if not run_saved_model_inference_check:
+            return
+        normalized_saved_model_path = (
+            str(saved_model_path)
+            if saved_model_path is not None and str(saved_model_path) != ''
+            else None
+        )
+        if normalized_saved_model_path is None:
+            return
+        _run_saved_model_inference_check(
+            saved_model_path=normalized_saved_model_path,
+            float32_tflite_path=float32_tflite_path,
+            source_label=source_label,
+        )
+
+    def _maybe_run_split_saved_model_inference_check(
+        *,
+        split_manifest_path: Optional[str],
+        reference_tflite_path: Optional[str],
+        source_label: str,
+    ) -> None:
+        if not run_saved_model_inference_check:
+            return
+        normalized_manifest_path = (
+            str(split_manifest_path)
+            if split_manifest_path is not None and str(split_manifest_path) != ''
+            else None
+        )
+        normalized_reference_tflite_path = (
+            str(reference_tflite_path)
+            if reference_tflite_path is not None and str(reference_tflite_path) != ''
+            else None
+        )
+        if (
+            normalized_manifest_path is None
+            or normalized_reference_tflite_path is None
+        ):
+            return
+        from onnx2tf.tflite_builder.split_saved_model_evaluator import (
+            evaluate_split_saved_model_outputs,
+        )
+
+        report_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_saved_model_validation_report.json',
+        )
+        report = evaluate_split_saved_model_outputs(
+            split_manifest_path=normalized_manifest_path,
+            reference_tflite_path=normalized_reference_tflite_path,
+            output_report_path=report_path,
+            source_label=source_label,
+            rtol=eval_rtol,
+            atol=eval_atol,
+        )
+        info(
+            Color.GREEN(
+                'Split SavedModel validation report output complete! '
+                f'({report_path}) '
+                f'pass={report["overall_pass"]} '
+                f'matched={report["comparison"]["matched"]}/{report["comparison"]["total"]} '
+                f'max_abs={report["comparison"]["max_abs"]:.6g}'
+            )
+        )
+
     def _run_flatbuffer_direct_op_error_report(
         *,
         tflite_path: Optional[str],
@@ -3508,17 +3588,120 @@ def convert(
                 optimize_redundant_transpose_operators,
                 prune_identity_cast_operators,
             )
+            from onnx2tf.tflite_builder.model_writer import (
+                write_model_file,
+            )
             from onnx2tf.tflite_builder.saved_model_exporter import (
                 export_saved_model_from_model_ir,
+            )
+            from onnx2tf.tflite_builder.schema_loader import (
+                load_schema_module,
+            )
+            from onnx2tf.tflite_builder.split_planner import (
+                plan_contiguous_partitions_by_size,
+                write_split_model_files_and_manifest,
+                write_split_plan_report,
+            )
+            from onnx2tf.tflite_builder.split_saved_model_exporter import (
+                export_split_saved_models,
             )
             from onnx2tf.tflite_builder.tflite_importer import (
                 import_model_ir_from_tflite,
             )
+            from ai_edge_litert.interpreter import Interpreter
 
             model_ir = import_model_ir_from_tflite(
                 tflite_file_path=input_tflite_file_path,
                 output_folder_path=output_folder_path,
             )
+            if enable_auto_split_model:
+                schema_tflite = load_schema_module(output_folder_path)
+                split_plan_report = plan_contiguous_partitions_by_size(
+                    model_ir=model_ir,
+                    target_max_bytes=tflite_split_target_bytes,
+                    hard_max_bytes=tflite_split_max_bytes,
+                    schema_tflite=schema_tflite,
+                )
+                split_plan_report_path = write_split_plan_report(
+                    report=split_plan_report,
+                    output_report_path=os.path.join(
+                        output_folder_path,
+                        f'{output_file_name}_split_plan.json',
+                    ),
+                )
+
+                def _validate_split_tflite_loadable(tflite_path: str) -> None:
+                    interpreter = Interpreter(model_path=tflite_path)
+                    interpreter.allocate_tensors()
+
+                split_outputs = write_split_model_files_and_manifest(
+                    schema_tflite=schema_tflite,
+                    model_ir=model_ir,
+                    plan_report=split_plan_report,
+                    output_folder_path=output_folder_path,
+                    output_file_name=output_file_name,
+                    tflite_loader_validator=_validate_split_tflite_loadable,
+                )
+                base_tflite_path = os.path.join(
+                    output_folder_path,
+                    f'{output_file_name}.tflite',
+                )
+                write_model_file(
+                    schema_tflite=schema_tflite,
+                    model_ir=model_ir,
+                    output_tflite_path=base_tflite_path,
+                )
+
+                info(Color.GREEN(f'TFLite output complete! ({base_tflite_path})'))
+                info(Color.GREEN(f'Split plan report output complete! ({split_plan_report_path})'))
+                info(
+                    Color.GREEN(
+                        f'Split manifest output complete! '
+                        f'({split_outputs["split_manifest_path"]}) '
+                        f'partitions={split_outputs["split_partition_count"]}'
+                    )
+                )
+
+                if flatbuffer_direct_output_saved_model:
+                    split_saved_model_outputs = export_split_saved_models(
+                        model_ir=model_ir,
+                        split_manifest_path=split_outputs['split_manifest_path'],
+                        output_folder_path=output_folder_path,
+                        output_file_name=output_file_name,
+                    )
+                    info(
+                        Color.GREEN(
+                            'Split SavedModel output complete! '
+                            f'partitions={split_saved_model_outputs["split_saved_model_count"]}'
+                        )
+                    )
+                    _maybe_run_split_saved_model_inference_check(
+                        split_manifest_path=split_outputs['split_manifest_path'],
+                        reference_tflite_path=base_tflite_path,
+                        source_label='tflite_direct_input',
+                    )
+                else:
+                    model_ir_fp32 = clone_model_ir_with_float32(model_ir)
+                    prune_identity_cast_operators(
+                        model_ir_fp32,
+                        preserve_model_outputs=True,
+                    )
+                    optimize_redundant_transpose_operators(
+                        model_ir_fp32,
+                        preserve_model_outputs=True,
+                    )
+                    saved_model_path = export_saved_model_from_model_ir(
+                        model_ir=model_ir_fp32,
+                        output_folder_path=output_folder_path,
+                    )
+                    info(Color.GREEN(f'SavedModel output complete! ({saved_model_path})'))
+                    _run_saved_model_tflite_direct_check(
+                        saved_model_path=saved_model_path,
+                        float32_tflite_path=base_tflite_path,
+                        source_label='tflite_direct_input',
+                    )
+                return None
+
             model_ir_fp32 = clone_model_ir_with_float32(model_ir)
             prune_identity_cast_operators(
                 model_ir_fp32,
@@ -3807,7 +3990,7 @@ def convert(
     fuse_expanded_qdq_to_qdq(graph=graph)
 
     # Auto split model by estimated weight size
-    if auto_split_model:
+    if auto_split_model and tflite_backend != 'flatbuffer_direct':
         if input_names_to_interrupt_model_conversion or output_names_to_interrupt_model_conversion:
             error(
                 'Auto split cannot be used together with input_names_to_interrupt_model_conversion '
@@ -4100,9 +4283,7 @@ def convert(
                     'eval_target_tflite': eval_target_tflite,
                     'eval_compare_mode': eval_compare_mode,
                     'eval_split_models': eval_split_models,
-                    'eval_split_reference': eval_split_reference,
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
-                    'auto_split_tflite_by_size': auto_split_tflite_by_size,
                     'report_op_coverage': report_op_coverage,
                     'flatbuffer_direct_output_saved_model': flatbuffer_direct_output_saved_model,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
@@ -4525,12 +4706,15 @@ def convert(
     info('')
     info(Color.REVERSE(f'Model loaded'), '=' * 72)
 
+    split_plan_enabled = bool(auto_split_model)
+    force_split_manifest = bool(
+        tflite_backend == 'flatbuffer_direct' and auto_split_model
+    )
+
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
     flatbuffer_direct_fast_path_blockers = []
-    if auto_split_model:
-        flatbuffer_direct_fast_path_blockers.append('auto_split_model')
     if output_h5:
         flatbuffer_direct_fast_path_blockers.append('output_h5')
     if output_keras_v3:
@@ -4539,6 +4723,86 @@ def convert(
         flatbuffer_direct_fast_path_blockers.append('output_tfv1_pb')
     if disable_model_save:
         flatbuffer_direct_fast_path_blockers.append('disable_model_save')
+
+    def _log_flatbuffer_direct_split_outputs(
+        direct_outputs: Dict[str, Any],
+        *,
+        split_plan_requested: bool,
+        force_split_manifest: bool,
+        target_bytes: int,
+    ) -> None:
+        if not split_plan_requested:
+            return
+        if 'split_plan_report_path' not in direct_outputs:
+            raise RuntimeError(
+                'flatbuffer_direct split plan was requested but no report was generated.'
+            )
+        info(
+            Color.GREEN(
+                f'Split plan report output complete! '
+                f'({direct_outputs["split_plan_report_path"]})'
+            )
+        )
+        if 'split_manifest_path' in direct_outputs:
+            partition_count = int(direct_outputs.get('split_partition_count', 0))
+            if bool(direct_outputs.get('split_required_by_estimate', False)):
+                info(
+                    Color.GREEN(
+                        f'Split manifest output complete! '
+                        f'({direct_outputs["split_manifest_path"]}) '
+                        f'partitions={partition_count} [required_by_estimate]'
+                    )
+                )
+            elif force_split_manifest:
+                info(
+                    Color.GREEN(
+                        f'Split manifest output complete! '
+                        f'({direct_outputs["split_manifest_path"]}) '
+                        f'partitions={partition_count} [forced_by_enable_auto_split_model]'
+                    )
+                )
+                if partition_count <= 1:
+                    info(
+                        Color.GREEN(
+                            'Split planner completed with a single partition '
+                            '(model fits within the target size).'
+                        )
+                    )
+                else:
+                    info(
+                        Color.GREEN(
+                            'Split planner produced partition outputs even though '
+                            'split was not required by estimate.'
+                        )
+                    )
+                estimated_bytes = direct_outputs.get('split_plan_total_estimated_bytes', None)
+                if estimated_bytes is not None:
+                    info(
+                        Color.GREEN(
+                            f'Split target summary: estimated={estimated_bytes} '
+                            f'target={target_bytes}'
+                        )
+                    )
+            else:
+                info(
+                    Color.GREEN(
+                        f'Split manifest output complete! '
+                        f'({direct_outputs["split_manifest_path"]}) '
+                        f'partitions={partition_count}'
+                    )
+                )
+        elif bool(direct_outputs.get('split_required_by_estimate', False)):
+            raise RuntimeError(
+                'flatbuffer_direct split was required by estimate, '
+                'but split manifest was not generated.'
+            )
+        else:
+            info(
+                Color.GREEN(
+                    'Split manifest output skipped '
+                    '(model fits target size estimate and no forced split was requested).'
+                )
+            )
 
     if tflite_backend == 'flatbuffer_direct' and not flatbuffer_direct_fast_path_blockers:
         info('')
@@ -4567,7 +4831,7 @@ def convert(
                             output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                             output_integer_quantized_tflite=output_integer_quantized_tflite,
                             enable_accumulation_type_float16=enable_accumulation_type_float16,
-                            auto_split_tflite_by_size=auto_split_tflite_by_size,
+                            force_split_manifest=force_split_manifest,
                             report_op_coverage=report_op_coverage,
                             output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                             flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
@@ -4650,36 +4914,12 @@ def convert(
                         f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
                     )
                 )
-            if auto_split_tflite_by_size:
-                if 'split_plan_report_path' not in direct_outputs:
-                    raise RuntimeError(
-                        'flatbuffer_direct split plan was requested but no report was generated.'
-                    )
-                info(
-                    Color.GREEN(
-                        f'Split plan report output complete! '
-                        f'({direct_outputs["split_plan_report_path"]})'
-                    )
-                )
-                if bool(direct_outputs.get('split_required_by_estimate', False)):
-                    if 'split_manifest_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct split was required by estimate, '
-                            'but split manifest was not generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'Split manifest output complete! '
-                            f'({direct_outputs["split_manifest_path"]}) '
-                            f'partitions={direct_outputs.get("split_partition_count", "0")}'
-                        )
-                    )
-                else:
-                    info(
-                        Color.GREEN(
-                            'Split manifest output skipped (model fits target size estimate).'
-                        )
-                    )
+            _log_flatbuffer_direct_split_outputs(
+                direct_outputs,
+                split_plan_requested=split_plan_enabled,
+                force_split_manifest=force_split_manifest,
+                target_bytes=tflite_split_target_bytes,
+            )
             if report_op_coverage:
                 if 'op_coverage_report_path' not in direct_outputs:
                     raise RuntimeError(
@@ -4779,17 +5019,25 @@ def convert(
                 tflite_paths=direct_eval_paths,
                 source_label='flatbuffer_direct',
                 contains_custom_ops=direct_contains_custom_ops,
+                split_manifest_path=direct_outputs.get('split_manifest_path', None),
             )
-            _run_saved_model_inference_check(
-                saved_model_path=direct_outputs.get('saved_model_path', None),
-                float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                source_label='flatbuffer_direct',
-            )
-            if eval_split_models:
+            if 'split_saved_model_dirs' in direct_outputs:
+                _maybe_run_split_saved_model_inference_check(
+                    split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                    reference_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                    source_label='flatbuffer_direct',
+                )
+            else:
+                _maybe_run_saved_model_inference_check(
+                    saved_model_path=direct_outputs.get('saved_model_path', None),
+                    float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                    source_label='flatbuffer_direct',
+                )
+            if eval_split_models is not None:
                 if 'split_manifest_path' not in direct_outputs:
                     raise RuntimeError(
-                        'eval_split_models=True but split manifest is not available. '
-                        'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
+                        'eval_split_models is set but split manifest is not available. '
+                        'Ensure enable_auto_split_model=True so split manifest output is generated.'
                     )
                 from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
                 split_accuracy_report_path = os.path.join(
@@ -4797,12 +5045,12 @@ def convert(
                     f'{output_file_name}_split_accuracy_report.json',
                 )
                 reference_tflite_path = None
-                if eval_split_reference == 'unsplit_tflite':
+                if eval_split_models == 'unsplit_tflite':
                     reference_tflite_path = direct_outputs['float32_tflite_path']
                 split_report = evaluate_split_manifest_outputs(
                     onnx_graph=onnx_graph,
                     split_manifest_path=direct_outputs['split_manifest_path'],
-                    reference_mode=eval_split_reference,
+                    reference_mode=eval_split_models,
                     reference_tflite_path=reference_tflite_path,
                     output_report_path=split_accuracy_report_path,
                     num_samples=eval_num_samples,
@@ -5287,7 +5535,7 @@ def convert(
                                     output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                                     output_integer_quantized_tflite=output_integer_quantized_tflite,
                                     enable_accumulation_type_float16=enable_accumulation_type_float16,
-                                    auto_split_tflite_by_size=auto_split_tflite_by_size,
+                                    force_split_manifest=force_split_manifest,
                                     report_op_coverage=report_op_coverage,
                                     output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                     flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
@@ -5394,12 +5642,20 @@ def convert(
                             tflite_paths=direct_eval_paths,
                             source_label='flatbuffer_direct',
                             contains_custom_ops=direct_contains_custom_ops,
+                            split_manifest_path=direct_outputs.get('split_manifest_path', None),
                         )
-                        _run_saved_model_inference_check(
-                            saved_model_path=direct_outputs.get('saved_model_path', None),
-                            float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                            source_label='flatbuffer_direct',
-                        )
+                        if 'split_saved_model_dirs' in direct_outputs:
+                            _maybe_run_split_saved_model_inference_check(
+                                split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                                reference_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                                source_label='flatbuffer_direct',
+                            )
+                        else:
+                            _maybe_run_saved_model_inference_check(
+                                saved_model_path=direct_outputs.get('saved_model_path', None),
+                                float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                                source_label='flatbuffer_direct',
+                            )
                     return None
                 except Exception:
                     raise
@@ -5719,7 +5975,7 @@ def convert(
                                 output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
                                 output_integer_quantized_tflite=output_integer_quantized_tflite,
                                 enable_accumulation_type_float16=enable_accumulation_type_float16,
-                                auto_split_tflite_by_size=auto_split_tflite_by_size,
+                                force_split_manifest=force_split_manifest,
                                 report_op_coverage=report_op_coverage,
                                 output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                 flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
@@ -5800,38 +6056,12 @@ def convert(
                             f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
                         )
                     )
-                if auto_split_tflite_by_size:
-                    if 'split_plan_report_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct split plan was requested but no report was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'Split plan report output complete! '
-                            f'({direct_outputs["split_plan_report_path"]})'
-                        )
-                    )
-                    if bool(direct_outputs.get('split_required_by_estimate', False)):
-                        if 'split_manifest_path' not in direct_outputs:
-                            raise RuntimeError(
-                                'flatbuffer_direct split was required by estimate, '
-                                'but split manifest was not generated.'
-                            )
-                        info(
-                            Color.GREEN(
-                                f'Split manifest output complete! '
-                                f'({direct_outputs["split_manifest_path"]}) '
-                                f'partitions={direct_outputs.get("split_partition_count", "0")}'
-                            )
-                        )
-                    else:
-                        info(
-                            Color.GREEN(
-                                'Split output was not required by estimate. '
-                                f'estimated={direct_outputs.get("split_plan_total_estimated_bytes", 0)} '
-                                f'target={tflite_split_target_bytes}'
-                            )
-                        )
+                _log_flatbuffer_direct_split_outputs(
+                    direct_outputs,
+                    split_plan_requested=split_plan_enabled,
+                    force_split_manifest=force_split_manifest,
+                    target_bytes=tflite_split_target_bytes,
+                )
                 if report_op_coverage:
                     if 'op_coverage_report_path' not in direct_outputs:
                         raise RuntimeError(
@@ -5938,17 +6168,25 @@ def convert(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',
                     contains_custom_ops=direct_contains_custom_ops,
+                    split_manifest_path=direct_outputs.get('split_manifest_path', None),
                 )
-                _run_saved_model_inference_check(
-                    saved_model_path=direct_outputs.get('saved_model_path', None),
-                    float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                    source_label='flatbuffer_direct',
-                )
-                if eval_split_models:
+                if 'split_saved_model_dirs' in direct_outputs:
+                    _maybe_run_split_saved_model_inference_check(
+                        split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                        reference_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                        source_label='flatbuffer_direct',
+                    )
+                else:
+                    _maybe_run_saved_model_inference_check(
+                        saved_model_path=direct_outputs.get('saved_model_path', None),
+                        float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
+                        source_label='flatbuffer_direct',
+                    )
+                if eval_split_models is not None:
                     if 'split_manifest_path' not in direct_outputs:
                         raise RuntimeError(
-                            'eval_split_models=True but split manifest is not available. '
-                            'Ensure auto_split_tflite_by_size=True and split is required by estimate.'
+                            'eval_split_models is set but split manifest is not available. '
+                            'Ensure enable_auto_split_model=True so split manifest output is generated.'
                         )
                     from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
                     split_accuracy_report_path = os.path.join(
@@ -5956,12 +6194,12 @@ def convert(
                         f'{output_file_name}_split_accuracy_report.json',
                     )
                     reference_tflite_path = None
-                    if eval_split_reference == 'unsplit_tflite':
+                    if eval_split_models == 'unsplit_tflite':
                         reference_tflite_path = direct_outputs['float32_tflite_path']
                     split_report = evaluate_split_manifest_outputs(
                         onnx_graph=onnx_graph,
                         split_manifest_path=direct_outputs['split_manifest_path'],
-                        reference_mode=eval_split_reference,
+                        reference_mode=eval_split_models,
                         reference_tflite_path=reference_tflite_path,
                         output_report_path=split_accuracy_report_path,
                         num_samples=eval_num_samples,
@@ -6909,7 +7147,7 @@ def main():
         '-it',
         '--input_tflite_file_path',
         type=str,
-        help='Input tflite file path for direct SavedModel export.'
+        help='Input tflite file path for direct import mode.'
     )
     iV_group.add_argument(
         '-V',
@@ -7071,31 +7309,21 @@ def main():
     )
     parser.add_argument(
         '--eval_split_models',
-        action='store_true',
-        help=\
-            'Evaluate split partitions sequentially using split manifest output.'
-    )
-    parser.add_argument(
-        '--eval_split_reference',
         type=str,
         choices=['unsplit_tflite', 'onnx'],
-        default='unsplit_tflite',
+        default=None,
         help=\
-            'Reference for split evaluation. \n' +
-            '"unsplit_tflite"(default) or "onnx".'
+            'Evaluate split partitions sequentially using split manifest output. \n' +
+            'Specify "unsplit_tflite" to compare against the unsplit/base TFLite model, \n' +
+            'or "onnx" to compare against ONNX Runtime output. \n' +
+            'Writes *_split_accuracy_report.json. \n' +
+            '*_accuracy_report.json remains the unsplit base float32 TFLite vs ONNX report.'
     )
     parser.add_argument(
         '--eval_split_fail_on_threshold',
         action='store_true',
         help=\
             'Return failure when split-model evaluation thresholds are not satisfied.'
-    )
-    parser.add_argument(
-        '--auto_split_tflite_by_size',
-        action='store_true',
-        help=\
-            'Estimate flatbuffer split partitions and output *_split_plan.json. \n' +
-            'Currently available only with --tflite_backend flatbuffer_direct.'
     )
     parser.add_argument(
         '--report_op_coverage',
@@ -7109,7 +7337,8 @@ def main():
         '--flatbuffer_direct_output_saved_model',
         action='store_true',
         help=\
-            'Output SavedModel directly from flatbuffer_direct ModelIR (float32).'
+            'Output SavedModel directly from flatbuffer_direct ModelIR (float32). \n' +
+            'With split output, partition SavedModels are emitted instead of a single root SavedModel.'
     )
     parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
@@ -7443,7 +7672,9 @@ def main():
         action='store_true',
         help=\
             'Force auto split regardless of the ONNX file size. \n' +
-            'Uses --auto_split_max_size as the target partition size.'
+            'Uses --auto_split_max_size as the target partition size. \n' +
+            'With --tflite_backend flatbuffer_direct, this forces the shared ModelIR split planner \n' +
+            'and split manifest output even when the estimated size fits in one partition.'
     )
     parser.add_argument(
         '-asms',
@@ -7454,7 +7685,7 @@ def main():
             'Target maximum size per partition when auto-split is triggered or forced. \n' +
             'Supported units: KB, MB, GB (e.g. 900MB, 1GB, 1536KB). \n' +
             'Bare numbers are treated as MB. \n' +
-            'When specified, this value is also used as the target size for --auto_split_tflite_by_size. \n' +
+            'When specified, this value is also used as the target size for --enable_auto_split_model. \n' +
             'Default: 1GB'
     )
     parser.add_argument(
@@ -7862,9 +8093,7 @@ def main():
         eval_target_tflite=args.eval_target_tflite,
         eval_compare_mode=args.eval_compare_mode,
         eval_split_models=args.eval_split_models,
-        eval_split_reference=args.eval_split_reference,
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
-        auto_split_tflite_by_size=args.auto_split_tflite_by_size,
         report_op_coverage=args.report_op_coverage,
         flatbuffer_direct_output_saved_model=args.flatbuffer_direct_output_saved_model,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,

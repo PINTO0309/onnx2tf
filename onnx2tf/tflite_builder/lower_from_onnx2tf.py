@@ -8,6 +8,7 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
+from onnx2tf.utils.common_functions import check_model_has_external_data
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_registry import (
     NodeValidationError,
@@ -405,6 +406,9 @@ def _graph_has_missing_rank_info(onnx_graph: onnx.ModelProto) -> bool:
 
 
 def _infer_shapes_with_fallback(onnx_graph: onnx.ModelProto) -> onnx.ModelProto:
+    if check_model_has_external_data(onnx_graph):
+        return onnx_graph
+
     inferred_graph = onnx_graph
     try:
         inferred_graph = onnx.shape_inference.infer_shapes(inferred_graph)

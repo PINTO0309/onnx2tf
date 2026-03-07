@@ -1,7 +1,9 @@
 import numpy as np
 import onnx
+import pytest
 from onnx import TensorProto, helper, numpy_helper
 
+import onnx2tf.tflite_builder.lower_from_onnx2tf as lower_from_onnx2tf
 from onnx2tf.tflite_builder.lower_from_onnx2tf import build_op_coverage_report
 
 
@@ -11,6 +13,31 @@ def _make_add_model() -> onnx.ModelProto:
     z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3])
     node = helper.make_node("Add", ["x", "y"], ["z"], name="AddNode")
     graph = helper.make_graph([node], "add_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _mark_tensor_external_data(
+    tensor: onnx.TensorProto,
+    *,
+    location: str,
+) -> onnx.TensorProto:
+    tensor.data_location = onnx.TensorProto.EXTERNAL
+    del tensor.external_data[:]
+    location_entry = tensor.external_data.add()
+    location_entry.key = "location"
+    location_entry.value = str(location)
+    return tensor
+
+
+def _make_external_data_initializer_add_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    w = _mark_tensor_external_data(
+        numpy_helper.from_array(np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32), name="w"),
+        location="weights.bin",
+    )
+    node = helper.make_node("Add", ["x", "w"], ["y"], name="ExternalAddNode")
+    graph = helper.make_graph([node], "external_add_graph", [x], [y], initializer=[w])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -631,6 +658,39 @@ def test_op_coverage_report_keys_compatibility_snapshot() -> None:
         "total_matched_nodes",
         "total_rewritten_nodes",
     ]
+
+
+def test_op_coverage_report_skips_infer_shapes_for_external_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    infer_shapes_called = False
+    original_to_array = lower_from_onnx2tf.numpy_helper.to_array
+
+    def _unexpected_infer_shapes(model: onnx.ModelProto) -> onnx.ModelProto:
+        nonlocal infer_shapes_called
+        infer_shapes_called = True
+        return model
+
+    def _to_array_with_external_data(tensor: onnx.TensorProto) -> np.ndarray:
+        if (
+            isinstance(tensor, onnx.TensorProto)
+            and tensor.name == "w"
+            and tensor.data_location == onnx.TensorProto.EXTERNAL
+        ):
+            return np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32)
+        return original_to_array(tensor)
+
+    monkeypatch.setattr(onnx.shape_inference, "infer_shapes", _unexpected_infer_shapes)
+    monkeypatch.setattr(lower_from_onnx2tf.numpy_helper, "to_array", _to_array_with_external_data)
+
+    report = build_op_coverage_report(
+        onnx_graph=_make_external_data_initializer_add_model(),
+        output_file_name="external_data_cov_snapshot",
+    )
+
+    assert infer_shapes_called is False
+    assert report["graph_summary"]["supported_nodes"] == 1
+    assert report["graph_summary"]["unsupported_nodes"] == 0
 
 
 def test_op_coverage_reason_code_snapshot_validation_failures() -> None:

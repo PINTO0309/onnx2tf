@@ -262,7 +262,6 @@ Actual speedup depends on model structure, enabled options, and runtime environm
 
 Fast path is intentionally disabled (falls back to the legacy TF-graph path) when TF-model dependent options are enabled:
 
-- `--enable_auto_split_model`
 - `--output_h5`
 - `--output_keras_v3`
 - `--output_tfv1_pb`
@@ -659,7 +658,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.3.0
+  ghcr.io/pinto0309/onnx2tf:2.3.1
 
   or
 
@@ -668,7 +667,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.3.0
+  docker.io/pinto0309/onnx2tf:2.3.1
 
   or
 
@@ -678,7 +677,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.3.0 \
+  docker.io/pinto0309/onnx2tf:2.3.1 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1954,7 +1953,7 @@ optional arguments:
     Input onnx file path.
 
   -it INPUT_TFLITE_FILE_PATH, --input_tflite_file_path INPUT_TFLITE_FILE_PATH
-    Input tflite file path for direct SavedModel export.
+    Input tflite file path for direct import mode.
 
   -V, --version
     Show version and exit.
@@ -2006,7 +2005,7 @@ optional arguments:
     1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
     2. onnx2tf first tries a direct fast path that skips TensorFlow per-node conversion (`op.make_node`) and directly exports from ONNX to TFLite FlatBuffer.
     3. Fast path is bypassed when TF-model dependent options are enabled:
-       `--enable_auto_split_model`, `--output_h5`, `--output_keras_v3`, `--output_tfv1_pb`, `--disable_model_save`.
+       `--output_h5`, `--output_keras_v3`, `--output_tfv1_pb`, `--disable_model_save`.
        In that case, conversion uses the legacy TF-graph path.
     4. Direct export supports FP32/FP16 `.tflite` generation.
     5. Dynamic range quantization (`-odrqt`) is supported in a limited form:
@@ -2050,12 +2049,28 @@ optional arguments:
        This option requires `--tflite_backend flatbuffer_direct`, cannot be combined with
        `--disable_model_save`,
        and fails explicitly if `CUSTOM` ops are present.
+       When split output is enabled, partition SavedModels are emitted instead of
+       a single root SavedModel.
+    14. Direct split planning in `flatbuffer_direct` is ModelIR-based and driven by
+       `--enable_auto_split_model`.
+       This always runs the split planner and emits split manifest output.
+       Outputs use the split manifest flow (`*_split_plan.json`, `*_split_manifest.json`,
+       `*_0001.tflite`, ...), not the legacy `part_0001/` recursive conversion flow.
+       Small models may still complete with a single-partition manifest when the planner
+       estimates that the model already fits within the target size.
+    15. Split accuracy evaluation is selected with a single option:
+       `--eval_split_models unsplit_tflite` or `--eval_split_models onnx`.
+       This is available only with `--tflite_backend flatbuffer_direct`
+       and requires `--enable_auto_split_model`.
+       This writes `*_split_accuracy_report.json`.
+       `*_accuracy_report.json` remains the unsplit base float32 TFLite vs ONNX report.
 
   -fdosm, --flatbuffer_direct_output_saved_model
     Output SavedModel directly from flatbuffer_direct ModelIR (float32).
     Available only with --tflite_backend flatbuffer_direct.
     Cannot be used with --disable_model_save.
     Fails explicitly if CUSTOM ops are present.
+    With split output, partition SavedModels are emitted instead of a single root SavedModel.
     When used with -cotof, also outputs `<model_name>_saved_model_validation_report.json`
     in the output directory (inference status + SavedModel/TFLite comparison metrics).
 
@@ -2276,13 +2291,24 @@ supports `--resume`, and generates `bulk_status.json` / `bulk_summary.json` / `b
   -easm, --enable_auto_split_model
     Force auto split regardless of the ONNX file size.
     Uses --auto_split_max_size as the target partition size.
+    In `flatbuffer_direct`, this forces the shared ModelIR split planner to run and
+    emit split manifest outputs even if the size estimate would otherwise fit in one partition.
 
   -asms AUTO_SPLIT_MAX_SIZE, --auto_split_max_size AUTO_SPLIT_MAX_SIZE
     Target maximum size per partition when auto-split is triggered or forced.
     Supported units: KB, MB, GB (e.g. 900MB, 1GB, 1536KB).
     Bare numbers are treated as MB.
-    When specified, this value is also used as the target size for --auto_split_tflite_by_size.
+    When specified, this value is also used as the target size for --enable_auto_split_model.
     Default: 1GB
+
+  --eval_split_models {unsplit_tflite,onnx}
+    Evaluate split partitions sequentially using split manifest output.
+    Specify `unsplit_tflite` to compare against the unsplit/base TFLite model,
+    or `onnx` to compare against ONNX Runtime output.
+    Available only with `--tflite_backend flatbuffer_direct`
+    and requires `--enable_auto_split_model`.
+    Writes `*_split_accuracy_report.json`.
+    `*_accuracy_report.json` remains the unsplit base float32 TFLite vs ONNX report.
 
   -dgc, --disable_group_convolution
     Disable GroupConvolution and replace it with SeparableConvolution for
@@ -2473,6 +2499,8 @@ supports `--resume`, and generates `bulk_status.json` / `bulk_summary.json` / `b
     When --input_tflite_file_path is specified, this runs SavedModel inference
     plus SavedModel vs input TFLite output comparison and emits
     `<model_name>_saved_model_validation_report.json`.
+    If split SavedModels are emitted, they are executed sequentially in
+    split-manifest order before comparison.
 
   -coton, --check_onnx_tf_outputs_sample_data_normalization
     norm: Validate using random data normalized to the range 0.0 to 1.0
@@ -2605,6 +2633,7 @@ convert(
   check_onnx_tf_outputs_sample_data_normalization: Optional[str] = 'norm',
   check_onnx_tf_outputs_elementwise_close_rtol: Optional[float] = 0.0,
   check_onnx_tf_outputs_elementwise_close_atol: Optional[float] = 1e-4,
+  eval_split_models: Optional[str] = None,
   test_data_nhwc_path: Union[str, NoneType] = None,
   disable_model_save: Union[bool, NoneType] = False,
   non_verbose: Union[bool, NoneType] = False,
@@ -2621,10 +2650,12 @@ convert(
 
     input_tflite_file_path: Optional[str]
       Input tflite file path.
-      If specified, runs tflite-direct SavedModel export mode.
-      In this mode, ONNX-dependent conversion options are rejected and
-      `check_onnx_tf_outputs_elementwise_close_full=True` runs
-      SavedModel vs input TFLite comparison.
+      If specified, runs tflite-direct import mode.
+      In this mode, ONNX-dependent conversion options are rejected.
+      By default it exports SavedModel from imported ModelIR, and
+      enable_auto_split_model=True can also emit split TFLite artifacts.
+      When used with flatbuffer_direct_output_saved_model=True and split,
+      partition SavedModels are emitted instead of a single root SavedModel.
 
     onnx_graph: Optional[onnx.ModelProto]
       onnx.ModelProto.
@@ -2681,6 +2712,8 @@ convert(
       Requires `tflite_backend="flatbuffer_direct"`.
       Cannot be combined with `disable_model_save=True`.
       Fails explicitly if `CUSTOM` ops are present.
+      When used together with split output, partition SavedModels are emitted
+      instead of a single root SavedModel.
       When used with `check_onnx_tf_outputs_elementwise_close_full=True`,
       `<model_name>_saved_model_validation_report.json` is generated.
 
@@ -2888,6 +2921,9 @@ convert(
     enable_auto_split_model: Optional[bool]
       Force auto split regardless of the ONNX file size.
       Uses auto_split_max_size as the target partition size.
+      In `flatbuffer_direct`, this runs the ModelIR split planner and forces
+      split manifest generation.
+      A small model may still result in a single-partition manifest.
       Short option: -easm
       Default: False
 
@@ -2896,8 +2932,17 @@ convert(
       Supports values such as "512KB", "900MB", and "1.5GB".
       Bare numeric values are treated as MB.
       Used when auto-split is triggered or forced.
-      When specified, also used as the split target when auto_split_tflite_by_size=True.
-      Default: "1GB"
+      When specified, also used as the split target when enable_auto_split_model=True.
+
+    eval_split_models: Optional[str]
+      Evaluate split partitions sequentially using split manifest output.
+      Specify "unsplit_tflite" to compare against the unsplit/base TFLite model,
+      or "onnx" to compare against ONNX Runtime output.
+      Available only with tflite_backend="flatbuffer_direct" and
+      requires enable_auto_split_model=True.
+      Writes `*_split_accuracy_report.json`.
+      `*_accuracy_report.json` remains the unsplit base float32 TFLite vs ONNX report.
+      Default: None
 
     auto_split_max_size_mb: Optional[int]
       [Deprecated] Legacy alias of auto_split_max_size in MB.

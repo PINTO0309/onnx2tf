@@ -3,15 +3,26 @@ import json
 import math
 import os
 import shutil
+import sys
 import tempfile
+import types
 from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
 import onnx
 import onnx2tf
+import onnxruntime as ort
 import pytest
 from onnx import TensorProto, helper, numpy_helper
+from onnx2tf.tflite_builder.accuracy_evaluator import (
+    _adapt_input_layout_for_tflite_input,
+    _build_tflite_detail_map,
+    _collect_onnx_input_specs,
+    _create_tflite_interpreter,
+    _quantize_for_tflite_input,
+    _resize_tflite_inputs_if_needed,
+)
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -24,6 +35,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
     _apply_safe_transpose_reduction_lite,
     _dtype_from_onnx_elem_type,
+    _infer_shapes_with_fallback,
     _infer_rank4_signature_from_input,
     _optimize_asin_transpose_passthrough_chains,
     _optimize_erf_transpose_passthrough_chains,
@@ -136,6 +148,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     lower_onnx_to_ir,
 )
+from onnx2tf.utils.common_functions import check_model_has_external_data
 from onnx2tf.tflite_builder.model_writer import serialize_model
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
@@ -171,10 +184,9 @@ def _convert(
     eval_fail_on_threshold: bool = False,
     eval_target_tflite: str = "float32",
     eval_compare_mode: str = "auto",
-    eval_split_models: bool = False,
-    eval_split_reference: str = "unsplit_tflite",
+    eval_split_models: str | None = None,
     eval_split_fail_on_threshold: bool = False,
-    auto_split_tflite_by_size: bool = False,
+    enable_auto_split_model: bool = False,
     report_op_coverage: bool = False,
     flatbuffer_direct_allow_custom_ops: bool = False,
     flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
@@ -202,9 +214,8 @@ def _convert(
         eval_target_tflite=eval_target_tflite,
         eval_compare_mode=eval_compare_mode,
         eval_split_models=eval_split_models,
-        eval_split_reference=eval_split_reference,
         eval_split_fail_on_threshold=eval_split_fail_on_threshold,
-        auto_split_tflite_by_size=auto_split_tflite_by_size,
+        enable_auto_split_model=enable_auto_split_model,
         report_op_coverage=report_op_coverage,
         flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
@@ -236,12 +247,185 @@ def _run_add_inference(tflite_path: str) -> np.ndarray:
     return interpreter.get_tensor(output_details[0]["index"])
 
 
+def _make_seeded_sample_inputs(
+    onnx_model: onnx.ModelProto,
+    *,
+    seed: int = 0,
+) -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    sample_inputs: dict[str, np.ndarray] = {}
+    for input_name, input_dtype, input_shape in _collect_onnx_input_specs(onnx_model):
+        sample_inputs[str(input_name)] = rng.standard_normal(size=input_shape).astype(input_dtype)
+    return sample_inputs
+
+
+def _run_tflite_and_collect_tensors(
+    *,
+    tflite_path: str,
+    onnx_model: onnx.ModelProto,
+    sample_inputs: dict[str, np.ndarray],
+    tensor_names: list[str],
+) -> dict[str, np.ndarray]:
+    interpreter = _create_tflite_interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    onnx_input_names = [name for name, _, _ in _collect_onnx_input_specs(onnx_model)]
+    input_map = _build_tflite_detail_map(
+        onnx_names=onnx_input_names,
+        tflite_details=interpreter.get_input_details(),
+    )
+    adapted_inputs = {
+        input_name: _adapt_input_layout_for_tflite_input(
+            sample_inputs[input_name],
+            input_map[input_name],
+        )
+        for input_name in onnx_input_names
+    }
+    resized = _resize_tflite_inputs_if_needed(
+        interpreter=interpreter,
+        onnx_input_names=onnx_input_names,
+        tflite_input_map=input_map,
+        adapted_inputs=adapted_inputs,
+    )
+    if resized:
+        interpreter.allocate_tensors()
+        input_map = _build_tflite_detail_map(
+            onnx_names=onnx_input_names,
+            tflite_details=interpreter.get_input_details(),
+        )
+    for input_name in onnx_input_names:
+        detail = input_map[input_name]
+        interpreter.set_tensor(
+            int(detail["index"]),
+            _quantize_for_tflite_input(adapted_inputs[input_name], detail),
+        )
+    interpreter.invoke()
+
+    detail_by_name = {
+        str(detail["name"]).split(":")[0]: detail
+        for detail in interpreter.get_tensor_details()
+    }
+    collected: dict[str, np.ndarray] = {}
+    for tensor_name in tensor_names:
+        detail = detail_by_name.get(str(tensor_name), None)
+        if detail is None:
+            raise KeyError(f"TFLite tensor detail not found. tensor_name={tensor_name}")
+        collected[str(tensor_name)] = np.asarray(
+            interpreter.get_tensor(int(detail["index"]))
+        )
+    return collected
+
+
+def _run_onnx_and_collect_outputs(
+    *,
+    onnx_model: onnx.ModelProto,
+    sample_inputs: dict[str, np.ndarray],
+    output_names: list[str],
+) -> dict[str, np.ndarray]:
+    model_for_eval = onnx.ModelProto()
+    model_for_eval.CopyFrom(onnx_model)
+    if not check_model_has_external_data(model_for_eval):
+        try:
+            model_for_eval = onnx.shape_inference.infer_shapes(model_for_eval)
+        except Exception:
+            pass
+    value_info_map = {
+        str(value_info.name): value_info
+        for value_info in list(model_for_eval.graph.input)
+        + list(model_for_eval.graph.value_info)
+        + list(model_for_eval.graph.output)
+    }
+    existing_output_names = {str(output.name) for output in model_for_eval.graph.output}
+    for output_name in output_names:
+        if output_name in existing_output_names:
+            continue
+        if output_name not in value_info_map:
+            raise KeyError(f"ONNX value_info not found. output_name={output_name}")
+        model_for_eval.graph.output.append(value_info_map[output_name])
+    try:
+        session = ort.InferenceSession(
+            model_for_eval.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    except Exception:
+        model_for_eval.ir_version = min(int(model_for_eval.ir_version), 10)
+        session = ort.InferenceSession(
+            model_for_eval.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    outputs = session.run(output_names, sample_inputs)
+    return {
+        output_name: np.asarray(value)
+        for output_name, value in zip(output_names, outputs)
+    }
+
+
 def _make_add_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
     z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3])
     node = helper.make_node("Add", ["x", "y"], ["z"], name="AddNode")
     graph = helper.make_graph([node], "add_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _mark_tensor_external_data(
+    tensor: onnx.TensorProto,
+    *,
+    location: str,
+) -> onnx.TensorProto:
+    tensor.data_location = onnx.TensorProto.EXTERNAL
+    del tensor.external_data[:]
+    location_entry = tensor.external_data.add()
+    location_entry.key = "location"
+    location_entry.value = str(location)
+    return tensor
+
+
+def _make_external_data_add_model(*, unknown_rank: bool = False) -> onnx.ModelProto:
+    input_shape = None if unknown_rank else [1, 3]
+    output_shape = None if unknown_rank else [1, 3]
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, input_shape)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, output_shape)
+    w = _mark_tensor_external_data(
+        numpy_helper.from_array(np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32), name="w"),
+        location="weights.bin",
+    )
+    node = helper.make_node("Add", ["x", "w"], ["y"], name="ExternalAddNode")
+    graph = helper.make_graph([node], "external_add_graph", [x], [y], initializer=[w])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_external_data_subgraph_model() -> onnx.ModelProto:
+    cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    then_value = _mark_tensor_external_data(
+        numpy_helper.from_array(np.asarray([1.0], dtype=np.float32), name="then_value"),
+        location="then_value.bin",
+    )
+    else_value = numpy_helper.from_array(np.asarray([0.0], dtype=np.float32), name="else_value")
+    then_const = helper.make_node("Constant", [], ["then_out"], name="ThenConst", value=then_value)
+    else_const = helper.make_node("Constant", [], ["else_out"], name="ElseConst", value=else_value)
+    then_branch = helper.make_graph(
+        [then_const],
+        "then_branch",
+        [],
+        [helper.make_tensor_value_info("then_out", TensorProto.FLOAT, [1])],
+    )
+    else_branch = helper.make_graph(
+        [else_const],
+        "else_branch",
+        [],
+        [helper.make_tensor_value_info("else_out", TensorProto.FLOAT, [1])],
+    )
+    if_node = helper.make_node(
+        "If",
+        ["cond"],
+        ["y"],
+        name="ExternalIfNode",
+        then_branch=then_branch,
+        else_branch=else_branch,
+    )
+    graph = helper.make_graph([if_node], "external_if_graph", [cond], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -309,6 +493,101 @@ def test_flatbuffer_direct_where_uint64_inputs_lower_to_uint32() -> None:
     ]
     assert len(uint64_cast_ops) >= 1
     assert all(str(op.options.get("outDataType", "")).upper() == "UINT32" for op in uint64_cast_ops)
+
+
+def test_check_model_has_external_data_detects_subgraph_tensor() -> None:
+    assert check_model_has_external_data(_make_external_data_add_model()) is True
+    assert check_model_has_external_data(_make_external_data_subgraph_model()) is True
+    assert check_model_has_external_data(_make_add_model()) is False
+
+
+def test_infer_shapes_with_fallback_skips_external_data_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external_model = _make_external_data_add_model(unknown_rank=True)
+    infer_shapes_called = False
+
+    def _unexpected_infer_shapes(model: onnx.ModelProto) -> onnx.ModelProto:
+        nonlocal infer_shapes_called
+        infer_shapes_called = True
+        raise AssertionError("infer_shapes must not run for external_data models")
+
+    fake_symbolic_module = types.ModuleType("onnxruntime.tools.symbolic_shape_infer")
+
+    class _UnexpectedSymbolicShapeInference:
+        @staticmethod
+        def infer_shapes(*args: Any, **kwargs: Any) -> onnx.ModelProto:
+            raise AssertionError("symbolic shape inference must not run for external_data models")
+
+    fake_symbolic_module.SymbolicShapeInference = _UnexpectedSymbolicShapeInference
+    monkeypatch.setattr(onnx.shape_inference, "infer_shapes", _unexpected_infer_shapes)
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime.tools.symbolic_shape_infer",
+        fake_symbolic_module,
+    )
+
+    inferred_model = _infer_shapes_with_fallback(external_model)
+
+    assert inferred_model is external_model
+    assert infer_shapes_called is False
+
+
+def test_infer_shapes_with_fallback_still_runs_for_non_external_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    infer_shapes_called = False
+
+    def _record_infer_shapes(model: onnx.ModelProto) -> onnx.ModelProto:
+        nonlocal infer_shapes_called
+        infer_shapes_called = True
+        return model
+
+    monkeypatch.setattr(onnx.shape_inference, "infer_shapes", _record_infer_shapes)
+
+    inferred_model = _infer_shapes_with_fallback(_make_add_model())
+
+    assert infer_shapes_called is True
+    assert isinstance(inferred_model, onnx.ModelProto)
+
+
+def test_run_onnx_and_collect_outputs_skips_infer_shapes_for_external_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external_model = _make_external_data_add_model()
+    infer_shapes_called = False
+
+    def _unexpected_infer_shapes(model: onnx.ModelProto) -> onnx.ModelProto:
+        nonlocal infer_shapes_called
+        infer_shapes_called = True
+        return model
+
+    class _FakeSession:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def run(
+            self,
+            output_names: list[str],
+            sample_inputs: dict[str, np.ndarray],
+        ) -> list[np.ndarray]:
+            x = np.asarray(sample_inputs["x"], dtype=np.float32)
+            return [x + np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32) for _ in output_names]
+
+    monkeypatch.setattr(onnx.shape_inference, "infer_shapes", _unexpected_infer_shapes)
+    monkeypatch.setattr(ort, "InferenceSession", _FakeSession)
+
+    outputs = _run_onnx_and_collect_outputs(
+        onnx_model=external_model,
+        sample_inputs={"x": np.asarray([[10.0, 20.0, 30.0]], dtype=np.float32)},
+        output_names=["y"],
+    )
+
+    assert infer_shapes_called is False
+    assert np.array_equal(
+        outputs["y"],
+        np.asarray([[11.0, 22.0, 33.0]], dtype=np.float32),
+    )
 
 
 def test_flatbuffer_direct_topological_sort_reorders_producer_before_consumer() -> None:
@@ -3066,6 +3345,52 @@ def _make_topk_dynamic_k_indices_reshape_flat_model() -> onnx.ModelProto:
         [x],
         [values, indices, flat_indices],
         initializer=[axis_index, k_limit, flatten_shape],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_postprocessor_topk_chain_model() -> onnx.ModelProto:
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, [1, 6])
+    label = helper.make_tensor_value_info("label_xyxy_score", TensorProto.FLOAT, [1, 3, 6])
+    boxes = numpy_helper.from_array(
+        np.asarray(
+            [
+                [
+                    [0.1, 0.2, 0.3, 0.4],
+                    [1.1, 1.2, 1.3, 1.4],
+                    [2.1, 2.2, 2.3, 2.4],
+                    [3.1, 3.2, 3.3, 3.4],
+                    [4.1, 4.2, 4.3, 4.4],
+                    [5.1, 5.2, 5.3, 5.4],
+                ]
+            ],
+            dtype=np.float32,
+        ),
+        name="boxes",
+    )
+    k_const = numpy_helper.from_array(np.asarray([3], dtype=np.int64), name="topk_k_const")
+    unsqueeze_axes = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="unsqueeze_axes")
+    tile_repeats = numpy_helper.from_array(np.asarray([1, 1, 4], dtype=np.int64), name="tile_repeats")
+    one_i64 = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="one_i64")
+    nodes = [
+        helper.make_node("Sigmoid", ["scores"], ["sigmoid_scores"], name="SigmoidNode"),
+        helper.make_node("Flatten", ["sigmoid_scores"], ["flat_scores"], name="FlattenNode", axis=1),
+        helper.make_node("TopK", ["flat_scores", "topk_k_const"], ["top_values", "top_indices"], name="TopKNode", axis=1),
+        helper.make_node("Unsqueeze", ["top_indices", "unsqueeze_axes"], ["top_indices_unsqueezed"], name="UnsqueezeIndices"),
+        helper.make_node("Div", ["top_indices_unsqueezed", "one_i64"], ["top_indices_div"], name="DivIndices"),
+        helper.make_node("Mul", ["top_indices_div", "one_i64"], ["top_indices_mul"], name="MulIndices"),
+        helper.make_node("Tile", ["top_indices_mul", "tile_repeats"], ["top_indices_tiled"], name="TileIndices"),
+        helper.make_node("GatherElements", ["boxes", "top_indices_tiled"], ["gathered_boxes"], name="GatherBoxes", axis=1),
+        helper.make_node("Cast", ["top_indices_mul"], ["top_indices_float"], name="CastIndices", to=TensorProto.FLOAT),
+        helper.make_node("Unsqueeze", ["top_values", "unsqueeze_axes"], ["top_values_unsqueezed"], name="UnsqueezeValues"),
+        helper.make_node("Concat", ["top_indices_float", "gathered_boxes", "top_values_unsqueezed"], ["label_xyxy_score"], name="ConcatLabel", axis=2),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "postprocessor_topk_chain_graph",
+        [scores],
+        [label],
+        initializer=[boxes, k_const, unsqueeze_axes, tile_repeats, one_i64],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
@@ -10878,13 +11203,14 @@ def test_flatbuffer_direct_min_topk_dynamic_k_lowering() -> None:
     assert len(k_input_producers) == 1
 
     indices_out = model_ir.tensors["indices"]
-    assert str(indices_out.dtype).upper() == "INT32"
+    assert str(indices_out.dtype).upper() == "INT64"
     cast_to_i64 = [
         op
         for op in model_ir.operators
         if str(op.op_type) == "CAST" and str(op.outputs[0]) == "indices"
     ]
-    assert len(cast_to_i64) == 0
+    assert len(cast_to_i64) == 1
+    assert list(cast_to_i64[0].inputs) == ["indices_topk_indices_raw"]
 
 
 def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:
@@ -31857,10 +32183,10 @@ def test_flatbuffer_direct_integration_split_eval_coverage_smoke() -> None:
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
             tflite_split_max_bytes=10_000_000,
-            tflite_split_target_bytes=1,
-            eval_split_models=True,
+            eval_split_models="unsplit_tflite",
             eval_num_samples=2,
             report_op_coverage=True,
         )
@@ -32247,7 +32573,7 @@ def test_flatbuffer_direct_split_plan_report_smoke() -> None:
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
             tflite_split_max_bytes=10_000_000,
             tflite_split_target_bytes=9_000_000,
         )
@@ -32280,7 +32606,7 @@ def test_flatbuffer_direct_split_plan_uses_auto_split_max_size_when_specified() 
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
             auto_split_max_size="256KB",
             tflite_split_max_bytes=10_000_000,
             tflite_split_target_bytes=9_000_000,
@@ -32303,9 +32629,9 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
             tflite_split_max_bytes=10_000_000,
-            tflite_split_target_bytes=1,
         )
 
         manifest_path = os.path.join(out_dir, "add_chain_split_split_manifest.json")
@@ -32314,7 +32640,7 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
             manifest = json.load(f)
         assert manifest["schema_version"] == 1
         assert manifest["base_model"] == "add_chain_split.tflite"
-        assert manifest["target_max_bytes"] == 1
+        assert manifest["target_max_bytes"] == 1024
         assert len(manifest["partitions"]) >= 1
         assert "edges" in manifest
 
@@ -32328,6 +32654,108 @@ def test_flatbuffer_direct_split_manifest_and_partition_outputs() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_enable_auto_split_model_forces_manifest_without_legacy_parts() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_model()
+        model_path = _save_model(tmpdir, "add_force_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            tflite_split_max_bytes=10_000_000,
+        )
+
+        manifest_path = os.path.join(out_dir, "add_force_split_split_manifest.json")
+        assert os.path.isfile(manifest_path)
+        assert os.path.isfile(os.path.join(out_dir, "add_force_split_float32.tflite"))
+        assert not os.path.isdir(os.path.join(out_dir, "part_0001"))
+
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert manifest["base_model"] == "add_force_split.tflite"
+        assert len(manifest["partitions"]) == 1
+
+        part_files = sorted(
+            glob.glob(os.path.join(out_dir, "add_force_split_[0-9][0-9][0-9][0-9].tflite"))
+        )
+        assert len(part_files) == 1
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_split_manifest_excludes_embedded_constant_inputs() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_conv_model()
+        model_path = _save_model(tmpdir, "conv_force_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            tflite_split_max_bytes=10_000_000,
+        )
+
+        manifest_path = os.path.join(out_dir, "conv_force_split_split_manifest.json")
+        assert os.path.isfile(manifest_path)
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        assert len(manifest["partitions"]) == 1
+        partition_entry = manifest["partitions"][0]
+        assert partition_entry["inputs"] == ["x"]
+        assert "W" not in partition_entry["inputs"]
+        assert "B" not in partition_entry["inputs"]
+
+        partition_path = os.path.join(out_dir, partition_entry["file"])
+        interpreter = Interpreter(model_path=partition_path)
+        interpreter.allocate_tensors()
+        input_names = {str(detail["name"]) for detail in interpreter.get_input_details()}
+        assert "x" in input_names
+        assert "W" not in input_names
+        assert "B" not in input_names
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_enable_auto_split_model_and_size_split_share_single_manifest_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_force_and_size_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
+            tflite_split_max_bytes=10_000_000,
+        )
+
+        manifest_path = os.path.join(
+            out_dir,
+            "add_force_and_size_split_split_manifest.json",
+        )
+        assert os.path.isfile(manifest_path)
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        part_files = sorted(
+            glob.glob(
+                os.path.join(
+                    out_dir,
+                    "add_force_and_size_split_[0-9][0-9][0-9][0-9].tflite",
+                )
+            )
+        )
+        assert len(part_files) == len(manifest["partitions"])
+        assert len(glob.glob(os.path.join(out_dir, "*_split_manifest.json"))) == 1
+        assert not os.path.isdir(os.path.join(out_dir, "part_0001"))
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_add_chain_model()
@@ -32337,11 +32765,10 @@ def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> Non
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
             tflite_split_max_bytes=10_000_000,
-            tflite_split_target_bytes=1,
-            eval_split_models=True,
-            eval_split_reference="unsplit_tflite",
+            eval_split_models="unsplit_tflite",
             eval_num_samples=3,
         )
         report_path = os.path.join(out_dir, "add_chain_eval_split_split_accuracy_report.json")
@@ -32351,6 +32778,192 @@ def test_flatbuffer_direct_split_accuracy_report_with_unsplit_reference() -> Non
         assert report["reference_mode"] == "unsplit_tflite"
         assert report["evaluation_pass"] is True
         assert report["allclose_summary"]["pass"] is True
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_split_accuracy_report_with_onnx_reference() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split_onnx", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
+            tflite_split_max_bytes=10_000_000,
+            eval_split_models="onnx",
+            eval_num_samples=3,
+        )
+        report_path = os.path.join(out_dir, "add_chain_eval_split_onnx_split_accuracy_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["reference_mode"] == "onnx"
+        assert report["evaluation_pass"] is True
+        assert report["allclose_summary"]["pass"] is True
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_split_accuracy_report_adapts_nhwc_partition_inputs() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_conv_model()
+        model_path = _save_model(tmpdir, "conv_eval_split_nhwc", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            tflite_split_max_bytes=10_000_000,
+            eval_split_models="unsplit_tflite",
+            eval_num_samples=1,
+        )
+        report_path = os.path.join(out_dir, "conv_eval_split_nhwc_split_accuracy_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["reference_mode"] == "unsplit_tflite"
+        assert report["evaluation_pass"] is True
+        assert report["allclose_summary"]["pass"] is True
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_eval_with_onnx_split_outputs_base_accuracy_report_only() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_base_vs_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
+            tflite_split_max_bytes=10_000_000,
+            eval_with_onnx=True,
+            eval_num_samples=1,
+        )
+        assert os.path.isfile(
+            os.path.join(out_dir, "add_chain_eval_base_vs_split_accuracy_report.json")
+        )
+        assert not os.path.exists(
+            os.path.join(out_dir, "add_chain_eval_base_vs_split_split_accuracy_report.json")
+        )
+        assert os.path.isfile(
+            os.path.join(out_dir, "add_chain_eval_base_vs_split_split_manifest.json")
+        )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_postprocessor_topk_chain_preserves_requested_indices_dtype_and_intermediates() -> None:
+    model = _make_postprocessor_topk_chain_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="postprocessor_topk_chain_test",
+        allow_custom_ops=False,
+    )
+
+    assert str(model_ir.tensors["top_indices"].dtype).upper() == "INT64"
+    cast_to_i64 = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CAST" and str(op.outputs[0]) == "top_indices"
+    ]
+    assert len(cast_to_i64) == 1
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "postprocessor_topk_chain", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+        )
+        tensor_names = [
+            "sigmoid_scores",
+            "top_values",
+            "top_indices",
+            "top_indices_div",
+            "top_indices_mul",
+            "top_indices_tiled",
+            "gathered_boxes",
+            "top_indices_float",
+            "label_xyxy_score",
+        ]
+        sample_inputs = _make_seeded_sample_inputs(model, seed=0)
+        onnx_outputs = _run_onnx_and_collect_outputs(
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            output_names=tensor_names,
+        )
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=tensor_names,
+        )
+        for tensor_name in tensor_names:
+            onnx_tensor = np.asarray(onnx_outputs[tensor_name])
+            tflite_tensor = np.asarray(tflite_outputs[tensor_name])
+            assert onnx_tensor.shape == tflite_tensor.shape
+            if np.issubdtype(onnx_tensor.dtype, np.integer) or np.issubdtype(onnx_tensor.dtype, np.bool_):
+                np.testing.assert_array_equal(tflite_tensor, onnx_tensor)
+            else:
+                np.testing.assert_allclose(tflite_tensor, onnx_tensor, rtol=1.0e-6, atol=1.0e-6)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_eval_split_models_rejects_invalid_mode() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split_invalid", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(SystemExit):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                enable_auto_split_model=True,
+                auto_split_max_size="1KB",
+                tflite_split_max_bytes=10_000_000,
+                eval_split_models="invalid",
+            )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_eval_split_models_requires_flatbuffer_direct_backend() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split_tf_backend", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(SystemExit):
+            _convert(
+                model_path,
+                out_dir,
+                "tf_converter",
+                enable_auto_split_model=True,
+                eval_split_models="onnx",
+            )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_eval_split_models_requires_enable_auto_split_model() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_add_chain_model()
+        model_path = _save_model(tmpdir, "add_chain_eval_split_requires_split", model)
+        out_dir = os.path.join(tmpdir, "out")
+        with pytest.raises(SystemExit):
+            _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                eval_split_models="onnx",
+            )
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -32365,9 +32978,9 @@ def test_split_accuracy_report_fail_on_threshold() -> None:
             model_path,
             out_dir,
             "flatbuffer_direct",
-            auto_split_tflite_by_size=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="1KB",
             tflite_split_max_bytes=10_000_000,
-            tflite_split_target_bytes=1,
         )
         split_manifest_path = os.path.join(out_dir, "add_chain_eval_split_fail_split_manifest.json")
         reference_tflite_path = os.path.join(out_dir, "add_chain_eval_split_fail_float32.tflite")

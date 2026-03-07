@@ -90,6 +90,21 @@ def _prune_dead_operators_in_place(model_ir: ModelIR) -> None:
     ]
 
 
+def _strip_embedded_constant_inputs_in_place(model_ir: ModelIR) -> None:
+    sanitized_inputs: List[str] = []
+    seen_inputs = set()
+    for tensor_name in model_ir.inputs:
+        normalized_name = str(tensor_name)
+        if normalized_name == "" or normalized_name in seen_inputs:
+            continue
+        seen_inputs.add(normalized_name)
+        tensor = model_ir.tensors.get(normalized_name, None)
+        if tensor is not None and tensor.data is not None:
+            continue
+        sanitized_inputs.append(normalized_name)
+    model_ir.inputs = sanitized_inputs
+
+
 def _sanitize_model_ir_for_serialization(model_ir: ModelIR) -> ModelIR:
     # Keep serialization side-effect free because one ModelIR instance can be
     # reused across multiple output variants.
@@ -109,6 +124,7 @@ def _sanitize_model_ir_for_serialization(model_ir: ModelIR) -> ModelIR:
         metadata=dict(model_ir.metadata),
     )
     _prune_dead_operators_in_place(sanitized_model_ir)
+    _strip_embedded_constant_inputs_in_place(sanitized_model_ir)
     _prune_unused_tensors_in_place(sanitized_model_ir)
     return sanitized_model_ir
 
