@@ -273,7 +273,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
 ## `flatbuffer_direct` execution path
 
-<img width="1207" height="514" alt="image" src="https://github.com/user-attachments/assets/f74b59cd-a4db-4601-92c8-0b2eb9c5dfa7" />
+<img width="1236" height="528" alt="image" src="https://github.com/user-attachments/assets/15570a42-dfad-42cb-ba67-74de1e5f732e" />
 
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
 
