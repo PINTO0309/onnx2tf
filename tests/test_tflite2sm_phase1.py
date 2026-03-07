@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from typing import Any
 
 import flatbuffers
 import numpy as np
@@ -109,7 +110,8 @@ def _run_saved_model_single_output(
     input_value: np.ndarray,
     output_name: str,
 ) -> np.ndarray:
-    module = tf.saved_model.load(saved_model_path)
+    module: Any = tf.saved_model.load(saved_model_path)
+    assert module is not None
     fn = module.signatures["serving_default"]
     outputs = fn(**{input_name: tf.constant(input_value)})
     return np.asarray(outputs[output_name].numpy())
@@ -161,7 +163,9 @@ def test_flatbuffer_direct_output_saved_model_validation(
             )
 
 
-def test_flatbuffer_direct_cotof_without_fdosm_skips_saved_model_check() -> None:
+def test_flatbuffer_direct_cotof_without_fdosm_skips_saved_model_check(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model_path = _save_model(tmpdir, "add_skip_sm_check", _make_add_model())
         onnx2tf.convert(
@@ -177,11 +181,11 @@ def test_flatbuffer_direct_cotof_without_fdosm_skips_saved_model_check() -> None
             tmpdir,
             "add_skip_sm_check_saved_model_validation_report.json",
         )
-        assert os.path.exists(report_path)
-        with open(report_path, "r", encoding="utf-8") as f:
-            report = json.load(f)
-        assert report["inference"]["status"] == "skipped"
-        assert report["inference"]["reason"] == "saved_model_unavailable"
+        assert not os.path.exists(report_path)
+        captured = capsys.readouterr()
+        assert "SavedModel inference check skipped because SavedModel path is unavailable" not in (
+            captured.out + captured.err
+        )
 
 
 def test_saved_model_exporter_add_smoke() -> None:
@@ -221,7 +225,8 @@ def test_saved_model_exporter_add_smoke() -> None:
             output_folder_path=tmpdir,
         )
         assert os.path.exists(os.path.join(saved_model_path, "saved_model.pb"))
-        module = tf.saved_model.load(saved_model_path)
+        module: Any = tf.saved_model.load(saved_model_path)
+        assert module is not None
         fn = module.signatures["serving_default"]
         outputs = fn(
             x=tf.constant([[1.0, 2.0, 3.0]], dtype=tf.float32),
@@ -759,6 +764,83 @@ def test_tflite_direct_input_saved_model_with_cotof_smoke() -> None:
         assert report["overall_pass"] is True
 
 
+def test_tflite_direct_input_split_outputs_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_split", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+        )
+        assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split.tflite"))
+        assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split_split_plan.json"))
+        manifest_path = os.path.join(output_dir, "add_tflite_direct_input_split_split_manifest.json")
+        assert os.path.exists(manifest_path)
+        assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split_0001.tflite"))
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert manifest["base_model"] == "add_tflite_direct_input_split.tflite"
+        assert len(manifest["partitions"]) == 1
+
+
+def test_tflite_direct_input_split_saved_model_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_split_sm", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            flatbuffer_direct_output_saved_model=True,
+        )
+        assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split_sm.tflite"))
+        assert not os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        manifest_path = os.path.join(output_dir, "add_tflite_direct_input_split_sm_split_manifest.json")
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert len(manifest["partitions"]) == 1
+        saved_model_dir = manifest["partitions"][0]["saved_model_dir"]
+        assert os.path.exists(os.path.join(output_dir, saved_model_dir, "saved_model.pb"))
+
+
+def test_tflite_direct_input_split_saved_model_cotof_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_split_cotof", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            flatbuffer_direct_output_saved_model=True,
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+        report_path = os.path.join(
+            output_dir,
+            "add_tflite_direct_input_split_cotof_saved_model_validation_report.json",
+        )
+        assert os.path.exists(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["mode"] == "split_saved_model"
+        assert report["comparison"]["status"] == "passed"
+        assert report["comparison"]["pass"] is True
+        assert report["overall_pass"] is True
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -836,6 +918,56 @@ def test_flatbuffer_direct_output_saved_model_cotof_smoke() -> None:
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
         assert report["inference"]["status"] == "passed"
+        assert report["comparison"]["status"] == "passed"
+        assert report["comparison"]["pass"] is True
+        assert report["overall_pass"] is True
+
+
+def test_flatbuffer_direct_output_saved_model_split_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_split_sm", _make_add_model())
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=tmpdir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            flatbuffer_direct_output_saved_model=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+        )
+        assert not os.path.exists(os.path.join(tmpdir, "saved_model.pb"))
+        manifest_path = os.path.join(tmpdir, "add_split_sm_split_manifest.json")
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert len(manifest["partitions"]) == 1
+        saved_model_dir = manifest["partitions"][0]["saved_model_dir"]
+        assert os.path.exists(os.path.join(tmpdir, saved_model_dir, "saved_model.pb"))
+        assert os.path.exists(os.path.join(tmpdir, "add_split_sm_float32.tflite"))
+
+
+def test_flatbuffer_direct_output_saved_model_split_cotof_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_split_sm_cotof", _make_add_model())
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=tmpdir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            flatbuffer_direct_output_saved_model=True,
+            enable_auto_split_model=True,
+            auto_split_max_size="256MB",
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+        report_path = os.path.join(
+            tmpdir,
+            "add_split_sm_cotof_saved_model_validation_report.json",
+        )
+        assert os.path.exists(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["mode"] == "split_saved_model"
         assert report["comparison"]["status"] == "passed"
         assert report["comparison"]["pass"] is True
         assert report["overall_pass"] is True

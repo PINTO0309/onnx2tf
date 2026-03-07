@@ -7486,8 +7486,7 @@ def define_reduceXXX(
         )
     return reduced_tensor
 
-def check_has_external_data(input_onnx_file_path: str) -> bool:
-    model = onnx.load(input_onnx_file_path, load_external_data=False)
+def check_model_has_external_data(model: onnx.ModelProto) -> bool:
     def iter_tensors_in_graph(g):
         for t in g.initializer:
             yield t
@@ -7509,3 +7508,8 @@ def check_has_external_data(input_onnx_file_path: str) -> bool:
         isinstance(t, onnx.TensorProto) and uses_external_data(t)
         for t in iter_tensors_in_graph(model.graph)
     )
+
+
+def check_has_external_data(input_onnx_file_path: str) -> bool:
+    model = onnx.load(input_onnx_file_path, load_external_data=False)
+    return check_model_has_external_data(model)

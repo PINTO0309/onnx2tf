@@ -8,6 +8,7 @@ import numpy as np
 import onnx
 
 from onnx2tf.tflite_builder.accuracy_evaluator import (
+    _adapt_input_layout_for_tflite_input,
     _MetricAccumulator,
     _build_tflite_detail_map,
     _collect_onnx_input_specs,
@@ -23,6 +24,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _QUANT_METRIC_THRESHOLDS,
     _resolve_compare_mode,
     _resolve_metric_thresholds,
+    _resize_tflite_inputs_if_needed,
 )
 
 
@@ -44,11 +46,36 @@ def _run_tflite_model(
     compare_mode: str,
 ) -> Dict[str, np.ndarray]:
     input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
     input_map = _build_tflite_detail_map(
         onnx_names=model_input_names,
         tflite_details=input_details,
     )
+
+    adapted_inputs: Dict[str, np.ndarray] = {}
+    for input_name in model_input_names:
+        if input_name not in provided_inputs:
+            raise ValueError(
+                f"Missing model input tensor for tflite run. input_name={input_name}"
+            )
+        adapted_inputs[input_name] = _adapt_input_layout_for_tflite_input(
+            provided_inputs[input_name],
+            input_map[input_name],
+        )
+
+    resized = _resize_tflite_inputs_if_needed(
+        interpreter=interpreter,
+        onnx_input_names=model_input_names,
+        tflite_input_map=input_map,
+        adapted_inputs=adapted_inputs,
+    )
+    if resized:
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        input_map = _build_tflite_detail_map(
+            onnx_names=model_input_names,
+            tflite_details=input_details,
+        )
+    output_details = interpreter.get_output_details()
     output_map = _build_tflite_detail_map(
         onnx_names=model_output_names,
         tflite_details=output_details,
@@ -56,13 +83,9 @@ def _run_tflite_model(
 
     for input_name in model_input_names:
         input_detail = input_map[input_name]
-        if input_name not in provided_inputs:
-            raise ValueError(
-                f"Missing model input tensor for tflite run. input_name={input_name}"
-            )
         interpreter.set_tensor(
             input_detail["index"],
-            _quantize_for_tflite_input(provided_inputs[input_name], input_detail),
+            _quantize_for_tflite_input(adapted_inputs[input_name], input_detail),
         )
     interpreter.invoke()
 

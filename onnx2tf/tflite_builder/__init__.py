@@ -42,6 +42,9 @@ from onnx2tf.tflite_builder.split_planner import (
     write_split_model_files_and_manifest,
     write_split_plan_report,
 )
+from onnx2tf.tflite_builder.split_saved_model_exporter import (
+    export_split_saved_models,
+)
 from onnx2tf.utils.common_functions import weights_export
 
 
@@ -106,7 +109,7 @@ def _create_progress_bar(
 def _build_export_progress_labels(
     *,
     report_op_coverage: bool,
-    auto_split_tflite_by_size: bool,
+    split_plan_requested: bool,
     output_dynamic_range_quantized_tflite: bool,
     output_integer_quantized_tflite: bool,
     output_weights: bool,
@@ -117,7 +120,7 @@ def _build_export_progress_labels(
     ]
     if report_op_coverage:
         labels.append("op coverage report")
-    if auto_split_tflite_by_size:
+    if split_plan_requested:
         labels.append("split planning")
     labels.extend(
         [
@@ -256,9 +259,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     enable_accumulation_type_float16 = bool(
         kwargs.get("enable_accumulation_type_float16", False)
     )
-    auto_split_tflite_by_size = bool(
-        kwargs.get("auto_split_tflite_by_size", False)
-    )
+    force_split_manifest = bool(kwargs.get("force_split_manifest", False))
+    split_plan_requested = bool(force_split_manifest)
     report_op_coverage = bool(kwargs.get("report_op_coverage", False))
     output_nms_with_argmax = bool(kwargs.get("output_nms_with_argmax", False))
     switch_nms_version = str(kwargs.get("switch_nms_version", "v4")).strip().lower()
@@ -453,7 +455,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
 
     export_progress_labels = _build_export_progress_labels(
         report_op_coverage=report_op_coverage,
-        auto_split_tflite_by_size=auto_split_tflite_by_size,
+        split_plan_requested=split_plan_requested,
         output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
         output_integer_quantized_tflite=output_integer_quantized_tflite,
         output_weights=output_weights,
@@ -550,7 +552,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         split_partition_paths = None
         split_partition_count = 0
         write_timing_report: Dict[str, Dict[str, Any]] = {}
-        if auto_split_tflite_by_size:
+        split_saved_model_dirs = None
+        if split_plan_requested:
             _set_export_progress_desc("split planning")
             split_plan_report = plan_contiguous_partitions_by_size(
                 model_ir=model_ir,
@@ -569,7 +572,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     f"{output_file_name}_split_plan.json",
                 ),
             )
-            if split_required_by_estimate:
+            if split_required_by_estimate or force_split_manifest:
                 from ai_edge_litert.interpreter import Interpreter
 
                 def _validate_split_tflite_loadable(tflite_path: str) -> None:
@@ -624,13 +627,22 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
 
         if output_saved_model_from_model_ir:
             _set_export_progress_desc("write saved_model")
-            from onnx2tf.tflite_builder.saved_model_exporter import (
-                export_saved_model_from_model_ir,
-            )
-            saved_model_path = export_saved_model_from_model_ir(
-                model_ir=model_ir_fp32,
-                output_folder_path=output_folder_path,
-            )
+            if split_manifest_path is not None:
+                split_saved_model_outputs = export_split_saved_models(
+                    model_ir=model_ir,
+                    split_manifest_path=split_manifest_path,
+                    output_folder_path=output_folder_path,
+                    output_file_name=output_file_name,
+                )
+                split_saved_model_dirs = split_saved_model_outputs["split_saved_model_dirs"]
+            else:
+                from onnx2tf.tflite_builder.saved_model_exporter import (
+                    export_saved_model_from_model_ir,
+                )
+                saved_model_path = export_saved_model_from_model_ir(
+                    model_ir=model_ir_fp32,
+                    output_folder_path=output_folder_path,
+                )
             _advance_export_progress()
 
         _set_export_progress_desc("write float16 tflite")
@@ -933,6 +945,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if split_partition_paths is not None:
         outputs["split_partition_paths"] = split_partition_paths
         outputs["split_partition_count"] = int(split_partition_count)
+    if split_saved_model_dirs is not None:
+        outputs["split_saved_model_dirs"] = list(split_saved_model_dirs)
+        outputs["split_saved_model_count"] = int(len(split_saved_model_dirs))
     if op_coverage_report_path is not None:
         outputs["op_coverage_report_path"] = op_coverage_report_path
     outputs["tensor_correspondence_report_path"] = tensor_correspondence_report_path

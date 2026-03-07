@@ -104,6 +104,69 @@ def _collect_inputs(operators: Sequence[OperatorIR]) -> List[str]:
     return inputs
 
 
+def _collect_required_operator_indices_for_outputs(
+    *,
+    operators: Sequence[OperatorIR],
+    partition_outputs: Sequence[str],
+) -> List[int]:
+    producer_index: Dict[str, int] = {}
+    for op_idx, op in enumerate(operators):
+        for output_name in op.outputs:
+            if output_name and output_name not in producer_index:
+                producer_index[output_name] = int(op_idx)
+
+    required_ops: Set[int] = set()
+    pending_tensors: List[str] = [
+        str(tensor_name) for tensor_name in partition_outputs if str(tensor_name) != ""
+    ]
+    visited_tensors: Set[str] = set()
+    while pending_tensors:
+        tensor_name = str(pending_tensors.pop())
+        if tensor_name == "" or tensor_name in visited_tensors:
+            continue
+        visited_tensors.add(tensor_name)
+        producer_op_idx = producer_index.get(tensor_name, None)
+        if producer_op_idx is None:
+            continue
+        if producer_op_idx in required_ops:
+            continue
+        required_ops.add(int(producer_op_idx))
+        for input_name in operators[producer_op_idx].inputs:
+            if input_name:
+                pending_tensors.append(str(input_name))
+    return sorted(list(required_ops))
+
+
+def _collect_partition_boundary_inputs(
+    *,
+    model_ir: ModelIR,
+    consumed_tensor_names: Sequence[str],
+    produced_tensor_names: Set[str],
+) -> List[str]:
+    runtime_input_names = {
+        str(tensor_name)
+        for tensor_name in model_ir.inputs
+        if str(tensor_name) != ""
+    }
+    partition_inputs: List[str] = []
+    seen_inputs: Set[str] = set()
+    for tensor_name in consumed_tensor_names:
+        normalized_name = str(tensor_name)
+        if normalized_name == "":
+            continue
+        if normalized_name in seen_inputs or normalized_name in produced_tensor_names:
+            continue
+        seen_inputs.add(normalized_name)
+        if normalized_name in runtime_input_names:
+            partition_inputs.append(normalized_name)
+            continue
+        tensor = model_ir.tensors.get(normalized_name, None)
+        if tensor is not None and tensor.data is not None:
+            continue
+        partition_inputs.append(normalized_name)
+    return partition_inputs
+
+
 def build_partition_model_ir(
     *,
     model_ir: ModelIR,
@@ -122,9 +185,11 @@ def build_partition_model_ir(
     produced_set = set(produced_in_range)
     consumed_in_range = _collect_inputs(range_ops)
 
-    partition_inputs: List[str] = [
-        name for name in consumed_in_range if name not in produced_set
-    ]
+    partition_inputs = _collect_partition_boundary_inputs(
+        model_ir=model_ir,
+        consumed_tensor_names=consumed_in_range,
+        produced_tensor_names=produced_set,
+    )
     consumed_after: Set[str] = set()
     for op in model_ir.operators[end_op_index:]:
         for input_name in op.inputs:
@@ -139,6 +204,28 @@ def build_partition_model_ir(
         for name in range_ops[-1].outputs:
             if name:
                 partition_outputs.append(name)
+
+    required_op_indices = _collect_required_operator_indices_for_outputs(
+        operators=range_ops,
+        partition_outputs=partition_outputs,
+    )
+    if len(required_op_indices) > 0:
+        range_ops = [range_ops[op_idx] for op_idx in required_op_indices]
+        produced_in_range = _collect_outputs(range_ops)
+        produced_set = set(produced_in_range)
+        consumed_in_range = _collect_inputs(range_ops)
+        partition_inputs = _collect_partition_boundary_inputs(
+            model_ir=model_ir,
+            consumed_tensor_names=consumed_in_range,
+            produced_tensor_names=produced_set,
+        )
+        partition_outputs = [
+            name for name in partition_outputs if name in produced_set
+        ]
+        if len(partition_outputs) == 0 and len(range_ops) > 0:
+            for name in range_ops[-1].outputs:
+                if name:
+                    partition_outputs.append(name)
 
     required_tensor_names: Set[str] = set(partition_inputs + partition_outputs)
     for op in range_ops:
