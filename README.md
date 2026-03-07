@@ -273,7 +273,9 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
 ## `flatbuffer_direct` execution path
 
-Currently, the `flatbuffer_direct` backend is faster and has a higher success rate than the default `tf_converter` backend. The simplest conversion command for `flatbuffer_direct` outputs only a LiteRT model, but if you add `--flatbuffer_direct_output_saved_model`, it will output a `saved_model` as before. However, what is different from the previous behavior is that it will build the graph of the `saved_model` from the LiteRT model. **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`.**
+Currently, the `flatbuffer_direct` backend is faster and has a higher success rate than the default `tf_converter` backend. The simplest conversion command for `flatbuffer_direct` outputs only a LiteRT model, but if you add `--flatbuffer_direct_output_saved_model`, it will output a `saved_model` as before. However, what is different from the previous behavior is that it will build the graph of the `saved_model` from the LiteRT model.
+
+**Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`.**
 
 <img width="1236" height="528" alt="image" src="https://github.com/user-attachments/assets/15570a42-dfad-42cb-ba67-74de1e5f732e" />
 
