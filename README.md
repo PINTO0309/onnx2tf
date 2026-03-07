@@ -237,7 +237,7 @@ Currently, the `flatbuffer_direct` backend is faster and has a higher success ra
 
 **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`.**
 
-<img width="1236" height="528" alt="image" src="https://github.com/user-attachments/assets/15570a42-dfad-42cb-ba67-74de1e5f732e" />
+<img width="1869" height="770" alt="image" src="https://github.com/user-attachments/assets/8becf72d-c3dd-4a1c-ae75-e9e67b22817d" />
 
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
 
