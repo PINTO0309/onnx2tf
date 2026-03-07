@@ -7,12 +7,27 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
 )
 
 
-def test_generate_seeded_input_float_image_shape_defaults_uniform_0_1(
+def test_generate_seeded_input_float_nchw_image_shape_defaults_normal(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", raising=False)
+    rng_actual = np.random.default_rng(0)
+    rng_expected = np.random.default_rng(0)
+    actual = _generate_seeded_input(
+        shape=(1, 3, 8, 8),
+        np_dtype=np.dtype(np.float32),
+        rng=rng_actual,
+    )
+    expected = rng_expected.standard_normal((1, 3, 8, 8)).astype(np.float32)
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_generate_seeded_input_float_nhwc_image_shape_defaults_uniform_0_1(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", raising=False)
     x = _generate_seeded_input(
-        shape=(1, 3, 8, 8),
+        shape=(1, 8, 8, 3),
         np_dtype=np.dtype(np.float32),
         rng=np.random.default_rng(0),
     )

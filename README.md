@@ -273,6 +273,8 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 
 ## `flatbuffer_direct` execution path
 
+Currently, the `flatbuffer_direct` backend is faster and has a higher success rate than the default `tf_converter` backend. The simplest conversion command for `flatbuffer_direct` outputs only a LiteRT model, but if you add `--flatbuffer_direct_output_saved_model`, it will output a `saved_model` as before. However, what is different from the previous behavior is that it will build the graph of the `saved_model` from the LiteRT model. **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`.**
+
 <img width="1207" height="514" alt="image" src="https://github.com/user-attachments/assets/f74b59cd-a4db-4601-92c8-0b2eb9c5dfa7" />
 
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
@@ -318,10 +320,23 @@ This option has strict constraints:
 |:-:|:-:|
 |<img width="300" alt="Image" src="https://github.com/user-attachments/assets/c1411cb7-35aa-489d-ad87-291d64b766ec" />|<img width="300" alt="image" src="https://github.com/user-attachments/assets/7ffeaa53-4c83-4a9e-b5b4-17ea11c93b20" />|
 
-- e.g.
+- e.g. LiteRT only output
   ```bash
   onnx2tf \
   -i iat_llie_180x320.onnx \
+  -tb flatbuffer_direct
+  ```
+- e.g. Generate additional `saved_model` from LiteRT after LiteRT output
+  ```bash
+  onnx2tf \
+  -i iat_llie_180x320.onnx \
+  -tb flatbuffer_direct \
+  -fdosm
+  ```
+- e.g. Generate `saved_model` directly from an existing LiteRT (`.tflite`) file
+  ```bash
+  onnx2tf \
+  -it iat_llie_180x320_float32.tflite \
   -tb flatbuffer_direct
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
@@ -1915,7 +1930,7 @@ onnx2tf -h
 
 usage: onnx2tf
 [-h]
-(-i INPUT_ONNX_FILE_PATH | -V)
+(-i INPUT_ONNX_FILE_PATH | -it INPUT_TFLITE_FILE_PATH | -V)
 [-o OUTPUT_FOLDER_PATH]
 [-osd]
 [-oh5]
@@ -1975,6 +1990,9 @@ optional arguments:
 
   -i INPUT_ONNX_FILE_PATH, --input_onnx_file_path INPUT_ONNX_FILE_PATH
     Input onnx file path.
+
+  -it INPUT_TFLITE_FILE_PATH, --input_tflite_file_path INPUT_TFLITE_FILE_PATH
+    Input tflite file path for direct SavedModel export.
 
   -V, --version
     Show version and exit.
@@ -2490,6 +2508,9 @@ supports `--resume`, and generates `bulk_status.json` / `bulk_summary.json` / `b
     values are compared, causing OutOfMemory.
     It is very time consuming because it performs as many inferences as
     there are operations.
+    When --input_tflite_file_path is specified, this runs SavedModel inference
+    plus SavedModel vs input TFLite output comparison and emits
+    `<model_name>_saved_model_validation_report.json`.
 
   -coton, --check_onnx_tf_outputs_sample_data_normalization
     norm: Validate using random data normalized to the range 0.0 to 1.0
@@ -2561,6 +2582,7 @@ Help on function convert in module onnx2tf:
 
 convert(
   input_onnx_file_path: Union[str, NoneType] = '',
+  input_tflite_file_path: Union[str, NoneType] = '',
   onnx_graph: Union[onnx.onnx_ml_pb2.ModelProto, NoneType] = None,
   output_folder_path: Union[str, NoneType] = 'saved_model',
   output_signaturedefs: Optional[bool] = False,
@@ -2633,11 +2655,18 @@ convert(
     ----------
     input_onnx_file_path: Optional[str]
       Input onnx file path.
-      Either input_onnx_file_path or onnx_graph must be specified.
+      Either input_onnx_file_path or input_tflite_file_path or onnx_graph must be specified.
+
+    input_tflite_file_path: Optional[str]
+      Input tflite file path.
+      If specified, runs tflite-direct SavedModel export mode.
+      In this mode, ONNX-dependent conversion options are rejected and
+      `check_onnx_tf_outputs_elementwise_close_full=True` runs
+      SavedModel vs input TFLite comparison.
 
     onnx_graph: Optional[onnx.ModelProto]
       onnx.ModelProto.
-      Either input_onnx_file_path or onnx_graph must be specified.
+      Either input_onnx_file_path or input_tflite_file_path or onnx_graph must be specified.
       onnx_graph If specified, ignore input_onnx_file_path and process onnx_graph.
 
     output_folder_path: Optional[str]

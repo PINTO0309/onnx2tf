@@ -1135,6 +1135,7 @@ def apply_nonzero_passthrough_tf(
 # pyright: reportGeneralTypeIssues=false
 def convert(
     input_onnx_file_path: Optional[str] = '',
+    input_tflite_file_path: Optional[str] = '',
     onnx_graph: Optional[onnx.ModelProto] = None,
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
@@ -1227,11 +1228,17 @@ def convert(
     ----------
     input_onnx_file_path: Optional[str]
         Input onnx file path.\n
-        Either input_onnx_file_path or onnx_graph must be specified.
+        Either input_onnx_file_path, input_tflite_file_path or onnx_graph must be specified.
+
+    input_tflite_file_path: Optional[str]
+        Input tflite file path.\n
+        If specified, run tflite-direct SavedModel export mode.\n
+        In this mode, ONNX-dependent conversion options are rejected,\n
+        and -cotof performs SavedModel vs TFLite runtime comparison.
 
     onnx_graph: Optional[onnx.ModelProto]
         onnx.ModelProto.\n
-        Either input_onnx_file_path or onnx_graph must be specified.\n
+        Either input_onnx_file_path, input_tflite_file_path or onnx_graph must be specified.\n
         onnx_graph If specified, ignore input_onnx_file_path and process onnx_graph.
 
     output_folder_path: Optional[str]
@@ -1769,20 +1776,46 @@ def convert(
     common_functions.set_dummy_shape_hints(shape_hints)
     common_functions.set_dummy_value_hints(value_hints)
 
-    # Either designation required
-    if not input_onnx_file_path and not onnx_graph:
-        error(
-            f'One of input_onnx_file_path or onnx_graph must be specified.'
-        )
-        sys.exit(1)
-
     # If output_folder_path is empty, set the initial value
     if not output_folder_path:
         output_folder_path = 'saved_model'
 
     # Escape
-    input_onnx_file_path = fr'{input_onnx_file_path}'
-    output_folder_path = fr'{output_folder_path}'
+    input_onnx_file_path = (
+        fr'{input_onnx_file_path}'
+        if input_onnx_file_path is not None
+        else ''
+    )
+    input_tflite_file_path = (
+        fr'{input_tflite_file_path}'
+        if input_tflite_file_path is not None
+        else ''
+    )
+    output_folder_path = (
+        fr'{output_folder_path}'
+        if output_folder_path is not None
+        else 'saved_model'
+    )
+
+    has_input_onnx = bool(input_onnx_file_path)
+    has_input_tflite = bool(input_tflite_file_path)
+    has_input_onnx_graph = bool(onnx_graph is not None)
+    if sum(
+        [
+            1 if has_input_onnx else 0,
+            1 if has_input_tflite else 0,
+            1 if has_input_onnx_graph else 0,
+        ]
+    ) > 1:
+        error(
+            'input_onnx_file_path, input_tflite_file_path, and onnx_graph are mutually exclusive.'
+        )
+        sys.exit(1)
+    if not has_input_onnx and not has_input_tflite and not has_input_onnx_graph:
+        error(
+            'One of input_onnx_file_path, input_tflite_file_path or onnx_graph must be specified.'
+        )
+        sys.exit(1)
 
     # TFLite backend
     tflite_backend = str(tflite_backend).lower() if tflite_backend is not None else 'tf_converter'
@@ -1945,6 +1978,73 @@ def convert(
             'flatbuffer_direct_allow_custom_ops currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
+
+    if has_input_tflite:
+        if tflite_backend != 'flatbuffer_direct':
+            error(
+                'input_tflite_file_path currently supports only tflite_backend="flatbuffer_direct".'
+            )
+            sys.exit(1)
+        if disable_model_save:
+            error(
+                'input_tflite_file_path cannot be used with disable_model_save=True.'
+            )
+            sys.exit(1)
+        disallowed_options = []
+        disallowed_checks = [
+            ('output_h5', bool(output_h5)),
+            ('output_keras_v3', bool(output_keras_v3)),
+            ('output_tfv1_pb', bool(output_tfv1_pb)),
+            ('output_weights', bool(output_weights)),
+            ('copy_onnx_input_output_names_to_tflite', bool(copy_onnx_input_output_names_to_tflite)),
+            ('output_dynamic_range_quantized_tflite', bool(output_dynamic_range_quantized_tflite)),
+            ('output_integer_quantized_tflite', bool(output_integer_quantized_tflite)),
+            ('eval_with_onnx', bool(eval_with_onnx)),
+            ('eval_split_models', bool(eval_split_models)),
+            ('auto_split_tflite_by_size', bool(auto_split_tflite_by_size)),
+            ('report_op_coverage', bool(report_op_coverage)),
+            ('flatbuffer_direct_output_saved_model', bool(flatbuffer_direct_output_saved_model)),
+            ('flatbuffer_direct_allow_custom_ops', bool(flatbuffer_direct_allow_custom_ops)),
+            (
+                'flatbuffer_direct_custom_op_allowlist',
+                bool(flatbuffer_direct_custom_op_allowlist is not None and len(flatbuffer_direct_custom_op_allowlist) > 0),
+            ),
+            ('check_onnx_tf_outputs_elementwise_close', bool(check_onnx_tf_outputs_elementwise_close)),
+            ('enable_auto_split_model', bool(enable_auto_split_model)),
+            ('check_gpu_delegate_compatibility', bool(check_gpu_delegate_compatibility)),
+            ('auto_generate_json', bool(auto_generate_json)),
+            ('auto_generate_json_on_error', bool(auto_generate_json_on_error)),
+            ('custom_input_op_name_np_data_path', bool(custom_input_op_name_np_data_path is not None)),
+            ('replace_to_pseudo_operators', bool(replace_to_pseudo_operators)),
+            ('input_names_to_interrupt_model_conversion', bool(input_names_to_interrupt_model_conversion)),
+            ('output_names_to_interrupt_model_conversion', bool(output_names_to_interrupt_model_conversion)),
+            ('overwrite_input_shape', bool(overwrite_input_shape)),
+            ('shape_hints', bool(shape_hints)),
+            ('batch_size', bool(batch_size is not None)),
+            ('param_replacement_file', bool(str(param_replacement_file).strip() != '')),
+            ('not_use_onnxsim', bool(not_use_onnxsim)),
+            ('not_use_opname_auto_generate', bool(not_use_opname_auto_generate)),
+            ('disable_group_convolution', bool(disable_group_convolution)),
+            ('enable_batchmatmul_unfold', bool(enable_batchmatmul_unfold)),
+            ('enable_rnn_unroll', bool(enable_rnn_unroll)),
+            ('disable_suppression_flextranspose', bool(disable_suppression_flextranspose)),
+            ('disable_suppression_flexstridedslice', bool(disable_suppression_flexstridedslice)),
+            ('disable_strict_mode', bool(disable_strict_mode)),
+            ('optimization_for_gpu_delegate', bool(optimization_for_gpu_delegate)),
+            ('replace_argmax_to_reducemax_and_indices_is_int64', bool(replace_argmax_to_reducemax_and_indices_is_int64)),
+            ('replace_argmax_to_reducemax_and_indices_is_float32', bool(replace_argmax_to_reducemax_and_indices_is_float32)),
+            ('replace_argmax_to_fused_argmax_and_indices_is_int64', bool(replace_argmax_to_fused_argmax_and_indices_is_int64)),
+            ('replace_argmax_to_fused_argmax_and_indices_is_float32', bool(replace_argmax_to_fused_argmax_and_indices_is_float32)),
+        ]
+        for option_name, option_enabled in disallowed_checks:
+            if bool(option_enabled):
+                disallowed_options.append(str(option_name))
+        if len(disallowed_options) > 0:
+            error(
+                'input_tflite_file_path does not support ONNX conversion options. '
+                f'unsupported_options={sorted(disallowed_options)}'
+            )
+            sys.exit(1)
 
     auto_eval_with_onnx_from_cotof = bool(
         check_onnx_tf_outputs_elementwise_close_full
@@ -2120,6 +2220,356 @@ def convert(
             )
         )
 
+    def _run_saved_model_tflite_direct_check(
+        *,
+        saved_model_path: Optional[str],
+        float32_tflite_path: Optional[str],
+        source_label: str,
+    ) -> None:
+        if not run_saved_model_inference_check:
+            return
+        report_path = os.path.join(
+            output_folder_path,
+            f'{output_file_name}_saved_model_validation_report.json',
+        )
+        report: Dict[str, Any] = {
+            'schema_version': 1,
+            'source_label': str(source_label),
+            'saved_model_path': (
+                str(saved_model_path)
+                if saved_model_path is not None
+                else None
+            ),
+            'float32_tflite_path': (
+                str(float32_tflite_path)
+                if float32_tflite_path is not None
+                else None
+            ),
+            'inference': {
+                'status': 'not_run',
+                'reason': '',
+                'outputs': [],
+            },
+            'comparison': {
+                'status': 'not_run',
+                'reason': '',
+                'pass': None,
+                'matched': 0,
+                'total': 0,
+                'max_abs': None,
+                'unmatched_outputs': [],
+            },
+            'overall_pass': False,
+        }
+
+        def _write_saved_model_validation_report() -> None:
+            try:
+                os.makedirs(output_folder_path, exist_ok=True)
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    json.dump(report, f, ensure_ascii=False, indent=2)
+                info(
+                    Color.GREEN(
+                        'SavedModel validation report output complete! '
+                        f'({report_path})'
+                    )
+                )
+            except Exception as report_ex:
+                warn(
+                    'SavedModel validation report output failed. '
+                    f'path={report_path} reason={report_ex}'
+                )
+
+        def _normalized_name(name: str) -> str:
+            normalized = str(name).split(':')[0]
+            if normalized.startswith('serving_default_'):
+                normalized = normalized[len('serving_default_'):]
+            return normalized
+
+        def _fallback_shape_from_spec(spec: tf.TensorSpec) -> List[int]:
+            shape: List[int] = []
+            for dim_index, dim in enumerate(spec.shape.as_list()):
+                if dim is None or int(dim) <= 0:
+                    shape.append(1 if dim_index == 0 else 16)
+                else:
+                    shape.append(int(dim))
+            return shape
+
+        def _detail_runtime_shape(detail: Dict[str, Any]) -> List[int]:
+            shape_signature = detail.get('shape_signature', None)
+            if shape_signature is None:
+                shape_signature = detail.get('shape', None)
+            shape_list = [int(v) for v in np.asarray(shape_signature).reshape(-1).tolist()]
+            runtime_shape: List[int] = []
+            for axis, dim in enumerate(shape_list):
+                runtime_shape.append(1 if int(dim) <= 0 else int(dim))
+            return runtime_shape
+
+        if saved_model_path is None or not os.path.exists(str(saved_model_path)):
+            report['inference']['status'] = 'failed'
+            report['inference']['reason'] = 'saved_model_unavailable'
+            report['comparison']['status'] = 'failed'
+            report['comparison']['reason'] = 'saved_model_unavailable'
+            report['comparison']['pass'] = False
+            report['overall_pass'] = False
+            _write_saved_model_validation_report()
+            raise RuntimeError(
+                'SavedModel inference check failed because SavedModel path is unavailable. '
+                f'source={source_label} path={saved_model_path}'
+            )
+        if float32_tflite_path is None or not os.path.exists(str(float32_tflite_path)):
+            report['inference']['status'] = 'failed'
+            report['inference']['reason'] = 'float32_tflite_unavailable'
+            report['comparison']['status'] = 'failed'
+            report['comparison']['reason'] = 'float32_tflite_unavailable'
+            report['comparison']['pass'] = False
+            report['overall_pass'] = False
+            _write_saved_model_validation_report()
+            raise RuntimeError(
+                'SavedModel inference check failed because float32 TFLite path is unavailable. '
+                f'source={source_label} path={float32_tflite_path}'
+            )
+
+        try:
+            from onnx2tf.tflite_builder.accuracy_evaluator import (
+                _align_output_layout_for_compare,
+                _create_tflite_interpreter,
+                _quantize_for_tflite_input,
+            )
+        except Exception as import_ex:
+            raise RuntimeError('Evaluator helpers are unavailable.') from import_ex
+
+        failure_reason = ''
+        try:
+            module = tf.saved_model.load(saved_model_path)
+            signature_fn = module.signatures.get('serving_default', None)
+            if signature_fn is None:
+                raise RuntimeError(
+                    'serving_default signature is missing in generated SavedModel. '
+                    f'available_signatures={list(module.signatures.keys())}'
+                )
+            signature_inputs = signature_fn.structured_input_signature[1]
+            if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
+                raise RuntimeError('SavedModel serving_default signature has no inputs.')
+
+            interpreter = _create_tflite_interpreter(float32_tflite_path)
+            interpreter.allocate_tensors()
+            tflite_input_details = interpreter.get_input_details()
+            tflite_output_details = interpreter.get_output_details()
+
+            if len(tflite_input_details) != len(signature_inputs):
+                raise RuntimeError(
+                    'Input count mismatch between SavedModel and TFLite. '
+                    f'saved_model_inputs={len(signature_inputs)} '
+                    f'tflite_inputs={len(tflite_input_details)}'
+                )
+
+            rng = np.random.default_rng(0)
+            random_input_by_detail_index: Dict[int, np.ndarray] = {}
+            detail_by_normalized_name: Dict[str, Dict[str, Any]] = {}
+            for detail in tflite_input_details:
+                detail_shape = _detail_runtime_shape(detail)
+                if len(detail_shape) == 0:
+                    detail_shape = [1]
+                random_input = rng.uniform(-1.0, 1.0, size=tuple(detail_shape)).astype(np.float32)
+                random_input_by_detail_index[int(detail['index'])] = random_input
+                detail_name = _normalized_name(str(detail.get('name', '')))
+                if detail_name not in detail_by_normalized_name:
+                    detail_by_normalized_name[detail_name] = detail
+
+            serving_inputs: Dict[str, tf.Tensor] = {}
+            tflite_inputs: Dict[int, np.ndarray] = {}
+            ordered_details = list(tflite_input_details)
+            for input_position, (saved_input_name, tensor_spec) in enumerate(signature_inputs.items()):
+                matched_detail = detail_by_normalized_name.get(
+                    _normalized_name(saved_input_name),
+                    None,
+                )
+                if matched_detail is None:
+                    matched_detail = ordered_details[input_position]
+                detail_index = int(matched_detail['index'])
+                base_input = np.asarray(random_input_by_detail_index[detail_index])
+
+                spec_shape = _fallback_shape_from_spec(tensor_spec)
+                spec_dtype = np.dtype(tensor_spec.dtype.as_numpy_dtype)
+                saved_input_value = np.asarray(base_input)
+                if saved_input_value.size == int(np.prod(np.asarray(spec_shape, dtype=np.int64))):
+                    saved_input_value = saved_input_value.reshape(tuple(spec_shape))
+                else:
+                    raise RuntimeError(
+                        'SavedModel input shape mismatch for generated random input. '
+                        f'input_name={saved_input_name} '
+                        f'saved_model_shape={tuple(spec_shape)} '
+                        f'tflite_shape={tuple(base_input.shape)}'
+                    )
+                if saved_input_value.dtype != spec_dtype:
+                    if np.issubdtype(spec_dtype, np.bool_):
+                        saved_input_value = (saved_input_value > 0.0).astype(np.bool_)
+                    else:
+                        saved_input_value = saved_input_value.astype(spec_dtype)
+
+                serving_inputs[saved_input_name] = tf.convert_to_tensor(
+                    saved_input_value,
+                    dtype=tensor_spec.dtype,
+                )
+                tflite_inputs[detail_index] = _quantize_for_tflite_input(
+                    np.asarray(base_input),
+                    matched_detail,
+                )
+
+            for detail in tflite_input_details:
+                detail_index = int(detail['index'])
+                interpreter.set_tensor(detail_index, tflite_inputs[detail_index])
+            interpreter.invoke()
+
+            with tf.device('/CPU:0'):
+                saved_outputs = signature_fn(**serving_inputs)
+
+            output_arrays: Dict[str, np.ndarray] = {}
+            output_names_in_order: List[str] = []
+            if isinstance(saved_outputs, dict):
+                output_names_in_order = [str(v) for v in saved_outputs.keys()]
+                for output_name, output_value in saved_outputs.items():
+                    if hasattr(output_value, 'numpy'):
+                        output_arrays[str(output_name)] = np.asarray(output_value.numpy())
+                    else:
+                        output_arrays[str(output_name)] = np.asarray(output_value)
+            report['inference']['status'] = 'passed'
+            report['inference']['reason'] = ''
+            report['inference']['outputs'] = list(output_names_in_order)
+
+            output_by_normalized_name = {
+                _normalized_name(name): value
+                for name, value in output_arrays.items()
+            }
+            comparison_total = int(len(tflite_output_details))
+            comparison_matched = 0
+            max_abs = 0.0
+            unmatched_outputs: List[str] = []
+            used_saved_output_names: set[str] = set()
+
+            for output_position, detail in enumerate(tflite_output_details):
+                tflite_output_value = np.asarray(interpreter.get_tensor(int(detail['index'])))
+                detail_name = _normalized_name(str(detail.get('name', '')))
+                selected_saved_name = None
+                saved_output_value = output_arrays.get(str(detail.get('name', '')), None)
+                if saved_output_value is None:
+                    saved_output_value = output_arrays.get(detail_name, None)
+                if saved_output_value is None:
+                    saved_output_value = output_by_normalized_name.get(detail_name, None)
+                    if saved_output_value is not None:
+                        selected_saved_name = next(
+                            (
+                                name
+                                for name in output_names_in_order
+                                if _normalized_name(name) == detail_name
+                            ),
+                            None,
+                        )
+                if saved_output_value is None and output_position < len(output_names_in_order):
+                    selected_saved_name = str(output_names_in_order[output_position])
+                    saved_output_value = output_arrays[selected_saved_name]
+                if saved_output_value is None:
+                    unmatched_outputs.append(str(detail.get('name', f'output_{output_position}')))
+                    continue
+                if selected_saved_name is None:
+                    selected_saved_name = next(
+                        (
+                            name
+                            for name, value in output_arrays.items()
+                            if value is saved_output_value and name not in used_saved_output_names
+                        ),
+                        None,
+                    )
+                if selected_saved_name is not None:
+                    used_saved_output_names.add(str(selected_saved_name))
+
+                saved_output_array = np.asarray(saved_output_value)
+                aligned_tflite = np.asarray(tflite_output_value)
+                try:
+                    aligned_tflite, _, _ = _align_output_layout_for_compare(
+                        onnx_output=saved_output_array,
+                        tflite_output=tflite_output_value,
+                        rtol=float(eval_rtol),
+                        atol=float(eval_atol),
+                    )
+                except Exception:
+                    if tuple(saved_output_array.shape) != tuple(tflite_output_value.shape):
+                        unmatched_outputs.append(str(detail.get('name', f'output_{output_position}')))
+                        continue
+
+                if bool(
+                    np.allclose(
+                        saved_output_array,
+                        aligned_tflite,
+                        rtol=float(eval_rtol),
+                        atol=float(eval_atol),
+                        equal_nan=True,
+                    )
+                ):
+                    comparison_matched += 1
+                else:
+                    unmatched_outputs.append(str(detail.get('name', f'output_{output_position}')))
+
+                if saved_output_array.size > 0:
+                    with np.errstate(invalid='ignore'):
+                        diff = np.abs(
+                            np.asarray(saved_output_array, dtype=np.float64)
+                            - np.asarray(aligned_tflite, dtype=np.float64)
+                        )
+                        if np.any(np.isfinite(diff)):
+                            local_max_abs = float(np.nanmax(diff))
+                            if local_max_abs > max_abs:
+                                max_abs = local_max_abs
+
+            comparison_pass = (
+                int(comparison_matched) == int(comparison_total)
+                and len(unmatched_outputs) == 0
+            )
+            report['comparison']['status'] = 'passed' if comparison_pass else 'failed'
+            report['comparison']['reason'] = '' if comparison_pass else 'output_mismatch'
+            report['comparison']['pass'] = bool(comparison_pass)
+            report['comparison']['matched'] = int(comparison_matched)
+            report['comparison']['total'] = int(comparison_total)
+            report['comparison']['max_abs'] = float(max_abs)
+            report['comparison']['unmatched_outputs'] = sorted(set(unmatched_outputs))
+            report['overall_pass'] = bool(comparison_pass)
+            _write_saved_model_validation_report()
+
+            if not comparison_pass:
+                failure_reason = (
+                    'SavedModel/TFLite output comparison failed. '
+                    f'source={source_label} '
+                    f'matched={comparison_matched}/{comparison_total} '
+                    f'max_abs={max_abs:.6g} '
+                    f'unmatched_outputs={sorted(set(unmatched_outputs))}'
+                )
+                raise RuntimeError(failure_reason)
+
+            info(
+                Color.GREEN(
+                    'SavedModel/TFLite output comparison complete! '
+                    f'source={source_label} '
+                    f'pass={comparison_pass} '
+                    f'matched={comparison_matched}/{comparison_total} '
+                    f'max_abs={max_abs:.6g}'
+                )
+            )
+        except Exception as ex:
+            if report['inference']['status'] != 'passed':
+                report['inference']['status'] = 'failed'
+                report['inference']['reason'] = str(ex)
+                report['comparison']['status'] = 'skipped'
+                report['comparison']['reason'] = 'inference_failed'
+                report['comparison']['pass'] = False
+                report['overall_pass'] = False
+                _write_saved_model_validation_report()
+            if failure_reason == '':
+                failure_reason = (
+                    'SavedModel inference check failed for tflite-direct mode. '
+                    f'source={source_label} reason={ex}'
+                )
+            raise RuntimeError(failure_reason) from ex
+
     def _run_saved_model_inference_check(
         *,
         saved_model_path: Optional[str],
@@ -2271,10 +2721,24 @@ def convert(
                 },
             )
 
+        if saved_model_path is None or not os.path.exists(str(saved_model_path)):
+            report['inference']['status'] = 'skipped'
+            report['inference']['reason'] = 'saved_model_unavailable'
+            report['comparison']['status'] = 'skipped'
+            report['comparison']['reason'] = 'saved_model_unavailable'
+            report['comparison']['pass'] = False
+            report['overall_pass'] = False
+            _write_saved_model_validation_report()
+            info(
+                Color.YELLOW(
+                    'SavedModel inference check skipped because SavedModel path is unavailable. '
+                    f'source={source_label} path={saved_model_path}'
+                )
+            )
+            return
+
         inference_exception: Optional[BaseException] = None
         try:
-            if saved_model_path is None or not os.path.exists(str(saved_model_path)):
-                raise RuntimeError('SavedModel path is unavailable.')
 
             try:
                 from onnx2tf.tflite_builder.accuracy_evaluator import (
@@ -3017,6 +3481,70 @@ def convert(
         )
         sys.exit(1)
 
+    # Extracting output base filename
+    output_file_name = ''
+    if has_input_tflite:
+        output_file_name = os.path.splitext(
+            os.path.basename(input_tflite_file_path)
+        )[0]
+    elif input_onnx_file_path:
+        output_file_name = os.path.splitext(
+            os.path.basename(input_onnx_file_path)
+        )[0]
+    else:
+        output_file_name = 'model'
+
+    if has_input_tflite:
+        if not os.path.exists(input_tflite_file_path):
+            error(
+                'The specified *.tflite file does not exist. '
+                f'input_tflite_file_path: {input_tflite_file_path}'
+            )
+            sys.exit(1)
+        os.makedirs(output_folder_path, exist_ok=True)
+        try:
+            from onnx2tf.tflite_builder.ir import (
+                clone_model_ir_with_float32,
+                optimize_redundant_transpose_operators,
+                prune_identity_cast_operators,
+            )
+            from onnx2tf.tflite_builder.saved_model_exporter import (
+                export_saved_model_from_model_ir,
+            )
+            from onnx2tf.tflite_builder.tflite_importer import (
+                import_model_ir_from_tflite,
+            )
+
+            model_ir = import_model_ir_from_tflite(
+                tflite_file_path=input_tflite_file_path,
+                output_folder_path=output_folder_path,
+            )
+            model_ir_fp32 = clone_model_ir_with_float32(model_ir)
+            prune_identity_cast_operators(
+                model_ir_fp32,
+                preserve_model_outputs=True,
+            )
+            optimize_redundant_transpose_operators(
+                model_ir_fp32,
+                preserve_model_outputs=True,
+            )
+            saved_model_path = export_saved_model_from_model_ir(
+                model_ir=model_ir_fp32,
+                output_folder_path=output_folder_path,
+            )
+        except Exception as ex:
+            raise RuntimeError(
+                'tflite direct input SavedModel export failed.'
+            ) from ex
+
+        info(Color.GREEN(f'SavedModel output complete! ({saved_model_path})'))
+        _run_saved_model_tflite_direct_check(
+            saved_model_path=saved_model_path,
+            float32_tflite_path=input_tflite_file_path,
+            source_label='tflite_direct_input',
+        )
+        return None
+
     # Input file existence check
     if not os.path.exists(input_onnx_file_path) and not onnx_graph:
         error(
@@ -3041,15 +3569,6 @@ def convert(
                 auto_split_model = True
         except Exception:
             pass
-
-    # Extracting onnx filenames
-    output_file_name = ''
-    if input_onnx_file_path:
-        output_file_name = os.path.splitext(
-            os.path.basename(input_onnx_file_path)
-        )[0]
-    else:
-        output_file_name = 'model'
 
     # batch_size
     if batch_size is not None and batch_size <= 0:
@@ -6385,6 +6904,12 @@ def main():
         help='Input onnx file path.'
     )
     iV_group.add_argument(
+        '-it',
+        '--input_tflite_file_path',
+        type=str,
+        help='Input tflite file path for direct SavedModel export.'
+    )
+    iV_group.add_argument(
         '-V',
         '--version',
         action='store_true',
@@ -7317,6 +7842,7 @@ def main():
     # Convert
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
+        input_tflite_file_path=args.input_tflite_file_path,
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,

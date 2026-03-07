@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 
+import flatbuffers
 import numpy as np
 import onnx
 import onnx2tf
@@ -16,6 +17,7 @@ from onnx2tf.tflite_builder.saved_model_exporter import (
     get_known_model_ir_op_types,
     get_supported_kernel_op_types,
 )
+from onnx2tf.tflite_builder.tflite_importer import import_model_ir_from_tflite
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.model_writer import write_model_file
 
@@ -29,6 +31,39 @@ def _make_add_model() -> onnx.ModelProto:
     node = helper.make_node("Add", ["x", "y"], ["z"], name="AddNode")
     graph = helper.make_graph([node], "add_graph", [x, y], [z])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_add_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="add_model_ir")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "y"],
+            outputs=["z"],
+            options={},
+        )
+    )
+    return model_ir
 
 
 def _save_model(tmpdir: str, name: str, model: onnx.ModelProto) -> str:
@@ -46,6 +81,26 @@ def _write_model_ir_as_tflite(tmpdir: str, name: str, model_ir: ModelIR) -> str:
         output_tflite_path=tflite_path,
     )
     return tflite_path
+
+
+def _mutate_tflite_model_in_place(
+    *,
+    tflite_path: str,
+    output_dir: str,
+    mutator,
+) -> None:
+    schema_tflite = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model_obj = schema_tflite["ModelT"].InitFromObj(
+        schema_tflite["Model"].GetRootAs(model_bytes, 0)
+    )
+    mutator(model_obj)
+    builder = flatbuffers.Builder()
+    model_offset = model_obj.Pack(builder)
+    builder.Finish(model_offset, file_identifier=b"TFL3")
+    with open(tflite_path, "wb") as f:
+        f.write(bytes(builder.Output()))
 
 
 def _run_saved_model_single_output(
@@ -106,6 +161,29 @@ def test_flatbuffer_direct_output_saved_model_validation(
             )
 
 
+def test_flatbuffer_direct_cotof_without_fdosm_skips_saved_model_check() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_skip_sm_check", _make_add_model())
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=tmpdir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+
+        report_path = os.path.join(
+            tmpdir,
+            "add_skip_sm_check_saved_model_validation_report.json",
+        )
+        assert os.path.exists(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["inference"]["status"] == "skipped"
+        assert report["inference"]["reason"] == "saved_model_unavailable"
+
+
 def test_saved_model_exporter_add_smoke() -> None:
     model_ir = ModelIR(name="add_smoke")
     model_ir.inputs = ["x", "y"]
@@ -155,6 +233,83 @@ def test_saved_model_exporter_add_smoke() -> None:
             rtol=0.0,
             atol=0.0,
         )
+
+
+def test_tflite_importer_add_roundtrip_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_roundtrip", model_ir)
+        imported = import_model_ir_from_tflite(
+            tflite_file_path=tflite_path,
+            output_folder_path=tmpdir,
+        )
+
+    assert imported.inputs == ["x", "y"]
+    assert imported.outputs == ["z"]
+    assert "x" in imported.tensors
+    assert imported.tensors["x"].dtype == "FLOAT32"
+    assert imported.tensors["x"].shape == [1, 3]
+    assert imported.operators[0].op_type == "ADD"
+    assert imported.operators[0].inputs == ["x", "y"]
+    assert imported.operators[0].outputs == ["z"]
+
+
+def test_tflite_importer_signature_name_priority() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_signature_priority", model_ir)
+
+        def _mutator(model_obj) -> None:
+            signature = model_obj.signatureDefs[0]
+            signature.inputs[0].name = "sig_x"
+            signature.inputs[1].name = "sig_y"
+            signature.outputs[0].name = "sig_z"
+
+        _mutate_tflite_model_in_place(
+            tflite_path=tflite_path,
+            output_dir=tmpdir,
+            mutator=_mutator,
+        )
+        imported = import_model_ir_from_tflite(
+            tflite_file_path=tflite_path,
+            output_folder_path=tmpdir,
+        )
+
+    assert imported.inputs == ["sig_x", "sig_y"]
+    assert imported.outputs == ["sig_z"]
+    assert "sig_x" in imported.tensors
+    assert "sig_y" in imported.tensors
+    assert "sig_z" in imported.tensors
+
+
+def test_tflite_importer_normalizes_empty_duplicate_tensor_names() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_empty_tensor_names", model_ir)
+
+        def _mutator(model_obj) -> None:
+            for tensor in model_obj.subgraphs[0].tensors:
+                tensor.name = ""
+            if model_obj.signatureDefs and len(model_obj.signatureDefs) > 0:
+                for tensor_map in model_obj.signatureDefs[0].inputs:
+                    tensor_map.name = ""
+                for tensor_map in model_obj.signatureDefs[0].outputs:
+                    tensor_map.name = ""
+
+        _mutate_tflite_model_in_place(
+            tflite_path=tflite_path,
+            output_dir=tmpdir,
+            mutator=_mutator,
+        )
+        imported = import_model_ir_from_tflite(
+            tflite_file_path=tflite_path,
+            output_folder_path=tmpdir,
+        )
+
+    tensor_names = list(imported.tensors.keys())
+    assert len(tensor_names) == len(set(tensor_names))
+    assert all(name.strip() != "" for name in tensor_names)
+    assert all(name.startswith("sg0_tensor") for name in imported.inputs + imported.outputs)
 
 
 def _make_while_model_ir() -> ModelIR:
@@ -563,6 +718,100 @@ def test_flatbuffer_direct_output_saved_model_smoke() -> None:
         )
         assert os.path.exists(os.path.join(tmpdir, "saved_model.pb"))
         assert os.path.exists(os.path.join(tmpdir, "add_float32.tflite"))
+
+
+def test_tflite_direct_input_saved_model_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+        )
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+
+
+def test_tflite_direct_input_saved_model_with_cotof_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_cotof", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+        report_path = os.path.join(
+            output_dir,
+            "add_tflite_direct_input_cotof_saved_model_validation_report.json",
+        )
+        assert os.path.exists(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["inference"]["status"] == "passed"
+        assert report["comparison"]["status"] == "passed"
+        assert report["comparison"]["pass"] is True
+        assert report["overall_pass"] is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        (
+            {
+                "tflite_backend": "tf_converter",
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_model_save": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "output_integer_quantized_tflite": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "check_onnx_tf_outputs_elementwise_close": True,
+            }
+        ),
+    ],
+)
+def test_tflite_direct_input_validation(kwargs: dict) -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_ng", model_ir)
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_tflite_file_path=tflite_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
+                **kwargs,
+            )
+
+
+def test_tflite_direct_input_rejects_mixed_onnx_and_tflite_input() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add", _make_add_model())
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_mix_ng", model_ir)
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_onnx_file_path=model_path,
+                input_tflite_file_path=tflite_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
+            )
 
 
 def test_flatbuffer_direct_output_saved_model_cotof_smoke() -> None:
