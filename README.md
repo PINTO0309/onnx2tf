@@ -3363,122 +3363,18 @@ Do not submit an issue that only contains an amount of information that cannot b
 
   </div></details>
 
-## Validated models (without replacement.json)
-ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
-
-<details><summary>See a list of verified models</summary><div>
-
-|No.|Model|Pass|
-|:-:|:-|:-:|
-|1|age_googlenet.onnx|:heavy_check_mark:|
-|2|alike_t_opset11_192x320.onnx|:heavy_check_mark:|
-|3|arcfaceresnet100-8.onnx|:heavy_check_mark:|
-|4|baseline_simplified.onnx|:heavy_check_mark:|
-|5|big_slice_11.onnx|:heavy_check_mark:|
-|6|bvlcalexnet-12.onnx|:heavy_check_mark:|
-|7|caffenet-12.onnx|:heavy_check_mark:|
-|8|convtranspose_3_1_5_2.onnx|:heavy_check_mark:|
-|9|convtranspose_4_5_2_2.onnx|:heavy_check_mark:|
-|10|convtranspose_5_5_6_1.onnx|:heavy_check_mark:|
-|11|convtranspose_6_5_5_8.onnx|:heavy_check_mark:|
-|12|convtranspose_7_1_3_4.onnx|:heavy_check_mark:|
-|13|damoyolo_tinynasL20_T_192x192_post.onnx|:heavy_check_mark:|
-|14|deeplabv3_mobilenet_v3_large.onnx|:heavy_check_mark:|
-|15|densenet-12.onnx|:heavy_check_mark:|
-|16|depth_to_spase_17.onnx|:heavy_check_mark:|
-|17|double_gru.onnx|:heavy_check_mark:|
-|18|digits.onnx|:heavy_check_mark:|
-|19|detr_demo.onnx|:heavy_check_mark:|
-|20|efficientformer_l1.onnx|:heavy_check_mark:|
-|21|efficientdet_lite2_detection_1.onnx|:heavy_check_mark:|
-|22|efficientnet-lite4-11_nchw.onnx|:heavy_check_mark:|
-|23|effnet_opset11_dynamic_axis.onnx|:heavy_check_mark:|
-|24|emotion-ferplus-8_rename.onnx|:heavy_check_mark:|
-|25|face_detection_yunet_2022mar.onnx|:heavy_check_mark:|
-|26|face_recognition_sface_2021dec-act_int8-wt_int8-quantized.onnx|:heavy_check_mark:|
-|27|face_recognition_sface_2021dec.onnx|:heavy_check_mark:|
-|28|faster_rcnn-10.onnx|:heavy_check_mark:|
-|29|fastestdet.onnx|:heavy_check_mark:|
-|30|fused_conv_clip.onnx|:heavy_check_mark:|
-|31|fused_conv_hardsigmoid.onnx|:heavy_check_mark:|
-|32|fused_conv_leakyrelu.onnx|:heavy_check_mark:|
-|33|fused_conv_relu.onnx|:heavy_check_mark:|
-|34|fused_conv_sigmoid.onnx|:heavy_check_mark:|
-|35|fused_conv_tanh.onnx|:heavy_check_mark:|
-|36|gender_googlenet.onnx|:heavy_check_mark:|
-|37|gmflow-scale1-mixdata-train320x576-4c3a6e9a_1x3x480x640_bidir_flow_sim.onnx|:heavy_check_mark:|
-|38|handpose_estimation_mediapipe_2022may.onnx|:heavy_check_mark:|
-|39|htnet_1x17x2_without_norm.onnx|:heavy_check_mark:|
-|40|iat_llie_180x320.onnx|:heavy_check_mark:|
-|41|if_p1_11.onnx|:heavy_check_mark:|
-|42|if_p2_11.onnx|:heavy_check_mark:|
-|43|if_p3_11.onnx|:heavy_check_mark:|
-|44|imageclassifier.onnx|:heavy_check_mark:|
-|45|inception-v2-9.onnx|:heavy_check_mark:|
-|46|inverse11.onnx|:heavy_check_mark:|
-|47|mhformer_NxFxKxXY_1x27x17x2.onnx|:heavy_check_mark:|
-|48|mnist.onnx|:heavy_check_mark:|
-|49|mnist-12.onnx|:heavy_check_mark:|
-|50|mobilenetv2-12.onnx|:heavy_check_mark:|
-|51|mosaic_11.onnx|:heavy_check_mark:|
-|52|mosaic-9.onnx|:heavy_check_mark:|
-|53|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
-|54|nanodet-plus-m_416.onnx|:heavy_check_mark:|
-|55|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
-|56|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
-|57|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
-|58|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
-|59|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
-|60|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|61|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|62|regnet_x_400mf.onnx|:heavy_check_mark:|
-|63|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|64|resnet18-v1-7.onnx|:heavy_check_mark:|
-|65|resnet50-v1-12.onnx|:heavy_check_mark:|
-|66|resnet50-v2-7.onnx|:heavy_check_mark:|
-|67|retinanet-9.onnx|:heavy_check_mark:|
-|68|sinet_320_op.onnx|:heavy_check_mark:|
-|69|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|70|super-resolution-10.onnx|:heavy_check_mark:|
-|71|swinir-m_64x64_12.onnx|:heavy_check_mark:|
-|72|text_recognition_CRNN_EN_2021sep.onnx|:heavy_check_mark:|
-|73|tinyyolov2-8.onnx|:heavy_check_mark:|
-|74|version-RFB-640.onnx|:heavy_check_mark:|
-|75|vit-b-32_textual.onnx|:heavy_check_mark:|
-|76|vit-b-32_visual.onnx|:heavy_check_mark:|
-|77|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|78|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|79|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|80|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|81|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|82|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|83|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|84|yolox_s.onnx|:heavy_check_mark:|
-|85|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|86|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|87|zfnet512-12.onnx|:heavy_check_mark:|
-
-</div></details>
-
 ## Related tools
-1. [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow)
-2. [openvino2tensorflow](https://github.com/PINTO0309/openvino2tensorflow)
-3. [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite)
-4. [tensorflowjs_converter](https://github.com/tensorflow/tfjs)
-5. [coremltools](https://github.com/apple/coremltools)
-6. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
-7. [tflite-input-output-rewriter](https://github.com/PINTO0309/tflite-input-output-rewriter)
-8. [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
-9. [onnx_graphsurgeon](https://github.com/NVIDIA/TensorRT/tree/master/tools/onnx-graphsurgeon)
-10. [onnx](https://github.com/onnx/onnx)
-11. [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow)
-12. [onnx2keras](https://github.com/gmalivenko/onnx2keras)
-13. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
-14. [nobuco](https://github.com/AlexanderLutsenko/nobuco)
-15. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
-16. [ai-edge-torch](https://github.com/google-ai-edge/ai-edge-torch)
-17. [LiteRT.js](https://ai.google.dev/edge/litert/web)
-18. [eiq-onnx2tflite](https://github.com/NXP/eiq-onnx2tflite)
+1. [tflite2json2tflite](https://github.com/PINTO0309/tflite2json2tflite)
+2. [tensorflowjs_converter](https://github.com/tensorflow/tfjs)
+3. [coremltools](https://github.com/apple/coremltools)
+4. [simple-onnx-processing-tools](https://github.com/PINTO0309/simple-onnx-processing-tools)
+5. [onnxsim](https://github.com/onnxsim/onnxsim)
+6. [onnx](https://github.com/onnx/onnx)
+7. [TinyNeuralNetwork](https://github.com/alibaba/TinyNeuralNetwork)
+8. [onnx2torch](https://github.com/ENOT-AutoDL/onnx2torch)
+9. [litert-torch](https://github.com/google-ai-edge/litert-torch)
+10. [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer)
+11. [LiteRT.js](https://ai.google.dev/edge/litert/web)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
