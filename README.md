@@ -2013,75 +2013,8 @@ optional arguments:
     --tflite_backend {tf_converter,flatbuffer_direct}
     TFLite generation backend.
     "tf_converter"(default): Use TensorFlow Lite Converter.
-    "flatbuffer_direct": Experimental direct FlatBuffer builder path (limited OP/quantization support).
-
-    flatbuffer_direct notes:
-    1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
-    2. onnx2tf first tries a direct fast path that skips TensorFlow per-node conversion (`op.make_node`) and directly exports from ONNX to TFLite FlatBuffer.
-    3. `--output_h5`, `--output_keras_v3`, and `--output_tfv1_pb` stay on the direct path.
-       These artifacts are generated from an internal SavedModel bridge built from float32 ModelIR.
-    4. `--disable_model_save` also stays on the direct path and means no final artifacts are left in
-       the requested output directory after conversion.
-    5. Invalid combinations fail explicitly:
-       `--disable_model_save` with `--output_h5`/`--output_keras_v3`/`--output_tfv1_pb`,
-       and `--enable_auto_split_model` with `--output_h5`/`--output_keras_v3`/`--output_tfv1_pb`.
-    6. Direct export supports FP32/FP16 `.tflite` generation.
-    7. Dynamic range quantization (`-odrqt`) is supported in a limited form:
-       weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
-       and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
-       For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-    8. Integer quantization (`-oiqt`) is supported in a limited form:
-       `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
-       `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-    9. Supported builtin OP set includes:
-       `ADD`, `SUB`, `MUL`, `DIV`, `FLOOR_MOD`, `MAXIMUM`, `MINIMUM`, `POW`,
-       `MEAN`, `SUM`, `REDUCE_MAX`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`, `SLICE`, `STRIDED_SLICE`,
-       `CONCATENATION`, `GATHER`, `GATHER_ND`, `ONE_HOT`,
-       `ARG_MAX`, `CAST`, `SHAPE`, `FILL`,
-       `PAD`, `MIRROR_PAD`,
-       `LOGISTIC`, `RELU`, `RELU6`, `TANH`, `EXP`, `SQRT`, `NEG`, `LOG`,
-       `SOFTMAX`, `L2_NORMALIZATION`, `LOCAL_RESPONSE_NORMALIZATION`,
-       `CONV_2D`, `DEPTHWISE_CONV_2D`, `CONV_3D`, `TRANSPOSE_CONV`, `CONV_3D_TRANSPOSE`, `AVERAGE_POOL_2D`, `MAX_POOL_2D`, `FULLY_CONNECTED`, `BATCH_MATMUL`,
-       `RESIZE_NEAREST_NEIGHBOR`, `RESIZE_BILINEAR`,
-       `BIDIRECTIONAL_SEQUENCE_LSTM`, `SPLIT`, `EXPAND_DIMS`, `WHILE`,
-       `DEQUANTIZE`, `QUANTIZE`.
-    10. Unsupported OPs fail explicitly with `NotImplementedError`.
-    11. Custom OP policy (opt-in):
-       `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
-       `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
-       If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
-       If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-    12. Bundled schema artifacts (`onnx2tf/tflite_builder/schema/schema.fbs` and `schema_generated.py`) are used.
-        No external `flatc` invocation is required in normal flows.
-    13. flatbuffer_direct quantization precision controls are configurable via environment variables:
-       `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
-       `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
-       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
-       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
-       `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-    14. Migration guide:
-       See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
-    15. SavedModel direct export from ModelIR:
-       `--flatbuffer_direct_output_saved_model` exports `saved_model.pb`/`variables`/`assets`
-       from float32 ModelIR in the direct path.
-       This option requires `--tflite_backend flatbuffer_direct`, cannot be combined with
-       `--disable_model_save`,
-       and fails explicitly if `CUSTOM` ops are present.
-       When split output is enabled, partition SavedModels are emitted instead of
-       a single root SavedModel.
-    16. Direct split planning in `flatbuffer_direct` is ModelIR-based and driven by
-       `--enable_auto_split_model`.
-       This always runs the split planner and emits split manifest output.
-       Outputs use the split manifest flow (`*_split_plan.json`, `*_split_manifest.json`,
-       `*_0001.tflite`, ...), not the legacy `part_0001/` recursive conversion flow.
-       Small models may still complete with a single-partition manifest when the planner
-       estimates that the model already fits within the target size.
-    15. Split accuracy evaluation is selected with a single option:
-       `--eval_split_models unsplit_tflite` or `--eval_split_models onnx`.
-       This is available only with `--tflite_backend flatbuffer_direct`
-       and requires `--enable_auto_split_model`.
-       This writes `*_split_accuracy_report.json`.
-       `*_accuracy_report.json` remains the unsplit base float32 TFLite vs ONNX report.
+    "flatbuffer_direct": Use direct FlatBuffer builder path (limited
+    OP/quantization support).
 
   -fdosm, --flatbuffer_direct_output_saved_model
     Output SavedModel directly from flatbuffer_direct ModelIR (float32).
@@ -2091,15 +2024,6 @@ optional arguments:
     With split output, partition SavedModels are emitted instead of a single root SavedModel.
     When used with -cotof, also outputs `<model_name>_saved_model_validation_report.json`
     in the output directory (inference status + SavedModel/TFLite comparison metrics).
-
-Bulk runner utility (for `tflite2sm-plan.md`):
-
-```bash
-onnx2tf-tflite2sm-bulk -l tflite2sm-plan.md -o tflite2sm_bulk_report
-```
-
-This utility executes models in listed order (including duplicates), records `missing_model`,
-supports `--resume`, and generates `bulk_status.json` / `bulk_summary.json` / `bulk_summary.md`.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
