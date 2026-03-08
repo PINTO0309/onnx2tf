@@ -279,6 +279,11 @@ For `-it` input they are applied to imported ModelIR before SavedModel bridge,
 split planning, or rewritten TFLite export.
 If the requested rewrite cannot be applied safely, conversion stops with an explicit error.
 
+`-me` also stays on the direct path in `flatbuffer_direct`.
+For ONNX `MeanVarianceNormalization`, direct lowering uses primitive builtin ops
+and applies `mvn_epsilon` to the internal `variance + epsilon` term without
+falling back to `tf_converter`.
+
 `--disable_model_save` also stays on the direct path. In `flatbuffer_direct`, it means the conversion can still run internal validation and temporary staging, but no final artifacts are left in the requested output directory.
 
 Invalid combinations are rejected explicitly:
@@ -410,6 +415,7 @@ Notes:
 |Identity|RESHAPE|-|
 |If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB + SELECT/SELECT_V2|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`). In control-flow branch lowering, dynamic-condition `If` is additionally supported when both branches are single-output initializer-only constants (lowered via `Where`)|
 |InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
+|MeanVarianceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`; `mvn_epsilon` is applied directly in builtin lowering; default axes follow ONNX channel-first semantics and rank `<3` reduces over axis `0`|
 |Inverse|SLICE + MUL + SUB + ADD + NEG + CONCATENATION + DIV (+ optional CAST in/out)|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=2`; matrix last dimensions must resolve to square `2x2` or `3x3`|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
@@ -642,7 +648,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 ## Environment
 - Linux / Windows
 - onnx==1.20.1
-- onnxruntime==1.24.1
+- onnxruntime==1.24.3
 - onnxsim-prebuilt==0.4.39.post2
 - onnxoptimizer==0.4.2
 - sne4onnx>=2.0.1
@@ -682,7 +688,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.3.1
+  ghcr.io/pinto0309/onnx2tf:2.3.2
 
   or
 
@@ -691,7 +697,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.3.1
+  docker.io/pinto0309/onnx2tf:2.3.2
 
   or
 
@@ -701,7 +707,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.3.1 \
+  docker.io/pinto0309/onnx2tf:2.3.2 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -2375,6 +2381,7 @@ optional arguments:
     The number to be added to the variance to avoid division by zero
     when normalizing the value.
     (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
     Default: 0.0000000001
 
   -prf PARAM_REPLACEMENT_FILE, --param_replacement_file PARAM_REPLACEMENT_FILE
@@ -3062,6 +3069,7 @@ convert(
       The number to be added to the variance to avoid division by zero
       when normalizing the value.
       (input_tensor - mean) / tf.sqrt(variance + mvn_epsilon)
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
       Default: 0.0000000001
 
     param_replacement_file: Optional[str]

@@ -453,6 +453,7 @@ class LoweringContext:
         graph_output_names: Optional[List[str]] = None,
         output_nms_with_argmax: bool = False,
         switch_nms_version: str = "v4",
+        mvn_epsilon: float = 1e-10,
         number_of_dimensions_after_flextranspose_compression: int = 6,
         number_of_dimensions_after_flexstridedslice_compression: int = 5,
         replace_to_pseudo_operators: Optional[List[str]] = None,
@@ -474,6 +475,7 @@ class LoweringContext:
         )
         self.graph_output_names = set(graph_output_names) if graph_output_names is not None else set()
         self.output_nms_with_argmax = bool(output_nms_with_argmax)
+        self.mvn_epsilon = float(mvn_epsilon)
         # TFLite TRANSPOSE kernel supports rank <= 6.
         # Keep user intent (>=2) while clamping to runtime-safe upper bound.
         self.number_of_dimensions_after_flextranspose_compression = int(
@@ -68765,6 +68767,7 @@ def lower_onnx_to_ir(
     disable_group_convolution: bool = False,
     output_nms_with_argmax: bool = False,
     switch_nms_version: str = "v4",
+    mvn_epsilon: float = 1e-10,
     show_progress: bool = False,
     apply_safe_transpose_reduction_lite_on_no_layout_opt: bool = False,
     number_of_dimensions_after_flextranspose_compression: int = 6,
@@ -68831,6 +68834,7 @@ def lower_onnx_to_ir(
         graph_output_names=graph_output_names,
         output_nms_with_argmax=output_nms_with_argmax,
         switch_nms_version=switch_nms_version,
+        mvn_epsilon=mvn_epsilon,
         number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
         number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
         replace_to_pseudo_operators=replace_to_pseudo_operators,

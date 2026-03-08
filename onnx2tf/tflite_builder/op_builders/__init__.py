@@ -117,6 +117,7 @@ from onnx2tf.tflite_builder.op_builders.norm import (
     build_instance_normalization_op,
     build_l2_normalization_op,
     build_layer_normalization_op,
+    build_mean_variance_normalization_op,
     build_lrn_op,
 )
 from onnx2tf.tflite_builder.op_builders.custom import (
@@ -254,6 +255,7 @@ __all__ = [
     "build_instance_normalization_op",
     "build_l2_normalization_op",
     "build_layer_normalization_op",
+    "build_mean_variance_normalization_op",
     "build_lrn_op",
     "build_custom_passthrough_op",
     "build_if_op",

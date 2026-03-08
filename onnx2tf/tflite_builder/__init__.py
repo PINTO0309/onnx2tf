@@ -306,6 +306,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     enable_rnn_unroll = bool(
         kwargs.get("enable_rnn_unroll", False)
     )
+    mvn_epsilon = float(kwargs.get("mvn_epsilon", 1e-10))
     flatbuffer_direct_allow_custom_ops = bool(
         kwargs.get("flatbuffer_direct_allow_custom_ops", False)
     )
@@ -471,6 +472,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             disable_group_convolution=disable_group_convolution,
             output_nms_with_argmax=output_nms_with_argmax,
             switch_nms_version=switch_nms_version,
+            mvn_epsilon=mvn_epsilon,
             show_progress=flatbuffer_direct_show_progress,
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,

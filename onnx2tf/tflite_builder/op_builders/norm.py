@@ -12,6 +12,54 @@ def _float_numpy_dtype(dtype: str) -> np.dtype:
     return np.dtype(np.float16) if str(dtype).upper() == "FLOAT16" else np.dtype(np.float32)
 
 
+def _normalize_mvn_axes(
+    *,
+    axes_attr: Any,
+    input_rank: int,
+) -> list[int]:
+    if input_rank < 1:
+        raise NotImplementedError(
+            "MeanVarianceNormalization requires input rank >= 1 in flatbuffer_direct."
+        )
+
+    if axes_attr is None:
+        if input_rank < 3:
+            source_axes = [0]
+        elif input_rank == 3:
+            source_axes = [0, 2]
+        else:
+            source_axes = [0, 2, 3]
+    elif isinstance(axes_attr, np.ndarray):
+        source_axes = [int(v) for v in np.asarray(axes_attr).reshape(-1).tolist()]
+    elif isinstance(axes_attr, (list, tuple)):
+        source_axes = [int(v) for v in axes_attr]
+    else:
+        source_axes = [int(axes_attr)]
+
+    normalized_axes: list[int] = []
+    for axis in source_axes:
+        if axis < -input_rank or axis >= input_rank:
+            raise NotImplementedError(
+                "MeanVarianceNormalization axes must be within input rank in flatbuffer_direct. "
+                f"rank={input_rank} axis={axis}"
+            )
+        normalized_axis = int(axis if axis >= 0 else axis + input_rank)
+        if normalized_axis not in normalized_axes:
+            normalized_axes.append(normalized_axis)
+    return normalized_axes
+
+
+def _reduced_shape_for_axes(
+    *,
+    input_shape: list[int],
+    axes: list[int],
+) -> list[int]:
+    reduced_shape = [int(v) for v in input_shape]
+    for axis in axes:
+        reduced_shape[int(axis)] = 1
+    return reduced_shape
+
+
 def build_l2_normalization_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -177,6 +225,167 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
+
+
+def build_mean_variance_normalization_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    if ctx.model_ir.tensors[output_name].shape == [1] and ctx.model_ir.tensors[input_name].shape != [1]:
+        ctx.model_ir.tensors[output_name].shape = list(ctx.model_ir.tensors[input_name].shape)
+        ctx.model_ir.tensors[output_name].shape_signature = (
+            list(ctx.model_ir.tensors[input_name].shape_signature)
+            if ctx.model_ir.tensors[input_name].shape_signature is not None
+            else list(ctx.model_ir.tensors[input_name].shape)
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_rank = len(input_shape)
+    if input_rank < 1:
+        raise NotImplementedError(
+            f"MeanVarianceNormalization requires input rank >= 1 in flatbuffer_direct. op={node.name}"
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NotImplementedError(
+            "MeanVarianceNormalization supports FLOAT16/FLOAT32 only in flatbuffer_direct. "
+            f"op={node.name} input_dtype={input_dtype} output_dtype={output_dtype}"
+        )
+
+    compute_dtype = input_dtype
+    np_compute_dtype = _float_numpy_dtype(compute_dtype)
+    moments_axes = _normalize_mvn_axes(
+        axes_attr=node.attrs.get("axes", None),
+        input_rank=input_rank,
+    )
+    reduced_shape = _reduced_shape_for_axes(
+        input_shape=input_shape,
+        axes=moments_axes,
+    )
+    epsilon = float(getattr(ctx, "mvn_epsilon", 1e-10))
+
+    x_name = input_name
+    axes_name = ctx.add_const_tensor(
+        f"{node.name}_mvn_axes",
+        np.asarray(moments_axes, dtype=np.int32),
+    )
+    mean_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_mean",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[x_name, axes_name],
+            outputs=[mean_name],
+            options={"keepDims": True},
+        )
+    )
+
+    centered_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_centered",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[x_name, mean_name],
+            outputs=[centered_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    squared_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_squared",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[centered_name, centered_name],
+            outputs=[squared_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    variance_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_variance",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[squared_name, axes_name],
+            outputs=[variance_name],
+            options={"keepDims": True},
+        )
+    )
+
+    epsilon_name = ctx.add_const_tensor(
+        f"{node.name}_mvn_epsilon",
+        np.asarray(epsilon, dtype=np_compute_dtype),
+    )
+    variance_eps_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_variance_eps",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[variance_name, epsilon_name],
+            outputs=[variance_eps_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    std_name = ctx.add_intermediate_tensor(
+        f"{node.name}_mvn_std",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[variance_eps_name],
+            outputs=[std_name],
+        )
+    )
+
+    pre_output_name = output_name
+    if output_dtype != compute_dtype:
+        pre_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_mvn_pre_output",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[centered_name, std_name],
+            outputs=[pre_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    if pre_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[pre_output_name],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
+        )
 
 
 def build_instance_normalization_op(node: Any, ctx: Any) -> None:

@@ -24,7 +24,7 @@ RUN set -eux; \
             onnx==1.20.1 \
             onnxsim-prebuilt==0.4.39.post2 \
             onnxoptimizer==0.4.2 \
-            onnxruntime==1.24.1 \
+            onnxruntime==1.24.3 \
             sne4onnx \
             sng4onnx \
             tensorflow==2.19.0 \
