@@ -539,20 +539,47 @@ def build_fully_connected_from_gemm_or_matmul(node: Any, ctx: Any) -> None:
             )
             c_term_name = c_scaled
 
-        add_out = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
+        bias_out = output_name if output_dtype == compute_dtype else ctx.add_intermediate_tensor(
             f"{output_name}_gemm_bias_added",
             dtype=compute_dtype,
             shape=output_shape,
         )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="ADD",
-                inputs=[current_name, c_term_name],
-                outputs=[add_out],
-                options={"fusedActivationFunction": "NONE"},
+        if bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
+            neg_one_name = ctx.add_const_tensor(
+                f"{output_name}_gemm_neg_one",
+                np.asarray(-1.0, dtype=np.float32),
             )
-        )
-        current_name = add_out
+            neg_bias_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gemm_bias_negated",
+                dtype=compute_dtype,
+                shape=[int(v) for v in ctx.get_tensor_shape(c_term_name)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[c_term_name, neg_one_name],
+                    outputs=[neg_bias_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SUB",
+                    inputs=[current_name, neg_bias_name],
+                    outputs=[bias_out],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        else:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="ADD",
+                    inputs=[current_name, c_term_name],
+                    outputs=[bias_out],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        current_name = bias_out
 
     if current_name != output_name:
         ctx.add_operator(

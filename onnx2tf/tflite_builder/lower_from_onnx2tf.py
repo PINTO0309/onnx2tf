@@ -454,8 +454,16 @@ class LoweringContext:
         output_nms_with_argmax: bool = False,
         switch_nms_version: str = "v4",
         mvn_epsilon: float = 1e-10,
+        disable_suppression_flextranspose: bool = False,
         number_of_dimensions_after_flextranspose_compression: int = 6,
+        disable_suppression_flexstridedslice: bool = False,
         number_of_dimensions_after_flexstridedslice_compression: int = 5,
+        optimization_for_gpu_delegate: bool = False,
+        replace_argmax_to_reducemax_and_indices_is_int64: bool = False,
+        replace_argmax_to_reducemax_and_indices_is_float32: bool = False,
+        replace_argmax_to_fused_argmax_and_indices_is_int64: bool = False,
+        replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
+        fused_argmax_scale_ratio: float = 0.5,
         replace_to_pseudo_operators: Optional[List[str]] = None,
     ):
         self.model_ir = model_ir
@@ -476,16 +484,46 @@ class LoweringContext:
         self.graph_output_names = set(graph_output_names) if graph_output_names is not None else set()
         self.output_nms_with_argmax = bool(output_nms_with_argmax)
         self.mvn_epsilon = float(mvn_epsilon)
+        self.disable_suppression_flextranspose = bool(
+            disable_suppression_flextranspose
+        )
         # TFLite TRANSPOSE kernel supports rank <= 6.
         # Keep user intent (>=2) while clamping to runtime-safe upper bound.
         self.number_of_dimensions_after_flextranspose_compression = int(
             max(2, min(6, int(number_of_dimensions_after_flextranspose_compression)))
+        )
+        self.disable_suppression_flexstridedslice = bool(
+            disable_suppression_flexstridedslice
         )
         # TFLite SLICE kernel supports rank <= 5.
         # Keep user intent (>=1) while clamping to runtime-safe upper bound.
         self.number_of_dimensions_after_flexstridedslice_compression = int(
             max(1, min(5, int(number_of_dimensions_after_flexstridedslice_compression)))
         )
+        self.optimization_for_gpu_delegate = bool(optimization_for_gpu_delegate)
+        self.replace_argmax_to_reducemax_and_indices_is_int64 = bool(
+            replace_argmax_to_reducemax_and_indices_is_int64
+        )
+        self.replace_argmax_to_reducemax_and_indices_is_float32 = bool(
+            replace_argmax_to_reducemax_and_indices_is_float32
+        )
+        self.replace_argmax_to_fused_argmax_and_indices_is_int64 = bool(
+            replace_argmax_to_fused_argmax_and_indices_is_int64
+        )
+        self.replace_argmax_to_fused_argmax_and_indices_is_float32 = bool(
+            replace_argmax_to_fused_argmax_and_indices_is_float32
+        )
+        self.fused_argmax_scale_ratio = float(fused_argmax_scale_ratio)
+        self.argmax_mode = "none"
+        if self.replace_argmax_to_reducemax_and_indices_is_int64:
+            self.argmax_mode = "reducemax_int64"
+        elif self.replace_argmax_to_reducemax_and_indices_is_float32:
+            self.argmax_mode = "reducemax_float32"
+        elif self.replace_argmax_to_fused_argmax_and_indices_is_int64:
+            self.argmax_mode = "fused_int64"
+        elif self.replace_argmax_to_fused_argmax_and_indices_is_float32:
+            self.argmax_mode = "fused_float32"
+        self.fused_argmax_restore_shapes: Dict[str, Dict[str, Any]] = {}
         nms_version = str(switch_nms_version).strip().lower()
         if nms_version not in {"v4", "v5"}:
             raise ValueError(
@@ -499,6 +537,24 @@ class LoweringContext:
             if str(v).strip() != ""
         }
         self._serial = 0
+        self.onnx_tensor_consumers: Dict[str, List[Any]] = {}
+        self.onnx_tensor_producers: Dict[str, Any] = {}
+        if (
+            self.onnx_model is not None
+            and hasattr(self.onnx_model, "graph")
+            and hasattr(self.onnx_model.graph, "node")
+        ):
+            for graph_node in self.onnx_model.graph.node:
+                for output_name in graph_node.output:
+                    key = str(output_name).strip()
+                    if key == "":
+                        continue
+                    self.onnx_tensor_producers[key] = graph_node
+                for input_name in graph_node.input:
+                    key = str(input_name).strip()
+                    if key == "":
+                        continue
+                    self.onnx_tensor_consumers.setdefault(key, []).append(graph_node)
 
     def _next_name(self, base: str) -> str:
         self._serial += 1
@@ -68770,8 +68826,16 @@ def lower_onnx_to_ir(
     mvn_epsilon: float = 1e-10,
     show_progress: bool = False,
     apply_safe_transpose_reduction_lite_on_no_layout_opt: bool = False,
+    disable_suppression_flextranspose: bool = False,
     number_of_dimensions_after_flextranspose_compression: int = 6,
+    disable_suppression_flexstridedslice: bool = False,
     number_of_dimensions_after_flexstridedslice_compression: int = 5,
+    optimization_for_gpu_delegate: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_int64: bool = False,
+    replace_argmax_to_reducemax_and_indices_is_float32: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_int64: bool = False,
+    replace_argmax_to_fused_argmax_and_indices_is_float32: bool = False,
+    fused_argmax_scale_ratio: float = 0.5,
     replace_to_pseudo_operators: Optional[List[str]] = None,
     protected_boundary_tensor_names: Optional[List[str]] = None,
 ) -> ModelIR:
@@ -68835,8 +68899,16 @@ def lower_onnx_to_ir(
         output_nms_with_argmax=output_nms_with_argmax,
         switch_nms_version=switch_nms_version,
         mvn_epsilon=mvn_epsilon,
+        disable_suppression_flextranspose=disable_suppression_flextranspose,
         number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+        disable_suppression_flexstridedslice=disable_suppression_flexstridedslice,
         number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+        optimization_for_gpu_delegate=optimization_for_gpu_delegate,
+        replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
+        replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
+        replace_argmax_to_fused_argmax_and_indices_is_int64=replace_argmax_to_fused_argmax_and_indices_is_int64,
+        replace_argmax_to_fused_argmax_and_indices_is_float32=replace_argmax_to_fused_argmax_and_indices_is_float32,
+        fused_argmax_scale_ratio=fused_argmax_scale_ratio,
         replace_to_pseudo_operators=replace_to_pseudo_operators,
     )
 

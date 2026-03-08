@@ -520,21 +520,22 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             if len(runtime_indices_signature) == 0:
                 runtime_indices_signature = [1]
 
-            gather_indices_zero_name = ctx.add_const_tensor(
-                f"{output_name}_gather_indices_zero_i32",
-                np.asarray([0], dtype=np.int32),
-            )
             gather_axis_dim_name = ctx.add_const_tensor(
                 f"{output_name}_gather_axis_dim_i32",
                 np.asarray([int(axis_dim)], dtype=np.int32),
             )
-
+            gather_indices_zero_name = ctx.add_const_tensor(
+                f"{output_name}_gather_indices_zero_i32",
+                np.asarray([0], dtype=np.int32),
+            )
             gather_indices_is_negative_name = ctx.add_intermediate_tensor(
                 f"{output_name}_gather_indices_is_negative",
                 dtype="BOOL",
                 shape=runtime_indices_shape,
             )
-            gather_indices_is_negative_tensor = ctx.model_ir.tensors.get(gather_indices_is_negative_name, None)
+            gather_indices_is_negative_tensor = ctx.model_ir.tensors.get(
+                gather_indices_is_negative_name, None
+            )
             if gather_indices_is_negative_tensor is not None:
                 gather_indices_is_negative_tensor.shape_signature = [
                     int(v) for v in runtime_indices_signature
@@ -549,29 +550,6 @@ def build_gather_op(node: Any, ctx: Any) -> None:
                     outputs=[gather_indices_is_negative_name],
                     options={},
                 )
-            )
-
-            gather_indices_wrapped_runtime_name = ctx.add_intermediate_tensor(
-                f"{output_name}_gather_indices_wrapped_runtime",
-                dtype="INT32",
-                shape=runtime_indices_shape,
-            )
-            gather_indices_wrapped_runtime_tensor = ctx.model_ir.tensors.get(
-                gather_indices_wrapped_runtime_name, None
-            )
-            if gather_indices_wrapped_runtime_tensor is not None:
-                gather_indices_wrapped_runtime_tensor.shape_signature = [
-                    int(v) for v in runtime_indices_signature
-                ]
-                gather_indices_wrapped_runtime_tensor.shape = [
-                    int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
-                ]
-            _add_binary_op(
-                ctx=ctx,
-                op_type="ADD",
-                lhs_name=gather_indices_name,
-                rhs_name=gather_axis_dim_name,
-                output_name=gather_indices_wrapped_runtime_name,
             )
 
             gather_indices_normalized_name = ctx.add_intermediate_tensor(
@@ -589,18 +567,106 @@ def build_gather_op(node: Any, ctx: Any) -> None:
                 gather_indices_normalized_tensor.shape = [
                     int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
                 ]
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="SELECT",
-                    inputs=[
-                        gather_indices_is_negative_name,
-                        gather_indices_wrapped_runtime_name,
-                        gather_indices_name,
-                    ],
-                    outputs=[gather_indices_normalized_name],
-                    options={},
+            if bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
+                one_name = ctx.add_const_tensor(
+                    f"{output_name}_gather_indices_one_i32",
+                    np.asarray([1], dtype=np.int32),
                 )
-            )
+                zero_mask_name = ctx.add_const_tensor(
+                    f"{output_name}_gather_indices_zero_mask_i32",
+                    np.asarray([0], dtype=np.int32),
+                )
+                gather_indices_negative_mask_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_gather_indices_negative_mask",
+                    dtype="INT32",
+                    shape=runtime_indices_shape,
+                )
+                gather_indices_negative_mask_tensor = ctx.model_ir.tensors.get(
+                    gather_indices_negative_mask_name, None
+                )
+                if gather_indices_negative_mask_tensor is not None:
+                    gather_indices_negative_mask_tensor.shape_signature = [
+                        int(v) for v in runtime_indices_signature
+                    ]
+                    gather_indices_negative_mask_tensor.shape = [
+                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+                    ]
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SELECT",
+                        inputs=[
+                            gather_indices_is_negative_name,
+                            one_name,
+                            zero_mask_name,
+                        ],
+                        outputs=[gather_indices_negative_mask_name],
+                        options={},
+                    )
+                )
+                gather_indices_offset_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_gather_indices_offset",
+                    dtype="INT32",
+                    shape=runtime_indices_shape,
+                )
+                gather_indices_offset_tensor = ctx.model_ir.tensors.get(
+                    gather_indices_offset_name, None
+                )
+                if gather_indices_offset_tensor is not None:
+                    gather_indices_offset_tensor.shape_signature = [
+                        int(v) for v in runtime_indices_signature
+                    ]
+                    gather_indices_offset_tensor.shape = [
+                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+                    ]
+                _add_binary_op(
+                    ctx=ctx,
+                    op_type="MUL",
+                    lhs_name=gather_indices_negative_mask_name,
+                    rhs_name=gather_axis_dim_name,
+                    output_name=gather_indices_offset_name,
+                )
+                _add_binary_op(
+                    ctx=ctx,
+                    op_type="ADD",
+                    lhs_name=gather_indices_name,
+                    rhs_name=gather_indices_offset_name,
+                    output_name=gather_indices_normalized_name,
+                )
+            else:
+                gather_indices_wrapped_runtime_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_gather_indices_wrapped_runtime",
+                    dtype="INT32",
+                    shape=runtime_indices_shape,
+                )
+                gather_indices_wrapped_runtime_tensor = ctx.model_ir.tensors.get(
+                    gather_indices_wrapped_runtime_name, None
+                )
+                if gather_indices_wrapped_runtime_tensor is not None:
+                    gather_indices_wrapped_runtime_tensor.shape_signature = [
+                        int(v) for v in runtime_indices_signature
+                    ]
+                    gather_indices_wrapped_runtime_tensor.shape = [
+                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+                    ]
+                _add_binary_op(
+                    ctx=ctx,
+                    op_type="ADD",
+                    lhs_name=gather_indices_name,
+                    rhs_name=gather_axis_dim_name,
+                    output_name=gather_indices_wrapped_runtime_name,
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SELECT",
+                        inputs=[
+                            gather_indices_is_negative_name,
+                            gather_indices_wrapped_runtime_name,
+                            gather_indices_name,
+                        ],
+                        outputs=[gather_indices_normalized_name],
+                        options={},
+                    )
+                )
             gather_indices_name = gather_indices_normalized_name
             gather_indices_shape = [int(v) for v in runtime_indices_shape]
             gather_indices_signature = [int(v) for v in runtime_indices_signature]
@@ -3420,6 +3486,645 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
             )
 
 
+def _set_tensor_shape_signature(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    shape: list[int],
+    signature: list[int] | None = None,
+) -> None:
+    tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None:
+        return
+    tensor.shape = [int(v) if int(v) >= 0 else 1 for v in list(shape)]
+    tensor.shape_signature = (
+        [int(v) for v in list(signature)]
+        if signature is not None
+        else [int(v) for v in list(shape)]
+    )
+
+
+def _add_cast_op(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    out_dtype: str,
+    shape: list[int],
+    signature: list[int] | None = None,
+) -> str:
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=output_name,
+        shape=shape,
+        signature=signature,
+    )
+    ctx.model_ir.tensors[output_name].dtype = str(out_dtype).upper()
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[output_name],
+            options={
+                "inDataType": str(ctx.get_tensor_dtype(input_name)).upper(),
+                "outDataType": str(out_dtype).upper(),
+            },
+        )
+    )
+    return str(output_name)
+
+
+def _add_reshape_op(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    new_shape: list[int],
+    signature: list[int] | None = None,
+) -> str:
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=output_name,
+        shape=[int(v) if int(v) >= 0 else 1 for v in list(new_shape)],
+        signature=signature if signature is not None else new_shape,
+    )
+    shape_name = ctx.add_const_tensor(
+        f"{output_name}_shape",
+        np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_name],
+            outputs=[output_name],
+            options={
+                "newShape": [int(v) for v in list(new_shape)],
+                "preserveDynamicShape": True,
+            },
+        )
+    )
+    return str(output_name)
+
+
+def _build_reducemax_argmax_op(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    axis: int,
+    keepdims: bool,
+    final_dtype: str,
+) -> None:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    axis_dim = _resolve_positive_axis_dim(
+        input_shape=input_shape,
+        input_signature=input_signature,
+        axis=axis,
+    )
+    if axis_dim <= 0:
+        raise NotImplementedError(
+            "ArgMax ReduceMax replacement requires static positive axis dimension in flatbuffer_direct. "
+            f"op={node.name} axis={axis} axis_dim={axis_dim}"
+        )
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_shape = (
+        [int(v) for v in list(output_tensor.shape)]
+        if output_tensor is not None
+        else [1]
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+
+    compute_input_name = input_name
+    if str(ctx.get_tensor_dtype(input_name)).upper() != "FLOAT32":
+        compute_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_argmax_compute_input",
+            dtype="FLOAT32",
+            shape=input_shape,
+        )
+        _add_cast_op(
+            ctx=ctx,
+            input_name=input_name,
+            output_name=compute_input_name,
+            out_dtype="FLOAT32",
+            shape=input_shape,
+            signature=input_signature,
+        )
+
+    reduce_keepdims_shape = [int(v) for v in list(input_shape)]
+    reduce_keepdims_shape[int(axis)] = 1
+    reduce_keepdims_signature = [int(v) for v in list(input_signature)]
+    reduce_keepdims_signature[int(axis)] = 1
+    axis_name = ctx.add_const_tensor(
+        f"{output_name}_argmax_reduce_axis",
+        np.asarray([int(axis)], dtype=np.int32),
+    )
+    axis_max_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_axis_max",
+        dtype="FLOAT32",
+        shape=[int(v) if int(v) >= 0 else 1 for v in list(reduce_keepdims_shape)],
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=axis_max_name,
+        shape=reduce_keepdims_shape,
+        signature=reduce_keepdims_signature,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="REDUCE_MAX",
+            inputs=[compute_input_name, axis_name],
+            outputs=[axis_max_name],
+            options={"keepDims": True},
+        )
+    )
+    zero_if_max_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_zero_if_max",
+        dtype="FLOAT32",
+        shape=input_shape,
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=zero_if_max_name,
+        shape=input_shape,
+        signature=input_signature,
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="SUB",
+        lhs_name=axis_max_name,
+        rhs_name=compute_input_name,
+        output_name=zero_if_max_name,
+    )
+
+    mask_zero_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_zero_mask",
+        dtype="FLOAT32",
+        shape=input_shape,
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=mask_zero_name,
+        shape=input_shape,
+        signature=input_signature,
+    )
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    if input_dtype in {"FLOAT16", "FLOAT32"}:
+        eps_name = ctx.add_const_tensor(
+            f"{output_name}_argmax_eps",
+            np.asarray([1.0e-6], dtype=np.float32),
+        )
+        clipped_name = ctx.add_intermediate_tensor(
+            f"{output_name}_argmax_clipped",
+            dtype="FLOAT32",
+            shape=input_shape,
+        )
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=clipped_name,
+            shape=input_shape,
+            signature=input_signature,
+        )
+        _add_binary_op(
+            ctx=ctx,
+            op_type="MINIMUM",
+            lhs_name=zero_if_max_name,
+            rhs_name=eps_name,
+            output_name=clipped_name,
+        )
+        inv_eps_name = ctx.add_const_tensor(
+            f"{output_name}_argmax_inv_eps",
+            np.asarray([1.0e6], dtype=np.float32),
+        )
+        _add_binary_op(
+            ctx=ctx,
+            op_type="MUL",
+            lhs_name=clipped_name,
+            rhs_name=inv_eps_name,
+            output_name=mask_zero_name,
+        )
+    else:
+        one_name = ctx.add_const_tensor(
+            f"{output_name}_argmax_one_int",
+            np.asarray([1.0], dtype=np.float32),
+        )
+        _add_binary_op(
+            ctx=ctx,
+            op_type="MINIMUM",
+            lhs_name=zero_if_max_name,
+            rhs_name=one_name,
+            output_name=mask_zero_name,
+        )
+
+    one_name = ctx.add_const_tensor(
+        f"{output_name}_argmax_one_final",
+        np.asarray([1.0], dtype=np.float32),
+    )
+    one_if_max_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_one_if_max",
+        dtype="FLOAT32",
+        shape=input_shape,
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=one_if_max_name,
+        shape=input_shape,
+        signature=input_signature,
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="SUB",
+        lhs_name=one_name,
+        rhs_name=mask_zero_name,
+        output_name=one_if_max_name,
+    )
+
+    rev_shape = [1] * int(len(input_shape))
+    rev_shape[int(axis)] = int(axis_dim)
+    rev_index_name = ctx.add_const_tensor(
+        f"{output_name}_argmax_rev_index",
+        np.arange(int(axis_dim), 0, -1, dtype=np.float32).reshape(rev_shape),
+    )
+    rev_if_max_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_rev_if_max",
+        dtype="FLOAT32",
+        shape=input_shape,
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=rev_if_max_name,
+        shape=input_shape,
+        signature=input_signature,
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="MUL",
+        lhs_name=one_if_max_name,
+        rhs_name=rev_index_name,
+        output_name=rev_if_max_name,
+    )
+    reverse_argmax_shape = (
+        reduce_keepdims_shape
+        if keepdims
+        else [int(v) for idx, v in enumerate(input_shape) if int(idx) != int(axis)] or [1]
+    )
+    reverse_argmax_signature = (
+        reduce_keepdims_signature
+        if keepdims
+        else [int(v) for idx, v in enumerate(input_signature) if int(idx) != int(axis)] or [1]
+    )
+    reverse_argmax_name = ctx.add_intermediate_tensor(
+        f"{output_name}_argmax_reverse",
+        dtype="FLOAT32",
+        shape=[int(v) if int(v) >= 0 else 1 for v in list(reverse_argmax_shape)],
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=reverse_argmax_name,
+        shape=reverse_argmax_shape,
+        signature=reverse_argmax_signature,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="REDUCE_MAX",
+            inputs=[rev_if_max_name, axis_name],
+            outputs=[reverse_argmax_name],
+            options={"keepDims": bool(keepdims)},
+        )
+    )
+    reduction_size_name = ctx.add_const_tensor(
+        f"{output_name}_argmax_axis_dim",
+        np.asarray([float(axis_dim)], dtype=np.float32),
+    )
+    raw_output_name = output_name
+    if str(final_dtype).upper() != "FLOAT32":
+        raw_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_argmax_raw",
+            dtype="FLOAT32",
+            shape=[int(v) if int(v) >= 0 else 1 for v in list(output_shape)],
+        )
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=raw_output_name,
+            shape=output_shape,
+            signature=output_signature,
+        )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="SUB",
+        lhs_name=reduction_size_name,
+        rhs_name=reverse_argmax_name,
+        output_name=raw_output_name,
+    )
+    if str(final_dtype).upper() != "FLOAT32":
+        _add_cast_op(
+            ctx=ctx,
+            input_name=raw_output_name,
+            output_name=output_name,
+            out_dtype=str(final_dtype).upper(),
+            shape=output_shape,
+            signature=output_signature,
+        )
+    if output_tensor is not None:
+        output_tensor.dtype = str(final_dtype).upper()
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = str(final_dtype).upper()
+
+
+def _build_fused_resize_argmax_op(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    keepdims: bool,
+    final_dtype: str,
+) -> bool:
+    restore_info = getattr(ctx, "fused_argmax_restore_shapes", {}).get(str(input_name), None)
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) != 4:
+        return False
+
+    producer_name = str(getattr(node.inputs[0], "name", input_name))
+    producer_node = getattr(ctx, "onnx_tensor_producers", {}).get(producer_name, None)
+    if producer_node is None or str(getattr(producer_node, "op_type", "")) not in {"Resize", "Upsample"}:
+        return False
+
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_shape = (
+        [int(v) for v in list(output_tensor.shape)]
+        if output_tensor is not None
+        else []
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+    if keepdims:
+        if len(output_shape) != 4 or int(output_shape[2]) <= 0 or int(output_shape[3]) <= 0:
+            return False
+        batch_dim = int(output_shape[0])
+        original_h = int(output_shape[2])
+        original_w = int(output_shape[3])
+    else:
+        if len(output_shape) != 3 or int(output_shape[1]) <= 0 or int(output_shape[2]) <= 0:
+            return False
+        batch_dim = int(output_shape[0])
+        original_h = int(output_shape[1])
+        original_w = int(output_shape[2])
+
+    scale_ratio = float(getattr(ctx, "fused_argmax_scale_ratio", 0.5))
+    if isinstance(restore_info, dict):
+        restored_original_shape = [int(v) for v in list(restore_info.get("original_shape", []))]
+        if len(restored_original_shape) == 4:
+            batch_dim = int(restored_original_shape[0])
+            channel_dim = int(restored_original_shape[1])
+            original_h = int(restored_original_shape[2])
+            original_w = int(restored_original_shape[3])
+        restored_resized_shape = [int(v) for v in list(restore_info.get("resized_shape", []))]
+        target_small_h = int(
+            restored_resized_shape[2]
+            if len(restored_resized_shape) == 4 and int(restored_resized_shape[2]) > 0
+            else max(1, int(float(original_h) * scale_ratio))
+        )
+        target_small_w = int(
+            restored_resized_shape[3]
+            if len(restored_resized_shape) == 4 and int(restored_resized_shape[3]) > 0
+            else max(1, int(float(original_w) * scale_ratio))
+        )
+    else:
+        target_small_h = max(1, int(float(original_h) * scale_ratio))
+        target_small_w = max(1, int(float(original_w) * scale_ratio))
+        channel_dim = -1
+
+    layout_nhwc = (
+        int(input_shape[0]) == int(batch_dim)
+        and int(input_shape[1]) in {int(original_h), int(target_small_h)}
+        and int(input_shape[2]) in {int(original_w), int(target_small_w)}
+        and (int(channel_dim) <= 0 or int(input_shape[3]) == int(channel_dim))
+    )
+    layout_nchw = (
+        int(input_shape[0]) == int(batch_dim)
+        and int(input_shape[2]) in {int(original_h), int(target_small_h)}
+        and int(input_shape[3]) in {int(original_w), int(target_small_w)}
+        and (int(channel_dim) <= 0 or int(input_shape[1]) == int(channel_dim))
+    )
+    if not layout_nhwc and not layout_nchw:
+        return False
+
+    if int(channel_dim) <= 0:
+        channel_dim = int(input_shape[3] if layout_nhwc else input_shape[1])
+    original_shape = [int(batch_dim), int(channel_dim), int(original_h), int(original_w)]
+
+    current_nhwc_name = str(input_name)
+    current_nhwc_shape = [int(v) for v in list(input_shape)]
+    if layout_nhwc:
+        current_nhwc_name = str(input_name)
+        current_nhwc_shape = [int(v) for v in list(input_shape)]
+    elif layout_nchw:
+        transposed_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_fused_argmax_input_nhwc",
+            dtype=str(ctx.get_tensor_dtype(input_name)).upper(),
+            shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), int(channel_dim)],
+        )
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=transposed_input_name,
+            shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), int(channel_dim)],
+            signature=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), int(channel_dim)],
+        )
+        current_nhwc_name = make_transpose(
+            ctx,
+            input_name,
+            transposed_input_name,
+            [0, 2, 3, 1],
+        )
+        current_nhwc_shape = [int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), int(channel_dim)]
+
+    if int(current_nhwc_shape[1]) != int(target_small_h) or int(current_nhwc_shape[2]) != int(target_small_w):
+        shrunk_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_fused_argmax_shrunk_nhwc",
+            dtype=str(ctx.get_tensor_dtype(current_nhwc_name)).upper(),
+            shape=[int(current_nhwc_shape[0]), int(target_small_h), int(target_small_w), int(current_nhwc_shape[3])],
+        )
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=shrunk_input_name,
+            shape=[int(current_nhwc_shape[0]), int(target_small_h), int(target_small_w), int(current_nhwc_shape[3])],
+            signature=[int(current_nhwc_shape[0]), int(target_small_h), int(target_small_w), int(current_nhwc_shape[3])],
+        )
+        shrink_size_name = ctx.add_const_tensor(
+            f"{output_name}_fused_argmax_shrink_size",
+            np.asarray([int(target_small_h), int(target_small_w)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESIZE_NEAREST_NEIGHBOR",
+                inputs=[current_nhwc_name, shrink_size_name],
+                outputs=[shrunk_input_name],
+                options={"alignCorners": True, "halfPixelCenters": False},
+            )
+        )
+        current_nhwc_name = shrunk_input_name
+        current_nhwc_shape = [int(current_nhwc_shape[0]), int(target_small_h), int(target_small_w), int(current_nhwc_shape[3])]
+    axis_name = ctx.add_const_tensor(
+        f"{output_name}_fused_argmax_axis",
+        np.asarray([3], dtype=np.int32),
+    )
+    small_argmax_name = ctx.add_intermediate_tensor(
+        f"{output_name}_fused_argmax_small",
+        dtype="INT32",
+        shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=small_argmax_name,
+        shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+        signature=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ARG_MAX",
+            inputs=[current_nhwc_name, axis_name],
+            outputs=[small_argmax_name],
+            options={"outputType": "INT32"},
+        )
+    )
+    small_argmax_f32_name = ctx.add_intermediate_tensor(
+        f"{output_name}_fused_argmax_small_f32",
+        dtype="FLOAT32",
+        shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+    )
+    _add_cast_op(
+        ctx=ctx,
+        input_name=small_argmax_name,
+        output_name=small_argmax_f32_name,
+        out_dtype="FLOAT32",
+        shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+        signature=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2])],
+    )
+    small_argmax_nhwc_name = ctx.add_intermediate_tensor(
+        f"{output_name}_fused_argmax_small_nhwc",
+        dtype="FLOAT32",
+        shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2]), 1],
+    )
+    _add_reshape_op(
+        ctx=ctx,
+        input_name=small_argmax_f32_name,
+        output_name=small_argmax_nhwc_name,
+        new_shape=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2]), 1],
+        signature=[int(current_nhwc_shape[0]), int(current_nhwc_shape[1]), int(current_nhwc_shape[2]), 1],
+    )
+    restored_nhwc_name = ctx.add_intermediate_tensor(
+        f"{output_name}_fused_argmax_restored_nhwc",
+        dtype="FLOAT32",
+        shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), 1],
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=restored_nhwc_name,
+        shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), 1],
+        signature=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), 1],
+    )
+    restore_size_name = ctx.add_const_tensor(
+        f"{output_name}_fused_argmax_restore_size",
+        np.asarray([int(original_shape[2]), int(original_shape[3])], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESIZE_NEAREST_NEIGHBOR",
+            inputs=[small_argmax_nhwc_name, restore_size_name],
+            outputs=[restored_nhwc_name],
+            options={"alignCorners": True, "halfPixelCenters": False},
+        )
+    )
+    current_name = restored_nhwc_name
+    current_shape = [int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), 1]
+    current_signature = [int(original_shape[0]), int(original_shape[2]), int(original_shape[3]), 1]
+    if keepdims:
+        keepdims_name = ctx.add_intermediate_tensor(
+            f"{output_name}_fused_argmax_keepdims",
+            dtype="FLOAT32",
+            shape=[int(original_shape[0]), 1, int(original_shape[2]), int(original_shape[3])],
+        )
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=keepdims_name,
+            shape=[int(original_shape[0]), 1, int(original_shape[2]), int(original_shape[3])],
+            signature=[int(original_shape[0]), 1, int(original_shape[2]), int(original_shape[3])],
+        )
+        current_name = make_transpose(
+            ctx,
+            current_name,
+            keepdims_name,
+            [0, 3, 1, 2],
+        )
+        current_shape = [int(original_shape[0]), 1, int(original_shape[2]), int(original_shape[3])]
+        current_signature = [int(original_shape[0]), 1, int(original_shape[2]), int(original_shape[3])]
+    else:
+        squeezed_name = ctx.add_intermediate_tensor(
+            f"{output_name}_fused_argmax_squeezed",
+            dtype="FLOAT32",
+            shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3])],
+        )
+        _add_reshape_op(
+            ctx=ctx,
+            input_name=current_name,
+            output_name=squeezed_name,
+            new_shape=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3])],
+            signature=[int(original_shape[0]), int(original_shape[2]), int(original_shape[3])],
+        )
+        current_name = squeezed_name
+        current_shape = [int(original_shape[0]), int(original_shape[2]), int(original_shape[3])]
+        current_signature = [int(original_shape[0]), int(original_shape[2]), int(original_shape[3])]
+
+    if str(final_dtype).upper() != "FLOAT32":
+        _add_cast_op(
+            ctx=ctx,
+            input_name=current_name,
+            output_name=output_name,
+            out_dtype=str(final_dtype).upper(),
+            shape=output_shape,
+            signature=output_signature,
+        )
+    else:
+        _add_reshape_op(
+            ctx=ctx,
+            input_name=current_name,
+            output_name=output_name,
+            new_shape=current_shape,
+            signature=current_signature,
+        )
+        ctx.model_ir.tensors[output_name].dtype = "FLOAT32"
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=output_name,
+            shape=output_shape,
+            signature=output_signature,
+        )
+    if output_tensor is not None:
+        output_tensor.dtype = str(final_dtype).upper()
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = str(final_dtype).upper()
+    return True
+
+
 def build_argmax_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -3444,11 +4149,55 @@ def build_argmax_op(node: Any, ctx: Any) -> None:
         )
 
     keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    argmax_mode = str(getattr(ctx, "argmax_mode", "none"))
     output_dtype = _prefer_int32_index_output_dtype(
         ctx=ctx,
         tensor_name=output_name,
         requested_dtype=str(ctx.get_tensor_dtype(output_name)).upper(),
     )
+
+    if argmax_mode == "reducemax_int64":
+        _build_reducemax_argmax_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            axis=axis,
+            keepdims=keepdims,
+            final_dtype="INT64",
+        )
+        return
+    if argmax_mode == "reducemax_float32":
+        _build_reducemax_argmax_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            axis=axis,
+            keepdims=keepdims,
+            final_dtype="FLOAT32",
+        )
+        return
+    if argmax_mode == "fused_int64" and int(axis) == 1:
+        if _build_fused_resize_argmax_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            keepdims=keepdims,
+            final_dtype="INT64",
+        ):
+            return
+    if argmax_mode == "fused_float32" and int(axis) == 1:
+        if _build_fused_resize_argmax_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            keepdims=keepdims,
+            final_dtype="FLOAT32",
+        ):
+            return
 
     argmax_output_name = output_name
     if keepdims:

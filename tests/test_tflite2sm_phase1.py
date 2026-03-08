@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 from typing import Any
 
@@ -309,6 +310,34 @@ def _disable_tf_converter_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _assert_dir_empty_or_missing(path: str) -> None:
     assert not os.path.exists(path) or len(os.listdir(path)) == 0
+
+
+def test_flatbuffer_direct_not_use_onnxsim_skips_onnxsim_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_check_output = subprocess.check_output
+
+    def _guard_check_output(*args, **kwargs):
+        cmd = args[0] if len(args) > 0 else kwargs.get("args")
+        if isinstance(cmd, (list, tuple)) and len(cmd) > 0 and str(cmd[0]) == "onnxsim":
+            raise AssertionError("onnxsim should not run when not_use_onnxsim=True")
+        return original_check_output(*args, **kwargs)
+
+    _disable_tf_converter_fallback(monkeypatch)
+    monkeypatch.setattr(subprocess, "check_output", _guard_check_output)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_no_onnxsim", _make_add_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            disable_strict_mode=True,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            not_use_onnxsim=True,
+        )
+        assert os.path.exists(os.path.join(output_dir, "add_no_onnxsim_float32.tflite"))
 
 
 @pytest.mark.parametrize(
@@ -1767,6 +1796,48 @@ def test_tflite_direct_input_split_saved_model_cotof_smoke() -> None:
             {
                 "tflite_backend": "flatbuffer_direct",
                 "check_onnx_tf_outputs_elementwise_close": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_suppression_flextranspose": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_suppression_flexstridedslice": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "optimization_for_gpu_delegate": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "replace_argmax_to_reducemax_and_indices_is_int64": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "replace_argmax_to_reducemax_and_indices_is_float32": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "replace_argmax_to_fused_argmax_and_indices_is_int64": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "replace_argmax_to_fused_argmax_and_indices_is_float32": True,
             }
         ),
     ],
