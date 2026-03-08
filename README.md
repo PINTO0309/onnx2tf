@@ -688,7 +688,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.3.2
+  ghcr.io/pinto0309/onnx2tf:2.3.3
 
   or
 
@@ -697,7 +697,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.3.2
+  docker.io/pinto0309/onnx2tf:2.3.3
 
   or
 
@@ -707,7 +707,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.3.2 \
+  docker.io/pinto0309/onnx2tf:2.3.3 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -2136,6 +2136,10 @@ optional arguments:
   -nuo, --not_use_onnxsim
     No optimization by onnx-simplifier is performed.
     If this option is used, the probability of a conversion error is very high.
+    Effective for both `tf_converter` and `flatbuffer_direct` when converting
+    ONNX input. With `-it/--input_tflite_file_path` and
+    `--tflite_backend flatbuffer_direct`, this remains unsupported because
+    there is no ONNX preprocess stage.
 
   -nuonag, --not_use_opname_auto_generate
     Automatic generation of each OP name in the old format ONNX file
@@ -2305,6 +2309,9 @@ optional arguments:
 
   -dsft, --disable_suppression_flextranspose
     Disables FlexTranspose generation suppression.
+    With `--tflite_backend flatbuffer_direct` on ONNX input, this emits a
+    single builtin `TRANSPOSE` without rank-compression. With
+    `-it/--input_tflite_file_path`, this option remains unsupported.
 
   -nodaftc, --number_of_dimensions_after_flextranspose_compression
     Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
@@ -2313,6 +2320,9 @@ optional arguments:
 
   -dsfs, --disable_suppression_flexstridedslice
     Disables FlexStridedSlice generation suppression.
+    With `--tflite_backend flatbuffer_direct` on ONNX input, this emits a
+    single builtin `SLICE`/`STRIDED_SLICE` without rank-compression. With
+    `-it/--input_tflite_file_path`, this option remains unsupported.
 
   -dsm, --disable_strict_mode
     If specified, the conversion speed is greatly accelerated because the strict accuracy
@@ -2328,9 +2338,16 @@ optional arguments:
   -ofgd, --optimization_for_gpu_delegate
     Replace operations that do not support gpu delegate with those
     that do as much as possible.
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+    In `flatbuffer_direct`, this now applies direct lowering rewrites for
+    broadcast arithmetic, Gather negative-index normalization, and Gemm bias
+    handling. With `-it/--input_tflite_file_path`, this option remains
+    unsupported.
 
   -rari64, --replace_argmax_to_reducemax_and_indices_is_int64
     Replace ArgMax with a ReduceMax. The returned indices are int64.
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+    With `-it/--input_tflite_file_path`, this option remains unsupported.
     Only one of replace_argmax_to_reducemax_and_indices_is_int64
     and replace_argmax_to_reducemax_and_indices_is_float32
     and replace_argmax_to_fused_argmax_and_indices_is_int64
@@ -2338,6 +2355,8 @@ optional arguments:
 
   -rarf32, --replace_argmax_to_reducemax_and_indices_is_float32
     Replace ArgMax with a ReduceMax. The returned indices are float32.
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+    With `-it/--input_tflite_file_path`, this option remains unsupported.
     Only one of replace_argmax_to_reducemax_and_indices_is_int64
     and replace_argmax_to_reducemax_and_indices_is_float32
     and replace_argmax_to_fused_argmax_and_indices_is_int64
@@ -2348,6 +2367,10 @@ optional arguments:
     It improves inference speed at the cost of a small sacrifice in accuracy.
     See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
     Currently, only 4D tensors are supported.
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+    In `flatbuffer_direct`, this currently targets `Resize -> ArgMax` 4D
+    patterns. With `-it/--input_tflite_file_path`, this option remains
+    unsupported.
     Only one of replace_argmax_to_reducemax_and_indices_is_int64
     and replace_argmax_to_reducemax_and_indices_is_float32
     and replace_argmax_to_fused_argmax_and_indices_is_int64
@@ -2358,6 +2381,10 @@ optional arguments:
     It improves inference speed at the cost of a small sacrifice in accuracy.
     See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
     Currently, only 4D tensors are supported.
+    Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+    In `flatbuffer_direct`, this currently targets `Resize -> ArgMax` 4D
+    patterns. With `-it/--input_tflite_file_path`, this option remains
+    unsupported.
     Only one of replace_argmax_to_reducemax_and_indices_is_int64
     and replace_argmax_to_reducemax_and_indices_is_float32
     and replace_argmax_to_fused_argmax_and_indices_is_int64
@@ -2819,6 +2846,10 @@ convert(
     not_use_onnxsim: Optional[bool]
       No optimization by onnx-simplifier is performed.
       If this option is used, the probability of a conversion error is very high.
+      Effective for both `tf_converter` and `flatbuffer_direct` when converting
+      ONNX input. With `input_tflite_file_path` and
+      `tflite_backend="flatbuffer_direct"`, this remains unsupported because
+      there is no ONNX preprocess stage.
 
     not_use_opname_auto_generate: Optional[bool]
       Automatic generation of each OP name in the old format ONNX file
@@ -2989,6 +3020,9 @@ convert(
 
     disable_suppression_flextranspose: Optional[bool]
       Disables FlexTranspose generation suppression.
+      With `tflite_backend="flatbuffer_direct"` on ONNX input, this emits a
+      single builtin `TRANSPOSE` without rank-compression.
+      With `input_tflite_file_path`, this option remains unsupported.
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
       Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
@@ -2997,6 +3031,9 @@ convert(
 
     disable_suppression_flexstridedslice: Optional[bool]
       Disables FlexStridedSlice generation suppression.
+      With `tflite_backend="flatbuffer_direct"` on ONNX input, this emits a
+      single builtin `SLICE`/`STRIDED_SLICE` without rank-compression.
+      With `input_tflite_file_path`, this option remains unsupported.
 
     disable_strict_mode: Optional[bool]
       If specified, the conversion speed is greatly accelerated because the strict accuracy
@@ -3012,9 +3049,15 @@ convert(
     optimization_for_gpu_delegate: Optional[bool]
       Replace operations that do not support gpu delegate with those
       that do as much as possible.
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+      In `flatbuffer_direct`, this now applies direct lowering rewrites for
+      broadcast arithmetic, Gather negative-index normalization, and Gemm bias
+      handling. With `input_tflite_file_path`, this option remains unsupported.
 
     replace_argmax_to_reducemax_and_indices_is_int64: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indices are int64.
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+      With `input_tflite_file_path`, this option remains unsupported.
       Only one of replace_argmax_to_reducemax_and_indices_is_int64 and
       replace_argmax_to_reducemax_and_indices_is_float32 and
       replace_argmax_to_fused_argmax_and_indices_is_int64 and
@@ -3023,6 +3066,8 @@ convert(
 
     replace_argmax_to_reducemax_and_indices_is_float32: Optional[bool]
       Replace ArgMax with a ReduceMax. The returned indices are float32.
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+      With `input_tflite_file_path`, this option remains unsupported.
       Only one of replace_argmax_to_reducemax_and_indices_is_int64 and
       replace_argmax_to_reducemax_and_indices_is_float32 and
       replace_argmax_to_fused_argmax_and_indices_is_int64 and
@@ -3034,6 +3079,9 @@ convert(
       It improves inference speed at the cost of a small sacrifice in accuracy.
       See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
       Currently, only 4D tensors are supported.
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+      In `flatbuffer_direct`, this currently targets `Resize -> ArgMax` 4D
+      patterns. With `input_tflite_file_path`, this option remains unsupported.
       Only one of replace_argmax_to_reducemax_and_indices_is_int64 and
       replace_argmax_to_reducemax_and_indices_is_float32 and
       replace_argmax_to_fused_argmax_and_indices_is_int64 and
@@ -3045,6 +3093,9 @@ convert(
       It improves inference speed at the cost of a small sacrifice in accuracy.
       See. https://github.com/tensorflow/models/tree/master/official/projects/edgetpu/vision#argmax-fusion-to-improve-segmentation-model-latency
       Currently, only 4D tensors are supported.
+      Effective in both `tf_converter` and `flatbuffer_direct` for ONNX input.
+      In `flatbuffer_direct`, this currently targets `Resize -> ArgMax` 4D
+      patterns. With `input_tflite_file_path`, this option remains unsupported.
       Only one of replace_argmax_to_reducemax_and_indices_is_int64 and
       replace_argmax_to_reducemax_and_indices_is_float32 and
       replace_argmax_to_fused_argmax_and_indices_is_int64 and

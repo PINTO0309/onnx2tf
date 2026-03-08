@@ -5,7 +5,10 @@ from typing import Any
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
-from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+from onnx2tf.tflite_builder.op_builders.shared import (
+    make_transpose,
+    materialize_broadcast_operand_for_gpu_delegate,
+)
 
 
 def _float_numpy_dtype(dtype: str) -> np.dtype:
@@ -203,6 +206,27 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
         f"{node.name}_bn_add",
         np.asarray(bn_add, dtype=np.float32),
     )
+    if bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
+        input_tensor = ctx.model_ir.tensors.get(input_name, None)
+        input_signature = (
+            [int(v) for v in list(input_tensor.shape_signature)]
+            if input_tensor is not None and input_tensor.shape_signature is not None
+            else [int(v) for v in list(input_shape)]
+        )
+        mul_const = materialize_broadcast_operand_for_gpu_delegate(
+            ctx=ctx,
+            input_name=mul_const,
+            target_shape=[int(v) for v in list(input_shape)],
+            target_signature=input_signature,
+            base_name=f"{node.name}_bn_mul",
+        )
+        add_const = materialize_broadcast_operand_for_gpu_delegate(
+            ctx=ctx,
+            input_name=add_const,
+            target_shape=[int(v) for v in list(input_shape)],
+            target_signature=input_signature,
+            base_name=f"{node.name}_bn_add",
+        )
 
     mul_out = ctx.add_intermediate_tensor(
         f"{node.name}_mul_out",

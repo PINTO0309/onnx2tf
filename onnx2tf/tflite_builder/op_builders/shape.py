@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import copy
 
 import numpy as np
+import onnx
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR, normalize_onnx_shape
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
@@ -195,6 +196,8 @@ def _parse_slice_indices(
 
 
 def _get_slice_rank_limit(ctx: Any) -> int:
+    if bool(getattr(ctx, "disable_suppression_flexstridedslice", False)):
+        return int(np.iinfo(np.int32).max)
     return int(
         max(
             1,
@@ -6708,6 +6711,61 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             output_shape = [int(input_shape[0]), int(input_shape[1]), int(out_h), int(out_w)]
         ctx.model_ir.tensors[output_name].shape = list(output_shape)
 
+    output_signature_for_resize = (
+        [int(v) for v in list(existing_output_signature)]
+        if existing_output_signature is not None
+        else [int(v) for v in list(output_shape)]
+    )
+    resize_existing_output_signature = (
+        [int(v) for v in list(existing_output_signature)]
+        if existing_output_signature is not None
+        else None
+    )
+    fused_argmax_mode = str(getattr(ctx, "argmax_mode", "none"))
+    fused_argmax_enabled = fused_argmax_mode in {"fused_int64", "fused_float32"}
+    if (
+        fused_argmax_enabled
+        and len(output_shape) == 4
+        and bool(getattr(ctx, "onnx_tensor_consumers", {}).get(str(output_name), []))
+    ):
+        consumers = list(getattr(ctx, "onnx_tensor_consumers", {}).get(str(output_name), []))
+        consumer_axis = 0
+        if len(consumers) == 1:
+            for attr in getattr(consumers[0], "attribute", []):
+                if str(getattr(attr, "name", "")) == "axis":
+                    if int(getattr(attr, "type", 0)) == onnx.AttributeProto.INT:
+                        consumer_axis = int(attr.i)
+                    break
+        if consumer_axis < 0:
+            consumer_axis += 4
+        if (
+            len(consumers) == 1
+            and str(getattr(consumers[0], "op_type", "")) == "ArgMax"
+            and int(consumer_axis) == 1
+        ):
+            scale_ratio = float(getattr(ctx, "fused_argmax_scale_ratio", 0.5))
+            shrink_h = int(float(output_shape[2]) * scale_ratio)
+            shrink_w = int(float(output_shape[3]) * scale_ratio)
+            if shrink_h <= 0 or shrink_w <= 0:
+                raise NotImplementedError(
+                    "Fused ArgMax resize shrink requires positive spatial size. "
+                    f"op={node.name} output_shape={output_shape} scale_ratio={scale_ratio}"
+                )
+            ctx.fused_argmax_restore_shapes[str(output_name)] = {
+                "original_shape": [int(v) for v in list(output_shape)],
+                "original_signature": [int(v) for v in list(output_signature_for_resize)],
+                "resized_shape": [int(output_shape[0]), int(output_shape[1]), int(shrink_h), int(shrink_w)],
+                "scale_ratio": scale_ratio,
+            }
+            output_shape = [int(output_shape[0]), int(output_shape[1]), int(shrink_h), int(shrink_w)]
+            ctx.model_ir.tensors[output_name].shape = [int(v) for v in list(output_shape)]
+            resize_existing_output_signature = [
+                int(output_signature_for_resize[0]),
+                int(output_signature_for_resize[1]),
+                int(shrink_h),
+                int(shrink_w),
+            ]
+
     input_dtype = str(ctx.get_tensor_dtype(input_name))
     output_dtype = str(ctx.get_tensor_dtype(output_name))
     if output_dtype == "FLOAT32" and input_dtype != "FLOAT32":
@@ -6725,7 +6783,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         output_shape_nchw=output_shape,
         onnx_sizes_hw=onnx_sizes_hw,
         onnx_scales_hw=onnx_scales_hw,
-        existing_output_signature_nchw=existing_output_signature,
+        existing_output_signature_nchw=resize_existing_output_signature,
     )
     output_tensor.shape_signature = [int(v) for v in list(output_signature)]
 

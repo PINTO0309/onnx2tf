@@ -196,6 +196,7 @@ def _convert(
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
     replace_to_pseudo_operators: list[str] | None = None,
+    **extra_kwargs: Any,
 ) -> str:
     onnx2tf.convert(
         input_onnx_file_path=model_path,
@@ -226,6 +227,7 @@ def _convert(
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
         replace_to_pseudo_operators=replace_to_pseudo_operators,
+        **extra_kwargs,
     )
     model_name = os.path.splitext(os.path.basename(model_path))[0]
     return os.path.join(output_dir, f"{model_name}_float32.tflite")
@@ -1961,6 +1963,25 @@ def _make_gemm_dynamic_weight_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_gemm_dynamic_weight_bias_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 4])
+    w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [3, 4])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Gemm",
+        ["x", "w", "b"],
+        ["y"],
+        name="GemmDynamicWeightBiasNode",
+        alpha=1.0,
+        beta=1.0,
+        transA=0,
+        transB=1,
+    )
+    graph = helper.make_graph([node], "gemm_dynamic_weight_bias_graph", [x, w, b], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_gemm_fp16_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT16, [2, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT16, [2, 3])
@@ -2466,6 +2487,45 @@ def _make_add_chain_model() -> onnx.ModelProto:
     n1 = helper.make_node("Add", ["a0", "y"], ["a1"], name="AddChain1")
     n2 = helper.make_node("Add", ["a1", "y"], ["z"], name="AddChain2")
     graph = helper.make_graph([n0, n1, n2], "add_chain_graph", [x, y], [z])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_add_two_input_broadcast_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [1, 1, 1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    node = helper.make_node("Add", ["x", "b"], ["y"], name="AddBroadcastTwoInputNode")
+    graph = helper.make_graph([node], "add_two_input_broadcast_graph", [x, b], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_argmax_keepdims_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2, 1, 4])
+    node = helper.make_node(
+        "ArgMax",
+        ["x"],
+        ["y"],
+        name="ArgMaxKeepDimsNode",
+        axis=1,
+        keepdims=1,
+    )
+    graph = helper.make_graph([node], "argmax_keepdims_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_argmax_no_keepdims_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2, 4])
+    node = helper.make_node(
+        "ArgMax",
+        ["x"],
+        ["y"],
+        name="ArgMaxNoKeepDimsNode",
+        axis=1,
+        keepdims=0,
+    )
+    graph = helper.make_graph([node], "argmax_no_keepdims_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -3764,6 +3824,43 @@ def _make_resize_nearest_model() -> onnx.ModelProto:
         nearest_mode="floor",
     )
     graph = helper.make_graph([node], "resize_nearest_graph", [x], [y], initializer=[roi, scales])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_resize_argmax_keepdims_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 4])
+    resize_out = helper.make_tensor_value_info("resize_out", TensorProto.FLOAT, [1, 3, 8, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, 1, 8, 8])
+    roi = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="resize_argmax_roi")
+    scales = numpy_helper.from_array(
+        np.asarray([1.0, 1.0, 2.0, 2.0], dtype=np.float32),
+        name="resize_argmax_scales",
+    )
+    resize = helper.make_node(
+        "Resize",
+        ["x", "resize_argmax_roi", "resize_argmax_scales"],
+        ["resize_out"],
+        name="ResizeArgMaxNearestNode",
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
+        nearest_mode="floor",
+    )
+    argmax = helper.make_node(
+        "ArgMax",
+        ["resize_out"],
+        ["y"],
+        name="ResizeArgMaxNode",
+        axis=1,
+        keepdims=1,
+    )
+    graph = helper.make_graph(
+        [resize, argmax],
+        "resize_argmax_keepdims_graph",
+        [x],
+        [y],
+        initializer=[roi, scales],
+        value_info=[resize_out],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -6736,6 +6833,74 @@ def test_flatbuffer_direct_gemm_dynamic_weight_lowering_uses_batch_matmul() -> N
     assert "FULLY_CONNECTED" not in op_types
 
 
+def test_flatbuffer_direct_gemm_dynamic_weight_bias_gpu_delegate_uses_sub_bias_path() -> None:
+    model = _make_gemm_dynamic_weight_bias_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+
+    default_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gemm_dynamic_weight_bias_default_test",
+    )
+    gpu_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gemm_dynamic_weight_bias_gpu_delegate_test",
+        optimization_for_gpu_delegate=True,
+    )
+
+    default_op_types = [str(op.op_type) for op in default_ir.operators]
+    gpu_op_types = [str(op.op_type) for op in gpu_ir.operators]
+    assert "ADD" in default_op_types
+    assert "SUB" not in default_op_types
+    assert "SUB" in gpu_op_types
+    assert "MUL" in gpu_op_types
+
+
+def test_flatbuffer_direct_gather_runtime_negative_indices_gpu_delegate_uses_mul_offset_path() -> None:
+    model = _make_gather_runtime_negative_indices_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+
+    default_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_runtime_negative_indices_default_test",
+    )
+    gpu_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_runtime_negative_indices_gpu_delegate_test",
+        optimization_for_gpu_delegate=True,
+    )
+
+    default_op_types = [str(op.op_type) for op in default_ir.operators]
+    gpu_op_types = [str(op.op_type) for op in gpu_ir.operators]
+    assert "MUL" not in default_op_types
+    assert "MUL" in gpu_op_types
+    assert "SELECT" in gpu_op_types
+    assert "GATHER" in gpu_op_types
+
+
+def test_flatbuffer_direct_binary_broadcast_gpu_delegate_materializes_operand() -> None:
+    model = _make_add_two_input_broadcast_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+
+    default_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="add_broadcast_default_test",
+    )
+    gpu_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="add_broadcast_gpu_delegate_test",
+        optimization_for_gpu_delegate=True,
+    )
+
+    default_op_types = [str(op.op_type) for op in default_ir.operators]
+    gpu_op_types = [str(op.op_type) for op in gpu_ir.operators]
+    assert "TILE" not in default_op_types
+    assert "TILE" in gpu_op_types
+    assert "ADD" in gpu_op_types
+
+
 def test_flatbuffer_direct_gemm_fp16_fully_connected_path_casts_io_to_float32() -> None:
     model = _make_gemm_fp16_model()
     register_default_preprocess_rules()
@@ -7080,6 +7245,25 @@ def test_flatbuffer_direct_rank7_transpose_decomposed_respects_nodaftc_rank4() -
         input_name = str(op.inputs[0])
         input_shape = [int(v) for v in list(model_ir.tensors[input_name].shape)]
         assert len(input_shape) <= 4
+
+
+def test_flatbuffer_direct_rank7_transpose_disable_suppression_emits_single_builtin_transpose() -> None:
+    model = _make_transpose_rank7_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="transpose_rank7_disable_suppression_test",
+        disable_suppression_flextranspose=True,
+    )
+
+    transpose_ops = [op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE"]
+    assert len(transpose_ops) == 1
+    transpose_input_name = str(transpose_ops[0].inputs[0])
+    assert len(list(model_ir.tensors[transpose_input_name].shape)) == 7
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "GATHER" not in op_types
+    assert "CONCATENATION" not in op_types
 
 
 def test_flatbuffer_direct_selu_exp_preserves_dynamic_shape_signature() -> None:
@@ -27889,6 +28073,139 @@ def test_flatbuffer_direct_rank6_slice_decomposed_respects_nodafsc_rank4() -> No
         in_name = str(op.inputs[0])
         in_shape = [int(v) for v in list(model_ir.tensors[in_name].shape)]
         assert len(in_shape) <= 4
+
+
+def test_flatbuffer_direct_rank6_slice_disable_suppression_emits_single_slice_like_op() -> None:
+    model = _make_slice_rank6_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="slice_rank6_disable_suppression_test",
+        disable_suppression_flexstridedslice=True,
+    )
+    slice_like_ops = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) in {"SLICE", "STRIDED_SLICE"}
+    ]
+    assert len(slice_like_ops) == 1
+    slice_input_name = str(slice_like_ops[0].inputs[0])
+    assert len(list(model_ir.tensors[slice_input_name].shape)) == 6
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CONCATENATION" not in op_types
+    assert "GATHER" not in op_types
+
+
+def test_flatbuffer_direct_argmax_reducemax_int64_replaces_builtin_argmax() -> None:
+    model = _make_argmax_keepdims_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="argmax_reducemax_int64_test",
+        replace_argmax_to_reducemax_and_indices_is_int64=True,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "ARG_MAX" not in op_types
+    assert op_types.count("REDUCE_MAX") == 2
+    assert "CAST" in op_types
+    assert str(model_ir.tensors["y"].dtype).upper() == "INT64"
+    assert list(model_ir.tensors["y"].shape_signature) == [2, 1, 4]
+
+
+def test_flatbuffer_direct_argmax_reducemax_float32_replaces_builtin_argmax() -> None:
+    model = _make_argmax_no_keepdims_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="argmax_reducemax_float32_test",
+        replace_argmax_to_reducemax_and_indices_is_float32=True,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "ARG_MAX" not in op_types
+    assert op_types.count("REDUCE_MAX") == 2
+    assert str(model_ir.tensors["y"].dtype).upper() == "FLOAT32"
+    assert list(model_ir.tensors["y"].shape_signature) == [2, 4]
+
+
+def test_flatbuffer_direct_argmax_fused_int64_restores_resize_shape() -> None:
+    model = _make_resize_argmax_keepdims_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="argmax_fused_int64_test",
+        replace_argmax_to_fused_argmax_and_indices_is_int64=True,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("ARG_MAX") == 1
+    assert op_types.count("RESIZE_NEAREST_NEIGHBOR") >= 2
+    assert "CAST" in op_types
+    assert str(model_ir.tensors["y"].dtype).upper() == "INT64"
+    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, 8, 8]
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_argmax_reducemax_float32_runtime_matches_onnx() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_argmax_no_keepdims_model()
+        model_path = _save_model(tmpdir, "argmax_reducemax_float32_runtime", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            replace_argmax_to_reducemax_and_indices_is_float32=True,
+        )
+
+        sample_inputs = {
+            "x": np.asarray(
+                [
+                    [[1.0, 9.0, 3.0, 4.0], [7.0, 2.0, 8.0, 5.0], [6.0, 0.0, 8.0, 1.0]],
+                    [[5.0, 4.0, 3.0, 2.0], [5.0, 6.0, 1.0, 0.0], [1.0, 7.0, 2.0, 9.0]],
+                ],
+                dtype=np.float32,
+            ),
+        }
+        onnx_output = _run_onnx_and_collect_outputs(
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            output_names=["y"],
+        )["y"].astype(np.float32)
+        tflite_output = _run_tflite_first_output(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+        )
+        np.testing.assert_allclose(tflite_output, onnx_output, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_argmax_fused_float32_runtime_restores_output_shape() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_resize_argmax_keepdims_model()
+        model_path = _save_model(tmpdir, "argmax_fused_float32_runtime", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            replace_argmax_to_fused_argmax_and_indices_is_float32=True,
+        )
+
+        sample_inputs = {"x": np.arange(1 * 3 * 4 * 4, dtype=np.float32).reshape(1, 3, 4, 4)}
+        tflite_output = _run_tflite_first_output(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+        )
+        assert tflite_output.shape == (1, 1, 8, 8)
+        assert np.dtype(tflite_output.dtype) == np.dtype(np.float32)
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")

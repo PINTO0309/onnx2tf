@@ -87,6 +87,123 @@ def _set_quantized_dimension(quantization: Any, qdim: int) -> None:
         quantization["quantized_dimension"] = int(qdim)
 
 
+def materialize_broadcast_operand_for_gpu_delegate(
+    *,
+    ctx: Any,
+    input_name: str,
+    target_shape: List[int],
+    target_signature: Optional[List[int]] = None,
+    base_name: str,
+) -> str:
+    if not bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
+        return str(input_name)
+
+    ctx.ensure_tensor(input_name)
+    src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+    if src_tensor is None:
+        return str(input_name)
+
+    dst_shape = [int(v) for v in list(target_shape)]
+    if len(dst_shape) == 0 or any(int(v) <= 0 for v in dst_shape):
+        return str(input_name)
+    dst_signature = (
+        [int(v) for v in list(target_signature)]
+        if target_signature is not None and len(list(target_signature)) == len(dst_shape)
+        else [int(v) for v in list(dst_shape)]
+    )
+
+    src_shape = [int(v) for v in list(src_tensor.shape)]
+    src_signature = (
+        [int(v) for v in list(src_tensor.shape_signature)]
+        if src_tensor.shape_signature is not None and len(list(src_tensor.shape_signature)) == len(src_shape)
+        else [int(v) for v in list(src_shape)]
+    )
+    if len(src_shape) > len(dst_shape):
+        return str(input_name)
+
+    padded_shape = [1] * int(len(dst_shape) - len(src_shape)) + [int(v) for v in list(src_shape)]
+    if padded_shape == dst_shape:
+        return str(input_name)
+
+    multiples: List[int] = []
+    for src_dim, dst_dim in zip(padded_shape, dst_shape):
+        if int(src_dim) == int(dst_dim):
+            multiples.append(1)
+            continue
+        if int(src_dim) == 1 and int(dst_dim) > 0:
+            multiples.append(int(dst_dim))
+            continue
+        return str(input_name)
+
+    src_const = src_tensor.data
+    if src_const is not None:
+        try:
+            reshaped = np.asarray(src_const).reshape(padded_shape)
+            broadcasted = np.broadcast_to(reshaped, dst_shape).copy()
+            broadcast_name = ctx.add_const_tensor(
+                f"{base_name}_broadcast_const",
+                broadcasted,
+            )
+            broadcast_tensor = ctx.model_ir.tensors.get(broadcast_name, None)
+            if broadcast_tensor is not None:
+                broadcast_tensor.shape_signature = [int(v) for v in list(dst_signature)]
+                broadcast_tensor.quantization = _clone_quantization(src_tensor.quantization)
+            return str(broadcast_name)
+        except Exception:
+            return str(input_name)
+
+    working_name = str(input_name)
+    working_signature = [1] * int(len(dst_shape) - len(src_signature)) + [int(v) for v in list(src_signature)]
+    if len(src_shape) != len(dst_shape):
+        reshape_name = ctx.add_intermediate_tensor(
+            f"{base_name}_reshape",
+            dtype=str(src_tensor.dtype).upper(),
+            shape=[int(v) for v in list(padded_shape)],
+        )
+        reshape_tensor = ctx.model_ir.tensors.get(reshape_name, None)
+        if reshape_tensor is not None:
+            reshape_tensor.shape_signature = [int(v) for v in list(working_signature)]
+            reshape_tensor.quantization = _clone_quantization(src_tensor.quantization)
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{base_name}_reshape_shape",
+            np.asarray(padded_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[str(input_name), reshape_shape_name],
+                outputs=[reshape_name],
+                options={
+                    "newShape": [int(v) for v in list(padded_shape)],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+        working_name = reshape_name
+
+    tile_name = ctx.add_intermediate_tensor(
+        f"{base_name}_tile",
+        dtype=str(src_tensor.dtype).upper(),
+        shape=[int(v) for v in list(dst_shape)],
+    )
+    tile_tensor = ctx.model_ir.tensors.get(tile_name, None)
+    if tile_tensor is not None:
+        tile_tensor.shape_signature = [int(v) for v in list(dst_signature)]
+        tile_tensor.quantization = _clone_quantization(src_tensor.quantization)
+    tile_multiples_name = ctx.add_const_tensor(
+        f"{base_name}_tile_multiples",
+        np.asarray(multiples, dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="TILE",
+            inputs=[working_name, tile_multiples_name],
+            outputs=[tile_name],
+        )
+    )
+    return str(tile_name)
+
+
 def _invert_perm(perm: List[int]) -> Optional[List[int]]:
     rank = len(list(perm))
     if sorted(int(v) for v in perm) != [int(i) for i in range(rank)]:
@@ -434,7 +551,10 @@ def make_transpose(
                     return prev_input_name
 
     input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
-    target_rank = int(
+    disable_suppression = bool(
+        getattr(ctx, "disable_suppression_flextranspose", False)
+    )
+    target_rank = int(len(input_shape)) if disable_suppression else int(
         max(
             2,
             min(
@@ -444,7 +564,8 @@ def make_transpose(
         )
     )
     if (
-        len(input_shape) > int(target_rank)
+        not disable_suppression
+        and len(input_shape) > int(target_rank)
         and _is_valid_perm(perm, len(input_shape))
         and perm != [int(v) for v in range(len(input_shape))]
     ):

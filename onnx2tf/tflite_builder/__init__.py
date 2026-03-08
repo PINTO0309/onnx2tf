@@ -348,8 +348,32 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     number_of_dimensions_after_flextranspose_compression = int(
         kwargs.get("number_of_dimensions_after_flextranspose_compression", 6)
     )
+    disable_suppression_flextranspose = bool(
+        kwargs.get("disable_suppression_flextranspose", False)
+    )
     number_of_dimensions_after_flexstridedslice_compression = int(
         kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
+    )
+    disable_suppression_flexstridedslice = bool(
+        kwargs.get("disable_suppression_flexstridedslice", False)
+    )
+    optimization_for_gpu_delegate = bool(
+        kwargs.get("optimization_for_gpu_delegate", False)
+    )
+    replace_argmax_to_reducemax_and_indices_is_int64 = bool(
+        kwargs.get("replace_argmax_to_reducemax_and_indices_is_int64", False)
+    )
+    replace_argmax_to_reducemax_and_indices_is_float32 = bool(
+        kwargs.get("replace_argmax_to_reducemax_and_indices_is_float32", False)
+    )
+    replace_argmax_to_fused_argmax_and_indices_is_int64 = bool(
+        kwargs.get("replace_argmax_to_fused_argmax_and_indices_is_int64", False)
+    )
+    replace_argmax_to_fused_argmax_and_indices_is_float32 = bool(
+        kwargs.get("replace_argmax_to_fused_argmax_and_indices_is_float32", False)
+    )
+    fused_argmax_scale_ratio = float(
+        kwargs.get("fused_argmax_scale_ratio", 0.5)
     )
     requested_pseudo_ops_raw = kwargs.get("replace_to_pseudo_operators", None)
     input_names_to_interrupt_model_conversion = kwargs.get(
@@ -474,8 +498,16 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             switch_nms_version=switch_nms_version,
             mvn_epsilon=mvn_epsilon,
             show_progress=flatbuffer_direct_show_progress,
+            disable_suppression_flextranspose=disable_suppression_flextranspose,
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
+            disable_suppression_flexstridedslice=disable_suppression_flexstridedslice,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+            optimization_for_gpu_delegate=optimization_for_gpu_delegate,
+            replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
+            replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
+            replace_argmax_to_fused_argmax_and_indices_is_int64=replace_argmax_to_fused_argmax_and_indices_is_int64,
+            replace_argmax_to_fused_argmax_and_indices_is_float32=replace_argmax_to_fused_argmax_and_indices_is_float32,
+            fused_argmax_scale_ratio=fused_argmax_scale_ratio,
             replace_to_pseudo_operators=requested_pseudo_ops,
             protected_boundary_tensor_names=list(
                 dict.fromkeys(

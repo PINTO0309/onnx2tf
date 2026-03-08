@@ -7,7 +7,10 @@ import copy
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
-from onnx2tf.tflite_builder.op_builders.shared import make_transpose
+from onnx2tf.tflite_builder.op_builders.shared import (
+    make_transpose,
+    materialize_broadcast_operand_for_gpu_delegate,
+)
 
 
 def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:
@@ -403,6 +406,29 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             if should_update:
                 output_tensor.shape = [int(v) for v in list(inferred_shape)]
                 output_tensor.shape_signature = [int(v) for v in list(inferred_signature)]
+
+    output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+    broadcast_target_shape = (
+        [int(v) for v in list(output_tensor.shape)]
+        if output_tensor is not None
+        else [int(v) for v in ctx.get_tensor_shape(output_name)]
+    )
+    broadcast_target_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in list(broadcast_target_shape)]
+    )
+    if len(input_names) == 2:
+        input_names = [
+            materialize_broadcast_operand_for_gpu_delegate(
+                ctx=ctx,
+                input_name=str(input_name),
+                target_shape=broadcast_target_shape,
+                target_signature=broadcast_target_signature,
+                base_name=f"{output_name}_{idx}",
+            )
+            for idx, input_name in enumerate(input_names)
+        ]
 
     def _normalize_binary_dtype(dtype: str) -> str:
         dt = str(dtype).upper()
