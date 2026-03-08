@@ -145,17 +145,12 @@ def _report_check_model(model):
 def _report_convert_model(file_path):
     """Test conversion and returns a report string."""
     try:
-        disable_model_save = True
-        # Keep tf_converter behavior as lightweight conversion-check only, but
-        # allow flatbuffer_direct fast path by avoiding this blocker.
-        if _CFG['tflite_backend'] == 'flatbuffer_direct':
-            disable_model_save = False
         onnx2tf.convert(
             input_onnx_file_path=file_path,
             output_folder_path=_CFG['output_directory'],
             output_nms_with_dynamic_tensor=True,
             disable_strict_mode=True,
-            disable_model_save=disable_model_save,
+            disable_model_save=True,
             tflite_backend=_CFG['tflite_backend'],
             not_use_onnxsim=_CFG['not_use_onnxsim'],
             verbosity="error",

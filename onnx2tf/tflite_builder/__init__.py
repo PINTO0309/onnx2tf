@@ -256,6 +256,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_saved_model_from_model_ir = bool(
         kwargs.get("output_saved_model_from_model_ir", False)
     )
+    saved_model_output_folder_path = kwargs.get(
+        "saved_model_output_folder_path",
+        None,
+    )
+    if saved_model_output_folder_path is None:
+        saved_model_output_folder_path = output_folder_path
+    persist_saved_model_output = bool(
+        kwargs.get(
+            "persist_saved_model_output",
+            output_saved_model_from_model_ir,
+        )
+    )
     enable_accumulation_type_float16 = bool(
         kwargs.get("enable_accumulation_type_float16", False)
     )
@@ -641,7 +653,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 )
                 saved_model_path = export_saved_model_from_model_ir(
                     model_ir=model_ir_fp32,
-                    output_folder_path=output_folder_path,
+                    output_folder_path=saved_model_output_folder_path,
                 )
             _advance_export_progress()
 
@@ -923,6 +935,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     }
     if saved_model_path is not None:
         outputs["saved_model_path"] = str(saved_model_path)
+        outputs["saved_model_persisted"] = bool(persist_saved_model_output)
     if len(write_timing_report) > 0:
         outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:

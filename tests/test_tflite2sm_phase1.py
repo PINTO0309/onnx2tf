@@ -9,6 +9,7 @@ import onnx
 import onnx2tf
 import pytest
 import tensorflow as tf
+import tf_keras
 from onnx import TensorProto, helper
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -128,6 +129,26 @@ def _run_tflite_single_output(
     interpreter.set_tensor(input_details[0]["index"], input_value)
     interpreter.invoke()
     return np.asarray(interpreter.get_tensor(output_details[0]["index"]))
+
+
+def _disable_tf_converter_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise(*args, **kwargs):
+        raise AssertionError("tf_converter fallback should not run")
+
+    monkeypatch.setattr(
+        tf.lite.TFLiteConverter,
+        "from_keras_model",
+        staticmethod(_raise),
+    )
+    monkeypatch.setattr(
+        tf.lite.TFLiteConverter,
+        "from_concrete_functions",
+        staticmethod(_raise),
+    )
+
+
+def _assert_dir_empty_or_missing(path: str) -> None:
+    assert not os.path.exists(path) or len(os.listdir(path)) == 0
 
 
 @pytest.mark.parametrize(
@@ -725,6 +746,113 @@ def test_flatbuffer_direct_output_saved_model_smoke() -> None:
         assert os.path.exists(os.path.join(tmpdir, "add_float32.tflite"))
 
 
+def test_flatbuffer_direct_output_h5_without_tf_converter_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tf_converter_fallback(monkeypatch)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_h5_direct", _make_add_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            output_h5=True,
+        )
+        h5_path = os.path.join(output_dir, "add_h5_direct_float32.h5")
+        assert os.path.exists(h5_path)
+        loaded = tf_keras.models.load_model(
+            h5_path,
+            compile=False,
+            safe_mode=False,
+        )
+        outputs = loaded(
+            [
+                np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+                np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32),
+            ]
+        )
+        np.testing.assert_allclose(
+            np.asarray(outputs),
+            np.asarray([[5.0, 7.0, 9.0]], dtype=np.float32),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+
+
+def test_flatbuffer_direct_output_keras_v3_without_tf_converter_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tf_converter_fallback(monkeypatch)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_kv3_direct", _make_add_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            output_keras_v3=True,
+        )
+        keras_path = os.path.join(output_dir, "add_kv3_direct_float32_v3.keras")
+        assert os.path.exists(keras_path)
+        loaded = tf_keras.models.load_model(
+            keras_path,
+            compile=False,
+            safe_mode=False,
+        )
+        outputs = loaded(
+            [
+                np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+                np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32),
+            ]
+        )
+        np.testing.assert_allclose(
+            np.asarray(outputs),
+            np.asarray([[5.0, 7.0, 9.0]], dtype=np.float32),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+
+
+def test_flatbuffer_direct_output_tfv1_pb_without_tf_converter_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_tf_converter_fallback(monkeypatch)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_pb_direct", _make_add_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            output_tfv1_pb=True,
+        )
+        assert os.path.exists(
+            os.path.join(output_dir, "add_pb_direct_float32.pb")
+        )
+
+
+def test_flatbuffer_direct_disable_model_save_leaves_no_artifacts() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_no_save", _make_add_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            disable_model_save=True,
+        )
+        _assert_dir_empty_or_missing(output_dir)
+
+
 def test_tflite_direct_input_saved_model_smoke() -> None:
     model_ir = _make_add_model_ir()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -737,6 +865,123 @@ def test_tflite_direct_input_saved_model_smoke() -> None:
             tflite_backend="flatbuffer_direct",
         )
         assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+
+
+def test_tflite_direct_input_output_h5_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_tflite_direct_input_h5",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            output_h5=True,
+        )
+        h5_path = os.path.join(output_dir, "add_tflite_direct_input_h5_float32.h5")
+        assert os.path.exists(h5_path)
+        loaded = tf_keras.models.load_model(
+            h5_path,
+            compile=False,
+            safe_mode=False,
+        )
+        outputs = loaded(
+            [
+                np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+                np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32),
+            ]
+        )
+        np.testing.assert_allclose(
+            np.asarray(outputs),
+            np.asarray([[5.0, 7.0, 9.0]], dtype=np.float32),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+
+
+def test_tflite_direct_input_output_keras_v3_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_tflite_direct_input_kv3",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            output_keras_v3=True,
+        )
+        keras_path = os.path.join(
+            output_dir,
+            "add_tflite_direct_input_kv3_float32_v3.keras",
+        )
+        assert os.path.exists(keras_path)
+        loaded = tf_keras.models.load_model(
+            keras_path,
+            compile=False,
+            safe_mode=False,
+        )
+        outputs = loaded(
+            [
+                np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
+                np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32),
+            ]
+        )
+        np.testing.assert_allclose(
+            np.asarray(outputs),
+            np.asarray([[5.0, 7.0, 9.0]], dtype=np.float32),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+
+
+def test_tflite_direct_input_output_tfv1_pb_smoke() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_tflite_direct_input_pb",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            output_tfv1_pb=True,
+        )
+        assert os.path.exists(
+            os.path.join(output_dir, "add_tflite_direct_input_pb_float32.pb")
+        )
+
+
+def test_tflite_direct_input_disable_model_save_leaves_no_artifacts() -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_tflite_direct_input_no_save",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            disable_model_save=True,
+        )
+        _assert_dir_empty_or_missing(output_dir)
 
 
 def test_tflite_direct_input_saved_model_with_cotof_smoke() -> None:
@@ -852,12 +1097,6 @@ def test_tflite_direct_input_split_saved_model_cotof_smoke() -> None:
         (
             {
                 "tflite_backend": "flatbuffer_direct",
-                "disable_model_save": True,
-            }
-        ),
-        (
-            {
-                "tflite_backend": "flatbuffer_direct",
                 "output_integer_quantized_tflite": True,
             }
         ),
@@ -878,6 +1117,75 @@ def test_tflite_direct_input_validation(kwargs: dict) -> None:
                 input_tflite_file_path=tflite_path,
                 output_folder_path=tmpdir,
                 verbosity="error",
+                **kwargs,
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_model_save": True,
+                "output_h5": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_model_save": True,
+                "output_keras_v3": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "disable_model_save": True,
+                "output_tfv1_pb": True,
+            }
+        ),
+        (
+            {
+                "tflite_backend": "flatbuffer_direct",
+                "enable_auto_split_model": True,
+                "output_h5": True,
+            }
+        ),
+    ],
+)
+def test_tflite_direct_input_new_conflict_validation(kwargs: dict) -> None:
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_conflict", model_ir)
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_tflite_file_path=tflite_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
+                **kwargs,
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"disable_model_save": True, "output_h5": True},
+        {"disable_model_save": True, "output_keras_v3": True},
+        {"disable_model_save": True, "output_tfv1_pb": True},
+        {"enable_auto_split_model": True, "output_h5": True},
+    ],
+)
+def test_flatbuffer_direct_new_conflict_validation(kwargs: dict) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_conflict", _make_add_model())
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_onnx_file_path=model_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
+                disable_strict_mode=True,
+                tflite_backend="flatbuffer_direct",
                 **kwargs,
             )
 

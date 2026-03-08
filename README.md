@@ -239,7 +239,7 @@ Currently, the `flatbuffer_direct` backend is faster and has a higher success ra
 
 <img width="1869" height="770" alt="image" src="https://github.com/user-attachments/assets/8becf72d-c3dd-4a1c-ae75-e9e67b22817d" />
 
-When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now prefers a direct fast path:
+When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now uses a direct fast path for both ONNX input and `-it/--input_tflite_file_path` input:
 
 1. ONNX graph preprocessing (`tflite_builder.preprocess`) and direct lowering (`lower_onnx_to_ir`)
 2. Direct FlatBuffer export (`*_float32.tflite`, `*_float16.tflite`, and optional quantized variants)
@@ -260,14 +260,21 @@ Measured example (same model, float32 TFLite write stage):
 
 Actual speedup depends on model structure, enabled options, and runtime environment.
 
-Fast path is intentionally disabled (falls back to the legacy TF-graph path) when TF-model dependent options are enabled:
+Direct export can also generate TF-side artifacts without falling back to `tf_converter`:
 
 - `--output_h5`
 - `--output_keras_v3`
 - `--output_tfv1_pb`
-- `--disable_model_save`
 
+These artifacts are generated from an internal SavedModel bridge built from float32 ModelIR.
 If direct export fails, conversion stops with an explicit error.
+
+`--disable_model_save` also stays on the direct path. In `flatbuffer_direct`, it means the conversion can still run internal validation and temporary staging, but no final artifacts are left in the requested output directory.
+
+Invalid combinations are rejected explicitly:
+
+- `--disable_model_save` with `--output_h5`, `--output_keras_v3`, or `--output_tfv1_pb`
+- `--enable_auto_split_model` with `--output_h5`, `--output_keras_v3`, or `--output_tfv1_pb`
 
 SavedModel direct export from `flatbuffer_direct` ModelIR is available with
 `--flatbuffer_direct_output_saved_model`.
@@ -299,6 +306,13 @@ This option has strict constraints:
   onnx2tf \
   -it iat_llie_180x320_float32.tflite \
   -tb flatbuffer_direct
+  ```
+- e.g. Generate `.h5` directly from an existing LiteRT (`.tflite`) file without `tf_converter` fallback
+  ```bash
+  onnx2tf \
+  -it iat_llie_180x320_float32.tflite \
+  -tb flatbuffer_direct \
+  -oh5
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
@@ -2004,18 +2018,22 @@ optional arguments:
     flatbuffer_direct notes:
     1. `flatbuffer_direct` is experimental; always validate model-by-model before production rollout.
     2. onnx2tf first tries a direct fast path that skips TensorFlow per-node conversion (`op.make_node`) and directly exports from ONNX to TFLite FlatBuffer.
-    3. Fast path is bypassed when TF-model dependent options are enabled:
-       `--output_h5`, `--output_keras_v3`, `--output_tfv1_pb`, `--disable_model_save`.
-       In that case, conversion uses the legacy TF-graph path.
-    4. Direct export supports FP32/FP16 `.tflite` generation.
-    5. Dynamic range quantization (`-odrqt`) is supported in a limited form:
+    3. `--output_h5`, `--output_keras_v3`, and `--output_tfv1_pb` stay on the direct path.
+       These artifacts are generated from an internal SavedModel bridge built from float32 ModelIR.
+    4. `--disable_model_save` also stays on the direct path and means no final artifacts are left in
+       the requested output directory after conversion.
+    5. Invalid combinations fail explicitly:
+       `--disable_model_save` with `--output_h5`/`--output_keras_v3`/`--output_tfv1_pb`,
+       and `--enable_auto_split_model` with `--output_h5`/`--output_keras_v3`/`--output_tfv1_pb`.
+    6. Direct export supports FP32/FP16 `.tflite` generation.
+    7. Dynamic range quantization (`-odrqt`) is supported in a limited form:
        weight-only INT8 quantization for `CONV_2D`, `DEPTHWISE_CONV_2D`, `FULLY_CONNECTED`,
        and constant tensor quantization + `DEQUANTIZE` insertion for `ADD`, `SUB`, `MUL`, `DIV`, `CONCATENATION`.
        For kernel weights, `--quant_type per-channel` and `--quant_type per-tensor` are both supported in `flatbuffer_direct`.
-    6. Integer quantization (`-oiqt`) is supported in a limited form:
+    8. Integer quantization (`-oiqt`) is supported in a limited form:
        `*_integer_quant.tflite`, `*_full_integer_quant.tflite`,
        `*_integer_quant_with_int16_act.tflite`, `*_full_integer_quant_with_int16_act.tflite` are generated.
-    7. Supported builtin OP set includes:
+    9. Supported builtin OP set includes:
        `ADD`, `SUB`, `MUL`, `DIV`, `FLOOR_MOD`, `MAXIMUM`, `MINIMUM`, `POW`,
        `MEAN`, `SUM`, `REDUCE_MAX`, `RESHAPE`, `TRANSPOSE`, `SQUEEZE`, `SLICE`, `STRIDED_SLICE`,
        `CONCATENATION`, `GATHER`, `GATHER_ND`, `ONE_HOT`,
@@ -2027,23 +2045,23 @@ optional arguments:
        `RESIZE_NEAREST_NEIGHBOR`, `RESIZE_BILINEAR`,
        `BIDIRECTIONAL_SEQUENCE_LSTM`, `SPLIT`, `EXPAND_DIMS`, `WHILE`,
        `DEQUANTIZE`, `QUANTIZE`.
-    8. Unsupported OPs fail explicitly with `NotImplementedError`.
-    9. Custom OP policy (opt-in):
+    10. Unsupported OPs fail explicitly with `NotImplementedError`.
+    11. Custom OP policy (opt-in):
        `--flatbuffer_direct_allow_custom_ops` enables lowering selected hard ops as TFLite `CUSTOM`.
        `--flatbuffer_direct_custom_op_allowlist` (comma-separated ONNX OP names) restricts allowed custom lowering targets.
        If a custom-op candidate appears while disabled, conversion fails with `reason_code=custom_op_candidate_disabled`.
        If enabled but not in allowlist, conversion fails with `reason_code=custom_op_not_in_allowlist`.
-    10. Bundled schema artifacts (`onnx2tf/tflite_builder/schema/schema.fbs` and `schema_generated.py`) are used.
+    12. Bundled schema artifacts (`onnx2tf/tflite_builder/schema/schema.fbs` and `schema_generated.py`) are used.
         No external `flatc` invocation is required in normal flows.
-    11. flatbuffer_direct quantization precision controls are configurable via environment variables:
+    13. flatbuffer_direct quantization precision controls are configurable via environment variables:
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD` (`max` or `percentile`),
        `ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE` (e.g. `99.99`),
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX`,
        `ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR`.
-    12. Migration guide:
+    14. Migration guide:
        See `FLATBUFFER_DIRECT_MIGRATION_GUIDE.md` for staged rollout and CI operation patterns.
-    13. SavedModel direct export from ModelIR:
+    15. SavedModel direct export from ModelIR:
        `--flatbuffer_direct_output_saved_model` exports `saved_model.pb`/`variables`/`assets`
        from float32 ModelIR in the direct path.
        This option requires `--tflite_backend flatbuffer_direct`, cannot be combined with
@@ -2051,7 +2069,7 @@ optional arguments:
        and fails explicitly if `CUSTOM` ops are present.
        When split output is enabled, partition SavedModels are emitted instead of
        a single root SavedModel.
-    14. Direct split planning in `flatbuffer_direct` is ModelIR-based and driven by
+    16. Direct split planning in `flatbuffer_direct` is ModelIR-based and driven by
        `--enable_auto_split_model`.
        This always runs the split planner and emits split manifest output.
        Outputs use the split manifest flow (`*_split_plan.json`, `*_split_manifest.json`,
@@ -2653,7 +2671,14 @@ convert(
       If specified, runs tflite-direct import mode.
       In this mode, ONNX-dependent conversion options are rejected.
       By default it exports SavedModel from imported ModelIR, and
+      `output_h5=True`, `output_keras_v3=True`, and `output_tfv1_pb=True`
+      are also supported through an internal SavedModel bridge without
+      `tf_converter` fallback.
+      `disable_model_save=True` is supported and leaves no final artifacts in
+      `output_folder_path`.
       enable_auto_split_model=True can also emit split TFLite artifacts.
+      `enable_auto_split_model=True` cannot be combined with
+      `output_h5=True`, `output_keras_v3=True`, or `output_tfv1_pb=True`.
       When used with flatbuffer_direct_output_saved_model=True and split,
       partition SavedModels are emitted instead of a single root SavedModel.
 
@@ -2673,12 +2698,24 @@ convert(
 
     output_h5: Optional[bool]
       Output model in Keras H5 format.
+      With `tflite_backend="flatbuffer_direct"`, this is generated from an
+      internal SavedModel bridge without falling back to `tf_converter`.
+      Cannot be combined with `disable_model_save=True` or
+      `enable_auto_split_model=True` in `flatbuffer_direct`.
 
     output_keras_v3: Optional[bool]
       Output model in Keras (keras_v3) format.
+      With `tflite_backend="flatbuffer_direct"`, this is generated from an
+      internal SavedModel bridge without falling back to `tf_converter`.
+      Cannot be combined with `disable_model_save=True` or
+      `enable_auto_split_model=True` in `flatbuffer_direct`.
 
     output_tfv1_pb: Optional[bool]
       Output model in TF v1 (.pb) format.
+      With `tflite_backend="flatbuffer_direct"`, this is generated from an
+      internal SavedModel bridge without falling back to `tf_converter`.
+      Cannot be combined with `disable_model_save=True` or
+      `enable_auto_split_model=True` in `flatbuffer_direct`.
 
     output_weights: Optional[bool]
       Output weights in hdf5 format.
@@ -3179,6 +3216,9 @@ convert(
 
     disable_model_save: Optional[bool]
       Does not save the converted model. For CIs RAM savings.
+      With `tflite_backend="flatbuffer_direct"`, conversion may still use
+      temporary staging and validation internally, but no final artifacts are
+      left in `output_folder_path`.
       Default: False
 
     non_verbose: Optional[bool]
