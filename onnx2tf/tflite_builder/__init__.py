@@ -35,9 +35,13 @@ from onnx2tf.tflite_builder.preprocess import (
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.split_planner import (
+    crop_model_ir_by_boundary_tensors,
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     plan_contiguous_partitions_by_size,
+    rewrite_model_ir_disable_group_convolution,
+    rewrite_model_ir_unfold_batchmatmul,
+    rewrite_model_ir_unroll_recurrent_ops,
     should_split_by_estimate,
     write_split_model_files_and_manifest,
     write_split_plan_report,
@@ -256,6 +260,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_saved_model_from_model_ir = bool(
         kwargs.get("output_saved_model_from_model_ir", False)
     )
+    saved_model_output_folder_path = kwargs.get(
+        "saved_model_output_folder_path",
+        None,
+    )
+    if saved_model_output_folder_path is None:
+        saved_model_output_folder_path = output_folder_path
+    persist_saved_model_output = bool(
+        kwargs.get(
+            "persist_saved_model_output",
+            output_saved_model_from_model_ir,
+        )
+    )
     enable_accumulation_type_float16 = bool(
         kwargs.get("enable_accumulation_type_float16", False)
     )
@@ -284,6 +300,13 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     disable_group_convolution = bool(
         kwargs.get("disable_group_convolution", False)
     )
+    enable_batchmatmul_unfold = bool(
+        kwargs.get("enable_batchmatmul_unfold", False)
+    )
+    enable_rnn_unroll = bool(
+        kwargs.get("enable_rnn_unroll", False)
+    )
+    mvn_epsilon = float(kwargs.get("mvn_epsilon", 1e-10))
     flatbuffer_direct_allow_custom_ops = bool(
         kwargs.get("flatbuffer_direct_allow_custom_ops", False)
     )
@@ -329,6 +352,14 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
     )
     requested_pseudo_ops_raw = kwargs.get("replace_to_pseudo_operators", None)
+    input_names_to_interrupt_model_conversion = kwargs.get(
+        "input_names_to_interrupt_model_conversion",
+        None,
+    )
+    output_names_to_interrupt_model_conversion = kwargs.get(
+        "output_names_to_interrupt_model_conversion",
+        None,
+    )
     if requested_pseudo_ops_raw is None:
         requested_pseudo_ops: List[str] = []
     elif isinstance(requested_pseudo_ops_raw, (list, tuple, set)):
@@ -441,11 +472,51 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             disable_group_convolution=disable_group_convolution,
             output_nms_with_argmax=output_nms_with_argmax,
             switch_nms_version=switch_nms_version,
+            mvn_epsilon=mvn_epsilon,
             show_progress=flatbuffer_direct_show_progress,
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             replace_to_pseudo_operators=requested_pseudo_ops,
+            protected_boundary_tensor_names=list(
+                dict.fromkeys(
+                    list(input_names_to_interrupt_model_conversion or [])
+                    + list(output_names_to_interrupt_model_conversion or [])
+                )
+            ),
         )
+        if (
+            input_names_to_interrupt_model_conversion
+            or output_names_to_interrupt_model_conversion
+        ):
+            default_output_boundaries = (
+                list(model_ir.metadata.get("original_graph_output_names", []))
+                if (
+                    output_names_to_interrupt_model_conversion is None
+                    and input_names_to_interrupt_model_conversion
+                )
+                else None
+            )
+            model_ir = crop_model_ir_by_boundary_tensors(
+                model_ir=model_ir,
+                requested_inputs=input_names_to_interrupt_model_conversion,
+                requested_outputs=(
+                    output_names_to_interrupt_model_conversion
+                    if output_names_to_interrupt_model_conversion is not None
+                    else default_output_boundaries
+                ),
+            )
+        if disable_group_convolution:
+            model_ir, _ = rewrite_model_ir_disable_group_convolution(
+                model_ir=model_ir,
+            )
+        if enable_batchmatmul_unfold:
+            model_ir, _ = rewrite_model_ir_unfold_batchmatmul(
+                model_ir=model_ir,
+            )
+        if enable_rnn_unroll:
+            model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
+                model_ir=model_ir,
+            )
     except Exception as ex:
         try:
             _write_coverage_report(str(ex))
@@ -641,7 +712,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 )
                 saved_model_path = export_saved_model_from_model_ir(
                     model_ir=model_ir_fp32,
-                    output_folder_path=output_folder_path,
+                    output_folder_path=saved_model_output_folder_path,
                 )
             _advance_export_progress()
 
@@ -923,6 +994,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     }
     if saved_model_path is not None:
         outputs["saved_model_path"] = str(saved_model_path)
+        outputs["saved_model_persisted"] = bool(persist_saved_model_output)
     if len(write_timing_report) > 0:
         outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:

@@ -80,6 +80,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_topk_op,
     build_l2_normalization_op,
     build_layer_normalization_op,
+    build_mean_variance_normalization_op,
     build_lrn_op,
     build_logistic_op,
     build_matmul_integer_op,
@@ -5347,6 +5348,72 @@ def _validate_instance_norm(node: Any, ctx: Any) -> None:
                 node_op=node.op,
             )
 
+
+def _validate_mean_variance_normalization(node: Any, ctx: Any) -> None:
+    if len(node.inputs) < 1:
+        raise NodeValidationError(
+            reason_code="invalid_input_count",
+            message="MeanVarianceNormalization expects 1 input.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    input_rank = len(input_shape)
+    if input_rank < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message="MeanVarianceNormalization input rank must be >= 1.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "MeanVarianceNormalization input dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "MeanVarianceNormalization output dtype must be FLOAT16/FLOAT32 for builtin lowering. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    axes_attr = node.attrs.get("axes", None)
+    if input_rank < 3:
+        return
+    if axes_attr is None:
+        axes = [0, 2] if input_rank == 3 else [0, 2, 3]
+    elif isinstance(axes_attr, np.ndarray):
+        axes = [int(v) for v in np.asarray(axes_attr).reshape(-1).tolist()]
+    elif isinstance(axes_attr, (list, tuple)):
+        axes = [int(v) for v in axes_attr]
+    else:
+        axes = [int(axes_attr)]
+    for axis in axes:
+        if axis < -input_rank or axis >= input_rank:
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=(
+                    "MeanVarianceNormalization axes must be within input rank for builtin lowering. "
+                    f"rank={input_rank} axis={axis}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
     epsilon = float(node.attrs.get("epsilon", 1e-5))
     if not np.isfinite(epsilon) or epsilon < 0.0:
         raise NodeValidationError(
@@ -7234,6 +7301,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_instance_normalization_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_instance_norm,
+    ),
+    "MeanVarianceNormalization": DispatchEntry(
+        onnx_op="MeanVarianceNormalization",
+        tflite_ops=["MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV"],
+        builder=build_mean_variance_normalization_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_mean_variance_normalization,
     ),
     "LayerNormalization": DispatchEntry(
         onnx_op="LayerNormalization",

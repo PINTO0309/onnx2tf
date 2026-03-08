@@ -17,6 +17,7 @@ import pytest
 from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _adapt_input_layout_for_tflite_input,
+    _align_output_layout_for_compare,
     _build_tflite_detail_map,
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
@@ -190,6 +191,7 @@ def _convert(
     report_op_coverage: bool = False,
     flatbuffer_direct_allow_custom_ops: bool = False,
     flatbuffer_direct_custom_op_allowlist: list[str] | None = None,
+    mvn_epsilon: float = 1e-10,
     auto_split_max_size: str | int | None = None,
     tflite_split_max_bytes: int = 1073741824,
     tflite_split_target_bytes: int = 1060000000,
@@ -219,6 +221,7 @@ def _convert(
         report_op_coverage=report_op_coverage,
         flatbuffer_direct_allow_custom_ops=flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
+        mvn_epsilon=mvn_epsilon,
         auto_split_max_size=auto_split_max_size,
         tflite_split_max_bytes=tflite_split_max_bytes,
         tflite_split_target_bytes=tflite_split_target_bytes,
@@ -313,6 +316,49 @@ def _run_tflite_and_collect_tensors(
             interpreter.get_tensor(int(detail["index"]))
         )
     return collected
+
+
+def _run_tflite_first_output(
+    *,
+    tflite_path: str,
+    onnx_model: onnx.ModelProto,
+    sample_inputs: dict[str, np.ndarray],
+) -> np.ndarray:
+    interpreter = _create_tflite_interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    onnx_input_names = [name for name, _, _ in _collect_onnx_input_specs(onnx_model)]
+    input_map = _build_tflite_detail_map(
+        onnx_names=onnx_input_names,
+        tflite_details=interpreter.get_input_details(),
+    )
+    adapted_inputs = {
+        input_name: _adapt_input_layout_for_tflite_input(
+            sample_inputs[input_name],
+            input_map[input_name],
+        )
+        for input_name in onnx_input_names
+    }
+    resized = _resize_tflite_inputs_if_needed(
+        interpreter=interpreter,
+        onnx_input_names=onnx_input_names,
+        tflite_input_map=input_map,
+        adapted_inputs=adapted_inputs,
+    )
+    if resized:
+        interpreter.allocate_tensors()
+        input_map = _build_tflite_detail_map(
+            onnx_names=onnx_input_names,
+            tflite_details=interpreter.get_input_details(),
+        )
+    for input_name in onnx_input_names:
+        detail = input_map[input_name]
+        interpreter.set_tensor(
+            int(detail["index"]),
+            _quantize_for_tflite_input(adapted_inputs[input_name], detail),
+        )
+    interpreter.invoke()
+    output_details = interpreter.get_output_details()
+    return np.asarray(interpreter.get_tensor(int(output_details[0]["index"])))
 
 
 def _run_onnx_and_collect_outputs(
@@ -6187,6 +6233,29 @@ def _make_instance_normalization_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_mean_variance_normalization_model(
+    *,
+    input_shape: list[int] | None = None,
+    axes: list[int] | None = None,
+) -> onnx.ModelProto:
+    if input_shape is None:
+        input_shape = [1, 3, 5, 5]
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, input_shape)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, input_shape)
+    attrs: dict[str, Any] = {}
+    if axes is not None:
+        attrs["axes"] = [int(v) for v in axes]
+    node = helper.make_node(
+        "MeanVarianceNormalization",
+        ["x"],
+        ["y"],
+        name="MeanVarianceNormalizationNode",
+        **attrs,
+    )
+    graph = helper.make_graph([node], "mean_variance_normalization_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_gather_int32_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [2, 4])
     y = helper.make_tensor_value_info("y", TensorProto.INT32, [2, 2])
@@ -6487,6 +6556,7 @@ def test_tflite_backend_matrix_hardswish_rewrite_on_off(monkeypatch: pytest.Monk
         ("lrn", _make_lrn_model),
         ("dropout", _make_dropout_model),
         ("instance_norm", _make_instance_normalization_model),
+        ("mean_variance_norm", _make_mean_variance_normalization_model),
         ("relu", lambda: _make_unary_model("Relu", name="relu")),
         ("tanh", lambda: _make_unary_model("Tanh", name="tanh")),
         ("atan", lambda: _make_unary_model("Atan", name="atan")),
@@ -6536,6 +6606,119 @@ def test_flatbuffer_direct_operator_smoke(name: str, model_factory) -> None:
         interpreter.set_tensor(input_details[0]["index"], x)
         interpreter.invoke()
         _ = interpreter.get_tensor(output_details[0]["index"])
+
+
+@pytest.mark.parametrize(
+    "model, expected_axes",
+    [
+        (_make_mean_variance_normalization_model(), [0, 2, 3]),
+        (_make_mean_variance_normalization_model(axes=[0, -1]), [0, 3]),
+        (_make_mean_variance_normalization_model(input_shape=[3, 4]), [0]),
+    ],
+)
+def test_flatbuffer_direct_mean_variance_normalization_lowering(
+    model: onnx.ModelProto,
+    expected_axes: list[int],
+) -> None:
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="mvn_lowering_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert op_types.count("MEAN") == 2
+    assert "SUB" in op_types
+    assert "MUL" in op_types
+    assert "ADD" in op_types
+    assert "SQRT" in op_types
+    assert "DIV" in op_types
+
+    axes_tensors = [
+        np.asarray(tensor.data).reshape(-1).tolist()
+        for tensor in model_ir.tensors.values()
+        if str(tensor.name).endswith("_mvn_axes") and isinstance(tensor.data, np.ndarray)
+    ]
+    assert axes_tensors == [[int(v) for v in expected_axes]]
+
+
+def test_flatbuffer_direct_mean_variance_normalization_uses_requested_epsilon() -> None:
+    model = _make_mean_variance_normalization_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+
+    model_ir_default = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="mvn_default_eps_test",
+    )
+    model_ir_custom = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="mvn_custom_eps_test",
+        mvn_epsilon=1e-3,
+    )
+
+    default_eps = [
+        float(np.asarray(tensor.data))
+        for tensor in model_ir_default.tensors.values()
+        if str(tensor.name).endswith("_mvn_epsilon") and isinstance(tensor.data, np.ndarray)
+    ]
+    custom_eps = [
+        float(np.asarray(tensor.data))
+        for tensor in model_ir_custom.tensors.values()
+        if str(tensor.name).endswith("_mvn_epsilon") and isinstance(tensor.data, np.ndarray)
+    ]
+    assert len(default_eps) == 1
+    assert len(custom_eps) == 1
+    assert default_eps[0] == pytest.approx(1e-10)
+    assert custom_eps[0] == pytest.approx(1e-3)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_mean_variance_normalization_matches_tf_converter() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_mean_variance_normalization_model()
+        model_path = _save_model(tmpdir, "mean_variance_norm_compare", model)
+
+        tf_out = os.path.join(tmpdir, "tf_converter")
+        fb_out = os.path.join(tmpdir, "flatbuffer_direct")
+        tf_tflite = _convert(
+            model_path,
+            tf_out,
+            "tf_converter",
+            mvn_epsilon=1e-3,
+        )
+        fb_tflite = _convert(
+            model_path,
+            fb_out,
+            "flatbuffer_direct",
+            mvn_epsilon=1e-3,
+        )
+
+        sample_inputs = _make_seeded_sample_inputs(model, seed=7)
+        tf_output = _run_tflite_first_output(
+            tflite_path=tf_tflite,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+        )
+        fb_output = _run_tflite_first_output(
+            tflite_path=fb_tflite,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+        )
+        fb_output_aligned, _, _ = _align_output_layout_for_compare(
+            onnx_output=np.asarray(tf_output),
+            tflite_output=np.asarray(fb_output),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            fb_output_aligned,
+            tf_output,
+            rtol=1e-5,
+            atol=1e-5,
+        )
 
 
 def test_flatbuffer_direct_gemm_dynamic_weight_lowering_uses_batch_matmul() -> None:

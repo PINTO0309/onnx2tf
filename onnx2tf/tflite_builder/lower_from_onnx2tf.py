@@ -453,6 +453,7 @@ class LoweringContext:
         graph_output_names: Optional[List[str]] = None,
         output_nms_with_argmax: bool = False,
         switch_nms_version: str = "v4",
+        mvn_epsilon: float = 1e-10,
         number_of_dimensions_after_flextranspose_compression: int = 6,
         number_of_dimensions_after_flexstridedslice_compression: int = 5,
         replace_to_pseudo_operators: Optional[List[str]] = None,
@@ -474,6 +475,7 @@ class LoweringContext:
         )
         self.graph_output_names = set(graph_output_names) if graph_output_names is not None else set()
         self.output_nms_with_argmax = bool(output_nms_with_argmax)
+        self.mvn_epsilon = float(mvn_epsilon)
         # TFLite TRANSPOSE kernel supports rank <= 6.
         # Keep user intent (>=2) while clamping to runtime-safe upper bound.
         self.number_of_dimensions_after_flextranspose_compression = int(
@@ -752,6 +754,34 @@ def _set_operator_outputs(
             },
         )
     op.outputs = normalized_new_outputs
+
+
+def _get_protected_boundary_tensor_names(model_ir: ModelIR) -> set[str]:
+    raw_names = model_ir.metadata.get(
+        "protected_boundary_tensor_names",
+        [],
+    )
+    if not isinstance(raw_names, list):
+        return set()
+    return {
+        str(name)
+        for name in raw_names
+        if str(name).strip() != ""
+    }
+
+
+def _append_model_outputs_preserving_order(
+    model_ir: ModelIR,
+    output_names: List[str],
+) -> None:
+    if len(output_names) <= 0:
+        return
+    merged_outputs = [
+        str(name)
+        for name in list(model_ir.outputs) + list(output_names)
+        if str(name) != ""
+    ]
+    model_ir.outputs = list(dict.fromkeys(merged_outputs))
 
 
 def _replace_operator_input_at(
@@ -59278,6 +59308,7 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
         "MUL": dict(binary_activation_map),
         "DIV": dict(binary_activation_map),
     }
+    protected_boundary_tensor_names = _get_protected_boundary_tensor_names(model_ir)
 
     while True:
         changed = False
@@ -59321,6 +59352,10 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
             if producer_out_tensor is not None and act_out_tensor is not None:
                 if str(producer_out_tensor.dtype).upper() != str(act_out_tensor.dtype).upper():
                     continue
+            if producer_out_name in protected_boundary_tensor_names:
+                continue
+            if act_out_name in protected_boundary_tensor_names:
+                continue
             # Keep explicit activation node when its output is both a graph output and
             # an internal bridge tensor. Fusing in this case can relabel NHWC bridge
             # tensors to ONNX/NCHW names and later trigger wrong layout adapters.
@@ -68732,11 +68767,13 @@ def lower_onnx_to_ir(
     disable_group_convolution: bool = False,
     output_nms_with_argmax: bool = False,
     switch_nms_version: str = "v4",
+    mvn_epsilon: float = 1e-10,
     show_progress: bool = False,
     apply_safe_transpose_reduction_lite_on_no_layout_opt: bool = False,
     number_of_dimensions_after_flextranspose_compression: int = 6,
     number_of_dimensions_after_flexstridedslice_compression: int = 5,
     replace_to_pseudo_operators: Optional[List[str]] = None,
+    protected_boundary_tensor_names: Optional[List[str]] = None,
 ) -> ModelIR:
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
@@ -68770,6 +68807,20 @@ def lower_onnx_to_ir(
     model_ir.metadata["onnx_boundary_shape_signature_map"] = dict(
         onnx_boundary_signature_map
     )
+    model_ir.metadata["original_graph_output_names"] = [
+        str(output.name)
+        for output in onnx_graph.graph.output
+        if str(output.name) != ""
+    ]
+    model_ir.metadata["protected_boundary_tensor_names"] = list(
+        dict.fromkeys(
+            [
+                str(name)
+                for name in (protected_boundary_tensor_names or [])
+                if str(name).strip() != ""
+            ]
+        )
+    )
     ctx = LoweringContext(
         model_ir=model_ir,
         shape_map=shape_map,
@@ -68783,6 +68834,7 @@ def lower_onnx_to_ir(
         graph_output_names=graph_output_names,
         output_nms_with_argmax=output_nms_with_argmax,
         switch_nms_version=switch_nms_version,
+        mvn_epsilon=mvn_epsilon,
         number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
         number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
         replace_to_pseudo_operators=replace_to_pseudo_operators,
@@ -68967,7 +69019,19 @@ def lower_onnx_to_ir(
     # Outputs
     for graph_output in onnx_graph.graph.output:
         ctx.ensure_tensor(graph_output.name)
-        model_ir.outputs.append(graph_output.name)
+        _append_model_outputs_preserving_order(
+            model_ir,
+            [str(graph_output.name)],
+        )
+    protected_boundary_outputs = [
+        str(name)
+        for name in _get_protected_boundary_tensor_names(model_ir)
+        if str(name) in model_ir.tensors
+    ]
+    _append_model_outputs_preserving_order(
+        model_ir,
+        protected_boundary_outputs,
+    )
     dynamic_boundary_signature_map: Dict[str, List[int]] = {}
     onnx_boundary_signature_map = model_ir.metadata.get(
         "onnx_boundary_shape_signature_map",
@@ -69958,6 +70022,7 @@ def lower_onnx_to_ir(
             apply_safe_transpose_reduction_lite_on_no_layout_opt=False,
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
+            protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
         fallback_norm_stats = _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(fallback_ir)
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
