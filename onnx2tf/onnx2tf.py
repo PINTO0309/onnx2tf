@@ -1313,7 +1313,10 @@ def convert(
     input_tflite_file_path: Optional[str]
         Input tflite file path.\n
         If specified, run tflite-direct import mode.\n
-        In this mode, ONNX-dependent conversion options are rejected.\n
+        In this mode, ONNX-dependent conversion options are rejected except\n
+        for direct ModelIR rewrites such as interrupt crop,\n
+        disable_group_convolution, enable_batchmatmul_unfold, and\n
+        enable_rnn_unroll.\n
         By default it exports SavedModel from imported ModelIR,\n
         `input_names_to_interrupt_model_conversion` and\n
         `output_names_to_interrupt_model_conversion` are resolved against\n
@@ -1649,7 +1652,9 @@ def convert(
 
     disable_group_convolution: Optional[bool]
         Disable GroupConvolution and replace it with SeparableConvolution\n
-        for output to saved_model format.
+        for output to saved_model format.\n
+        With input_tflite_file_path and flatbuffer_direct, imported grouped\n
+        CONV_2D ops are rewritten into split-per-group direct ops.
 
     enable_accumulation_type_float16: Optional[bool]
         Hint for XNNPack fp16 inference on float16 tflite model.\n
@@ -1658,11 +1663,16 @@ def convert(
         https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/delegates/xnnpack/README.md#floating-point-ieee-fp16-operators
 
     enable_batchmatmul_unfold: Optional[bool]
-        BatchMatMul is separated batch by batch to generate a primitive MatMul.
+        BatchMatMul is separated batch by batch to generate a primitive MatMul.\n
+        With flatbuffer_direct, this runs as a ModelIR rewrite for both ONNX\n
+        input and input_tflite_file_path.
 
     enable_rnn_unroll: Optional[bool]
         Instead of increasing inference speed by expanding all symbolic loops of the RNN (LSTM, GRU, RNN),\n
         RAM consumption will increase because all tensors are expanded and embedded in the model.\n
+        With flatbuffer_direct, supported sequence RNN/LSTM ModelIR ops are\n
+        rewritten into step-unrolled primitive ops for both ONNX input and\n
+        input_tflite_file_path.\n
         https://keras.io/api/layers/recurrent_layers/
 
     disable_suppression_flextranspose: Optional[bool]
@@ -2131,9 +2141,6 @@ def convert(
             ('param_replacement_file', bool(str(param_replacement_file).strip() != '')),
             ('not_use_onnxsim', bool(not_use_onnxsim)),
             ('not_use_opname_auto_generate', bool(not_use_opname_auto_generate)),
-            ('disable_group_convolution', bool(disable_group_convolution)),
-            ('enable_batchmatmul_unfold', bool(enable_batchmatmul_unfold)),
-            ('enable_rnn_unroll', bool(enable_rnn_unroll)),
             ('disable_suppression_flextranspose', bool(disable_suppression_flextranspose)),
             ('disable_suppression_flexstridedslice', bool(disable_suppression_flexstridedslice)),
             ('disable_strict_mode', bool(disable_strict_mode)),
@@ -3888,6 +3895,9 @@ def convert(
             from onnx2tf.tflite_builder.split_planner import (
                 crop_model_ir_by_boundary_tensors,
                 plan_contiguous_partitions_by_size,
+                rewrite_model_ir_disable_group_convolution,
+                rewrite_model_ir_unfold_batchmatmul,
+                rewrite_model_ir_unroll_recurrent_ops,
                 write_split_model_files_and_manifest,
                 write_split_plan_report,
             )
@@ -3915,6 +3925,48 @@ def convert(
                     )
                 except ValueError as ex:
                     error(str(ex))
+                    sys.exit(1)
+            if disable_group_convolution:
+                try:
+                    model_ir, grouped_conv_rewrite_count = rewrite_model_ir_disable_group_convolution(
+                        model_ir=model_ir,
+                    )
+                except ValueError as ex:
+                    error(str(ex))
+                    sys.exit(1)
+                if grouped_conv_rewrite_count <= 0:
+                    error(
+                        'input_tflite_file_path with disable_group_convolution '
+                        'requires at least one grouped CONV_2D in the imported ModelIR.'
+                    )
+                    sys.exit(1)
+            if enable_batchmatmul_unfold:
+                try:
+                    model_ir, batchmatmul_unfold_count = rewrite_model_ir_unfold_batchmatmul(
+                        model_ir=model_ir,
+                    )
+                except ValueError as ex:
+                    error(str(ex))
+                    sys.exit(1)
+                if batchmatmul_unfold_count <= 0:
+                    error(
+                        'input_tflite_file_path with enable_batchmatmul_unfold '
+                        'requires at least one batch-expanded BATCH_MATMUL in the imported ModelIR.'
+                    )
+                    sys.exit(1)
+            if enable_rnn_unroll:
+                try:
+                    model_ir, recurrent_unroll_count = rewrite_model_ir_unroll_recurrent_ops(
+                        model_ir=model_ir,
+                    )
+                except ValueError as ex:
+                    error(str(ex))
+                    sys.exit(1)
+                if recurrent_unroll_count <= 0:
+                    error(
+                        'input_tflite_file_path with enable_rnn_unroll '
+                        'requires at least one supported sequence RNN/LSTM op in the imported ModelIR.'
+                    )
                     sys.exit(1)
             if enable_auto_split_model:
                 schema_tflite = load_schema_module(tflite_direct_output_folder_path)
@@ -5236,6 +5288,8 @@ def convert(
                         keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                         keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                         disable_group_convolution=disable_group_convolution,
+                        enable_batchmatmul_unfold=enable_batchmatmul_unfold,
+                        enable_rnn_unroll=enable_rnn_unroll,
                         output_nms_with_argmax=direct_output_nms_with_argmax,
                         switch_nms_version=switch_nms_version,
                         tflite_split_max_bytes=tflite_split_max_bytes,
@@ -6002,6 +6056,8 @@ def convert(
                                     keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                                     keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                                     disable_group_convolution=disable_group_convolution,
+                                    enable_batchmatmul_unfold=enable_batchmatmul_unfold,
+                                    enable_rnn_unroll=enable_rnn_unroll,
                                     output_nms_with_argmax=direct_output_nms_with_argmax,
                                     switch_nms_version=switch_nms_version,
                                     tflite_split_max_bytes=tflite_split_max_bytes,
@@ -6442,6 +6498,8 @@ def convert(
                                 keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
                                 keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
                                 disable_group_convolution=disable_group_convolution,
+                                enable_batchmatmul_unfold=enable_batchmatmul_unfold,
+                                enable_rnn_unroll=enable_rnn_unroll,
                                 output_nms_with_argmax=direct_output_nms_with_argmax,
                                 switch_nms_version=switch_nms_version,
                                 tflite_split_max_bytes=tflite_split_max_bytes,

@@ -273,6 +273,12 @@ If direct export fails, conversion stops with an explicit error.
 For ONNX input and `-it` input, these options crop the imported/lowered ModelIR
 at the specified boundary tensor names instead of splitting the ONNX graph.
 
+`-dgc`, `-ebu`, and `-eru` also stay on the direct path in `flatbuffer_direct`.
+For ONNX input they are applied during lowering or as post-lowering ModelIR rewrites.
+For `-it` input they are applied to imported ModelIR before SavedModel bridge,
+split planning, or rewritten TFLite export.
+If the requested rewrite cannot be applied safely, conversion stops with an explicit error.
+
 `--disable_model_save` also stays on the direct path. In `flatbuffer_direct`, it means the conversion can still run internal validation and temporary staging, but no final artifacts are left in the requested output directory.
 
 Invalid combinations are rejected explicitly:
@@ -2264,6 +2270,9 @@ optional arguments:
     Disable GroupConvolution and replace it with SeparableConvolution for
     conversion outputs.
     This option is applied in both tf_converter and flatbuffer_direct paths.
+    In `flatbuffer_direct`, ONNX input keeps using direct grouped-conv lowering
+    control, and `-it/--input_tflite_file_path` rewrites imported grouped
+    `CONV_2D` to `SPLIT` + per-group `CONV_2D` + `CONCATENATION`.
 
   -eatfp16, --enable_accumulation_type_float16 ENABLE_ACCUMULATION_TYPE_FLOAT16
     Hint for XNNPACK fp16 inference on float16 tflite model.
@@ -2274,11 +2283,18 @@ optional arguments:
 
   -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
+    In `flatbuffer_direct`, this rewrites ModelIR `BATCH_MATMUL` ops with
+    static batch prefixes into per-batch slices plus rank-lowered matmul ops.
+    This is available for both ONNX input and `-it/--input_tflite_file_path`.
 
   -eru, --enable_rnn_unroll
     Instead of increasing inference speed by expanding all symbolic loops of
     the RNN (LSTM, GRU, RNN), RAM consumption will increase because all tensors
     are expanded and embedded in the model.
+    In `flatbuffer_direct`, this rewrites supported sequence RNN/LSTM ModelIR
+    ops into step-unrolled primitive ops for both ONNX input and
+    `-it/--input_tflite_file_path`. `GRU` already uses step-style lowering in
+    the direct path.
     https://keras.io/api/layers/recurrent_layers/
 
   -dsft, --disable_suppression_flextranspose
@@ -2601,7 +2617,13 @@ convert(
     input_tflite_file_path: Optional[str]
       Input tflite file path.
       If specified, runs tflite-direct import mode.
-      In this mode, ONNX-dependent conversion options are rejected.
+      In this mode, ONNX-dependent conversion options are rejected except for
+      direct ModelIR rewrites such as
+      `input_names_to_interrupt_model_conversion`,
+      `output_names_to_interrupt_model_conversion`,
+      `disable_group_convolution=True`,
+      `enable_batchmatmul_unfold=True`, and
+      `enable_rnn_unroll=True`.
       By default it exports SavedModel from imported ModelIR, and
       `input_names_to_interrupt_model_conversion` and
       `output_names_to_interrupt_model_conversion` are resolved against
@@ -2609,6 +2631,10 @@ convert(
       `output_h5=True`, `output_keras_v3=True`, and `output_tfv1_pb=True`
       are also supported through an internal SavedModel bridge without
       `tf_converter` fallback.
+      `disable_group_convolution=True`, `enable_batchmatmul_unfold=True`, and
+      `enable_rnn_unroll=True` are applied to imported ModelIR before
+      SavedModel export or split planning, and fail explicitly if the requested
+      rewrite is not applicable.
       `disable_model_save=True` is supported and leaves no final artifacts in
       `output_folder_path`.
       enable_auto_split_model=True can also emit split TFLite artifacts.
@@ -2928,6 +2954,9 @@ convert(
       Disable GroupConvolution and replace it with SeparableConvolution for
       conversion outputs.
       This option is applied in both tf_converter and flatbuffer_direct paths.
+      With `input_tflite_file_path` and `tflite_backend="flatbuffer_direct"`,
+      this rewrites imported grouped `CONV_2D` into split-per-group direct ops
+      and fails explicitly when the grouping cannot be inferred safely.
 
     enable_accumulation_type_float16: Optional[bool]
       Hint for XNNPack fp16 inference on float16 tflite model.
@@ -2938,11 +2967,17 @@ convert(
 
     enable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
+      With `tflite_backend="flatbuffer_direct"`, this runs as a ModelIR rewrite
+      for both ONNX input and `input_tflite_file_path`.
+      Imported/direct ModelIR must have fully static batch prefixes.
 
     enable_rnn_unroll: Optional[bool]
       Instead of increasing inference speed by expanding all symbolic loops of
       the RNN (LSTM, GRU, RNN), RAM consumption will increase because all tensors
       are expanded and embedded in the model.
+      With `tflite_backend="flatbuffer_direct"`, this rewrites supported
+      sequence RNN/LSTM ModelIR ops into step-unrolled primitive ops for both
+      ONNX input and `input_tflite_file_path`.
       https://keras.io/api/layers/recurrent_layers/
 
     disable_suppression_flextranspose: Optional[bool]

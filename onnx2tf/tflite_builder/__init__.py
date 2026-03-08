@@ -39,6 +39,9 @@ from onnx2tf.tflite_builder.split_planner import (
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     plan_contiguous_partitions_by_size,
+    rewrite_model_ir_disable_group_convolution,
+    rewrite_model_ir_unfold_batchmatmul,
+    rewrite_model_ir_unroll_recurrent_ops,
     should_split_by_estimate,
     write_split_model_files_and_manifest,
     write_split_plan_report,
@@ -297,6 +300,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     disable_group_convolution = bool(
         kwargs.get("disable_group_convolution", False)
     )
+    enable_batchmatmul_unfold = bool(
+        kwargs.get("enable_batchmatmul_unfold", False)
+    )
+    enable_rnn_unroll = bool(
+        kwargs.get("enable_rnn_unroll", False)
+    )
     flatbuffer_direct_allow_custom_ops = bool(
         kwargs.get("flatbuffer_direct_allow_custom_ops", False)
     )
@@ -493,6 +502,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     if output_names_to_interrupt_model_conversion is not None
                     else default_output_boundaries
                 ),
+            )
+        if disable_group_convolution:
+            model_ir, _ = rewrite_model_ir_disable_group_convolution(
+                model_ir=model_ir,
+            )
+        if enable_batchmatmul_unfold:
+            model_ir, _ = rewrite_model_ir_unfold_batchmatmul(
+                model_ir=model_ir,
+            )
+        if enable_rnn_unroll:
+            model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
+                model_ir=model_ir,
             )
     except Exception as ex:
         try:
