@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.saved_model_exporter import (
 from onnx2tf.tflite_builder.tflite_importer import import_model_ir_from_tflite
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.model_writer import write_model_file
+from onnx2tf.tflite_builder.split_planner import (
+    crop_model_ir_by_boundary_tensors,
+)
 
 Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
 
@@ -61,6 +64,70 @@ def _make_add_model_ir() -> ModelIR:
         OperatorIR(
             op_type="ADD",
             inputs=["x", "y"],
+            outputs=["z"],
+            options={},
+        )
+    )
+    return model_ir
+
+
+def _make_add_relu_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
+    sum_tensor = helper.make_tensor_value_info("sum", TensorProto.FLOAT, [1, 3])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3])
+    add = helper.make_node("Add", ["x", "y"], ["sum"], name="AddNode")
+    relu = helper.make_node("Relu", ["sum"], ["z"], name="ReluNode")
+    graph = helper.make_graph(
+        [add, relu],
+        "add_relu_graph",
+        [x, y],
+        [z],
+        value_info=[sum_tensor],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_add_relu_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="add_relu_model_ir")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.tensors["sum"] = TensorIR(
+        name="sum",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "y"],
+            outputs=["sum"],
+            options={},
+        )
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RELU",
+            inputs=["sum"],
             outputs=["z"],
             options={},
         )
@@ -118,6 +185,28 @@ def _run_saved_model_single_output(
     return np.asarray(outputs[output_name].numpy())
 
 
+def _run_saved_model_with_inputs(
+    saved_model_path: str,
+    inputs: dict[str, np.ndarray],
+) -> tuple[list[str], dict[str, np.ndarray]]:
+    module: Any = tf.saved_model.load(saved_model_path)
+    assert module is not None
+    fn = module.signatures["serving_default"]
+    outputs = fn(
+        **{
+            name: tf.constant(value)
+            for name, value in inputs.items()
+        }
+    )
+    return (
+        list(fn.structured_input_signature[1].keys()),
+        {
+            str(name): np.asarray(value.numpy())
+            for name, value in outputs.items()
+        },
+    )
+
+
 def _run_tflite_single_output(
     tflite_path: str,
     input_value: np.ndarray,
@@ -129,6 +218,25 @@ def _run_tflite_single_output(
     interpreter.set_tensor(input_details[0]["index"], input_value)
     interpreter.invoke()
     return np.asarray(interpreter.get_tensor(output_details[0]["index"]))
+
+
+def _run_tflite_with_inputs(
+    tflite_path: str,
+    input_values: list[np.ndarray],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[np.ndarray]]:
+    interpreter = Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    assert len(input_values) == len(input_details)
+    for detail, value in zip(input_details, input_values):
+        interpreter.set_tensor(detail["index"], np.asarray(value))
+    interpreter.invoke()
+    outputs = [
+        np.asarray(interpreter.get_tensor(detail["index"]))
+        for detail in output_details
+    ]
+    return input_details, output_details, outputs
 
 
 def _disable_tf_converter_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,6 +444,34 @@ def test_tflite_importer_normalizes_empty_duplicate_tensor_names() -> None:
     assert len(tensor_names) == len(set(tensor_names))
     assert all(name.strip() != "" for name in tensor_names)
     assert all(name.startswith("sg0_tensor") for name in imported.inputs + imported.outputs)
+
+
+def test_crop_model_ir_by_boundary_tensors_rejects_nested_subgraph_tensor_name() -> None:
+    model_ir = _make_add_relu_model_ir()
+    nested = ModelIR(name="nested")
+    nested.tensors["inner_tensor"] = TensorIR(
+        name="inner_tensor",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.subgraphs = [nested]
+    with pytest.raises(ValueError, match="nested subgraph tensor names are unsupported"):
+        crop_model_ir_by_boundary_tensors(
+            model_ir=model_ir,
+            requested_inputs=["inner_tensor"],
+            requested_outputs=["z"],
+        )
+
+
+def test_crop_model_ir_by_boundary_tensors_rejects_unreachable_outputs() -> None:
+    model_ir = _make_add_relu_model_ir()
+    with pytest.raises(ValueError, match="requested outputs are not reachable"):
+        crop_model_ir_by_boundary_tensors(
+            model_ir=model_ir,
+            requested_inputs=["y"],
+            requested_outputs=["sum"],
+        )
 
 
 def _make_while_model_ir() -> ModelIR:
@@ -853,6 +989,113 @@ def test_flatbuffer_direct_disable_model_save_leaves_no_artifacts() -> None:
         _assert_dir_empty_or_missing(output_dir)
 
 
+def test_flatbuffer_direct_interrupt_input_names_model_ir_crop_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_relu_inimc", _make_add_relu_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            input_names_to_interrupt_model_conversion=["sum"],
+        )
+        tflite_path = os.path.join(output_dir, "add_relu_inimc_float32.tflite")
+        input_details, output_details, outputs = _run_tflite_with_inputs(
+            tflite_path,
+            [np.asarray([[-1.0, 2.0, -3.0]], dtype=np.float32)],
+        )
+        assert len(input_details) == 1
+        assert len(output_details) == 1
+        assert input_details[0]["shape"].tolist() == [1, 3]
+        np.testing.assert_allclose(
+            outputs[0],
+            np.asarray([[0.0, 2.0, 0.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_flatbuffer_direct_interrupt_output_names_model_ir_crop_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_relu_onimc", _make_add_relu_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            output_names_to_interrupt_model_conversion=["sum"],
+        )
+        tflite_path = os.path.join(output_dir, "add_relu_onimc_float32.tflite")
+        input_details, output_details, outputs = _run_tflite_with_inputs(
+            tflite_path,
+            [
+                np.asarray([[1.0, -2.0, 3.0]], dtype=np.float32),
+                np.asarray([[4.0, 5.0, -6.0]], dtype=np.float32),
+            ],
+        )
+        assert len(input_details) == 2
+        assert len(output_details) == 1
+        np.testing.assert_allclose(
+            outputs[0],
+            np.asarray([[5.0, 3.0, -3.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_flatbuffer_direct_interrupt_zero_op_crop_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_relu_zero", _make_add_relu_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            input_names_to_interrupt_model_conversion=["sum"],
+            output_names_to_interrupt_model_conversion=["sum"],
+        )
+        tflite_path = os.path.join(output_dir, "add_relu_zero_float32.tflite")
+        input_details, output_details, outputs = _run_tflite_with_inputs(
+            tflite_path,
+            [np.asarray([[7.0, -8.0, 9.0]], dtype=np.float32)],
+        )
+        assert len(input_details) == 1
+        assert len(output_details) == 1
+        np.testing.assert_allclose(
+            outputs[0],
+            np.asarray([[7.0, -8.0, 9.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_flatbuffer_direct_interrupt_with_enable_auto_split_model_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_relu_split_crop", _make_add_relu_model())
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            enable_auto_split_model=True,
+            output_names_to_interrupt_model_conversion=["sum"],
+        )
+        assert os.path.exists(
+            os.path.join(output_dir, "add_relu_split_crop_split_plan.json")
+        )
+        assert os.path.exists(
+            os.path.join(output_dir, "add_relu_split_crop_split_manifest.json")
+        )
+
+
 def test_tflite_direct_input_saved_model_smoke() -> None:
     model_ir = _make_add_model_ir()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -982,6 +1225,69 @@ def test_tflite_direct_input_disable_model_save_leaves_no_artifacts() -> None:
             disable_model_save=True,
         )
         _assert_dir_empty_or_missing(output_dir)
+
+
+def test_tflite_direct_input_interrupt_input_names_model_ir_crop_smoke() -> None:
+    model_ir = _make_add_relu_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_relu_tflite_direct_input_inimc",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            input_names_to_interrupt_model_conversion=["sum"],
+        )
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        input_names, outputs = _run_saved_model_with_inputs(
+            output_dir,
+            {"sum": np.asarray([[-1.0, 2.0, -3.0]], dtype=np.float32)},
+        )
+        assert input_names == ["sum"]
+        np.testing.assert_allclose(
+            outputs["z"],
+            np.asarray([[0.0, 2.0, 0.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_tflite_direct_input_interrupt_output_names_model_ir_crop_smoke() -> None:
+    model_ir = _make_add_relu_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_relu_tflite_direct_input_onimc",
+            model_ir,
+        )
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            output_names_to_interrupt_model_conversion=["sum"],
+        )
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        input_names, outputs = _run_saved_model_with_inputs(
+            output_dir,
+            {
+                "x": np.asarray([[1.0, -2.0, 3.0]], dtype=np.float32),
+                "y": np.asarray([[4.0, 5.0, -6.0]], dtype=np.float32),
+            },
+        )
+        assert set(input_names) == {"x", "y"}
+        np.testing.assert_allclose(
+            outputs["sum"],
+            np.asarray([[5.0, 3.0, -3.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=0.0,
+        )
 
 
 def test_tflite_direct_input_saved_model_with_cotof_smoke() -> None:
@@ -1185,6 +1491,60 @@ def test_flatbuffer_direct_new_conflict_validation(kwargs: dict) -> None:
                 output_folder_path=tmpdir,
                 verbosity="error",
                 disable_strict_mode=True,
+                tflite_backend="flatbuffer_direct",
+                **kwargs,
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"input_names_to_interrupt_model_conversion": ["missing_tensor"]},
+        {"output_names_to_interrupt_model_conversion": ["missing_tensor"]},
+        {
+            "input_names_to_interrupt_model_conversion": ["y"],
+            "output_names_to_interrupt_model_conversion": ["sum"],
+        },
+    ],
+)
+def test_flatbuffer_direct_interrupt_validation(kwargs: dict) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_relu_interrupt_ng", _make_add_relu_model())
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_onnx_file_path=model_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
+                disable_strict_mode=True,
+                tflite_backend="flatbuffer_direct",
+                **kwargs,
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"input_names_to_interrupt_model_conversion": ["missing_tensor"]},
+        {"output_names_to_interrupt_model_conversion": ["missing_tensor"]},
+        {
+            "input_names_to_interrupt_model_conversion": ["y"],
+            "output_names_to_interrupt_model_conversion": ["sum"],
+        },
+    ],
+)
+def test_tflite_direct_input_interrupt_validation(kwargs: dict) -> None:
+    model_ir = _make_add_relu_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(
+            tmpdir,
+            "add_relu_tflite_direct_interrupt_ng",
+            model_ir,
+        )
+        with pytest.raises(SystemExit):
+            onnx2tf.convert(
+                input_tflite_file_path=tflite_path,
+                output_folder_path=tmpdir,
+                verbosity="error",
                 tflite_backend="flatbuffer_direct",
                 **kwargs,
             )

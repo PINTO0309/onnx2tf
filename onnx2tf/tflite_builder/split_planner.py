@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import dataclass
@@ -264,6 +265,228 @@ def build_partition_model_ir(
             quantization=tensor.quantization,
         )
     return part_model
+
+
+def _collect_nested_tensor_names(
+    model_ir: ModelIR,
+) -> Set[str]:
+    nested_tensor_names: Set[str] = set()
+    for subgraph in list(getattr(model_ir, "subgraphs", [])):
+        for tensor_name in list(getattr(subgraph, "tensors", {}).keys()):
+            normalized_name = str(tensor_name)
+            if normalized_name != "":
+                nested_tensor_names.add(normalized_name)
+        nested_tensor_names.update(_collect_nested_tensor_names(subgraph))
+    return nested_tensor_names
+
+
+def crop_model_ir_by_boundary_tensors(
+    *,
+    model_ir: ModelIR,
+    requested_inputs: Optional[Sequence[str]] = None,
+    requested_outputs: Optional[Sequence[str]] = None,
+) -> ModelIR:
+    crop_error_prefix = "flatbuffer_direct ModelIR interrupt crop failed."
+    top_level_tensor_names: Set[str] = {
+        str(name)
+        for name in list(model_ir.tensors.keys())
+        if str(name) != ""
+    }
+    top_level_tensor_names.update(
+        str(name)
+        for name in list(model_ir.inputs)
+        if str(name) != ""
+    )
+    top_level_tensor_names.update(
+        str(name)
+        for name in list(model_ir.outputs)
+        if str(name) != ""
+    )
+    nested_tensor_names = _collect_nested_tensor_names(model_ir)
+
+    boundary_inputs = [
+        str(name)
+        for name in (
+            list(model_ir.inputs)
+            if requested_inputs is None
+            else list(requested_inputs)
+        )
+        if str(name) != ""
+    ]
+    boundary_outputs = [
+        str(name)
+        for name in (
+            list(model_ir.outputs)
+            if requested_outputs is None
+            else list(requested_outputs)
+        )
+        if str(name) != ""
+    ]
+    boundary_inputs = list(dict.fromkeys(boundary_inputs))
+    boundary_outputs = list(dict.fromkeys(boundary_outputs))
+
+    if len(boundary_inputs) == 0:
+        raise ValueError(
+            f"{crop_error_prefix} requested input boundary list is empty."
+        )
+    if len(boundary_outputs) == 0:
+        raise ValueError(
+            f"{crop_error_prefix} requested output boundary list is empty."
+        )
+
+    producer_index: Dict[str, int] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in list(op.outputs):
+            normalized_name = str(output_name)
+            if normalized_name != "" and normalized_name not in producer_index:
+                producer_index[normalized_name] = int(op_idx)
+
+    for tensor_name in boundary_inputs + boundary_outputs:
+        if tensor_name in top_level_tensor_names:
+            continue
+        if tensor_name in nested_tensor_names:
+            raise ValueError(
+                f"{crop_error_prefix} nested subgraph tensor names are unsupported. "
+                f"name={tensor_name}"
+            )
+        raise ValueError(
+            f"{crop_error_prefix} requested tensor was not found in top-level ModelIR tensors. "
+            f"name={tensor_name}"
+        )
+
+    for tensor_name in boundary_inputs:
+        tensor = model_ir.tensors.get(tensor_name, None)
+        if tensor is None:
+            continue
+        if tensor_name in producer_index:
+            continue
+        if tensor_name in set(str(name) for name in model_ir.inputs):
+            continue
+        if tensor.data is not None:
+            raise ValueError(
+                f"{crop_error_prefix} constant tensors cannot be used as interrupt inputs. "
+                f"name={tensor_name}"
+            )
+
+    always_available_tensors: Set[str] = set(boundary_inputs)
+    for tensor_name, tensor in model_ir.tensors.items():
+        normalized_name = str(tensor_name)
+        if normalized_name != "" and tensor.data is not None:
+            always_available_tensors.add(normalized_name)
+
+    forward_reachable_ops: Set[int] = set()
+    forward_available_tensors: Set[str] = set(always_available_tensors)
+    for op_idx, op in enumerate(model_ir.operators):
+        op_inputs = [str(name) for name in list(op.inputs) if str(name) != ""]
+        if all(input_name in forward_available_tensors for input_name in op_inputs):
+            forward_reachable_ops.add(int(op_idx))
+            for output_name in list(op.outputs):
+                normalized_name = str(output_name)
+                if normalized_name != "":
+                    forward_available_tensors.add(normalized_name)
+
+    backward_required_ops: Set[int] = set()
+    pending_tensors: List[str] = list(boundary_outputs)
+    visited_tensors: Set[str] = set()
+    while pending_tensors:
+        tensor_name = str(pending_tensors.pop())
+        if tensor_name == "" or tensor_name in visited_tensors:
+            continue
+        visited_tensors.add(tensor_name)
+        if tensor_name in always_available_tensors:
+            continue
+        producer_op_idx = producer_index.get(tensor_name, None)
+        if producer_op_idx is None:
+            continue
+        if producer_op_idx in backward_required_ops:
+            continue
+        backward_required_ops.add(int(producer_op_idx))
+        for input_name in list(model_ir.operators[int(producer_op_idx)].inputs):
+            normalized_name = str(input_name)
+            if normalized_name != "":
+                pending_tensors.append(normalized_name)
+
+    kept_operator_indices = [
+        int(op_idx)
+        for op_idx in range(len(model_ir.operators))
+        if int(op_idx) in forward_reachable_ops
+        and int(op_idx) in backward_required_ops
+    ]
+
+    kept_output_tensors: Set[str] = set()
+    for op_idx in kept_operator_indices:
+        kept_output_tensors.update(
+            str(name)
+            for name in list(model_ir.operators[int(op_idx)].outputs)
+            if str(name) != ""
+        )
+
+    missing_runtime_inputs: List[str] = []
+    cropped_available_tensors: Set[str] = set(always_available_tensors)
+    for op_idx in kept_operator_indices:
+        op = model_ir.operators[int(op_idx)]
+        for input_name in list(op.inputs):
+            normalized_name = str(input_name)
+            if normalized_name == "":
+                continue
+            if normalized_name not in cropped_available_tensors:
+                missing_runtime_inputs.append(normalized_name)
+        for output_name in list(op.outputs):
+            normalized_name = str(output_name)
+            if normalized_name != "":
+                cropped_available_tensors.add(normalized_name)
+
+    if len(missing_runtime_inputs) > 0:
+        raise ValueError(
+            f"{crop_error_prefix} requested boundaries require unavailable intermediate tensors. "
+            f"missing_inputs={sorted(set(missing_runtime_inputs))}"
+        )
+
+    unreachable_outputs = [
+        tensor_name
+        for tensor_name in boundary_outputs
+        if tensor_name not in cropped_available_tensors
+    ]
+    if len(unreachable_outputs) > 0:
+        raise ValueError(
+            f"{crop_error_prefix} requested outputs are not reachable from requested inputs. "
+            f"outputs={sorted(set(unreachable_outputs))}"
+        )
+
+    required_tensor_names: Set[str] = set(boundary_inputs + boundary_outputs)
+    for op_idx in kept_operator_indices:
+        op = model_ir.operators[int(op_idx)]
+        required_tensor_names.update(
+            str(name) for name in list(op.inputs) if str(name) != ""
+        )
+        required_tensor_names.update(
+            str(name) for name in list(op.outputs) if str(name) != ""
+        )
+
+    cropped_model_ir = ModelIR(
+        name=str(model_ir.name),
+        description=str(model_ir.description),
+        metadata=copy.deepcopy(dict(model_ir.metadata)),
+    )
+    cropped_model_ir.inputs = list(boundary_inputs)
+    cropped_model_ir.outputs = list(boundary_outputs)
+    cropped_model_ir.subgraphs = copy.deepcopy(list(model_ir.subgraphs))
+    cropped_model_ir.operators = [
+        OperatorIR(
+            op_type=str(model_ir.operators[int(op_idx)].op_type),
+            inputs=list(model_ir.operators[int(op_idx)].inputs),
+            outputs=list(model_ir.operators[int(op_idx)].outputs),
+            options=copy.deepcopy(dict(model_ir.operators[int(op_idx)].options)),
+            version=int(model_ir.operators[int(op_idx)].version),
+        )
+        for op_idx in kept_operator_indices
+    ]
+    for tensor_name in required_tensor_names:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        cropped_model_ir.tensors[str(tensor_name)] = copy.deepcopy(tensor)
+    return cropped_model_ir
 
 
 def find_dependency_safe_split_points(model_ir: ModelIR) -> List[Dict[str, Any]]:

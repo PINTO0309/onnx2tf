@@ -35,6 +35,7 @@ from onnx2tf.tflite_builder.preprocess import (
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.split_planner import (
+    crop_model_ir_by_boundary_tensors,
     DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     plan_contiguous_partitions_by_size,
@@ -341,6 +342,14 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
     )
     requested_pseudo_ops_raw = kwargs.get("replace_to_pseudo_operators", None)
+    input_names_to_interrupt_model_conversion = kwargs.get(
+        "input_names_to_interrupt_model_conversion",
+        None,
+    )
+    output_names_to_interrupt_model_conversion = kwargs.get(
+        "output_names_to_interrupt_model_conversion",
+        None,
+    )
     if requested_pseudo_ops_raw is None:
         requested_pseudo_ops: List[str] = []
     elif isinstance(requested_pseudo_ops_raw, (list, tuple, set)):
@@ -457,7 +466,34 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             replace_to_pseudo_operators=requested_pseudo_ops,
+            protected_boundary_tensor_names=list(
+                dict.fromkeys(
+                    list(input_names_to_interrupt_model_conversion or [])
+                    + list(output_names_to_interrupt_model_conversion or [])
+                )
+            ),
         )
+        if (
+            input_names_to_interrupt_model_conversion
+            or output_names_to_interrupt_model_conversion
+        ):
+            default_output_boundaries = (
+                list(model_ir.metadata.get("original_graph_output_names", []))
+                if (
+                    output_names_to_interrupt_model_conversion is None
+                    and input_names_to_interrupt_model_conversion
+                )
+                else None
+            )
+            model_ir = crop_model_ir_by_boundary_tensors(
+                model_ir=model_ir,
+                requested_inputs=input_names_to_interrupt_model_conversion,
+                requested_outputs=(
+                    output_names_to_interrupt_model_conversion
+                    if output_names_to_interrupt_model_conversion is not None
+                    else default_output_boundaries
+                ),
+            )
     except Exception as ex:
         try:
             _write_coverage_report(str(ex))

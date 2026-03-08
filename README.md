@@ -269,6 +269,10 @@ Direct export can also generate TF-side artifacts without falling back to `tf_co
 These artifacts are generated from an internal SavedModel bridge built from float32 ModelIR.
 If direct export fails, conversion stops with an explicit error.
 
+`-inimc` / `-onimc` also stay on the direct path in `flatbuffer_direct`.
+For ONNX input and `-it` input, these options crop the imported/lowered ModelIR
+at the specified boundary tensor names instead of splitting the ONNX graph.
+
 `--disable_model_save` also stays on the direct path. In `flatbuffer_direct`, it means the conversion can still run internal validation and temporary staging, but no final artifacts are left in the requested output directory.
 
 Invalid combinations are rejected explicitly:
@@ -2221,6 +2225,8 @@ optional arguments:
     Input names of ONNX that interrupt model conversion.
     Interrupts model transformation at the specified input name and inputs the
     model partitioned into subgraphs.
+    With `--tflite_backend flatbuffer_direct`, this crops ModelIR and treats
+    the specified tensors as runtime inputs.
     e.g. --input_names_to_interrupt_model_conversion "input0" "input1" "input2"
 
   -onimc OUTPUT_NAMES [OUTPUT_NAMES ...], \
@@ -2228,6 +2234,8 @@ optional arguments:
     Output names of ONNX that interrupt model conversion.
     Interrupts model transformation at the specified output name and outputs the
     model partitioned into subgraphs.
+    With `--tflite_backend flatbuffer_direct`, this crops ModelIR and treats
+    the specified tensors as runtime outputs.
     e.g. --output_names_to_interrupt_model_conversion "output0" "output1" "output2"
 
   -easm, --enable_auto_split_model
@@ -2595,6 +2603,9 @@ convert(
       If specified, runs tflite-direct import mode.
       In this mode, ONNX-dependent conversion options are rejected.
       By default it exports SavedModel from imported ModelIR, and
+      `input_names_to_interrupt_model_conversion` and
+      `output_names_to_interrupt_model_conversion` are resolved against
+      imported ModelIR tensor names,
       `output_h5=True`, `output_keras_v3=True`, and `output_tfv1_pb=True`
       are also supported through an internal SavedModel bridge without
       `tf_converter` fallback.
@@ -2869,6 +2880,8 @@ convert(
       Input names of ONNX that interrupt model conversion.
       Interrupts model transformation at the specified input name
       and inputs the model partitioned into subgraphs.
+      With `tflite_backend="flatbuffer_direct"`, this crops ModelIR and
+      treats the specified tensors as runtime inputs.
       e.g.
       input_names_to_interrupt_model_conversion=['input0','input1','input2']
 
@@ -2876,6 +2889,8 @@ convert(
       Output names of ONNX that interrupt model conversion.
       Interrupts model transformation at the specified output name
       and outputs the model partitioned into subgraphs.
+      With `tflite_backend="flatbuffer_direct"`, this crops ModelIR and
+      treats the specified tensors as runtime outputs.
       e.g.
       output_names_to_interrupt_model_conversion=['output0','output1','output2']
 

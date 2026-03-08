@@ -1315,6 +1315,9 @@ def convert(
         If specified, run tflite-direct import mode.\n
         In this mode, ONNX-dependent conversion options are rejected.\n
         By default it exports SavedModel from imported ModelIR,\n
+        `input_names_to_interrupt_model_conversion` and\n
+        `output_names_to_interrupt_model_conversion` are resolved against\n
+        imported ModelIR tensor names,\n
         and `--enable_auto_split_model` can also emit split TFLite artifacts.\n
         When used with `--flatbuffer_direct_output_saved_model` and split,\n
         partition SavedModels are emitted instead of a single root SavedModel.
@@ -1629,14 +1632,18 @@ def convert(
     input_names_to_interrupt_model_conversion: Optional[List[str]]
         Input names that interrupt model conversion.\n
         Interrupts model transformation at the specified input name\n
-        and inputs the model partitioned into subgraphs.\n\n
+        and inputs the model partitioned into subgraphs.\n
+        With `tflite_backend="flatbuffer_direct"`, this crops the ModelIR\n
+        boundary and treats the specified tensors as runtime inputs.\n\n
         e.g.\n
         input_names_to_interrupt_model_conversion=['input0','input1','input2']
 
     output_names_to_interrupt_model_conversion: Optional[List[str]]
         Output names that interrupt model conversion.\n
         Interrupts model transformation at the specified output name\n
-        and outputs the model partitioned into subgraphs.\n\n
+        and outputs the model partitioned into subgraphs.\n
+        With `tflite_backend="flatbuffer_direct"`, this crops the ModelIR\n
+        boundary and treats the specified tensors as runtime outputs.\n\n
         e.g.\n
         output_names_to_interrupt_model_conversion=['output0','output1','output2']
 
@@ -2118,8 +2125,6 @@ def convert(
             ('auto_generate_json_on_error', bool(auto_generate_json_on_error)),
             ('custom_input_op_name_np_data_path', bool(custom_input_op_name_np_data_path is not None)),
             ('replace_to_pseudo_operators', bool(replace_to_pseudo_operators)),
-            ('input_names_to_interrupt_model_conversion', bool(input_names_to_interrupt_model_conversion)),
-            ('output_names_to_interrupt_model_conversion', bool(output_names_to_interrupt_model_conversion)),
             ('overwrite_input_shape', bool(overwrite_input_shape)),
             ('shape_hints', bool(shape_hints)),
             ('batch_size', bool(batch_size is not None)),
@@ -3881,6 +3886,7 @@ def convert(
                 load_schema_module,
             )
             from onnx2tf.tflite_builder.split_planner import (
+                crop_model_ir_by_boundary_tensors,
                 plan_contiguous_partitions_by_size,
                 write_split_model_files_and_manifest,
                 write_split_plan_report,
@@ -3897,6 +3903,19 @@ def convert(
                 tflite_file_path=input_tflite_file_path,
                 output_folder_path=tflite_direct_output_folder_path,
             )
+            if (
+                input_names_to_interrupt_model_conversion
+                or output_names_to_interrupt_model_conversion
+            ):
+                try:
+                    model_ir = crop_model_ir_by_boundary_tensors(
+                        model_ir=model_ir,
+                        requested_inputs=input_names_to_interrupt_model_conversion,
+                        requested_outputs=output_names_to_interrupt_model_conversion,
+                    )
+                except ValueError as ex:
+                    error(str(ex))
+                    sys.exit(1)
             if enable_auto_split_model:
                 schema_tflite = load_schema_module(tflite_direct_output_folder_path)
                 split_plan_report = plan_contiguous_partitions_by_size(
@@ -4865,7 +4884,7 @@ def convert(
                 return model_ret
 
     # Cut the ONNX graph when an input name is specified that interrupts the conversion
-    if not input_names_to_interrupt_model_conversion:
+    if tflite_backend == 'flatbuffer_direct' or not input_names_to_interrupt_model_conversion:
         input_names = [
             graph_input.name for graph_input in graph.inputs
         ]
@@ -4936,7 +4955,7 @@ def convert(
             onnx_graph.metadata_props.extend(metadata_props)
 
     # Cut the ONNX graph when an output name is specified that interrupts the conversion
-    if not output_names_to_interrupt_model_conversion:
+    if tflite_backend == 'flatbuffer_direct' or not output_names_to_interrupt_model_conversion:
         output_names = [
             graph_output.name for graph_output in graph.outputs
         ]
@@ -5197,6 +5216,8 @@ def convert(
                         onnx_graph=onnx_graph,
                         output_folder_path=export_output_folder_path,
                         output_file_name=output_file_name,
+                        input_names_to_interrupt_model_conversion=input_names_to_interrupt_model_conversion,
+                        output_names_to_interrupt_model_conversion=output_names_to_interrupt_model_conversion,
                         output_weights=output_weights,
                         quant_type=quant_type,
                         input_quant_dtype=input_quant_dtype,
@@ -5240,6 +5261,13 @@ def convert(
                     direct_error = None
                     break
                 except Exception as retry_ex:
+                    if (
+                        isinstance(retry_ex, ValueError)
+                        and str(retry_ex).startswith(
+                            'flatbuffer_direct ModelIR interrupt crop failed.'
+                        )
+                    ):
+                        raise
                     retry_ex_str = str(retry_ex)
                     retry_nms_argmax = (
                         'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
@@ -5487,6 +5515,11 @@ def convert(
                     saved_model_output_folder_path=flatbuffer_direct_saved_model_output_folder_path,
                     persist_saved_model_output=bool(flatbuffer_direct_output_saved_model),
                 )
+            except ValueError as ex:
+                if str(ex).startswith('flatbuffer_direct ModelIR interrupt crop failed.'):
+                    error(str(ex))
+                    sys.exit(1)
+                raise
             except NotImplementedError:
                 raise
             except Exception as ex:
@@ -8076,7 +8109,9 @@ def main():
         help=\
             'Input names that interrupt model conversion. \n' +
             'Interrupts model transformation at the specified input name \n' +
-            'and inputs the model partitioned into subgraphs. \n\n' +
+            'and inputs the model partitioned into subgraphs. \n' +
+            'With --tflite_backend flatbuffer_direct, this crops ModelIR \n' +
+            'and treats the specified tensors as runtime inputs. \n\n' +
             'e.g. \n' +
             '--input_names_to_interrupt_model_conversion "input0" "input1" "input2"'
     )
@@ -8088,7 +8123,9 @@ def main():
         help=\
             'Output names that interrupt model conversion. \n' +
             'Interrupts model transformation at the specified output name \n' +
-            'and outputs the model partitioned into subgraphs. \n\n' +
+            'and outputs the model partitioned into subgraphs. \n' +
+            'With --tflite_backend flatbuffer_direct, this crops ModelIR \n' +
+            'and treats the specified tensors as runtime outputs. \n\n' +
             'e.g. \n' +
             '--output_names_to_interrupt_model_conversion "output0" "output1" "output2"'
     )
