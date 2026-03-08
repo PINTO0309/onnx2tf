@@ -2243,7 +2243,7 @@ optional arguments:
     When specified, this value is also used as the target size for --enable_auto_split_model.
     Default: 1GB
 
-  --eval_split_models {unsplit_tflite,onnx}
+  -esm {unsplit_tflite,onnx}, --eval_split_models {unsplit_tflite,onnx}
     Evaluate split partitions sequentially using split manifest output.
     Specify `unsplit_tflite` to compare against the unsplit/base TFLite model,
     or `onnx` to compare against ONNX Runtime output.
@@ -2901,6 +2901,7 @@ convert(
       or "onnx" to compare against ONNX Runtime output.
       Available only with tflite_backend="flatbuffer_direct" and
       requires enable_auto_split_model=True.
+      Short option: -esm
       Writes `*_split_accuracy_report.json`.
       `*_accuracy_report.json` remains the unsplit base float32 TFLite vs ONNX report.
       Default: None

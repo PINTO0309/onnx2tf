@@ -7733,6 +7733,7 @@ def main():
             'Default: auto'
     )
     parser.add_argument(
+        '-esm',
         '--eval_split_models',
         type=str,
         choices=['unsplit_tflite', 'onnx'],
