@@ -43,6 +43,7 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
             inputs=list(op.inputs),
             outputs=list(op.outputs),
             options=dict(op.options),
+            axis_semantics=dict(op.axis_semantics),
             version=op.version,
         )
         for op in model_ir.operators
@@ -74,6 +75,7 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
                 if isinstance(tensor.quantization, QuantParamIR)
                 else tensor.quantization
             ),
+            logical_layout=tensor.logical_layout,
         )
     return clone
 

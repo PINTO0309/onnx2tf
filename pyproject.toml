@@ -47,6 +47,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+torch = [
+    "torch==2.9.0+cu128",
+]
 dev = [
     "onnx-graphsurgeon==0.5.8",
 ]
@@ -71,6 +74,16 @@ override-dependencies = [
 
 [tool.uv.build-backend]
 module-root = ""
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.pyright]
 exclude = [

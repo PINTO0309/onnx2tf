@@ -552,6 +552,7 @@ def import_model_ir_from_tflite(
     root_model_ir.description = _as_text(
         getattr(model_obj, "description", "")
     ) or "onnx2tf tflite direct import"
+    root_model_ir.metadata["onnx_public_layout_map"] = {}
 
     for subgraph_index in range(1, len(subgraphs)):
         child_ir = _import_subgraph(

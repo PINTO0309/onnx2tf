@@ -21,7 +21,9 @@ from onnx2tf.tflite_builder.ir import (
     OperatorIR,
     QuantParamIR,
     TensorIR,
+    infer_model_ir_logical_layouts,
     normalize_onnx_shape,
+    validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
@@ -70104,6 +70106,10 @@ def lower_onnx_to_ir(
             _optimize_consecutive_reshape_passthrough_chains(fallback_ir)
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
+        infer_model_ir_logical_layouts(fallback_ir)
+        fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
+        if len(fallback_layout_problems) > 0:
+            fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
             "count": int(len(unbound_inputs)),
@@ -70130,6 +70136,10 @@ def lower_onnx_to_ir(
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
     _topologically_sort_operators(model_ir)
+    infer_model_ir_logical_layouts(model_ir)
+    layout_problems = validate_model_ir_layout_annotations(model_ir)
+    if len(layout_problems) > 0:
+        model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_bar.close()

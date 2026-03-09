@@ -1239,6 +1239,7 @@ def convert(
     eval_split_fail_on_threshold: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
     flatbuffer_direct_output_saved_model: Optional[bool] = False,
+    flatbuffer_direct_output_pytorch: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
     flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
@@ -1432,6 +1433,15 @@ def convert(
         instead of a single root SavedModel.\n
         With `check_onnx_tf_outputs_elementwise_close_full=True`, onnx2tf writes
         `<model_name>_saved_model_validation_report.json`.
+
+    flatbuffer_direct_output_pytorch: Optional[bool]
+        Export a reloadable PyTorch package directly from flatbuffer_direct
+        ModelIR using channel-first execution.\n
+        Public spatial inputs/outputs use NCW/NCHW/NCDHW order.\n
+        When used together with split output, partition PyTorch packages are
+        emitted instead of a single root package.\n
+        Unsupported/CUSTOM ops or residual channel-last layout bridges are
+        rejected with an explicit error.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1947,6 +1957,9 @@ def convert(
     flatbuffer_direct_output_saved_model = bool(
         flatbuffer_direct_output_saved_model
     )
+    flatbuffer_direct_output_pytorch = bool(
+        flatbuffer_direct_output_pytorch
+    )
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
     replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
         replace_to_pseudo_operators
@@ -2068,6 +2081,11 @@ def convert(
     if flatbuffer_direct_output_saved_model and tflite_backend != 'flatbuffer_direct':
         error(
             'flatbuffer_direct_output_saved_model currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if flatbuffer_direct_output_pytorch and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_output_pytorch currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
     if flatbuffer_direct_output_saved_model and disable_model_save:
@@ -3875,6 +3893,8 @@ def convert(
             )
             tflite_direct_output_folder_path = tflite_direct_staging_dir.name
             runtime_output_folder_path = tflite_direct_output_folder_path
+            if flatbuffer_direct_output_pytorch:
+                os.makedirs(output_folder_path, exist_ok=True)
         else:
             os.makedirs(output_folder_path, exist_ok=True)
         try:
@@ -3888,6 +3908,9 @@ def convert(
             )
             from onnx2tf.tflite_builder.saved_model_exporter import (
                 export_saved_model_from_model_ir,
+            )
+            from onnx2tf.tflite_builder.pytorch_exporter import (
+                export_pytorch_package_from_model_ir,
             )
             from onnx2tf.tflite_builder.schema_loader import (
                 load_schema_module,
@@ -3903,6 +3926,9 @@ def convert(
             )
             from onnx2tf.tflite_builder.split_saved_model_exporter import (
                 export_split_saved_models,
+            )
+            from onnx2tf.tflite_builder.split_pytorch_exporter import (
+                export_split_pytorch_packages,
             )
             from onnx2tf.tflite_builder.tflite_importer import (
                 import_model_ir_from_tflite,
@@ -4034,6 +4060,19 @@ def convert(
                         reference_tflite_path=base_tflite_path,
                         source_label='tflite_direct_input',
                     )
+                if flatbuffer_direct_output_pytorch:
+                    split_pytorch_outputs = export_split_pytorch_packages(
+                        model_ir=model_ir,
+                        split_manifest_path=split_outputs['split_manifest_path'],
+                        output_folder_path=output_folder_path,
+                        output_file_name=output_file_name,
+                    )
+                    info(
+                        Color.GREEN(
+                            'Split PyTorch package output complete! '
+                            f'partitions={split_pytorch_outputs["split_pytorch_package_count"]}'
+                        )
+                    )
                 elif (not disable_model_save) or run_saved_model_inference_check:
                     model_ir_fp32 = clone_model_ir_with_float32(model_ir)
                     prune_identity_cast_operators(
@@ -4075,6 +4114,7 @@ def convert(
                 or run_saved_model_inference_check
             )
             saved_model_path = None
+            pytorch_package_path = None
             if should_export_tflite_direct_saved_model:
                 saved_model_output_folder_path = tflite_direct_output_folder_path
                 if not persist_tflite_direct_saved_model:
@@ -4109,13 +4149,21 @@ def convert(
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,
                 )
+            if flatbuffer_direct_output_pytorch:
+                pytorch_package_path = export_pytorch_package_from_model_ir(
+                    model_ir=model_ir,
+                    output_folder_path=os.path.join(
+                        output_folder_path,
+                        f'{output_file_name}_pytorch',
+                    ),
+                )
         except Exception as ex:
             if tflite_direct_bridge_saved_model_dir is not None:
                 tflite_direct_bridge_saved_model_dir.cleanup()
             if tflite_direct_staging_dir is not None:
                 tflite_direct_staging_dir.cleanup()
             raise RuntimeError(
-                'tflite direct input SavedModel export failed.'
+                'tflite direct input artifact export failed.'
             ) from ex
 
         try:
@@ -4135,6 +4183,8 @@ def convert(
                     float32_tflite_path=input_tflite_file_path,
                     source_label='tflite_direct_input',
                 )
+            if pytorch_package_path is not None:
+                info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
         finally:
             if tflite_direct_bridge_saved_model_dir is not None:
                 tflite_direct_bridge_saved_model_dir.cleanup()
@@ -4700,6 +4750,7 @@ def convert(
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'report_op_coverage': report_op_coverage,
                     'flatbuffer_direct_output_saved_model': flatbuffer_direct_output_saved_model,
+                    'flatbuffer_direct_output_pytorch': flatbuffer_direct_output_pytorch,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
                     'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
@@ -5131,12 +5182,18 @@ def convert(
     flatbuffer_direct_bridge_saved_model_dir = None
     flatbuffer_direct_output_folder_path = output_folder_path
     flatbuffer_direct_saved_model_output_folder_path = None
+    flatbuffer_direct_pytorch_output_folder_path = os.path.join(
+        output_folder_path,
+        f'{output_file_name}_pytorch',
+    )
     if tflite_backend == 'flatbuffer_direct':
         if disable_model_save:
             flatbuffer_direct_staging_dir = tempfile.TemporaryDirectory(
                 prefix='onnx2tf_flatbuffer_direct_',
             )
             flatbuffer_direct_output_folder_path = flatbuffer_direct_staging_dir.name
+            if flatbuffer_direct_output_pytorch:
+                os.makedirs(output_folder_path, exist_ok=True)
         else:
             os.makedirs(output_folder_path, exist_ok=True)
         runtime_output_folder_path = flatbuffer_direct_output_folder_path
@@ -5247,7 +5304,9 @@ def convert(
         *,
         export_output_folder_path: str,
         output_saved_model_from_model_ir: bool,
+        output_pytorch_from_model_ir: bool,
         saved_model_output_folder_path: Optional[str],
+        pytorch_output_folder_path: Optional[str],
         persist_saved_model_output: bool,
         custom_retry_context: str = '',
     ) -> Dict[str, Any]:
@@ -5280,7 +5339,9 @@ def convert(
                         force_split_manifest=force_split_manifest,
                         report_op_coverage=report_op_coverage,
                         output_saved_model_from_model_ir=output_saved_model_from_model_ir,
+                        output_pytorch_from_model_ir=output_pytorch_from_model_ir,
                         saved_model_output_folder_path=saved_model_output_folder_path,
+                        pytorch_output_folder_path=pytorch_output_folder_path,
                         persist_saved_model_output=persist_saved_model_output,
                         flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
@@ -5386,6 +5447,20 @@ def convert(
             info(
                 Color.GREEN(
                     f'{saved_model_message}({direct_outputs["saved_model_path"]})'
+                )
+            )
+        if 'pytorch_package_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'PyTorch package output complete! '
+                    f'({direct_outputs["pytorch_package_path"]})'
+                )
+            )
+        if 'split_pytorch_package_dirs' in direct_outputs:
+            info(
+                Color.GREEN(
+                    'Split PyTorch package output complete! '
+                    f'partitions={direct_outputs["split_pytorch_package_count"]}'
                 )
             )
         _log_flatbuffer_direct_split_outputs(
@@ -5575,7 +5650,11 @@ def convert(
                     output_saved_model_from_model_ir=bool(
                         flatbuffer_direct_output_saved_model or needs_saved_model_bridge
                     ),
+                    output_pytorch_from_model_ir=bool(
+                        flatbuffer_direct_output_pytorch
+                    ),
                     saved_model_output_folder_path=flatbuffer_direct_saved_model_output_folder_path,
+                    pytorch_output_folder_path=flatbuffer_direct_pytorch_output_folder_path,
                     persist_saved_model_output=bool(flatbuffer_direct_output_saved_model),
                 )
             except ValueError as ex:
@@ -6059,6 +6138,11 @@ def convert(
                                     force_split_manifest=force_split_manifest,
                                     report_op_coverage=report_op_coverage,
                                     output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
+                                    output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
+                                    pytorch_output_folder_path=os.path.join(
+                                        output_folder_path,
+                                        f'{output_file_name}_pytorch',
+                                    ),
                                     flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                     flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                     keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -6140,6 +6224,12 @@ def convert(
                             info(
                                 Color.GREEN(
                                     f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                                )
+                            )
+                        if 'pytorch_package_path' in direct_outputs:
+                            info(
+                                Color.GREEN(
+                                    f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
                                 )
                             )
                         direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
@@ -6510,6 +6600,11 @@ def convert(
                                 force_split_manifest=force_split_manifest,
                                 report_op_coverage=report_op_coverage,
                                 output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
+                                output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
+                                pytorch_output_folder_path=os.path.join(
+                                    output_folder_path,
+                                    f'{output_file_name}_pytorch',
+                                ),
                                 flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                 flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -6597,6 +6692,12 @@ def convert(
                     info(
                         Color.GREEN(
                             f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                        )
+                    )
+                if 'pytorch_package_path' in direct_outputs:
+                    info(
+                        Color.GREEN(
+                            f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
                         )
                     )
                 _log_flatbuffer_direct_split_outputs(
@@ -7885,6 +7986,14 @@ def main():
             'With split output, partition SavedModels are emitted instead of a single root SavedModel.'
     )
     parser.add_argument(
+        '-fdopt',
+        '--flatbuffer_direct_output_pytorch',
+        action='store_true',
+        help=\
+            'Output a reloadable PyTorch package directly from flatbuffer_direct ModelIR. \n' +
+            'Public spatial inputs/outputs use NCW/NCHW/NCDHW.'
+    )
+    parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
         action='store_true',
         help=\
@@ -8644,6 +8753,7 @@ def main():
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         report_op_coverage=args.report_op_coverage,
         flatbuffer_direct_output_saved_model=args.flatbuffer_direct_output_saved_model,
+        flatbuffer_direct_output_pytorch=args.flatbuffer_direct_output_pytorch,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,

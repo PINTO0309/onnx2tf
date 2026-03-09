@@ -266,6 +266,7 @@ Direct export can also generate TF-side artifacts without falling back to `tf_co
 - `--output_h5`
 - `--output_keras_v3`
 - `--output_tfv1_pb`
+- `--flatbuffer_direct_output_pytorch`
 
 These artifacts are generated from an internal SavedModel bridge built from float32 ModelIR.
 If direct export fails, conversion stops with an explicit error.
@@ -294,10 +295,12 @@ Invalid combinations are rejected explicitly:
 
 SavedModel direct export from `flatbuffer_direct` ModelIR is available with
 `--flatbuffer_direct_output_saved_model`.
-This option has strict constraints:
+PyTorch package direct export is available with
+`--flatbuffer_direct_output_pytorch`.
+These options have the following constraints:
 
-- `--tflite_backend flatbuffer_direct` is required
-- `--disable_model_save` cannot be combined
+- `--tflite_backend flatbuffer_direct` is required for both
+- `--flatbuffer_direct_output_saved_model` cannot be combined with `--disable_model_save`
 - `CUSTOM` ops are rejected with an explicit error
 
 |INT8 ONNX|INT8 TFLite(LiteRT)|
@@ -2078,6 +2081,11 @@ optional arguments:
     When used with -cotof, also outputs `<model_name>_saved_model_validation_report.json`
     in the output directory (inference status + SavedModel/TFLite comparison metrics).
 
+  -fdopt, --flatbuffer_direct_output_pytorch
+    Output a reloadable PyTorch package directly from flatbuffer_direct ModelIR.
+    Public spatial inputs/outputs use NCW/NCHW/NCDHW.
+    Unsupported/CUSTOM ops and residual channel-last layout bridges fail explicitly.
+
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
@@ -2620,6 +2628,7 @@ convert(
   copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
   output_integer_quantized_tflite: Optional[bool] = False,
   flatbuffer_direct_output_saved_model: Optional[bool] = False,
+  flatbuffer_direct_output_pytorch: Optional[bool] = False,
   tflite_backend: Optional[str] = 'tf_converter',
   quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
   quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -2785,6 +2794,12 @@ convert(
       instead of a single root SavedModel.
       When used with `check_onnx_tf_outputs_elementwise_close_full=True`,
       `<model_name>_saved_model_validation_report.json` is generated.
+
+    flatbuffer_direct_output_pytorch: Optional[bool]
+      Output a reloadable PyTorch package directly from flatbuffer_direct
+      ModelIR. Public spatial inputs/outputs use NCW/NCHW/NCDHW.
+      Unsupported/CUSTOM ops and residual channel-last layout bridges fail
+      explicitly.
 
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.

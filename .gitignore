@@ -22,6 +22,7 @@ saved_model/
 node_modules/
 tmp_*/
 tflite2sm_*/
+*pytorch_test*/
 
 .act.secrets
 .act.env
