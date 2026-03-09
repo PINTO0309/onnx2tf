@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
@@ -407,6 +408,59 @@ def build_multi_head_attention_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+
+def build_attention_op(node: Any, ctx: Any) -> None:
+    original_inputs = _get_original_node_inputs(node, ctx)
+    unsupported_optional_inputs = [
+        _input_name(original_inputs, idx)
+        for idx in range(3, len(original_inputs))
+        if _input_name(original_inputs, idx) != ""
+    ]
+    if len(unsupported_optional_inputs) > 0:
+        raise NotImplementedError(
+            "Attention builtin lowering currently supports 3-input form only "
+            "(query,key,value; no mask/cache inputs). "
+            f"op={node.name} unsupported_optional_inputs={unsupported_optional_inputs}"
+        )
+    if len(node.outputs) != 1:
+        raise NotImplementedError(
+            f"Attention builtin lowering currently supports 1 output only. op={node.name} outputs={len(node.outputs)}"
+        )
+
+    q_num_heads = int(node.attrs.get("q_num_heads", node.attrs.get("num_heads", 0)))
+    kv_num_heads = int(node.attrs.get("kv_num_heads", q_num_heads))
+    if q_num_heads <= 0 or kv_num_heads <= 0 or q_num_heads != kv_num_heads:
+        raise NotImplementedError(
+            "Attention builtin lowering requires q_num_heads and kv_num_heads to be equal positive integers. "
+            f"op={node.name} q_num_heads={q_num_heads} kv_num_heads={kv_num_heads}"
+        )
+    if int(node.attrs.get("is_causal", 0)) != 0:
+        raise NotImplementedError(
+            f"Attention builtin lowering currently supports is_causal=0 only. op={node.name}"
+        )
+    if int(node.attrs.get("qk_matmul_output_mode", 0)) != 0:
+        raise NotImplementedError(
+            "Attention builtin lowering currently supports qk_matmul_output_mode=0 only. "
+            f"op={node.name} qk_matmul_output_mode={int(node.attrs.get('qk_matmul_output_mode', 0))}"
+        )
+    softcap = float(node.attrs.get("softcap", 0.0))
+    if not np.isfinite(softcap) or abs(softcap) > 1e-12:
+        raise NotImplementedError(
+            f"Attention builtin lowering currently supports softcap=0 only. op={node.name} softcap={softcap}"
+        )
+
+    proxy_attrs = dict(node.attrs)
+    proxy_attrs["num_heads"] = int(q_num_heads)
+    proxy_attrs["unidirectional"] = 0
+    proxy_node = SimpleNamespace(
+        name=str(node.name),
+        op="MultiHeadAttention",
+        attrs=proxy_attrs,
+        inputs=node.inputs,
+        outputs=node.outputs,
+    )
+    build_multi_head_attention_op(proxy_node, ctx)
 
 
 def build_lstm_op(node: Any, ctx: Any) -> None:

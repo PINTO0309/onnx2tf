@@ -63,6 +63,300 @@ def _reduced_shape_for_axes(
     return reduced_shape
 
 
+def _reshape_with_preserve_dynamic_shape(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    new_shape: list[int],
+) -> None:
+    shape_name = ctx.add_const_tensor(
+        f"{output_name}_reshape_shape",
+        np.asarray([int(v) for v in list(new_shape)], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, shape_name],
+            outputs=[output_name],
+            options={
+                "newShape": [int(v) for v in list(new_shape)],
+                "preserveDynamicShape": True,
+            },
+        )
+    )
+
+
+def build_group_normalization_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    scale_name = node.inputs[1].name
+    bias_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+
+    groups = int(node.attrs.get("num_groups", 1))
+    epsilon = float(node.attrs.get("epsilon", 1e-5))
+    stash_type = int(node.attrs.get("stash_type", 1))
+    channels = int(input_signature[1]) if len(input_signature) > 1 and int(input_signature[1]) > 0 else int(input_shape[1])
+    group_size = int(channels // groups)
+
+    compute_dtype = "FLOAT32" if int(stash_type) == 1 else str(output_dtype).upper()
+    compute_input_name = input_name
+    if input_dtype != compute_dtype:
+        compute_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_group_norm_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[compute_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    grouped_signature = [int(input_signature[0]), int(groups), int(group_size)] + [int(v) for v in input_signature[2:]]
+    grouped_shape = [int(input_shape[0]), int(groups), int(group_size)] + [int(v) for v in input_shape[2:]]
+    grouped_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_grouped",
+        dtype=compute_dtype,
+        shape=grouped_shape,
+    )
+    grouped_tensor = ctx.model_ir.tensors.get(grouped_name, None)
+    if grouped_tensor is not None:
+        grouped_tensor.shape_signature = [int(v) for v in grouped_signature]
+    _reshape_with_preserve_dynamic_shape(
+        ctx=ctx,
+        input_name=compute_input_name,
+        output_name=grouped_name,
+        new_shape=grouped_signature,
+    )
+
+    reduce_axes = list(range(2, len(grouped_signature)))
+    reduce_axes_name = ctx.add_const_tensor(
+        f"{node.name}_group_norm_reduce_axes",
+        np.asarray(reduce_axes, dtype=np.int32),
+    )
+    reduced_signature = [int(grouped_signature[0]), int(groups)] + [1] * int(len(grouped_signature) - 2)
+    reduced_shape = [int(grouped_shape[0]), int(groups)] + [1] * int(len(grouped_shape) - 2)
+
+    mean_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_mean",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    mean_tensor = ctx.model_ir.tensors.get(mean_name, None)
+    if mean_tensor is not None:
+        mean_tensor.shape_signature = [int(v) for v in reduced_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[grouped_name, reduce_axes_name],
+            outputs=[mean_name],
+            options={"keepDims": True},
+        )
+    )
+
+    centered_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_centered",
+        dtype=compute_dtype,
+        shape=grouped_shape,
+    )
+    centered_tensor = ctx.model_ir.tensors.get(centered_name, None)
+    if centered_tensor is not None:
+        centered_tensor.shape_signature = [int(v) for v in grouped_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[grouped_name, mean_name],
+            outputs=[centered_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    squared_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_squared",
+        dtype=compute_dtype,
+        shape=grouped_shape,
+    )
+    squared_tensor = ctx.model_ir.tensors.get(squared_name, None)
+    if squared_tensor is not None:
+        squared_tensor.shape_signature = [int(v) for v in grouped_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[centered_name, centered_name],
+            outputs=[squared_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    variance_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_variance",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    variance_tensor = ctx.model_ir.tensors.get(variance_name, None)
+    if variance_tensor is not None:
+        variance_tensor.shape_signature = [int(v) for v in reduced_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MEAN",
+            inputs=[squared_name, reduce_axes_name],
+            outputs=[variance_name],
+            options={"keepDims": True},
+        )
+    )
+
+    epsilon_name = ctx.add_const_tensor(
+        f"{node.name}_group_norm_epsilon",
+        np.asarray(epsilon, dtype=_float_numpy_dtype(compute_dtype)),
+    )
+    variance_eps_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_variance_eps",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    variance_eps_tensor = ctx.model_ir.tensors.get(variance_eps_name, None)
+    if variance_eps_tensor is not None:
+        variance_eps_tensor.shape_signature = [int(v) for v in reduced_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[variance_name, epsilon_name],
+            outputs=[variance_eps_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    std_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_std",
+        dtype=compute_dtype,
+        shape=reduced_shape,
+    )
+    std_tensor = ctx.model_ir.tensors.get(std_name, None)
+    if std_tensor is not None:
+        std_tensor.shape_signature = [int(v) for v in reduced_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SQRT",
+            inputs=[variance_eps_name],
+            outputs=[std_name],
+        )
+    )
+
+    normalized_grouped_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_normalized_grouped",
+        dtype=compute_dtype,
+        shape=grouped_shape,
+    )
+    normalized_grouped_tensor = ctx.model_ir.tensors.get(normalized_grouped_name, None)
+    if normalized_grouped_tensor is not None:
+        normalized_grouped_tensor.shape_signature = [int(v) for v in grouped_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[centered_name, std_name],
+            outputs=[normalized_grouped_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    normalized_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_normalized",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    normalized_tensor = ctx.model_ir.tensors.get(normalized_name, None)
+    if normalized_tensor is not None:
+        normalized_tensor.shape_signature = [int(v) for v in input_signature]
+    _reshape_with_preserve_dynamic_shape(
+        ctx=ctx,
+        input_name=normalized_grouped_name,
+        output_name=normalized_name,
+        new_shape=input_signature,
+    )
+
+    scale = np.asarray(ctx.get_constant_array(scale_name), dtype=_float_numpy_dtype(output_dtype)).reshape([1, int(channels)] + [1] * int(len(input_shape) - 2))
+    bias = np.asarray(ctx.get_constant_array(bias_name), dtype=_float_numpy_dtype(output_dtype)).reshape([1, int(channels)] + [1] * int(len(input_shape) - 2))
+    scale_const_name = ctx.add_const_tensor(
+        f"{node.name}_group_norm_scale",
+        scale,
+    )
+    bias_const_name = ctx.add_const_tensor(
+        f"{node.name}_group_norm_bias",
+        bias,
+    )
+
+    affine_input_name = normalized_name
+    if compute_dtype != output_dtype:
+        affine_input_name = ctx.add_intermediate_tensor(
+            f"{node.name}_group_norm_affine_input_cast",
+            dtype=output_dtype,
+            shape=input_shape,
+        )
+        affine_tensor = ctx.model_ir.tensors.get(affine_input_name, None)
+        if affine_tensor is not None:
+            affine_tensor.shape_signature = [int(v) for v in input_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[normalized_name],
+                outputs=[affine_input_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+    scaled_name = ctx.add_intermediate_tensor(
+        f"{node.name}_group_norm_scaled",
+        dtype=output_dtype,
+        shape=input_shape,
+    )
+    scaled_tensor = ctx.model_ir.tensors.get(scaled_name, None)
+    if scaled_tensor is not None:
+        scaled_tensor.shape_signature = [int(v) for v in input_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[affine_input_name, scale_const_name],
+            outputs=[scaled_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[scaled_name, bias_const_name],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) for v in input_shape]
+        output_tensor.shape_signature = [int(v) for v in input_signature]
+
+
 def build_l2_normalization_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name

@@ -3466,3 +3466,768 @@ def build_fused_conv_op(node: Any, ctx: Any) -> None:
         activation=activation,
         activation_params=activation_params,
     )
+
+
+def build_deform_conv_op(node: Any, ctx: Any) -> None:
+    input_name = str(node.inputs[0].name)
+    weight_name = str(node.inputs[1].name)
+    offset_name = str(node.inputs[2].name)
+    bias_name = str(node.inputs[3].name) if len(node.inputs) >= 4 and str(node.inputs[3].name) != "" else ""
+    mask_name = str(node.inputs[4].name) if len(node.inputs) >= 5 and str(node.inputs[4].name) != "" else ""
+    output_name = str(node.outputs[0].name)
+    for tensor_name in [input_name, weight_name, offset_name, output_name]:
+        ctx.ensure_tensor(tensor_name)
+    if bias_name != "":
+        ctx.ensure_tensor(bias_name)
+    if mask_name != "":
+        ctx.ensure_tensor(mask_name)
+
+    input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
+    offset_shape = [int(v) for v in list(ctx.get_tensor_shape(offset_name))]
+    output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) == 4
+        else [int(v) for v in list(output_shape)]
+    )
+
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        raise NotImplementedError(
+            f"DeformConv weights must be constant for flatbuffer_direct. op={node.name}"
+        )
+    weights = np.asarray(weights)
+    if weights.ndim != 4:
+        raise NotImplementedError(
+            f"DeformConv weight rank must be 4 for flatbuffer_direct. op={node.name} weight_shape={list(weights.shape)}"
+        )
+
+    group = int(node.attrs.get("group", 1))
+    offset_group = int(node.attrs.get("offset_group", 1))
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+    kernel_shape_attr = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    kh = int(kernel_shape_attr[0]) if len(kernel_shape_attr) >= 1 else int(weights.shape[2])
+    kw = int(kernel_shape_attr[1]) if len(kernel_shape_attr) >= 2 else int(weights.shape[3])
+
+    batch_meta = int(output_signature[0]) if len(output_signature) == 4 else int(output_shape[0])
+    if int(batch_meta) == 0:
+        batch_meta = -1
+    in_channels = int(input_shape[1])
+    in_h = int(input_shape[2])
+    in_w = int(input_shape[3])
+    out_channels = int(output_shape[1])
+    out_h = int(output_shape[2])
+    out_w = int(output_shape[3])
+    padded_h = int(in_h + pads[0] + pads[2])
+    padded_w = int(in_w + pads[1] + pads[3])
+    kernel_point_count = int(kh * kw)
+    if int(group) != 1 or int(offset_group) != 1:
+        raise NotImplementedError(
+            "DeformConv builtin lowering is limited to group=1 and offset_group=1. "
+            f"op={node.name} group={group} offset_group={offset_group}"
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    offset_dtype = str(ctx.get_tensor_dtype(offset_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    mask_dtype = str(ctx.get_tensor_dtype(mask_name)).upper() if mask_name != "" else input_dtype
+    compute_dtype = "FLOAT32" if "FLOAT32" in {input_dtype, offset_dtype, output_dtype, mask_dtype} else "FLOAT16"
+    compute_np_dtype = np.float32 if compute_dtype == "FLOAT32" else np.float16
+
+    def _set_signature(tensor_name: str, signature: list[int], shape: list[int] | None = None) -> None:
+        tensor = ctx.model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            return
+        tensor.shape_signature = [int(v) for v in list(signature)]
+        source_shape = list(shape) if shape is not None else list(signature)
+        tensor.shape = [int(v) if int(v) > 0 else 1 for v in source_shape]
+
+    def _add_const(name: str, value: Any, dtype: np.dtype | None = None) -> str:
+        arr = np.asarray(value, dtype=dtype)
+        return ctx.add_const_tensor(name, arr)
+
+    def _add_cast(src_name: str, dst_name: str, src_dtype: str, dst_dtype: str, signature: list[int]) -> str:
+        cast_name = ctx.add_intermediate_tensor(
+            dst_name,
+            dtype=dst_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in list(signature)],
+        )
+        _set_signature(cast_name, signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[src_name],
+                outputs=[cast_name],
+                options={
+                    "inDataType": str(src_dtype).upper(),
+                    "outDataType": str(dst_dtype).upper(),
+                },
+            )
+        )
+        return str(cast_name)
+
+    def _add_elementwise(
+        op_type: str,
+        lhs_name: str,
+        rhs_name: str,
+        out_name: str,
+        signature: list[int],
+        dtype: str,
+    ) -> str:
+        dst_name = ctx.add_intermediate_tensor(
+            out_name,
+            dtype=dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in list(signature)],
+        )
+        _set_signature(dst_name, signature)
+        options: dict[str, Any] = {}
+        if op_type in {"ADD", "SUB", "MUL", "DIV"}:
+            options["fusedActivationFunction"] = "NONE"
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[lhs_name, rhs_name],
+                outputs=[dst_name],
+                options=options,
+            )
+        )
+        return str(dst_name)
+
+    def _add_compare(
+        op_type: str,
+        lhs_name: str,
+        rhs_name: str,
+        out_name: str,
+        signature: list[int],
+    ) -> str:
+        dst_name = ctx.add_intermediate_tensor(
+            out_name,
+            dtype="BOOL",
+            shape=[int(v) if int(v) > 0 else 1 for v in list(signature)],
+        )
+        _set_signature(dst_name, signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[lhs_name, rhs_name],
+                outputs=[dst_name],
+            )
+        )
+        return str(dst_name)
+
+    def _add_shape_vector(
+        *,
+        output_basename: str,
+        dims: list[int],
+    ) -> str:
+        return _add_const(
+            f"{output_basename}_shape",
+            np.asarray([int(v) for v in list(dims)], dtype=np.int32),
+            dtype=np.int32,
+        )
+
+    def _add_reshape(
+        *,
+        input_tensor_name: str,
+        output_basename: str,
+        signature: list[int],
+        shape: list[int] | None = None,
+    ) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            output_basename,
+            dtype=ctx.get_tensor_dtype(input_tensor_name),
+            shape=[int(v) if int(v) > 0 else 1 for v in (list(shape) if shape is not None else list(signature))],
+        )
+        _set_signature(out_name, signature, shape)
+        shape_name = _add_shape_vector(output_basename=output_basename, dims=signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_tensor_name, shape_name],
+                outputs=[out_name],
+                options={
+                    "newShape": [int(v) for v in list(signature)],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+        return str(out_name)
+
+    def _add_shape(input_tensor_name: str, output_basename: str, rank: int) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            output_basename,
+            dtype="INT32",
+            shape=[int(rank)],
+        )
+        _set_signature(out_name, [int(rank)])
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[input_tensor_name],
+                outputs=[out_name],
+                options={"outType": "INT32"},
+            )
+        )
+        return str(out_name)
+
+    def _add_range(start_name: str, limit_name: str, delta_name: str, output_basename: str, signature: list[int]) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            output_basename,
+            dtype="INT32",
+            shape=[int(v) if int(v) > 0 else 1 for v in list(signature)],
+        )
+        _set_signature(out_name, signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RANGE",
+                inputs=[start_name, limit_name, delta_name],
+                outputs=[out_name],
+            )
+        )
+        return str(out_name)
+
+    def _add_squeeze(input_tensor_name: str, output_basename: str, signature: list[int], squeeze_dims: list[int]) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            output_basename,
+            dtype=ctx.get_tensor_dtype(input_tensor_name),
+            shape=[int(v) if int(v) > 0 else 1 for v in list(signature)],
+        )
+        _set_signature(out_name, signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[input_tensor_name],
+                outputs=[out_name],
+                options={"squeezeDims": [int(v) for v in list(squeeze_dims)]},
+            )
+        )
+        return str(out_name)
+
+    def _add_scalar_const(name: str, value: int) -> str:
+        scalar_name = _add_const(name, np.asarray(int(value), dtype=np.int32), dtype=np.int32)
+        scalar_tensor = ctx.model_ir.tensors.get(str(scalar_name), None)
+        if scalar_tensor is not None:
+            scalar_tensor.shape = []
+            scalar_tensor.shape_signature = []
+        return str(scalar_name)
+
+    def _add_gather(
+        *,
+        params_name: str,
+        indices_name: str,
+        output_basename: str,
+        signature: list[int],
+        dtype: str,
+        axis: int,
+        batch_dims: int = 0,
+        shape: list[int] | None = None,
+    ) -> str:
+        out_name = ctx.add_intermediate_tensor(
+            output_basename,
+            dtype=dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in (list(shape) if shape is not None else list(signature))],
+        )
+        _set_signature(out_name, signature)
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[params_name, indices_name],
+                outputs=[out_name],
+                options={
+                    "axis": int(axis),
+                    "batchDims": int(batch_dims),
+                },
+            )
+        )
+        return str(out_name)
+
+    compute_input_name = input_name
+    if input_dtype != compute_dtype:
+        compute_input_name = _add_cast(
+            input_name,
+            f"{node.name}_input_{compute_dtype.lower()}",
+            input_dtype,
+            compute_dtype,
+            [int(v) for v in list(input_signature)],
+        )
+    compute_offset_name = offset_name
+    if offset_dtype != compute_dtype:
+        compute_offset_name = _add_cast(
+            offset_name,
+            f"{node.name}_offset_{compute_dtype.lower()}",
+            offset_dtype,
+            compute_dtype,
+            [int(v) for v in list(offset_shape)],
+        )
+
+    compute_mask_name = mask_name
+    if mask_name != "" and mask_dtype != compute_dtype:
+        mask_shape = [int(v) for v in list(ctx.get_tensor_shape(mask_name))]
+        compute_mask_name = _add_cast(
+            mask_name,
+            f"{node.name}_mask_{compute_dtype.lower()}",
+            mask_dtype,
+            compute_dtype,
+            [int(v) for v in list(mask_shape)],
+        )
+
+    nhwc_input_shape = [int(batch_meta), int(in_h), int(in_w), int(in_channels)]
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=compute_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in list(nhwc_input_shape)],
+    )
+    _set_signature(
+        x_nhwc,
+        [
+            int(input_signature[0]),
+            int(input_signature[2]),
+            int(input_signature[3]),
+            int(input_signature[1]),
+        ],
+    )
+    x_nhwc = make_transpose(
+        ctx,
+        compute_input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    x_nhwc_conv = str(x_nhwc)
+    if any(int(v) != 0 for v in list(pads)):
+        x_nhwc_padded = ctx.add_intermediate_tensor(
+            f"{node.name}_input_nhwc_padded",
+            dtype=compute_dtype,
+            shape=[int(batch_meta), int(padded_h), int(padded_w), int(in_channels)],
+        )
+        padded_sig = [
+            int(input_signature[0]),
+            int(in_h + pads[0] + pads[2]),
+            int(in_w + pads[1] + pads[3]),
+            int(in_channels),
+        ]
+        _set_signature(x_nhwc_padded, padded_sig)
+        pads_name = _add_const(
+            f"{node.name}_pads_nhwc",
+            [
+                [0, 0],
+                [int(pads[0]), int(pads[2])],
+                [int(pads[1]), int(pads[3])],
+                [0, 0],
+            ],
+            dtype=np.int32,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="PAD",
+                inputs=[x_nhwc_conv, pads_name],
+                outputs=[x_nhwc_padded],
+            )
+        )
+        x_nhwc_conv = str(x_nhwc_padded)
+
+    offset_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_offset_nhwc",
+        dtype=compute_dtype,
+        shape=[int(batch_meta), int(out_h), int(out_w), int(2 * offset_group * kh * kw)],
+    )
+    _set_signature(offset_nhwc, [int(batch_meta), int(out_h), int(out_w), int(2 * offset_group * kh * kw)])
+    offset_nhwc = make_transpose(
+        ctx,
+        compute_offset_name,
+        offset_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    mask_nhwc = ""
+    if compute_mask_name != "":
+        mask_nhwc = ctx.add_intermediate_tensor(
+            f"{node.name}_mask_nhwc",
+            dtype=compute_dtype,
+            shape=[int(batch_meta), int(out_h), int(out_w), int(offset_group * kh * kw)],
+        )
+        _set_signature(mask_nhwc, [int(batch_meta), int(out_h), int(out_w), int(offset_group * kh * kw)])
+        mask_nhwc = make_transpose(
+            ctx,
+            compute_mask_name,
+            mask_nhwc,
+            [0, 2, 3, 1],
+            allow_elide_inverse_chain=True,
+        )
+
+    offset_for_coords = _add_reshape(
+        input_tensor_name=str(offset_nhwc),
+        output_basename=f"{node.name}_offset_for_coords",
+        signature=[-1, int(out_h), int(out_w), int(kernel_point_count), 2],
+        shape=[int(batch_meta) if int(batch_meta) > 0 else 1, int(out_h), int(out_w), int(kernel_point_count), 2],
+    )
+
+    oy = np.arange(int(out_h), dtype=compute_np_dtype).reshape(int(out_h), 1, 1, 1) * np.asarray(int(strides[0]), dtype=compute_np_dtype)
+    ox = np.arange(int(out_w), dtype=compute_np_dtype).reshape(1, int(out_w), 1, 1) * np.asarray(int(strides[1]), dtype=compute_np_dtype)
+    ky = np.arange(int(kh), dtype=compute_np_dtype).reshape(1, 1, int(kh), 1) * np.asarray(int(dilations[0]), dtype=compute_np_dtype)
+    kx = np.arange(int(kw), dtype=compute_np_dtype).reshape(1, 1, 1, int(kw)) * np.asarray(int(dilations[1]), dtype=compute_np_dtype)
+    base_y = np.broadcast_to(oy + ky, (int(out_h), int(out_w), int(kh), int(kw)))
+    base_x = np.broadcast_to(ox + kx, (int(out_h), int(out_w), int(kh), int(kw)))
+    base_grid = np.stack([base_y, base_x], axis=-1).reshape(1, int(out_h), int(out_w), int(kernel_point_count), 2)
+    base_grid_name = _add_const(
+        f"{node.name}_base_grid",
+        base_grid.astype(compute_np_dtype),
+        dtype=compute_np_dtype,
+    )
+    coords = _add_elementwise(
+        "ADD",
+        base_grid_name,
+        offset_for_coords,
+        f"{node.name}_coords",
+        [-1, int(out_h), int(out_w), int(kernel_point_count), 2],
+        compute_dtype,
+    )
+
+    def _coord_component(index: int, tag: str) -> str:
+        index_name = _add_const(
+            f"{node.name}_{tag}_coord_index",
+            np.asarray([int(index)], dtype=np.int32),
+            dtype=np.int32,
+        )
+        gathered = _add_gather(
+            params_name=coords,
+            indices_name=index_name,
+            output_basename=f"{node.name}_{tag}_coord_gather",
+            signature=[-1, int(out_h), int(out_w), int(kernel_point_count), 1],
+            dtype=compute_dtype,
+            axis=4,
+            batch_dims=0,
+        )
+        return _add_reshape(
+            input_tensor_name=gathered,
+            output_basename=f"{node.name}_{tag}_coord",
+            signature=[-1, int(out_h), int(out_w), int(kernel_point_count)],
+        )
+
+    y = _coord_component(0, "y")
+    x = _coord_component(1, "x")
+    y0 = ctx.add_intermediate_tensor(f"{node.name}_y0", dtype=compute_dtype, shape=[1, int(out_h), int(out_w), int(kernel_point_count)])
+    _set_signature(y0, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    ctx.add_operator(OperatorIR(op_type="FLOOR", inputs=[y], outputs=[y0]))
+    x0 = ctx.add_intermediate_tensor(f"{node.name}_x0", dtype=compute_dtype, shape=[1, int(out_h), int(out_w), int(kernel_point_count)])
+    _set_signature(x0, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    ctx.add_operator(OperatorIR(op_type="FLOOR", inputs=[x], outputs=[x0]))
+
+    one_name = _add_const(f"{node.name}_one", np.asarray(1.0, dtype=compute_np_dtype), dtype=compute_np_dtype)
+    zero_name = _add_const(f"{node.name}_zero", np.asarray(0.0, dtype=compute_np_dtype), dtype=compute_np_dtype)
+    max_y_name = _add_const(f"{node.name}_max_y", np.asarray(float(padded_h - 1), dtype=compute_np_dtype), dtype=compute_np_dtype)
+    max_x_name = _add_const(f"{node.name}_max_x", np.asarray(float(padded_w - 1), dtype=compute_np_dtype), dtype=compute_np_dtype)
+    width_name = _add_const(f"{node.name}_width", np.asarray(int(padded_w), dtype=np.int32), dtype=np.int32)
+
+    y1 = _add_elementwise("ADD", y0, one_name, f"{node.name}_y1", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    x1 = _add_elementwise("ADD", x0, one_name, f"{node.name}_x1", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    dy = _add_elementwise("SUB", y, y0, f"{node.name}_dy", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    dx = _add_elementwise("SUB", x, x0, f"{node.name}_dx", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    one_minus_dy = _add_elementwise("SUB", one_name, dy, f"{node.name}_one_minus_dy", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    one_minus_dx = _add_elementwise("SUB", one_name, dx, f"{node.name}_one_minus_dx", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    w00 = _add_elementwise("MUL", one_minus_dy, one_minus_dx, f"{node.name}_w00", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    w10 = _add_elementwise("MUL", dy, one_minus_dx, f"{node.name}_w10", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    w11 = _add_elementwise("MUL", dy, dx, f"{node.name}_w11", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+    w01 = _add_elementwise("MUL", one_minus_dy, dx, f"{node.name}_w01", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+
+    def _in_bounds(coord_y: str, coord_x: str, tag: str) -> str:
+        ge_y = _add_compare("GREATER_EQUAL", coord_y, zero_name, f"{node.name}_{tag}_ge_y", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        le_y = _add_compare("LESS_EQUAL", coord_y, max_y_name, f"{node.name}_{tag}_le_y", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        ge_x = _add_compare("GREATER_EQUAL", coord_x, zero_name, f"{node.name}_{tag}_ge_x", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        le_x = _add_compare("LESS_EQUAL", coord_x, max_x_name, f"{node.name}_{tag}_le_x", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        and_y = _add_compare("LOGICAL_AND", ge_y, le_y, f"{node.name}_{tag}_and_y", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        and_x = _add_compare("LOGICAL_AND", ge_x, le_x, f"{node.name}_{tag}_and_x", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+        return _add_compare("LOGICAL_AND", and_y, and_x, f"{node.name}_{tag}_in_bounds", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+
+    m00 = _in_bounds(y0, x0, "m00")
+    m10 = _in_bounds(y1, x0, "m10")
+    m11 = _in_bounds(y1, x1, "m11")
+    m01 = _in_bounds(y0, x1, "m01")
+
+    def _clip_and_cast(coord_name: str, max_name: str, tag: str) -> str:
+        clipped_min = _add_elementwise("MAXIMUM", coord_name, zero_name, f"{node.name}_{tag}_clip_min", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+        clipped = _add_elementwise("MINIMUM", clipped_min, max_name, f"{node.name}_{tag}_clip", [-1, int(out_h), int(out_w), int(kernel_point_count)], compute_dtype)
+        return _add_cast(clipped, f"{node.name}_{tag}_i32", compute_dtype, "INT32", [-1, int(out_h), int(out_w), int(kernel_point_count)])
+
+    y0i = _clip_and_cast(y0, max_y_name, "y0")
+    x0i = _clip_and_cast(x0, max_x_name, "x0")
+    y1i = _clip_and_cast(y1, max_y_name, "y1")
+    x1i = _clip_and_cast(x1, max_x_name, "x1")
+    input_linear_rows = int(batch_meta * padded_h * padded_w) if int(batch_meta) > 0 else -1
+    sample_point_count = int(batch_meta * out_h * out_w * kernel_point_count) if int(batch_meta) > 0 else -1
+    output_point_count = int(batch_meta * out_h * out_w) if int(batch_meta) > 0 else -1
+
+    x_flat = _add_reshape(
+        input_tensor_name=x_nhwc_conv,
+        output_basename=f"{node.name}_input_flat",
+        signature=[-1, int(padded_h * padded_w), int(in_channels)],
+        shape=[int(batch_meta) if int(batch_meta) > 0 else 1, int(padded_h * padded_w), int(in_channels)],
+    )
+    x_params_linear = _add_reshape(
+        input_tensor_name=x_flat,
+        output_basename=f"{node.name}_input_linear",
+        signature=[-1, int(in_channels)],
+        shape=[int(input_linear_rows) if int(input_linear_rows) > 0 else 1, int(in_channels)],
+    )
+
+    input_shape_runtime = _add_shape(x_flat, f"{node.name}_input_flat_shape", 3)
+    batch_index_name = _add_const(
+        f"{node.name}_batch_dim_index",
+        np.asarray([0], dtype=np.int32),
+        dtype=np.int32,
+    )
+    batch_dim_vec = _add_gather(
+        params_name=input_shape_runtime,
+        indices_name=batch_index_name,
+        output_basename=f"{node.name}_batch_dim_vec",
+        signature=[1],
+        dtype="INT32",
+        axis=0,
+        batch_dims=0,
+    )
+    batch_dim_scalar = _add_squeeze(
+        batch_dim_vec,
+        f"{node.name}_batch_dim_scalar",
+        [],
+        [0],
+    )
+    range_start_name = _add_scalar_const(f"{node.name}_range_start", 0)
+    range_delta_name = _add_scalar_const(f"{node.name}_range_delta", 1)
+    batch_ids = _add_range(
+        range_start_name,
+        batch_dim_scalar,
+        range_delta_name,
+        f"{node.name}_batch_ids",
+        [int(batch_meta)],
+    )
+    batch_ids_base = _add_reshape(
+        input_tensor_name=batch_ids,
+        output_basename=f"{node.name}_batch_ids_base",
+        signature=[-1, 1, 1, 1],
+    )
+    padded_area_name = _add_scalar_const(f"{node.name}_padded_area", int(padded_h * padded_w))
+    batch_offsets = _add_elementwise(
+        "MUL",
+        batch_ids_base,
+        padded_area_name,
+        f"{node.name}_batch_offsets",
+        [-1, 1, 1, 1],
+        "INT32",
+    )
+
+    def _linear_index(y_idx: str, x_idx: str, tag: str) -> str:
+        mul_name = _add_elementwise("MUL", y_idx, width_name, f"{node.name}_{tag}_mul", [-1, int(out_h), int(out_w), int(kernel_point_count)], "INT32")
+        return _add_elementwise("ADD", mul_name, x_idx, f"{node.name}_{tag}_linear", [-1, int(out_h), int(out_w), int(kernel_point_count)], "INT32")
+
+    linear00 = _linear_index(y0i, x0i, "linear00")
+    linear10 = _linear_index(y1i, x0i, "linear10")
+    linear11 = _linear_index(y1i, x1i, "linear11")
+    linear01 = _linear_index(y0i, x1i, "linear01")
+
+    def _gather_neighbors(linear_name: str, tag: str) -> str:
+        global_idx = _add_elementwise(
+            "ADD",
+            linear_name,
+            batch_offsets,
+            f"{node.name}_{tag}_global_idx",
+            [-1, int(out_h), int(out_w), int(kernel_point_count)],
+            "INT32",
+        )
+        global_idx_flat = _add_reshape(
+            input_tensor_name=global_idx,
+            output_basename=f"{node.name}_{tag}_global_idx_flat",
+            signature=[-1],
+            shape=[int(sample_point_count) if int(sample_point_count) > 0 else 1],
+        )
+        gathered_flat = _add_gather(
+            params_name=x_params_linear,
+            indices_name=global_idx_flat,
+            output_basename=f"{node.name}_{tag}_gather_flat",
+            signature=[-1, int(in_channels)],
+            dtype=compute_dtype,
+            axis=0,
+            batch_dims=0,
+            shape=[int(sample_point_count) if int(sample_point_count) > 0 else 1, int(in_channels)],
+        )
+        return _add_reshape(
+            input_tensor_name=gathered_flat,
+            output_basename=f"{node.name}_{tag}_gather",
+            signature=[-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)],
+            shape=[
+                int(batch_meta) if int(batch_meta) > 0 else 1,
+                int(out_h),
+                int(out_w),
+                int(kernel_point_count),
+                int(in_channels),
+            ],
+        )
+
+    v00 = _gather_neighbors(linear00, "v00")
+    v10 = _gather_neighbors(linear10, "v10")
+    v11 = _gather_neighbors(linear11, "v11")
+    v01 = _gather_neighbors(linear01, "v01")
+
+    def _expand_last(name: str, tag: str) -> str:
+        return _add_reshape(
+            input_tensor_name=name,
+            output_basename=f"{node.name}_{tag}_expanded",
+            signature=[-1, int(out_h), int(out_w), int(kernel_point_count), 1],
+        )
+
+    w00e = _expand_last(w00, "w00")
+    w10e = _expand_last(w10, "w10")
+    w11e = _expand_last(w11, "w11")
+    w01e = _expand_last(w01, "w01")
+    m00f = _add_cast(m00, f"{node.name}_m00_f", "BOOL", compute_dtype, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    m10f = _add_cast(m10, f"{node.name}_m10_f", "BOOL", compute_dtype, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    m11f = _add_cast(m11, f"{node.name}_m11_f", "BOOL", compute_dtype, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    m01f = _add_cast(m01, f"{node.name}_m01_f", "BOOL", compute_dtype, [-1, int(out_h), int(out_w), int(kernel_point_count)])
+    m00e = _expand_last(m00f, "m00")
+    m10e = _expand_last(m10f, "m10")
+    m11e = _expand_last(m11f, "m11")
+    m01e = _expand_last(m01f, "m01")
+    vw00 = _add_elementwise("MUL", v00, w00e, f"{node.name}_vw00", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw10 = _add_elementwise("MUL", v10, w10e, f"{node.name}_vw10", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw11 = _add_elementwise("MUL", v11, w11e, f"{node.name}_vw11", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw01 = _add_elementwise("MUL", v01, w01e, f"{node.name}_vw01", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw00 = _add_elementwise("MUL", vw00, m00e, f"{node.name}_vw00_masked", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw10 = _add_elementwise("MUL", vw10, m10e, f"{node.name}_vw10_masked", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw11 = _add_elementwise("MUL", vw11, m11e, f"{node.name}_vw11_masked", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    vw01 = _add_elementwise("MUL", vw01, m01e, f"{node.name}_vw01_masked", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    sample = _add_elementwise("ADD", vw00, vw10, f"{node.name}_sample_acc0", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    sample = _add_elementwise("ADD", sample, vw11, f"{node.name}_sample_acc1", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+    sample = _add_elementwise("ADD", sample, vw01, f"{node.name}_sample", [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)], compute_dtype)
+
+    if mask_nhwc != "":
+        mask_for_sample = _add_reshape(
+            input_tensor_name=str(mask_nhwc),
+            output_basename=f"{node.name}_mask_for_sample",
+            signature=[-1, int(out_h), int(out_w), int(kernel_point_count), 1],
+            shape=[int(batch_meta) if int(batch_meta) > 0 else 1, int(out_h), int(out_w), int(kernel_point_count), 1],
+        )
+        sample = _add_elementwise(
+            "MUL",
+            sample,
+            mask_for_sample,
+            f"{node.name}_sample_masked",
+            [-1, int(out_h), int(out_w), int(kernel_point_count), int(in_channels)],
+            compute_dtype,
+        )
+
+    cols = _add_reshape(
+        input_tensor_name=sample,
+        output_basename=f"{node.name}_cols",
+        signature=[-1, int(kh * kw * in_channels)],
+        shape=[int(output_point_count) if int(output_point_count) > 0 else 1, int(kh * kw * in_channels)],
+    )
+    cols_batched = _add_reshape(
+        input_tensor_name=cols,
+        output_basename=f"{node.name}_cols_batched",
+        signature=[1, -1, int(kh * kw * in_channels)],
+        shape=[1, int(output_point_count) if int(output_point_count) > 0 else 1, int(kh * kw * in_channels)],
+    )
+
+    weights_batched = np.transpose(weights, (2, 3, 1, 0)).reshape(
+        1,
+        int(kh * kw * in_channels),
+        int(out_channels),
+    )
+    weights_batched_name = _add_const(
+        f"{node.name}_weights_batched",
+        weights_batched.astype(compute_np_dtype),
+        dtype=compute_np_dtype,
+    )
+
+    bmm_out = ctx.add_intermediate_tensor(
+        f"{node.name}_bmm_out",
+        dtype=compute_dtype,
+        shape=[1, int(output_point_count) if int(output_point_count) > 0 else 1, int(out_channels)],
+    )
+    _set_signature(bmm_out, [1, -1, int(out_channels)])
+    ctx.add_operator(
+        OperatorIR(
+            op_type="BATCH_MATMUL",
+            inputs=[str(cols_batched), weights_batched_name],
+            outputs=[bmm_out],
+            options={
+                "adjX": False,
+                "adjY": False,
+                "asymmetricQuantizeInputs": False,
+            },
+        )
+    )
+
+    y_nhwc = _add_reshape(
+        input_tensor_name=str(bmm_out),
+        output_basename=f"{node.name}_output_nhwc",
+        signature=[-1, int(out_h), int(out_w), int(out_channels)],
+    )
+    _set_signature(
+        y_nhwc,
+        [
+            int(output_signature[0]),
+            int(output_signature[2]),
+            int(output_signature[3]),
+            int(output_signature[1]),
+        ],
+    )
+
+    if bias_name != "":
+        bias_values = ctx.get_constant_array(bias_name)
+        if bias_values is None:
+            raise NotImplementedError(
+                f"DeformConv bias must be constant when provided. op={node.name}"
+            )
+        bias_values = np.asarray(bias_values, dtype=compute_np_dtype).reshape(-1)
+        bias_const = _add_const(
+            f"{node.name}_bias",
+            bias_values.astype(compute_np_dtype),
+            dtype=compute_np_dtype,
+        )
+        y_nhwc = _add_elementwise(
+            "ADD",
+            y_nhwc,
+            bias_const,
+            f"{node.name}_output_nhwc_bias",
+            [int(output_signature[0]), int(output_signature[2]), int(output_signature[3]), int(output_signature[1])],
+            compute_dtype,
+        )
+
+    nchw_compute_output_name = str(output_name)
+    if output_dtype != compute_dtype:
+        nchw_compute_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nchw_{compute_dtype.lower()}",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in list(output_signature)],
+        )
+        _set_signature(nchw_compute_output_name, [int(v) for v in list(output_signature)])
+
+    make_transpose(
+        ctx,
+        y_nhwc,
+        nchw_compute_output_name,
+        [0, 3, 1, 2],
+    )
+    if nchw_compute_output_name != str(output_name):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[nchw_compute_output_name],
+                outputs=[str(output_name)],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )

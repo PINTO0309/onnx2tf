@@ -337,7 +337,7 @@ This option has strict constraints:
 - Scope: ONNX ops listed in the `Supported layers` table above.
 - Source of truth: `onnx2tf/tflite_builder/op_registry.py` and `--report_op_coverage` output.
 - Current summary:
-  - Listed ONNX ops in the builtin table below: `153`
+  - Listed ONNX ops in the builtin table below: `192`
   - Policy counts are generated in `*_op_coverage_report.json` (`schema_policy_counts`).
   - Check each conversion run with `--report_op_coverage` for the latest numbers.
 
@@ -354,24 +354,29 @@ Notes:
 |Acos|MUL + SUB + SQRT + ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Acosh|SUB + ADD + SQRT + MUL + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Add|ADD|-|
+|AffineGrid|BATCH_MATMUL + TRANSPOSE + RESHAPE|`size` input must be constant rank-1 length `4` or `5` with static positive values; `theta` must be rank-3 float tensor with shape `[N,2,3]` or `[N,3,4]`; output shape must match `size`; `align_corners` in `{0,1}`|
 |And|LOGICAL_AND|-|
 |ArgMax|ARG_MAX (+ optional RESHAPE for keepdims)|`axis` must be in range, `keepdims` must be `0` or `1`, `select_last_index=0`, output dtype must be `INT32` or `INT64`|
 |ArgMin|ARG_MIN (+ optional RESHAPE for keepdims)|`axis` must be in range, `keepdims` must be `0` or `1`, `select_last_index=0`, output dtype must be `INT32` or `INT64`|
+|Attention|RESHAPE + TRANSPOSE + BATCH_MATMUL + MUL + SOFTMAX + CAST|Canonical 3-input form only (`query/key/value`); single output only; `q_num_heads == kv_num_heads > 0`; `is_causal=0`; `qk_matmul_output_mode=0`; `softcap=0`; rank-3 float tensors only|
 |Asin|MUL + SUB + SQRT + ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Asinh|MUL + ADD + SQRT + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Atan|ATAN2|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Atanh|ADD + SUB + DIV + LOG + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |AveragePool|AVERAGE_POOL_2D (+ optional PAD/PADV2 + divisor correction DIV)|2D only (rank=4), `ceil_mode` in `{0,1}`, `count_include_pad` in `{0,1}`. Supports `auto_pad` in `{NOTSET,VALID,SAME_*,SAME_LOWER}` and explicit pads. For `count_include_pad=0` with non-zero effective pads, a correction path (`AVERAGE_POOL_2D` on mask + `DIV`) is applied|
 |BatchNormalization|MUL + ADD|All parameter inputs (`scale`, `bias`, `mean`, `var`) must be constant|
+|Bernoulli|SHAPE + RANDOM_UNIFORM + LESS (+ optional CAST)|Input dtype must be `FLOAT16/FLOAT32`; output dtype must be `BOOL` or numeric|
 |BitShift|RIGHT_SHIFT (RIGHT) or MUL-based (LEFT)|LHS/RHS must be integer tensors, `direction` must be `LEFT` or `RIGHT`; `LEFT` requires constant shift input|
 |BitwiseAnd|LOGICAL_AND|BOOL tensors only|
 |BitwiseNot|LOGICAL_NOT / SUB + CAST|Input dtype must be BOOL or integer|
 |BitwiseOr|LOGICAL_OR|BOOL tensors only|
 |BitwiseXor|BITWISE_XOR|Input dtypes must match and be BOOL/integer|
+|BlackmanWindow|CAST + SQUEEZE + RANGE + MUL + DIV + COS + SUB + ADD + MAXIMUM|Input must be scalar-like rank-1 length-1 integer tensor; output dtype must be `FLOAT16/FLOAT32`|
 |Cast|CAST|-|
 |CastLike|CAST|-|
 |Ceil|CEIL|-|
 |Celu|MAXIMUM + MINIMUM + DIV + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|CenterCropPad|SLICE + PAD (+ optional RESHAPE passthrough)|Target shape input must be constant rank-1; `axes` must be in range and length must match target shape; output rank must match input rank; string dtype unsupported in builtin path|
 |Clip|RELU / RELU6 / MAXIMUM + MINIMUM|General constant clip ranges are supported via `MAXIMUM`/`MINIMUM` decomposition. ReLU fast-path: `min=0,max=+inf`; ReLU6 fast-path: `min=0,max=6`|
 |Col2Im|RESHAPE + TRANSPOSE + TRANSPOSE_CONV + SLICE + CAST|Input/output dtype must be `FLOAT16/FLOAT32`; input/output ranks must be `3/4`; `image_shape` and `block_shape` must be constant 2-elements; static positive dimensions required|
 |Concat|CONCATENATION|-|
@@ -379,12 +384,16 @@ Notes:
 |Conv|CONV_2D / DEPTHWISE_CONV_2D / CONV_3D|2D: rank=4, constant weights, grouped conv only regular/depthwise, zero pads or `auto_pad=SAME_*`. 3D: rank=5, constant rank-5 weights, `group=1`, strides/dilations length=3, `auto_pad` in `{NOTSET,VALID,SAME_UPPER}` (`SAME_LOWER` unsupported); explicit pads are handled via VALID+pad/crop path|
 |ConvInteger|CAST + SUB + PAD + CONV_2D / DEPTHWISE_CONV_2D + TRANSPOSE|Input must be integer tensor, output dtype must be `INT32/INT64`, weights must be constant rank-4, and grouped conv must be regular/depthwise only|
 |ConvTranspose|TRANSPOSE_CONV / CONV_3D_TRANSPOSE (+ optional ADD bias; 1D uses `EXPAND_DIMS/SQUEEZE` shim)|1D/2D/3D supported (1D: input rank=3 + weight rank=3 const, 2D: input rank=4 + weight rank=4 const, 3D: input rank=5 + weight rank=5 const), `group=1`, dilations must be all-ones, and `output_padding` must satisfy `0 <= output_padding < stride` (1D len=1, 2D len=2, 3D len=3). `auto_pad` supports `SAME_*`, `VALID`, and `NOTSET`; explicit non-zero pads are handled by post-crop when output shape is static|
+|Compress|NOT_EQUAL + WHERE + RESHAPE + CAST + GATHER|Condition input must be rank-1 `BOOL` or integer tensor; `axis` may be omitted (flattened output) or be in range; when `axis` is specified and static, condition length must match that axis dimension|
 |Cos|COS|-|
 |Cosh|SUB + EXP + ADD + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |CumProd|RANGE + LESS/LESS_EQUAL + RESHAPE + TILE + FILL + SELECT_V2 + REDUCE_PROD (+ optional REVERSE_V2)|Input/output dtype must be `FLOAT16` or `FLOAT32`; input shape must be fully static positive; `axis` must be scalar constant (or attr) and in range; `exclusive`/`reverse` must be `0` or `1`|
+|DFT|RESHAPE + BATCH_MATMUL + CONCATENATION (+ optional CAST)|Current builtin path supports real input `[..., N, 1]` only with `onesided=1`, `inverse=0`, and transform `axis=rank-2`; input/output shapes must be static positive; optional `dft_length` and `axis` inputs must be constant scalars; output shape must be `[..., N//2 + 1, 2]`|
 |CumSum|CUMSUM|Input rank must be `>=1`; `axis` must be scalar constant (or attr) and in range; `exclusive`/`reverse` must be `0` or `1`|
+|DeformConv|PAD + RESHAPE + TRANSPOSE + SHAPE + RANGE + SQUEEZE + GATHER + FLOOR + MAXIMUM/MINIMUM + CAST + MUL + ADD + SUB + BATCH_MATMUL|Constrained 2D float path only: input/output/offset/mask rank=4, input/offset/output(/mask) dtype `FLOAT16/FLOAT32`, weights and optional bias must be constant, kernel/channel/spatial dims must be static positive, and builtin lowering is limited to `group=1` and `offset_group=1` for LiteRT runtime safety. Grouped patterns remain custom-op candidates|
 |DequantizeLinear|DEQUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
 |DepthToSpace|DEPTH_TO_SPACE (DCR) / RESHAPE + TRANSPOSE + RESHAPE (CRD)|Rank-4 only, `blocksize > 1`, `mode` in `{DCR,CRD}`|
+|Det|GATHER + RESHAPE + MUL + SUB + ADD|Input/output dtype must be `FLOAT16/FLOAT32`; builtin lowering currently supports static square `2x2` / `3x3` matrices only|
 |Div|DIV or MUL (when divisor is constant reciprocal)|For non-floating outputs, lowered as `CAST -> MUL(reciprocal) -> CAST` to preserve output dtype without using unsupported integer DIV paths|
 |Dropout|RESHAPE (+ optional SHAPE + FILL for mask output)|Inference-time no-op in flatbuffer_direct; inputs `ratio`/`training_mode` are ignored|
 |DynamicQuantizeLinear|NEG + REDUCE_MAX + MINIMUM + MAXIMUM + SUB + DIV + ADD + CAST|Input dtype must be `FLOAT16/FLOAT32`, output dtypes must be `Y=UINT8`, `Y_Scale=FLOAT16/FLOAT32`, `Y_ZeroPoint=UINT8`; scale/zero-point outputs must be scalar|
@@ -408,21 +417,30 @@ Notes:
 |GreaterOrEqual|GREATER_EQUAL|-|
 |GridSample|PAD + RESHAPE + TRANSPOSE + SQUEEZE + SLICE + ADD/SUB/MUL + FLOOR + MAXIMUM/MINIMUM + CAST + GATHER|Rank-4/5 with static positive dims; `mode=bilinear`; `padding_mode` in `{zeros,border}`; `align_corners` in `{0,1}`. When `grid` is graph input, keep shape metadata (e.g. `-kat grid`)|
 |GlobalAveragePool|MEAN|Input rank must be `>=3`|
+|GlobalLpPool|ABS + POW + SUM + RESHAPE (+ optional CAST)|Input rank must be `>=3`; input/output dtype must be `FLOAT16/FLOAT32`; `p` must be finite and `> 0`|
 |GlobalMaxPool|REDUCE_MAX|Input rank must be `>=3`|
+|GroupNormalization|RESHAPE + MEAN + SUB + MUL + ADD + SQRT + DIV (+ optional CAST)|Input/output dtype must be `FLOAT16/FLOAT32`; scale/bias must be constant length=`C`; `num_groups > 0` and must divide channel dim; channel/spatial dims must be static positive|
 |GRU|TRANSPOSE + SLICE + SQUEEZE + BATCH_MATMUL + ADD + MUL + SUB + LOGISTIC + TANH + RESHAPE + CONCATENATION + EXPAND_DIMS|`layout=0`; `direction` in `{forward, reverse, bidirectional}`; `sequence_lens` unsupported; `W/R` must be constant rank-3; `linear_before_reset` in `{0,1}`; activations `[Sigmoid,Tanh]`; `clip=0`|
 |Hardmax|TRANSPOSE + ARG_MAX + ONE_HOT|`axis` must be in range; target axis size must be static positive|
 |HardSigmoid|MUL + ADD + MAXIMUM + MINIMUM|Input/output dtype must be FLOAT16 or FLOAT32|
 |HardSwish|HARD_SWISH|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|HammingWindow|CAST + SQUEEZE + RANGE + MUL + DIV + COS + SUB + MAXIMUM|Input must be scalar-like rank-1 length-1 integer tensor; output dtype must be `FLOAT16/FLOAT32`|
+|HannWindow|CAST + SQUEEZE + RANGE + MUL + DIV + COS + SUB + MAXIMUM|Input must be scalar-like rank-1 length-1 integer tensor; output dtype must be `FLOAT16/FLOAT32`|
+|MelWeightMatrix|const-folded builtin tensor materialization|All five inputs must be constant scalars; output dtype must be `FLOAT16/FLOAT32`; output shape is `[dft_length // 2 + 1, num_mel_bins]`; requires `0 <= lower_edge_hertz < upper_edge_hertz <= sample_rate / 2`|
 |Identity|RESHAPE|-|
 |If|CONCATENATION + REDUCE_MAX + CAST + ADD + MUL + RESHAPE + NON_MAX_SUPPRESSION_V4/V5 + SLICE + GATHER + SHAPE + SUB + SELECT/SELECT_V2|Built-in lowering supports constrained patterns: NMS-guard pattern (empty then-branch + NMS else-branch), axis0 Add-branch pattern (single `Add` per branch, same trailing dims, different static first dim), SequenceConstruct Add-branch pattern (branch-local `Constant`/`Add` with terminal `SequenceConstruct`), and nested ReduceMin/Add pattern (else-branch `ReduceMin/Greater` with nested Add/Add `If`). In control-flow branch lowering, dynamic-condition `If` is additionally supported when both branches are single-output initializer-only constants (lowered via `Where`)|
 |InstanceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=3`; `scale` and `bias` inputs must be constant|
+|IsInf|ABS + EQUAL / LESS + GREATER + LOGICAL_AND|Input dtype must be `FLOAT16/FLOAT32`; output dtype must be `BOOL`; `detect_negative` / `detect_positive` are honored|
+|IsNaN|NOT_EQUAL|Input dtype must be `FLOAT16/FLOAT32`; output dtype must be `BOOL`|
 |MeanVarianceNormalization|MEAN + SUB + MUL + MEAN + ADD + SQRT + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`; `mvn_epsilon` is applied directly in builtin lowering; default axes follow ONNX channel-first semantics and rank `<3` reduces over axis `0`|
 |Inverse|SLICE + MUL + SUB + ADD + NEG + CONCATENATION + DIV (+ optional CAST in/out)|Input/output dtype must be `FLOAT16` or `FLOAT32`; input rank must be `>=2`; matrix last dimensions must resolve to square `2x2` or `3x3`|
+|LeakyRelu|LEAKY_RELU|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Less|LESS|-|
 |LessOrEqual|LESS_EQUAL|-|
 |Log|LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |LogSoftmax|SOFTMAX + LOG (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
 |Loop|WHILE (+ subgraph-local ADD/LESS/LOGICAL_AND/RESHAPE and lowered body ops)|Built-in lowering supports either static-unroll patterns (constant `trip_count`/`cond`, loop-carried outputs only) or WHILE patterns with loop-carried outputs only (no scan outputs). `max_trip_count` input dtype must be `INT32` or `INT64`|
+|LpPool|ABS + POW + AVERAGE_POOL_2D + MUL + RESHAPE (+ optional CAST)|Rank-4 only; input/output dtype must be `FLOAT16/FLOAT32`; `kernel_shape/strides/dilations` must be 2D; `dilations=[1,1]`; `p` must be finite and `> 0`; non-zero pads require `count_include_pad=1`|
 |LpNormalization|L2_NORMALIZATION|`p=2`, `axis=last` only|
 |LRN|LOCAL_RESPONSE_NORMALIZATION (+ transpose in/out)|Input rank must be 4, `size` must be a positive odd integer|
 |LayerNormalization|MEAN + SUB + MUL + ADD + SQRT + DIV (+ optional CAST)|`axis` and `stash_type` are honored; optional ONNX outputs (`mean`, `inv_std_dev`) are supported|
@@ -431,6 +449,10 @@ Notes:
 |MatMulInteger|CAST + SUB + BATCH_MATMUL|A/B input rank must be >=2 (rank=1 placeholder allowed), A/B dtypes must be integer tensor types (`INT8/UINT8/INT16/UINT16/INT32`), output dtype must be `INT32/INT64`; optional zero-point inputs must be scalar/1D and shape-compatible|
 |Max|MAXIMUM (chained for >2 inputs)|At least 2 inputs|
 |MaxPool|MAX_POOL_2D|2D only (rank=4), `ceil_mode` in `{0,1}`, zero pads or `auto_pad=SAME_*`|
+|MaxRoiPool|TRANSPOSE + SLICE + MAX_POOL_2D + CONCATENATION|Current builtin path supports rank-4 input/output only with constant `rois`; input/output dtype must be `FLOAT16/FLOAT32`; all shapes must be static positive; `pooled_shape` must be length-2 positive and match output spatial dims; output channels must match input channels; output batch must equal the number of constant rois|
+|MaxUnpool|CAST + RESHAPE + SCATTER_ND|Input/indices/output must be rank-4; input and indices shapes must match; input/output dtype must match and indices must be integer; output shape must be static positive with matching batch/channel; `kernel_shape` and `strides` must be length-2 positive; zero `pads` only; optional `output_shape` input must be a constant length-4 tensor matching the graph output shape|
+|Mean|ADD + DIV (+ optional CAST)|All inputs and output must be `FLOAT16/FLOAT32`|
+|NegativeLogLikelihoodLoss|TRANSPOSE + CAST + EQUAL + SELECT_V2 + ONE_HOT + MUL + SUM + SUB (+ optional GATHER/MEAN/DIV)|Input/output dtype must be `FLOAT16/FLOAT32`; target dtype must be integer; input rank must be `>=2` with static positive class dim at axis 1; optional weight must be rank-1 float tensor of length `C`; `reduction` in `{none,sum,mean}`; `ignore_index` supported|
 |Min|MINIMUM (chained for >2 inputs)|At least 2 inputs|
 |Mish|EXP + ADD + LOG + TANH + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Mod|FLOOR_MOD|`fmod=0` only|
@@ -458,26 +480,37 @@ Notes:
 |QLinearSigmoid|DEQUANTIZE + LOGISTIC + QUANTIZE|All quantization params (`x scale/zero_point`, `y scale/zero_point`) must be constant|
 |QLinearSoftmax|DEQUANTIZE + SOFTMAX + QUANTIZE|All quantization params (`x/y scale`, `x/y zero_point`) must be constant; `axis` must be last dimension|
 |QuantizeLinear|QUANTIZE|`scale` must be constant, `zero_point` (if provided) must be constant, per-axis `axis` must be in range|
+|RandomNormal|RANDOM_STANDARD_NORMAL (+ optional MUL + ADD + CAST)|`shape` attribute must be present and non-empty; output dtype must be `FLOAT16/FLOAT32`; `seed` is mapped to TFLite random options when provided|
 |RandomNormalLike|SHAPE + RANDOM_STANDARD_NORMAL (+ optional MUL + ADD + CAST)|Rank inferred from input shape; output dtype must be supported numeric type (`FLOAT16/FLOAT32/INT*`/`UINT*`). `seed` is mapped to TFLite random options when provided|
+|RandomUniform|RANDOM_UNIFORM (+ optional MUL + ADD + CAST)|`shape` attribute must be present and non-empty; output dtype must be `FLOAT16/FLOAT32`; `seed` is mapped to TFLite random options when provided|
+|RandomUniformLike|SHAPE + RANDOM_UNIFORM (+ optional MUL + ADD + CAST)|Input rank is used only to materialize the runtime shape; output dtype must be `FLOAT16/FLOAT32`; `seed` is mapped to TFLite random options when provided|
 |Range|CAST + SQUEEZE + RANGE|Each of `start/limit/delta` must be scalar-like rank-1 length-1 tensor|
 |Reciprocal|DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |ReduceL1|ABS + SUM|Reduce axes must be constant when provided via input tensor|
 |ReduceL2|MUL + SUM + SQRT + CAST|Reduce axes must be constant when provided via input tensor|
+|ReduceLogSum|SUM + LOG (+ optional CAST)|Input/output dtype must be `FLOAT16/FLOAT32`; reduce axes must be constant when provided via input tensor|
+|ReduceLogSumExp|EXP + SUM + LOG (+ optional CAST)|Input/output dtype must be `FLOAT16/FLOAT32`; reduce axes must be constant when provided via input tensor|
 |ReduceMax|REDUCE_MAX|Reduce axes must be constant when provided via input tensor|
 |ReduceMean|MEAN|Reduce axes must be constant when provided via input tensor|
 |ReduceMin|REDUCE_MIN|Reduce axes must be constant when provided via input tensor|
 |ReduceProd|REDUCE_PROD|Reduce axes must be constant when provided via input tensor|
+|ReduceSumSquare|MUL + SUM (+ optional CAST)|Input/output dtype must be `FLOAT16/FLOAT32`; reduce axes must be constant when provided via input tensor|
 |ReduceSum|SUM|Reduce axes must be constant when provided via input tensor|
 |Relu|RELU|-|
 |Reshape|RESHAPE|Shape input must be constant|
 |Resize|RESIZE_NEAREST_NEIGHBOR / RESIZE_BILINEAR / (cubic) RESHAPE + BATCH_MATMUL + RESHAPE + BATCH_MATMUL|Rank-4 only. `nearest`/`linear`: builtin resize path (limited attr combinations), parameters must be constant `scales/sizes` or dynamic rank-1 integer `sizes` (INT32/INT64). `cubic`: strict ONNX cubic decomposition (no FlexResizeBicubic), supports `coordinate_transformation_mode` in `{align_corners, asymmetric, half_pixel, pytorch_half_pixel}` and honors `cubic_coeff_a`/`exclude_outside`; requires static input C/H/W and static output H/W. Batch dimension is preserved through the cubic decomposition path|
+|ReverseSequence|CAST + REVERSE_SEQUENCE|Input rank must be `>=2`; `seq_lengths` must be rank-1 integer tensor; `batch_axis`/`time_axis` must be in range and different|
 |RoiAlign|CAST + GATHER + PAD + RESHAPE + ADD/SUB/MUL/DIV + MAXIMUM/MINIMUM + FLOOR + TILE + AVERAGE_POOL_2D / MAX_POOL_2D + TRANSPOSE|Input/output rank=4 only; `rois` rank=2 (`[...,4]`), `batch_indices` rank=1 integer; input `C/H/W` must be static positive; `mode` in `{avg,max}`; `coordinate_transformation_mode` in `{half_pixel,output_half_pixel}`; `output_height/output_width` must be positive|
+|RotaryEmbedding|TRANSPOSE + SLICE + RESHAPE + CAST + MUL + SUB + ADD + CONCATENATION|Current builtin path supports rank-4 input/output only, `interleaved=0`, and no `position_ids` input; all tensor dtypes must be `FLOAT16/FLOAT32` with output dtype matching input; shapes must be static positive; `cos/sin` must be rank-2 with shape `[seq_len, rotary_embedding_dim/2]`; `rotary_embedding_dim` must be even and `<= head_size`|
 |RNN|UNIDIRECTIONAL_SEQUENCE_RNN + REVERSE_V2 + CONCATENATION + TRANSPOSE + EXPAND_DIMS + SLICE + SQUEEZE + RESHAPE|`direction` in `{forward,reverse,bidirectional}`, `layout=0`; `sequence_lens` unsupported; `W/R` must be constant rank-3 with `num_directions` matching `direction`; optional `B` must be constant shape `[num_directions, 2*hidden_size]`; optional `initial_h` shape must be `[num_directions, batch, hidden]` (runtime tensor inputs are supported); activations in `{tanh,relu,sigmoid}`; `clip=0`|
 |Round|ROUND|-|
+|Scatter|CAST + LESS + SELECT + SHAPE + GATHER + RANGE + RESHAPE + TILE + CONCATENATION + MUL + ADD + SUB + FILL + SCATTER_ND|Alias of `ScatterElements`; `reduction=none` only; `axis` must be in range; `indices` dtype must be integer; `updates/output` dtype must match `data` dtype|
 |ScatterND|CAST + SHAPE + FILL + MUL + SCATTER_ND + SUB + ADD|`reduction=none` only; data/updates/output dtypes must match (numeric), indices dtype must be integer, indices last dim must be static positive and `<= data rank`|
 |ScatterElements|CAST + LESS + SELECT + SHAPE + GATHER + RANGE + RESHAPE + TILE + CONCATENATION + MUL + ADD + SUB + FILL + SCATTER_ND|`reduction=none` only; `data/indices/updates` must have same rank; `axis` must be in range; `indices` dtype must be integer; `updates/output` dtype must match `data` dtype; output shape must match `data` shape|
+|TensorScatter|CAST + GATHER + RESHAPE + ADD (+ FLOOR_MOD for `mode=circular`) + CONCATENATION + FILL + MUL + SUB + SCATTER_ND|`data/updates/output` rank must match and `updates` shape must be static positive; `axis` must be in range; `mode` in `{linear,circular}`; optional `write_indices` must be rank-1 integer tensor with length `>= updates.shape[0]`; `output` dtype must match `data` dtype; `mode=circular` requires static positive axis dim|
 |Selu|MAXIMUM + MINIMUM + EXP + SUB + MUL + ADD|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Shape|SHAPE (+ SLICE for `start/end`)|Output dtype must be `INT32` or `INT64`; `start/end` slicing follows ONNX normalization|
+|Shrink|ADD + SUB + LESS + GREATER + SELECT_V2 (+ optional CAST)|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Sigmoid|LOGISTIC|-|
 |Sign|SIGN|-|
 |Sin|SIN|-|
@@ -486,8 +519,10 @@ Notes:
 |StringNormalizer|RESHAPE (no-op) / EQUAL + LOGICAL_OR + LOGICAL_NOT + WHERE + GATHER (+ EXPAND_DIMS for rank-2) / const-fold|Input/output dtype must be `STRING`, `locale` must be `''` or `en_US`. Runtime path supports only `case_change_action=NONE` (or empty). For non-constant input, stopword filtering is supported only when `is_case_sensitive=1` and input rank is 1 or 2 (`rank=2` follows current onnx2tf behavior and processes the first row). Constant-input path is folded at conversion time and supports `LOWER/UPPER`, case-insensitive matching, and empty-result fallback (`""`) semantics.|
 |Slice|SLICE / STRIDED_SLICE / REVERSE_V2|`starts` must be constant input/attr. `ends` is usually constant input/attr; dynamic `ends` is supported only for rank-1 axis-0 prefix slice (`start=0`, `step=1`). `steps=0` unsupported. Negative `steps` are supported only for full-axis reverse pattern (`start=-1`, very negative `end`, `step=-1`) via `REVERSE_V2`|
 |Softmax|SOFTMAX (+ transpose in/out for non-last axis)|`axis` must be in range (negative axis normalized)|
+|SoftmaxCrossEntropyLoss|TRANSPOSE + SOFTMAX + LOG + CAST + EQUAL + SELECT_V2 + ONE_HOT + MUL + SUM + SUB (+ optional GATHER/MEAN/DIV)|Input/output dtype must be `FLOAT16/FLOAT32`; labels dtype must be integer; input rank must be `>=2` with static positive class dim at axis 1; optional weight must be rank-1 float tensor of length `C`; `reduction` in `{none,sum,mean}`; optional output[1] log-prob tensor is supported|
 |Softplus|EXP + ADD + LOG|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Softsign|ABS + ADD + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
+|STFT|SLICE + MUL + RESHAPE + BATCH_MATMUL + CONCATENATION (+ optional CAST)|Current builtin path supports rank-2 signal input only with `onesided=1`; `frame_step`, `window`, and `frame_length` inputs must be constant; shapes must be static positive with `signal_length >= frame_length`; `window` length must equal `frame_length`; output shape must be `[batch, num_frames, frame_length//2 + 1, 2]`|
 |SpaceToDepth|SPACE_TO_DEPTH|`blocksize > 1`, rank=4 (NCHW)|
 |Split|SLICE|`axis` must be in range; explicit split sizes (input/attr) must be constant and count must match outputs; without explicit split sizes, axis dim must be known and divisible by output count|
 |Sqrt|SQRT|-|
@@ -496,6 +531,7 @@ Notes:
 |Sum|ADD (chained for >2 inputs)|At least 2 inputs|
 |Tan|SIN + COS + DIV|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Tanh|TANH|-|
+|ThresholdedRelu|GREATER + CAST + MUL|Input/output dtype must be `FLOAT16` or `FLOAT32`|
 |Tile|CAST + TILE|`multiples` must be rank-1 integer tensor; if input rank is static, `len(multiples)` must match input rank; constant `multiples` must be non-negative|
 |TopK|TOPK_V2 (+ optional TRANSPOSE + NEG + CAST + SQUEEZE)|Input rank must be `>=1`; input dtype must be `FLOAT16/FLOAT32`; `axis` must be in range; `largest` must be `0` or `1`; `sorted` must be `1`; `k` must be scalar-like (`[]` or `[1]`) and integer dtype; indices output dtype must be `INT32` or `INT64`|
 |Transpose|TRANSPOSE|Permutation input must be constant|
@@ -512,7 +548,7 @@ Notes:
 
 |ONNX OP|Default policy|When enabled|
 |:-|:-|:-|
-|DeformConv|explicit_error (`custom_op_candidate_disabled`)|Lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
+|DeformConv|builtin_supported on constrained standard 2D float pattern (`group=1`, `offset_group=1`); otherwise explicit_error (`custom_op_candidate_disabled`)|Grouped or otherwise unsupported patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |DynamicQuantizeLinear|builtin_supported on constrained float-input/uint8-output pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |Einsum|builtin_supported on constrained equations; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported equations can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
 |GridSample|builtin_supported on constrained rank-4/5 bilinear pattern; otherwise explicit_error (`custom_op_candidate_disabled`)|Unsupported GridSample patterns can be lowered to TFLite `CUSTOM` when `--flatbuffer_direct_allow_custom_ops` is enabled and allowlist passes|
@@ -689,7 +725,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.3.3
+  ghcr.io/pinto0309/onnx2tf:2.3.4
 
   or
 
@@ -698,7 +734,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.3.3
+  docker.io/pinto0309/onnx2tf:2.3.4
 
   or
 
@@ -708,7 +744,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.3.3 \
+  docker.io/pinto0309/onnx2tf:2.3.4 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

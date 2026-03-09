@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import math
+from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
@@ -1950,3 +1951,485 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             indices_output_name,
             [0, 3, 1, 2],
         )
+
+
+def build_lp_pool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    p = float(node.attrs.get("p", 2.0))
+    np_dtype = np.float16 if input_dtype == "FLOAT16" else np.float32
+
+    abs_name = ctx.add_intermediate_tensor(
+        f"{node.name}_lp_abs",
+        dtype=input_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ABS",
+            inputs=[input_name],
+            outputs=[abs_name],
+        )
+    )
+
+    powered_name = abs_name
+    if abs(float(p) - 1.0) > 1e-12:
+        p_const_name = ctx.add_const_tensor(
+            f"{node.name}_lp_p",
+            np.asarray(float(p), dtype=np_dtype),
+        )
+        powered_name = ctx.add_intermediate_tensor(
+            f"{node.name}_lp_powered",
+            dtype=input_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="POW",
+                inputs=[abs_name, p_const_name],
+                outputs=[powered_name],
+            )
+        )
+
+    pooled_name = ctx.add_intermediate_tensor(
+        f"{node.name}_lp_avg",
+        dtype=input_dtype,
+        shape=output_shape,
+    )
+    pooled_tensor = ctx.model_ir.tensors.get(pooled_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if pooled_tensor is not None and output_tensor is not None:
+        pooled_tensor.shape_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in output_shape]
+        )
+
+    proxy_node = SimpleNamespace(
+        name=f"{node.name}_lp_avgpool",
+        op="AveragePool",
+        attrs=dict(node.attrs),
+        inputs=[SimpleNamespace(name=powered_name)],
+        outputs=[SimpleNamespace(name=pooled_name)],
+    )
+    build_pool2d_op(proxy_node, ctx, "AVERAGE_POOL_2D")
+
+    kernel_shape = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    kernel_size = 1
+    for value in kernel_shape:
+        kernel_size *= int(value)
+    kernel_const_name = ctx.add_const_tensor(
+        f"{node.name}_lp_kernel_size",
+        np.asarray(float(kernel_size), dtype=np_dtype),
+    )
+    summed_name = ctx.add_intermediate_tensor(
+        f"{node.name}_lp_summed",
+        dtype=input_dtype,
+        shape=output_shape,
+    )
+    summed_tensor = ctx.model_ir.tensors.get(summed_name, None)
+    if pooled_tensor is not None and summed_tensor is not None:
+        summed_tensor.shape_signature = (
+            [int(v) for v in list(pooled_tensor.shape_signature)]
+            if pooled_tensor.shape_signature is not None
+            else [int(v) for v in output_shape]
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[pooled_name, kernel_const_name],
+            outputs=[summed_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    root_name = summed_name
+    if abs(float(p) - 1.0) > 1e-12:
+        inv_p_const_name = ctx.add_const_tensor(
+            f"{node.name}_lp_inv_p",
+            np.asarray(float(1.0 / p), dtype=np_dtype),
+        )
+        root_name = ctx.add_intermediate_tensor(
+            f"{node.name}_lp_root",
+            dtype=input_dtype,
+            shape=output_shape,
+        )
+        root_tensor = ctx.model_ir.tensors.get(root_name, None)
+        if summed_tensor is not None and root_tensor is not None:
+            root_tensor.shape_signature = (
+                [int(v) for v in list(summed_tensor.shape_signature)]
+                if summed_tensor.shape_signature is not None
+                else [int(v) for v in output_shape]
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="POW",
+                inputs=[summed_name, inv_p_const_name],
+                outputs=[root_name],
+            )
+        )
+
+    if output_dtype == input_dtype:
+        shape_const_name = ctx.add_const_tensor(
+            f"{output_name}_lp_shape",
+            np.asarray([int(v) for v in output_shape], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[root_name, shape_const_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+        return
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[root_name],
+            outputs=[output_name],
+            options={"inDataType": input_dtype, "outDataType": output_dtype},
+        )
+    )
+
+
+def build_max_unpool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    indices_name = node.inputs[1].name
+    output_shape_name = node.inputs[2].name if len(node.inputs) > 2 and str(node.inputs[2].name) != "" else ""
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(indices_name)
+    if str(output_shape_name) != "":
+        ctx.ensure_tensor(output_shape_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor.dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    output_tensor.quantization = _clone_quantization(input_tensor.quantization)
+
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    if str(output_shape_name) != "":
+        output_shape_arr = ctx.get_constant_array(output_shape_name)
+        if output_shape_arr is None:
+            raise NotImplementedError(
+                f"MaxUnpool output_shape input must be constant in flatbuffer_direct. op={node.name}"
+            )
+        output_shape = [int(v) for v in np.asarray(output_shape_arr).reshape(-1).tolist()]
+    output_tensor.shape = [int(v) for v in output_shape]
+    output_tensor.shape_signature = [int(v) for v in output_shape]
+
+    indices_i32_name = indices_name
+    indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
+    if indices_dtype != "INT32":
+        indices_i32_name = ctx.add_intermediate_tensor(
+            f"{output_name}_max_unpool_indices_i32",
+            dtype="INT32",
+            shape=[int(v) for v in ctx.get_tensor_shape(indices_name)],
+        )
+        indices_i32_tensor = ctx.model_ir.tensors.get(indices_i32_name, None)
+        if indices_i32_tensor is not None:
+            indices_src_tensor = ctx.model_ir.tensors.get(indices_name, None)
+            if indices_src_tensor is not None and indices_src_tensor.shape_signature is not None:
+                indices_i32_tensor.shape_signature = [int(v) for v in indices_src_tensor.shape_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[indices_name],
+                outputs=[indices_i32_name],
+                options={"inDataType": indices_dtype, "outDataType": "INT32"},
+            )
+        )
+
+    input_count = 1
+    for dim in input_shape:
+        input_count *= int(dim)
+    output_count = 1
+    for dim in output_shape:
+        output_count *= int(dim)
+
+    flat_indices_name = ctx.add_intermediate_tensor(
+        f"{output_name}_max_unpool_indices_flat",
+        dtype="INT32",
+        shape=[int(input_count)],
+    )
+    flat_indices_2d_name = ctx.add_intermediate_tensor(
+        f"{output_name}_max_unpool_indices_2d",
+        dtype="INT32",
+        shape=[int(input_count), 1],
+    )
+    flat_values_name = ctx.add_intermediate_tensor(
+        f"{output_name}_max_unpool_values_flat",
+        dtype=input_dtype,
+        shape=[int(input_count)],
+    )
+    scatter_shape_name = ctx.add_const_tensor(
+        f"{output_name}_max_unpool_scatter_shape",
+        np.asarray([int(output_count)], dtype=np.int32),
+    )
+    output_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_max_unpool_flat",
+        dtype=input_dtype,
+        shape=[int(output_count)],
+    )
+    output_flat_tensor = ctx.model_ir.tensors.get(output_flat_name, None)
+    if output_flat_tensor is not None:
+        output_flat_tensor.shape_signature = [int(output_count)]
+
+    reshape_flat_shape_name = ctx.add_const_tensor(
+        f"{output_name}_max_unpool_flat_shape",
+        np.asarray([int(input_count)], dtype=np.int32),
+    )
+    reshape_indices_2d_shape_name = ctx.add_const_tensor(
+        f"{output_name}_max_unpool_indices_2d_shape",
+        np.asarray([int(input_count), 1], dtype=np.int32),
+    )
+    final_shape_name = ctx.add_const_tensor(
+        f"{output_name}_max_unpool_output_shape",
+        np.asarray([int(v) for v in output_shape], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[indices_i32_name, reshape_flat_shape_name],
+            outputs=[flat_indices_name],
+            options={"newShape": [int(input_count)]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[flat_indices_name, reshape_indices_2d_shape_name],
+            outputs=[flat_indices_2d_name],
+            options={"newShape": [int(input_count), 1]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[input_name, reshape_flat_shape_name],
+            outputs=[flat_values_name],
+            options={"newShape": [int(input_count)]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=[flat_indices_2d_name, flat_values_name, scatter_shape_name],
+            outputs=[output_flat_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[output_flat_name, final_shape_name],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in output_shape]},
+        )
+    )
+
+
+def build_max_roi_pool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    rois_name = node.inputs[1].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    pooled_shape = [int(v) for v in list(node.attrs.get("pooled_shape", [1, 1]))]
+    pooled_h, pooled_w = int(pooled_shape[0]), int(pooled_shape[1])
+    spatial_scale = float(node.attrs.get("spatial_scale", 1.0))
+    rois = np.asarray(ctx.get_constant_array(rois_name), dtype=np.float32).reshape(-1, 5)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    if output_tensor is not None:
+        output_tensor.dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+        output_tensor.shape = [int(v) for v in output_shape]
+        output_tensor.shape_signature = [int(v) for v in output_shape]
+        if input_tensor is not None:
+            output_tensor.quantization = _clone_quantization(input_tensor.quantization)
+
+    n, c, h, w = [int(v) for v in input_shape]
+    input_nhwc_name = ctx.add_intermediate_tensor(
+        f"{output_name}_max_roi_pool_input_nhwc",
+        dtype=input_dtype,
+        shape=[int(n), int(h), int(w), int(c)],
+    )
+    input_nhwc_name = make_transpose(ctx, input_name, input_nhwc_name, [0, 2, 3, 1])
+
+    zero_const_name = ctx.add_const_tensor(
+        f"{output_name}_max_roi_pool_zero",
+        np.zeros((1, 1, 1, int(c)), dtype=np.float16 if input_dtype == "FLOAT16" else np.float32),
+    )
+
+    roi_outputs: list[str] = []
+    for roi_idx, roi in enumerate(rois):
+        batch_idx = int(roi[0])
+        x1 = float(roi[1]) * spatial_scale
+        y1 = float(roi[2]) * spatial_scale
+        x2 = float(roi[3]) * spatial_scale
+        y2 = float(roi[4]) * spatial_scale
+        roi_start_w = int(np.clip(np.round(x1), 0, w))
+        roi_start_h = int(np.clip(np.round(y1), 0, h))
+        roi_end_w = int(np.clip(np.round(x2), 0, w))
+        roi_end_h = int(np.clip(np.round(y2), 0, h))
+        roi_width = max(int(roi_end_w - roi_start_w + 1), 1)
+        roi_height = max(int(roi_end_h - roi_start_h + 1), 1)
+        bin_size_h = float(roi_height) / float(pooled_h)
+        bin_size_w = float(roi_width) / float(pooled_w)
+
+        row_outputs: list[str] = []
+        for ph in range(int(pooled_h)):
+            cell_outputs: list[str] = []
+            for pw in range(int(pooled_w)):
+                hstart = int(np.floor(float(ph) * bin_size_h)) + int(roi_start_h)
+                hend = int(np.ceil(float(ph + 1) * bin_size_h)) + int(roi_start_h)
+                wstart = int(np.floor(float(pw) * bin_size_w)) + int(roi_start_w)
+                wend = int(np.ceil(float(pw + 1) * bin_size_w)) + int(roi_start_w)
+                hstart = int(np.clip(hstart, 0, h))
+                hend = int(np.clip(hend, 0, h))
+                wstart = int(np.clip(wstart, 0, w))
+                wend = int(np.clip(wend, 0, w))
+                if hend <= hstart or wend <= wstart:
+                    cell_outputs.append(zero_const_name)
+                    continue
+                region_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_max_roi_pool_roi{roi_idx}_r{ph}_c{pw}_region",
+                    dtype=input_dtype,
+                    shape=[1, int(hend - hstart), int(wend - wstart), int(c)],
+                )
+                begin_name = ctx.add_const_tensor(
+                    f"{region_name}_begin",
+                    np.asarray([int(batch_idx), int(hstart), int(wstart), 0], dtype=np.int32),
+                )
+                size_name = ctx.add_const_tensor(
+                    f"{region_name}_size",
+                    np.asarray([1, int(hend - hstart), int(wend - wstart), int(c)], dtype=np.int32),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SLICE",
+                        inputs=[input_nhwc_name, begin_name, size_name],
+                        outputs=[region_name],
+                    )
+                )
+                pooled_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_max_roi_pool_roi{roi_idx}_r{ph}_c{pw}_pooled",
+                    dtype=input_dtype,
+                    shape=[1, 1, 1, int(c)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="MAX_POOL_2D",
+                        inputs=[region_name],
+                        outputs=[pooled_name],
+                        options={
+                            "padding": "VALID",
+                            "strideH": 1,
+                            "strideW": 1,
+                            "filterHeight": int(hend - hstart),
+                            "filterWidth": int(wend - wstart),
+                            "fusedActivationFunction": "NONE",
+                        },
+                    )
+                )
+                pooled_nchw_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_max_roi_pool_roi{roi_idx}_r{ph}_c{pw}_pooled_nchw",
+                    dtype=input_dtype,
+                    shape=[1, int(c), 1, 1],
+                )
+                pooled_nchw_tensor = ctx.model_ir.tensors.get(pooled_nchw_name, None)
+                if pooled_nchw_tensor is not None:
+                    pooled_nchw_tensor.shape_signature = [1, int(c), 1, 1]
+                pooled_perm_name = ctx.add_const_tensor(
+                    f"{pooled_nchw_name}_perm",
+                    np.asarray([0, 3, 1, 2], dtype=np.int32),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="TRANSPOSE",
+                        inputs=[pooled_name, pooled_perm_name],
+                        outputs=[pooled_nchw_name],
+                    )
+                )
+                cell_outputs.append(pooled_nchw_name)
+            row_name = cell_outputs[0]
+            if len(cell_outputs) > 1:
+                row_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_max_roi_pool_roi{roi_idx}_row{ph}",
+                    dtype=input_dtype,
+                    shape=[1, int(c), 1, int(pooled_w)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CONCATENATION",
+                        inputs=cell_outputs,
+                        outputs=[row_name],
+                        options={"axis": 3, "fusedActivationFunction": "NONE"},
+                    )
+                )
+            row_outputs.append(row_name)
+        roi_name = row_outputs[0]
+        if len(row_outputs) > 1:
+            roi_name = ctx.add_intermediate_tensor(
+                f"{output_name}_max_roi_pool_roi{roi_idx}",
+                dtype=input_dtype,
+                shape=[1, int(c), int(pooled_h), int(pooled_w)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=row_outputs,
+                    outputs=[roi_name],
+                    options={"axis": 2, "fusedActivationFunction": "NONE"},
+                )
+            )
+        roi_outputs.append(roi_name)
+
+    roi_concat_name = roi_outputs[0]
+    if len(roi_outputs) > 1:
+        roi_concat_name = ctx.add_intermediate_tensor(
+            f"{output_name}_max_roi_pool_concat",
+            dtype=input_dtype,
+            shape=[int(len(roi_outputs)), int(c), int(pooled_h), int(pooled_w)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=roi_outputs,
+                outputs=[roi_concat_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+    if roi_concat_name != output_name:
+        reshape_shape_name = ctx.add_const_tensor(
+            f"{output_name}_max_roi_pool_identity_shape",
+            np.asarray(output_shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[roi_concat_name, reshape_shape_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in output_shape]},
+            )
+        )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) for v in output_shape]
+        output_tensor.shape_signature = [int(v) for v in output_shape]

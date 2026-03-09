@@ -426,6 +426,16 @@ def _build_reverse_v2_options(
     return _enum(schema_tflite, "BuiltinOptions", "ReverseV2Options"), options
 
 
+def _build_reverse_sequence_options(
+    schema_tflite: Dict[str, Any],
+    op: OperatorIR,
+) -> Tuple[int, object]:
+    options = schema_tflite["ReverseSequenceOptionsT"]()
+    options.seqDim = int(op.options.get("seqDim", 0))
+    options.batchDim = int(op.options.get("batchDim", 1))
+    return _enum(schema_tflite, "BuiltinOptions", "ReverseSequenceOptions"), options
+
+
 def _build_random_options(
     schema_tflite: Dict[str, Any],
     op: OperatorIR,
@@ -627,7 +637,11 @@ def _build_builtin_options(
         return _build_cumsum_options(schema_tflite, op)
     if op.op_type == "REVERSE_V2":
         return _build_reverse_v2_options(schema_tflite, op)
+    if op.op_type == "REVERSE_SEQUENCE":
+        return _build_reverse_sequence_options(schema_tflite, op)
     if op.op_type == "RANDOM_STANDARD_NORMAL":
+        return _build_random_options(schema_tflite, op)
+    if op.op_type == "RANDOM_UNIFORM":
         return _build_random_options(schema_tflite, op)
     if op.op_type == "FULLY_CONNECTED":
         return _build_fully_connected_options(schema_tflite, op)
