@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import copy
+from types import SimpleNamespace
 from typing import Any, List
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _is_unresolved_placeholder_shape(shape: List[int], signature: List[int] | None) -> bool:
@@ -24,6 +27,195 @@ def _is_unresolved_placeholder_shape(shape: List[int], signature: List[int] | No
 def _materialize_tensor_shape_from_signature(tensor: Any, *, signature: List[int]) -> None:
     tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(signature)]
     tensor.shape_signature = [int(v) if int(v) > 0 else -1 for v in list(signature)]
+
+
+def _clone_quantization(quantization: Any) -> Any:
+    if quantization is None:
+        return None
+    return copy.deepcopy(quantization)
+
+
+def _tensor_shape_with_signature(ctx: Any, tensor_name: str) -> list[int]:
+    shape = [int(v) for v in ctx.get_tensor_shape(tensor_name)]
+    tensor = ctx.model_ir.tensors.get(tensor_name, None)
+    signature = (
+        [int(v) for v in list(tensor.shape_signature)]
+        if tensor is not None and tensor.shape_signature is not None
+        else [int(v) for v in shape]
+    )
+    if len(signature) != len(shape):
+        return [int(v) for v in shape]
+    return [
+        int(signature[idx]) if int(signature[idx]) < 0 else int(shape[idx])
+        for idx in range(len(shape))
+    ]
+
+
+def _normalize_axis_for_rank(axis: int, rank: int) -> int:
+    axis_norm = int(axis)
+    if axis_norm < 0:
+        axis_norm += int(rank)
+    if axis_norm < 0 or axis_norm >= int(rank):
+        raise NotImplementedError(f"axis is out of range. axis={axis} rank={rank}")
+    return int(axis_norm)
+
+
+def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> None:
+    ctx.ensure_tensor(src_tensor_name)
+    ctx.ensure_tensor(dst_tensor_name)
+    src = ctx.model_ir.tensors[src_tensor_name]
+    dst = ctx.model_ir.tensors[dst_tensor_name]
+    src_signature = (
+        list(src.shape_signature)
+        if src.shape_signature is not None
+        else list(src.shape)
+    )
+    dst.shape = [int(v) for v in list(src.shape)]
+    dst.shape_signature = [int(v) for v in list(src_signature)]
+    dst.dtype = str(src.dtype)
+    dst.quantization = _clone_quantization(src.quantization)
+
+
+def _add_binary_op(
+    *,
+    ctx: Any,
+    op_type: str,
+    lhs_name: str,
+    rhs_name: str,
+    output_name: str,
+) -> None:
+    options: dict[str, Any] = {}
+    if op_type in {"ADD", "SUB", "MUL", "DIV"}:
+        options = {"fusedActivationFunction": "NONE"}
+    ctx.add_operator(
+        OperatorIR(
+            op_type=op_type,
+            inputs=[lhs_name, rhs_name],
+            outputs=[output_name],
+            options=options,
+        )
+    )
+
+
+def _build_reduce_sum_all_axes(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    if len(input_shape) == 0:
+        if str(input_name) != str(output_name):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[input_name, ctx.add_const_tensor(f"{output_name}_identity_shape", np.asarray([], dtype=np.int32))],
+                    outputs=[output_name],
+                    options={"newShape": []},
+                )
+            )
+        return
+    axes_name = ctx.add_const_tensor(
+        f"{output_name}_reduce_axes",
+        np.asarray(list(range(len(input_shape))), dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUM",
+            inputs=[input_name, axes_name],
+            outputs=[output_name],
+            options={"keepDims": False},
+        )
+    )
+
+
+def _build_safe_divide_no_nan(
+    *,
+    ctx: Any,
+    numerator_name: str,
+    denominator_name: str,
+    output_name: str,
+    dtype: str,
+) -> None:
+    zero_name = ctx.add_const_tensor(
+        f"{output_name}_safe_div_zero",
+        np.asarray(0.0, dtype=np.float16 if str(dtype).upper() == "FLOAT16" else np.float32),
+    )
+    one_name = ctx.add_const_tensor(
+        f"{output_name}_safe_div_one",
+        np.asarray(1.0, dtype=np.float16 if str(dtype).upper() == "FLOAT16" else np.float32),
+    )
+    positive_name = ctx.add_intermediate_tensor(
+        f"{output_name}_safe_div_positive",
+        dtype="BOOL",
+        shape=[],
+    )
+    safe_denom_name = ctx.add_intermediate_tensor(
+        f"{output_name}_safe_div_denominator",
+        dtype=dtype,
+        shape=[],
+    )
+    div_name = ctx.add_intermediate_tensor(
+        f"{output_name}_safe_div_value",
+        dtype=dtype,
+        shape=[],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GREATER",
+            inputs=[denominator_name, zero_name],
+            outputs=[positive_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[positive_name, denominator_name, one_name],
+            outputs=[safe_denom_name],
+        )
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="DIV",
+        lhs_name=numerator_name,
+        rhs_name=safe_denom_name,
+        output_name=div_name,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[positive_name, div_name, zero_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def _move_axis_to_last(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    axis: int,
+) -> str:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    rank = int(len(input_shape))
+    axis_norm = _normalize_axis_for_rank(axis=axis, rank=rank)
+    if int(axis_norm) == int(rank - 1):
+        return str(input_name)
+    perm_to_last = [int(v) for v in range(rank) if int(v) != int(axis_norm)] + [int(axis_norm)]
+    permuted_shape = [int(input_shape[int(v)]) for v in perm_to_last]
+    transposed_name = ctx.add_intermediate_tensor(
+        output_name,
+        dtype=str(ctx.get_tensor_dtype(input_name)).upper(),
+        shape=permuted_shape,
+    )
+    return make_transpose(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=transposed_name,
+        perm_values=perm_to_last,
+        allow_elide_inverse_chain=False,
+    )
 
 
 def _normalize_axes(axes: List[int], rank: int, node_name: str) -> List[int]:
@@ -707,6 +899,134 @@ def build_global_max_pool_op(node: Any, ctx: Any) -> None:
     )
 
 
+def build_global_lp_pool_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    if len(input_shape) < 3:
+        raise NotImplementedError(
+            f"GlobalLpPool requires rank>=3. op={node.name} input_shape={input_shape}"
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    np_dtype = np.float16 if input_dtype == "FLOAT16" else np.float32
+    p = float(node.attrs.get("p", 2.0))
+
+    abs_name = ctx.add_intermediate_tensor(
+        f"{node.name}_global_lp_abs",
+        dtype=input_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ABS",
+            inputs=[input_name],
+            outputs=[abs_name],
+        )
+    )
+
+    powered_name = abs_name
+    if abs(float(p) - 1.0) > 1e-12:
+        p_const_name = ctx.add_const_tensor(
+            f"{node.name}_global_lp_p",
+            np.asarray(float(p), dtype=np_dtype),
+        )
+        powered_name = ctx.add_intermediate_tensor(
+            f"{node.name}_global_lp_powered",
+            dtype=input_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="POW",
+                inputs=[abs_name, p_const_name],
+                outputs=[powered_name],
+            )
+        )
+
+    reduced_shape = [int(input_shape[0]), int(input_shape[1])] + [1] * int(len(input_shape) - 2)
+    spatial_axes = [int(v) for v in range(2, len(input_shape))]
+    axes_const_name = ctx.add_const_tensor(
+        f"{node.name}_global_lp_axes",
+        np.asarray(spatial_axes, dtype=np.int32),
+    )
+    reduced_name = ctx.add_intermediate_tensor(
+        f"{node.name}_global_lp_reduced",
+        dtype=input_dtype,
+        shape=reduced_shape,
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    reduced_tensor = ctx.model_ir.tensors.get(reduced_name, None)
+    if output_tensor is not None and reduced_tensor is not None:
+        reduced_tensor.shape_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(reduced_shape)]
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUM",
+            inputs=[powered_name, axes_const_name],
+            outputs=[reduced_name],
+            options={"keepDims": True},
+        )
+    )
+
+    root_name = reduced_name
+    if abs(float(p) - 1.0) > 1e-12:
+        inv_p_const_name = ctx.add_const_tensor(
+            f"{node.name}_global_lp_inv_p",
+            np.asarray(float(1.0 / p), dtype=np_dtype),
+        )
+        root_name = ctx.add_intermediate_tensor(
+            f"{node.name}_global_lp_root",
+            dtype=input_dtype,
+            shape=reduced_shape,
+        )
+        root_tensor = ctx.model_ir.tensors.get(root_name, None)
+        if reduced_tensor is not None and root_tensor is not None:
+            root_tensor.shape_signature = (
+                [int(v) for v in list(reduced_tensor.shape_signature)]
+                if reduced_tensor.shape_signature is not None
+                else [int(v) for v in list(reduced_shape)]
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="POW",
+                inputs=[reduced_name, inv_p_const_name],
+                outputs=[root_name],
+            )
+        )
+
+    if output_dtype == input_dtype:
+        shape_const_name = ctx.add_const_tensor(
+            f"{output_name}_global_lp_shape",
+            np.asarray([int(v) for v in ctx.get_tensor_shape(output_name)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[root_name, shape_const_name],
+                outputs=[output_name],
+                options={"newShape": [int(v) for v in ctx.get_tensor_shape(output_name)]},
+            )
+        )
+        return
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[root_name],
+            outputs=[output_name],
+            options={"inDataType": input_dtype, "outDataType": output_dtype},
+        )
+    )
+
+
 def _build_sum_reduce_from_input(
     *,
     node: Any,
@@ -856,3 +1176,740 @@ def build_reduce_l2_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+
+def build_reduce_sum_square_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+
+    square_input_name = input_name
+    if input_dtype != compute_dtype:
+        square_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_sum_square_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[square_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    squared_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_sum_square_squared",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[square_input_name, square_input_name],
+            outputs=[squared_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+
+    sum_name = output_name
+    if output_dtype != compute_dtype:
+        sum_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_sum_square_sum",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+    _build_sum_reduce_from_input(
+        node=node,
+        ctx=ctx,
+        input_name=squared_name,
+        output_name=sum_name,
+    )
+
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[sum_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+
+def build_reduce_log_sum_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+
+    sum_input_name = input_name
+    if input_dtype != compute_dtype:
+        sum_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_log_sum_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[sum_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_log_sum_sum",
+        dtype=compute_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+    )
+    log_name = output_name
+    if output_dtype != compute_dtype:
+        log_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_log_sum_log",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+    _build_sum_reduce_from_input(
+        node=node,
+        ctx=ctx,
+        input_name=sum_input_name,
+        output_name=sum_name,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[sum_name],
+            outputs=[log_name],
+        )
+    )
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[log_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+
+def build_reduce_log_sum_exp_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+
+    exp_input_name = input_name
+    if input_dtype != compute_dtype:
+        exp_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_log_sum_exp_input_cast",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[input_name],
+                outputs=[exp_input_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": compute_dtype,
+                },
+            )
+        )
+
+    exp_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_log_sum_exp_exp",
+        dtype=compute_dtype,
+        shape=input_shape,
+    )
+    sum_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reduce_log_sum_exp_sum",
+        dtype=compute_dtype,
+        shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+    )
+    log_name = output_name
+    if output_dtype != compute_dtype:
+        log_name = ctx.add_intermediate_tensor(
+            f"{output_name}_reduce_log_sum_exp_log",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="EXP",
+            inputs=[exp_input_name],
+            outputs=[exp_name],
+        )
+    )
+    _build_sum_reduce_from_input(
+        node=node,
+        ctx=ctx,
+        input_name=exp_name,
+        output_name=sum_name,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOG",
+            inputs=[sum_name],
+            outputs=[log_name],
+        )
+    )
+    if output_dtype != compute_dtype:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[log_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": compute_dtype,
+                    "outDataType": output_dtype,
+                },
+            )
+        )
+
+
+def build_negative_log_likelihood_loss_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    target_name = node.inputs[1].name
+    weight_name = node.inputs[2].name if len(node.inputs) > 2 and str(node.inputs[2].name) != "" else ""
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(target_name)
+    if str(weight_name) != "":
+        ctx.ensure_tensor(weight_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    rank = int(len(input_shape))
+
+    working_input_name = _move_axis_to_last(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=f"{output_name}_nll_input_axis_last",
+        axis=1,
+    )
+    working_input_shape = _tensor_shape_with_signature(ctx, working_input_name)
+    class_depth = int(working_input_shape[-1])
+
+    target_i32_name = target_name
+    target_dtype = str(ctx.get_tensor_dtype(target_name)).upper()
+    target_shape = _tensor_shape_with_signature(ctx, target_name)
+    if target_dtype != "INT32":
+        target_i32_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_target_i32",
+            dtype="INT32",
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        target_i32_tensor = ctx.model_ir.tensors.get(target_i32_name, None)
+        if target_i32_tensor is not None:
+            target_i32_tensor.shape_signature = [int(v) for v in target_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[target_name],
+                outputs=[target_i32_name],
+                options={"inDataType": target_dtype, "outDataType": "INT32"},
+            )
+        )
+
+    ignore_mask_name = ""
+    labels_safe_name = target_i32_name
+    ignore_index = node.attrs.get("ignore_index", None)
+    if ignore_index is not None:
+        ignore_const_name = ctx.add_const_tensor(
+            f"{output_name}_nll_ignore_index",
+            np.asarray(int(ignore_index), dtype=np.int32),
+        )
+        ignore_mask_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_ignore_mask",
+            dtype="BOOL",
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        labels_zero_name = ctx.add_const_tensor(
+            f"{output_name}_nll_zero_i32",
+            np.asarray(0, dtype=np.int32),
+        )
+        labels_safe_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_labels_safe",
+            dtype="INT32",
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        labels_safe_tensor = ctx.model_ir.tensors.get(labels_safe_name, None)
+        if labels_safe_tensor is not None:
+            labels_safe_tensor.shape_signature = [int(v) for v in target_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EQUAL",
+                inputs=[target_i32_name, ignore_const_name],
+                outputs=[ignore_mask_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SELECT_V2",
+                inputs=[ignore_mask_name, labels_zero_name, target_i32_name],
+                outputs=[labels_safe_name],
+            )
+        )
+
+    depth_name = ctx.add_const_tensor(
+        f"{output_name}_nll_depth",
+        np.asarray(int(class_depth), dtype=np.int32),
+    )
+    values_name = ctx.add_const_tensor(
+        f"{output_name}_nll_one_hot_values",
+        np.asarray([0.0, 1.0], dtype=np.float16 if input_dtype == "FLOAT16" else np.float32),
+    )
+    one_hot_name = ctx.add_intermediate_tensor(
+        f"{output_name}_nll_one_hot",
+        dtype=input_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in target_shape] + [int(class_depth)],
+    )
+    one_hot_tensor = ctx.model_ir.tensors.get(one_hot_name, None)
+    if one_hot_tensor is not None:
+        one_hot_tensor.shape_signature = [int(v) for v in target_shape] + [int(class_depth)]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ONE_HOT",
+            inputs=[labels_safe_name, depth_name, ctx.add_const_tensor(f"{output_name}_nll_on_value", np.asarray(1.0, dtype=np.float16 if input_dtype == "FLOAT16" else np.float32)), ctx.add_const_tensor(f"{output_name}_nll_off_value", np.asarray(0.0, dtype=np.float16 if input_dtype == "FLOAT16" else np.float32))],
+            outputs=[one_hot_name],
+            options={"axis": -1},
+        )
+    )
+
+    selected_mul_name = ctx.add_intermediate_tensor(
+        f"{output_name}_nll_selected_mul",
+        dtype=input_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in working_input_shape],
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="MUL",
+        lhs_name=working_input_name,
+        rhs_name=one_hot_name,
+        output_name=selected_mul_name,
+    )
+    selected_name = ctx.add_intermediate_tensor(
+        f"{output_name}_nll_selected",
+        dtype=input_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+    )
+    selected_tensor = ctx.model_ir.tensors.get(selected_name, None)
+    if selected_tensor is not None:
+        selected_tensor.shape_signature = [int(v) for v in target_shape]
+    selected_axes_name = ctx.add_const_tensor(
+        f"{output_name}_nll_selected_axes",
+        np.asarray([-1], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUM",
+            inputs=[selected_mul_name, selected_axes_name],
+            outputs=[selected_name],
+            options={"keepDims": False},
+        )
+    )
+
+    zero_float_name = ctx.add_const_tensor(
+        f"{output_name}_nll_zero",
+        np.asarray(0.0, dtype=np.float16 if input_dtype == "FLOAT16" else np.float32),
+    )
+    loss_name = ctx.add_intermediate_tensor(
+        f"{output_name}_nll_loss",
+        dtype=input_dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+    )
+    loss_tensor = ctx.model_ir.tensors.get(loss_name, None)
+    if loss_tensor is not None:
+        loss_tensor.shape_signature = [int(v) for v in target_shape]
+    _add_binary_op(
+        ctx=ctx,
+        op_type="SUB",
+        lhs_name=zero_float_name,
+        rhs_name=selected_name,
+        output_name=loss_name,
+    )
+
+    denominator_name = ""
+    if str(weight_name) != "":
+        gathered_weight_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_weight_gather",
+            dtype=str(ctx.get_tensor_dtype(weight_name)).upper(),
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        gathered_weight_tensor = ctx.model_ir.tensors.get(gathered_weight_name, None)
+        if gathered_weight_tensor is not None:
+            gathered_weight_tensor.shape_signature = [int(v) for v in target_shape]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="GATHER",
+                inputs=[weight_name, labels_safe_name],
+                outputs=[gathered_weight_name],
+                options={"axis": 0, "batchDims": 0},
+            )
+        )
+        weight_runtime_name = gathered_weight_name
+        gathered_dtype = str(ctx.get_tensor_dtype(weight_runtime_name)).upper()
+        if gathered_dtype != input_dtype:
+            weight_runtime_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nll_weight_cast",
+                dtype=input_dtype,
+                shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+            )
+            weight_runtime_tensor = ctx.model_ir.tensors.get(weight_runtime_name, None)
+            if weight_runtime_tensor is not None:
+                weight_runtime_tensor.shape_signature = [int(v) for v in target_shape]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[gathered_weight_name],
+                    outputs=[weight_runtime_name],
+                    options={"inDataType": gathered_dtype, "outDataType": input_dtype},
+                )
+            )
+        if str(ignore_mask_name) != "":
+            weight_masked_name = ctx.add_intermediate_tensor(
+                f"{output_name}_nll_weight_masked",
+                dtype=input_dtype,
+                shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+            )
+            weight_masked_tensor = ctx.model_ir.tensors.get(weight_masked_name, None)
+            if weight_masked_tensor is not None:
+                weight_masked_tensor.shape_signature = [int(v) for v in target_shape]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SELECT_V2",
+                    inputs=[ignore_mask_name, zero_float_name, weight_runtime_name],
+                    outputs=[weight_masked_name],
+                )
+            )
+            weight_runtime_name = weight_masked_name
+        weighted_loss_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_weighted_loss",
+            dtype=input_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        weighted_loss_tensor = ctx.model_ir.tensors.get(weighted_loss_name, None)
+        if weighted_loss_tensor is not None:
+            weighted_loss_tensor.shape_signature = [int(v) for v in target_shape]
+        _add_binary_op(
+            ctx=ctx,
+            op_type="MUL",
+            lhs_name=loss_name,
+            rhs_name=weight_runtime_name,
+            output_name=weighted_loss_name,
+        )
+        loss_name = weighted_loss_name
+        denominator_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_weight_denominator",
+            dtype=input_dtype,
+            shape=[],
+        )
+        _build_reduce_sum_all_axes(
+            ctx=ctx,
+            input_name=weight_runtime_name,
+            output_name=denominator_name,
+        )
+    elif str(ignore_mask_name) != "":
+        valid_mask_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_valid_mask",
+            dtype=input_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        valid_mask_tensor = ctx.model_ir.tensors.get(valid_mask_name, None)
+        if valid_mask_tensor is not None:
+            valid_mask_tensor.shape_signature = [int(v) for v in target_shape]
+        one_float_name = ctx.add_const_tensor(
+            f"{output_name}_nll_one",
+            np.asarray(1.0, dtype=np.float16 if input_dtype == "FLOAT16" else np.float32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SELECT_V2",
+                inputs=[ignore_mask_name, zero_float_name, one_float_name],
+                outputs=[valid_mask_name],
+            )
+        )
+        masked_loss_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_masked_loss",
+            dtype=input_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in target_shape],
+        )
+        masked_loss_tensor = ctx.model_ir.tensors.get(masked_loss_name, None)
+        if masked_loss_tensor is not None:
+            masked_loss_tensor.shape_signature = [int(v) for v in target_shape]
+        _add_binary_op(
+            ctx=ctx,
+            op_type="MUL",
+            lhs_name=loss_name,
+            rhs_name=valid_mask_name,
+            output_name=masked_loss_name,
+        )
+        loss_name = masked_loss_name
+        denominator_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_valid_denominator",
+            dtype=input_dtype,
+            shape=[],
+        )
+        _build_reduce_sum_all_axes(
+            ctx=ctx,
+            input_name=valid_mask_name,
+            output_name=denominator_name,
+        )
+
+    reduction = str(node.attrs.get("reduction", "mean")).lower()
+    if reduction == "none":
+        output_tensor = ctx.model_ir.tensors[output_name]
+        target_tensor = ctx.model_ir.tensors.get(target_name, None)
+        output_tensor.dtype = output_dtype
+        output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in target_shape]
+        output_tensor.shape_signature = [int(v) for v in target_shape]
+        if target_tensor is not None:
+            output_tensor.quantization = _clone_quantization(target_tensor.quantization)
+        if output_dtype == input_dtype:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[loss_name, ctx.add_const_tensor(f"{output_name}_nll_output_shape", np.asarray([int(v) for v in target_shape], dtype=np.int32))],
+                    outputs=[output_name],
+                    options={"newShape": [int(v) for v in target_shape], "preserveDynamicShape": True},
+                )
+            )
+        else:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[loss_name],
+                    outputs=[output_name],
+                    options={"inDataType": input_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
+
+    sum_loss_name = ctx.add_intermediate_tensor(
+        f"{output_name}_nll_sum_loss",
+        dtype=input_dtype,
+        shape=[],
+    )
+    _build_reduce_sum_all_axes(
+        ctx=ctx,
+        input_name=loss_name,
+        output_name=sum_loss_name,
+    )
+    output_core_name = output_name
+    if output_dtype != input_dtype:
+        output_core_name = ctx.add_intermediate_tensor(
+            f"{output_name}_nll_output_core",
+            dtype=input_dtype,
+            shape=[],
+        )
+
+    output_tensor = ctx.model_ir.tensors[output_name]
+    output_tensor.shape = []
+    output_tensor.shape_signature = []
+    output_tensor.dtype = output_dtype
+    if reduction == "sum":
+        if str(output_core_name) != str(output_name):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[sum_loss_name],
+                    outputs=[output_name],
+                    options={"inDataType": input_dtype, "outDataType": output_dtype},
+                )
+            )
+        else:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[sum_loss_name, ctx.add_const_tensor(f"{output_name}_nll_scalar_shape", np.asarray([], dtype=np.int32))],
+                    outputs=[output_name],
+                    options={"newShape": []},
+                )
+            )
+        return
+
+    if str(denominator_name) == "":
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MEAN",
+                inputs=[loss_name, ctx.add_const_tensor(f"{output_name}_nll_mean_axes", np.asarray(list(range(max(int(rank - 1), 1))), dtype=np.int32))],
+                outputs=[output_core_name],
+                options={"keepDims": False},
+            )
+        )
+    else:
+        _build_safe_divide_no_nan(
+            ctx=ctx,
+            numerator_name=sum_loss_name,
+            denominator_name=denominator_name,
+            output_name=output_core_name,
+            dtype=input_dtype,
+        )
+    if str(output_core_name) != str(output_name):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[output_core_name],
+                outputs=[output_name],
+                options={"inDataType": input_dtype, "outDataType": output_dtype},
+            )
+        )
+
+
+def build_softmax_cross_entropy_loss_op(node: Any, ctx: Any) -> None:
+    scores_name = node.inputs[0].name
+    loss_output_name = node.outputs[0].name
+    log_prob_output_name = node.outputs[1].name if len(node.outputs) > 1 and str(node.outputs[1].name) != "" else ""
+    ctx.ensure_tensor(scores_name)
+    ctx.ensure_tensor(loss_output_name)
+    if str(log_prob_output_name) != "":
+        ctx.ensure_tensor(log_prob_output_name)
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(scores_name)]
+    rank = int(len(input_shape))
+    class_axis = 1
+    axis_norm = _normalize_axis_for_rank(class_axis, rank)
+    log_prob_name = log_prob_output_name if str(log_prob_output_name) != "" else ctx.add_intermediate_tensor(
+        f"{loss_output_name}_softmaxce_log_prob",
+        dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+        shape=[int(v) for v in input_shape],
+    )
+    if str(log_prob_output_name) != "":
+        _propagate_shape(ctx, scores_name, log_prob_output_name)
+
+    if int(axis_norm) == int(rank - 1):
+        softmax_name = ctx.add_intermediate_tensor(
+            f"{loss_output_name}_softmaxce_softmax",
+            dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+            shape=[int(v) for v in input_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SOFTMAX",
+                inputs=[scores_name],
+                outputs=[softmax_name],
+                options={"beta": 1.0},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOG",
+                inputs=[softmax_name],
+                outputs=[log_prob_name],
+            )
+        )
+    else:
+        perm_to_last = [int(v) for v in range(rank) if int(v) != int(axis_norm)] + [int(axis_norm)]
+        perm_from_last = [0] * int(rank)
+        for out_axis, in_axis in enumerate(perm_to_last):
+            perm_from_last[int(in_axis)] = int(out_axis)
+        axis_last_shape = [int(input_shape[int(v)]) for v in perm_to_last]
+        input_axis_last_name = ctx.add_intermediate_tensor(
+            f"{loss_output_name}_softmaxce_input_axis_last",
+            dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+            shape=axis_last_shape,
+        )
+        input_axis_last_name = make_transpose(
+            ctx=ctx,
+            input_name=scores_name,
+            output_name=input_axis_last_name,
+            perm_values=perm_to_last,
+            allow_elide_inverse_chain=False,
+        )
+        softmax_axis_last_name = ctx.add_intermediate_tensor(
+            f"{loss_output_name}_softmaxce_softmax_axis_last",
+            dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+            shape=axis_last_shape,
+        )
+        log_axis_last_name = ctx.add_intermediate_tensor(
+            f"{loss_output_name}_softmaxce_log_axis_last",
+            dtype=str(ctx.get_tensor_dtype(scores_name)).upper(),
+            shape=axis_last_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SOFTMAX",
+                inputs=[input_axis_last_name],
+                outputs=[softmax_axis_last_name],
+                options={"beta": 1.0},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOG",
+                inputs=[softmax_axis_last_name],
+                outputs=[log_axis_last_name],
+            )
+        )
+        transposed_log_prob_name = make_transpose(
+            ctx=ctx,
+            input_name=log_axis_last_name,
+            output_name=log_prob_name,
+            perm_values=perm_from_last,
+            allow_elide_inverse_chain=False,
+        )
+        if str(transposed_log_prob_name) != str(log_prob_name):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[
+                        transposed_log_prob_name,
+                        ctx.add_const_tensor(
+                            f"{loss_output_name}_softmaxce_log_prob_shape",
+                            np.asarray([int(v) for v in input_shape], dtype=np.int32),
+                        ),
+                    ],
+                    outputs=[log_prob_name],
+                    options={"newShape": [int(v) for v in input_shape]},
+                )
+            )
+
+    proxy_node = SimpleNamespace(
+        name=f"{node.name}_softmaxce_nll_proxy",
+        op="NegativeLogLikelihoodLoss",
+        attrs={
+            "reduction": node.attrs.get("reduction", "mean"),
+            "ignore_index": node.attrs.get("ignore_index", None),
+        },
+        inputs=[
+            SimpleNamespace(name=log_prob_name),
+            SimpleNamespace(name=node.inputs[1].name),
+        ] + ([SimpleNamespace(name=node.inputs[2].name)] if len(node.inputs) > 2 and str(node.inputs[2].name) != "" else []),
+        outputs=[SimpleNamespace(name=loss_output_name)],
+    )
+    build_negative_log_likelihood_loss_op(proxy_node, ctx)

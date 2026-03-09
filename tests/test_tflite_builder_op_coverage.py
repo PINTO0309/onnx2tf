@@ -373,6 +373,82 @@ def _make_grouped_conv_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _deform_conv_reference_params(
+    *,
+    in_channels: int = 4,
+    out_channels: int = 4,
+    group: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    weights = np.linspace(
+        -0.35,
+        0.35,
+        num=int(out_channels) * int(in_channels // group) * 3 * 3,
+        dtype=np.float32,
+    ).reshape(int(out_channels), int(in_channels // group), 3, 3)
+    bias = np.linspace(-0.125, 0.125, num=int(out_channels), dtype=np.float32)
+    return weights, bias
+
+
+def _make_deform_conv_builtin_model() -> onnx.ModelProto:
+    weights, bias = _deform_conv_reference_params()
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8, 8])
+    offset = helper.make_tensor_value_info("offset", TensorProto.FLOAT, [1, 18, 8, 8])
+    mask = helper.make_tensor_value_info("mask", TensorProto.FLOAT, [1, 9, 8, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 8])
+    node = helper.make_node(
+        "DeformConv",
+        ["x", "W", "offset", "B", "mask"],
+        ["y"],
+        name="DeformConvBuiltinNode",
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+        dilations=[1, 1],
+        group=1,
+        offset_group=1,
+    )
+    graph = helper.make_graph(
+        [node],
+        "deform_conv_builtin_graph",
+        [x, offset, mask],
+        [y],
+        initializer=[
+            numpy_helper.from_array(weights, name="W"),
+            numpy_helper.from_array(bias, name="B"),
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
+def _make_deform_conv_custom_candidate_model() -> onnx.ModelProto:
+    weights, bias = _deform_conv_reference_params(group=2)
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8, 8])
+    offset = helper.make_tensor_value_info("offset", TensorProto.FLOAT, [1, 36, 8, 8])
+    mask = helper.make_tensor_value_info("mask", TensorProto.FLOAT, [1, 18, 8, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 8])
+    node = helper.make_node(
+        "DeformConv",
+        ["x", "W", "offset", "B", "mask"],
+        ["y"],
+        name="DeformConvCustomNode",
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+        dilations=[1, 1],
+        group=2,
+        offset_group=2,
+    )
+    graph = helper.make_graph(
+        [node],
+        "deform_conv_custom_graph",
+        [x, offset, mask],
+        [y],
+        initializer=[
+            numpy_helper.from_array(weights, name="W"),
+            numpy_helper.from_array(bias, name="B"),
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
 def _make_einsum_nonconst_rhs_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])
@@ -885,6 +961,52 @@ def test_op_coverage_reason_code_snapshot_custom_policy_paths() -> None:
     )
 
 
+def test_op_coverage_deform_conv_builtin_and_custom_policy_paths() -> None:
+    builtin_report = build_op_coverage_report(
+        onnx_graph=_make_deform_conv_builtin_model(),
+        output_file_name="deformconv_builtin_snapshot",
+        allow_custom_ops=True,
+        custom_op_allowlist=["DeformConv"],
+    )
+    assert builtin_report["unsupported_reason_counts"] == {}
+    assert builtin_report["graph_summary"]["custom_lowered_nodes"] == 0
+    assert builtin_report["graph_custom_ops"] == []
+    assert any(
+        node["onnx_op"] == "DeformConv" and node.get("dispatch_mode") == "builtin"
+        for node in builtin_report["graph_node_reports"]
+    )
+
+    default_report = build_op_coverage_report(
+        onnx_graph=_make_deform_conv_custom_candidate_model(),
+        output_file_name="deformconv_custom_disabled_snapshot",
+    )
+    assert default_report["unsupported_reason_counts"] == {"custom_op_candidate_disabled": 1}
+    assert default_report["unsupported_nodes"][0]["reason_code"] == "custom_op_candidate_disabled"
+
+    allowlist_block_report = build_op_coverage_report(
+        onnx_graph=_make_deform_conv_custom_candidate_model(),
+        output_file_name="deformconv_custom_allowlist_block_snapshot",
+        allow_custom_ops=True,
+        custom_op_allowlist=["TopK"],
+    )
+    assert allowlist_block_report["unsupported_reason_counts"] == {"custom_op_not_in_allowlist": 1}
+    assert allowlist_block_report["unsupported_nodes"][0]["reason_code"] == "custom_op_not_in_allowlist"
+
+    allowlist_custom_report = build_op_coverage_report(
+        onnx_graph=_make_deform_conv_custom_candidate_model(),
+        output_file_name="deformconv_custom_allowed_snapshot",
+        allow_custom_ops=True,
+        custom_op_allowlist=["DeformConv"],
+    )
+    assert allowlist_custom_report["unsupported_reason_counts"] == {}
+    assert allowlist_custom_report["graph_summary"]["custom_lowered_nodes"] == 1
+    assert allowlist_custom_report["graph_custom_ops"] == ["DeformConv"]
+    assert any(
+        node["onnx_op"] == "DeformConv" and node.get("dispatch_mode") == "custom"
+        for node in allowlist_custom_report["graph_node_reports"]
+    )
+
+
 def test_op_coverage_global_average_pool_and_grouped_conv_builtin_dispatch() -> None:
     global_avg_report = build_op_coverage_report(
         onnx_graph=_make_global_average_pool_model(),
@@ -959,6 +1081,576 @@ def test_op_coverage_max_log_builtin_dispatch() -> None:
         (_make_log_model(), "Log"),
         (_make_scatter_elements_model(), "ScatterElements"),
         (_make_roi_align_model(), "RoiAlign"),
+    ]
+    for model, op_name in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name=f"{op_name.lower()}_builtin_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def _make_wave1_unary_builtin_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    y_thr = helper.make_tensor_value_info("y_thr", TensorProto.FLOAT, [2, 3])
+    y_shrink = helper.make_tensor_value_info("y_shrink", TensorProto.FLOAT, [2, 3])
+    y_inf = helper.make_tensor_value_info("y_inf", TensorProto.BOOL, [2, 3])
+    y_nan = helper.make_tensor_value_info("y_nan", TensorProto.BOOL, [2, 3])
+    nodes = [
+        helper.make_node("LeakyRelu", ["x"], ["y"], name="LeakyReluNode", alpha=0.125),
+        helper.make_node("ThresholdedRelu", ["y"], ["y_thr"], name="ThresholdedReluNode", alpha=0.25),
+        helper.make_node("Shrink", ["y_thr"], ["y_shrink"], name="ShrinkNode", lambd=0.5, bias=0.125),
+        helper.make_node("IsInf", ["x"], ["y_inf"], name="IsInfNode"),
+        helper.make_node("IsNaN", ["x"], ["y_nan"], name="IsNaNNode"),
+    ]
+    graph = helper.make_graph(nodes, "wave1_unary_builtin_graph", [x], [y_shrink, y_inf, y_nan])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
+def _make_wave1_reduce_builtin_model() -> onnx.ModelProto:
+    x0 = helper.make_tensor_value_info("x0", TensorProto.FLOAT, [2, 3])
+    x1 = helper.make_tensor_value_info("x1", TensorProto.FLOAT, [2, 3])
+    y_mean = helper.make_tensor_value_info("y_mean", TensorProto.FLOAT, [2, 3])
+    y_logsum = helper.make_tensor_value_info("y_logsum", TensorProto.FLOAT, [2, 1])
+    y_logsumexp = helper.make_tensor_value_info("y_logsumexp", TensorProto.FLOAT, [2, 1])
+    y_sumsquare = helper.make_tensor_value_info("y_sumsquare", TensorProto.FLOAT, [2, 1])
+    axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="axes")
+    nodes = [
+        helper.make_node("Mean", ["x0", "x1"], ["y_mean"], name="MeanNode"),
+        helper.make_node("ReduceLogSum", ["x0", "axes"], ["y_logsum"], name="ReduceLogSumNode", keepdims=1),
+        helper.make_node(
+            "ReduceLogSumExp",
+            ["x0", "axes"],
+            ["y_logsumexp"],
+            name="ReduceLogSumExpNode",
+            keepdims=1,
+        ),
+        helper.make_node(
+            "ReduceSumSquare",
+            ["x0", "axes"],
+            ["y_sumsquare"],
+            name="ReduceSumSquareNode",
+            keepdims=1,
+        ),
+    ]
+    graph = helper.make_graph(nodes, "wave1_reduce_builtin_graph", [x0, x1], [y_mean, y_logsum, y_logsumexp, y_sumsquare], initializer=[axes])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
+def _make_wave1_random_builtin_model() -> onnx.ModelProto:
+    probs = helper.make_tensor_value_info("probs", TensorProto.FLOAT, [2, 3])
+    size = helper.make_tensor_value_info("size", TensorProto.INT64, [1])
+    y_rn = helper.make_tensor_value_info("y_rn", TensorProto.FLOAT, [2, 3])
+    y_ru = helper.make_tensor_value_info("y_ru", TensorProto.FLOAT, [2, 3])
+    y_rul = helper.make_tensor_value_info("y_rul", TensorProto.FLOAT, [2, 3])
+    y_bern = helper.make_tensor_value_info("y_bern", TensorProto.INT32, [2, 3])
+    y_black = helper.make_tensor_value_info("y_black", TensorProto.FLOAT, [5])
+    y_hamming = helper.make_tensor_value_info("y_hamming", TensorProto.FLOAT, [5])
+    y_hann = helper.make_tensor_value_info("y_hann", TensorProto.FLOAT, [5])
+    nodes = [
+        helper.make_node(
+            "RandomNormal",
+            [],
+            ["y_rn"],
+            name="RandomNormalNode",
+            shape=[2, 3],
+            mean=0.25,
+            scale=1.5,
+            seed=7.0,
+        ),
+        helper.make_node(
+            "RandomUniform",
+            [],
+            ["y_ru"],
+            name="RandomUniformNode",
+            shape=[2, 3],
+            low=-0.5,
+            high=0.5,
+            seed=11.0,
+        ),
+        helper.make_node(
+            "RandomUniformLike",
+            ["probs"],
+            ["y_rul"],
+            name="RandomUniformLikeNode",
+            low=0.1,
+            high=0.9,
+            seed=13.0,
+        ),
+        helper.make_node("Bernoulli", ["probs"], ["y_bern"], name="BernoulliNode", dtype=TensorProto.INT32, seed=17.0),
+        helper.make_node("BlackmanWindow", ["size"], ["y_black"], name="BlackmanWindowNode"),
+        helper.make_node("HammingWindow", ["size"], ["y_hamming"], name="HammingWindowNode", periodic=0),
+        helper.make_node("HannWindow", ["size"], ["y_hann"], name="HannWindowNode"),
+    ]
+    graph = helper.make_graph(nodes, "wave1_random_builtin_graph", [probs, size], [y_rn, y_ru, y_rul, y_bern, y_black, y_hamming, y_hann])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
+def test_op_coverage_wave1_builtin_registry_and_dispatch() -> None:
+    expected_ops = {
+        "LeakyRelu",
+        "Mean",
+        "ReduceLogSum",
+        "ReduceLogSumExp",
+        "ReduceSumSquare",
+        "ThresholdedRelu",
+        "IsInf",
+        "IsNaN",
+        "Shrink",
+        "RandomNormal",
+        "RandomUniform",
+        "RandomUniformLike",
+        "Bernoulli",
+        "BlackmanWindow",
+        "HammingWindow",
+        "HannWindow",
+    }
+    report = build_op_coverage_report(
+        onnx_graph=_make_wave1_unary_builtin_model(),
+        output_file_name="wave1_unary_builtin_snapshot",
+    )
+    assert expected_ops.issubset(set(report["supported_onnx_ops_registry"]))
+
+
+def test_op_coverage_wave1_unary_reduce_random_dispatch() -> None:
+    cases = [
+        (_make_wave1_unary_builtin_model(), {"LeakyRelu", "ThresholdedRelu", "Shrink", "IsInf", "IsNaN"}),
+        (_make_wave1_reduce_builtin_model(), {"Mean", "ReduceLogSum", "ReduceLogSumExp", "ReduceSumSquare"}),
+        (_make_wave1_random_builtin_model(), {"RandomNormal", "RandomUniform", "RandomUniformLike", "Bernoulli", "BlackmanWindow", "HammingWindow", "HannWindow"}),
+    ]
+    for model, expected_ops in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name="wave1_builtin_dispatch_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        for op_name in expected_ops:
+            assert any(
+                node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+                for node in report["graph_node_reports"]
+            )
+
+
+def _make_reverse_sequence_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [3, 2, 2])
+    seq = helper.make_tensor_value_info("seq", TensorProto.INT64, [2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2, 2])
+    node = helper.make_node(
+        "ReverseSequence",
+        ["x", "seq"],
+        ["y"],
+        name="ReverseSequenceNode",
+        time_axis=0,
+        batch_axis=1,
+    )
+    graph = helper.make_graph([node], "reverse_sequence_graph", [x, seq], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
+
+
+def _make_scatter_alias_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 3])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Scatter",
+        ["data", "indices", "updates"],
+        ["y"],
+        name="ScatterAliasNode",
+        axis=1,
+    )
+    graph = helper.make_graph([node], "scatter_alias_graph", [data, indices, updates], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 10)])
+    model.ir_version = 10
+    return model
+
+
+def _make_group_normalization_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 2, 2])
+    scale = numpy_helper.from_array(np.ones((4,), dtype=np.float32), name="scale")
+    bias = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="bias")
+    node = helper.make_node(
+        "GroupNormalization",
+        ["x", "scale", "bias"],
+        ["y"],
+        name="GroupNormalizationNode",
+        epsilon=1e-5,
+        num_groups=2,
+        stash_type=1,
+    )
+    graph = helper.make_graph([node], "group_normalization_graph", [x], [y], initializer=[scale, bias])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 21)])
+    model.ir_version = 10
+    return model
+
+
+def _make_attention_model() -> onnx.ModelProto:
+    q = helper.make_tensor_value_info("q", TensorProto.FLOAT, [1, 3, 4])
+    k = helper.make_tensor_value_info("k", TensorProto.FLOAT, [1, 3, 4])
+    v = helper.make_tensor_value_info("v", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node(
+        "Attention",
+        ["q", "k", "v"],
+        ["y"],
+        name="AttentionNode",
+        q_num_heads=2,
+        kv_num_heads=2,
+    )
+    graph = helper.make_graph([node], "attention_graph", [q, k, v], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 24)])
+    model.ir_version = 10
+    return model
+
+
+def _make_det_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])
+    node = helper.make_node("Det", ["x"], ["y"], name="DetNode")
+    graph = helper.make_graph([node], "det_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_lp_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 2, 2])
+    node = helper.make_node(
+        "LpPool",
+        ["x"],
+        ["y"],
+        name="LpPoolNode",
+        kernel_shape=[2, 2],
+        strides=[2, 2],
+        p=2,
+    )
+    graph = helper.make_graph([node], "lp_pool_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)])
+    model.ir_version = 10
+    return model
+
+
+def _make_global_lp_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
+    node = helper.make_node(
+        "GlobalLpPool",
+        ["x"],
+        ["y"],
+        name="GlobalLpPoolNode",
+        p=2,
+    )
+    graph = helper.make_graph([node], "global_lp_pool_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 22)])
+    model.ir_version = 10
+    return model
+
+
+def _make_compress_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 2])
+    node = helper.make_node(
+        "Compress",
+        ["x", "cond"],
+        ["y"],
+        name="CompressNode",
+        axis=1,
+    )
+    graph = helper.make_graph([node], "compress_graph", [x, cond], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
+    model.ir_version = 10
+    return model
+
+
+def _make_affine_grid_model() -> onnx.ModelProto:
+    theta = helper.make_tensor_value_info("theta", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 2])
+    size = numpy_helper.from_array(np.asarray([1, 1, 2, 3], dtype=np.int64), name="size")
+    node = helper.make_node(
+        "AffineGrid",
+        ["theta", "size"],
+        ["y"],
+        name="AffineGridNode",
+        align_corners=0,
+    )
+    graph = helper.make_graph([node], "affine_grid_graph", [theta], [y], initializer=[size])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 20)])
+    model.ir_version = 10
+    return model
+
+
+def _make_center_crop_pad_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 4])
+    shape = numpy_helper.from_array(np.asarray([2, 4], dtype=np.int64), name="shape")
+    node = helper.make_node(
+        "CenterCropPad",
+        ["x", "shape"],
+        ["y"],
+        name="CenterCropPadNode",
+        axes=[2, 3],
+    )
+    graph = helper.make_graph([node], "center_crop_pad_graph", [x], [y], initializer=[shape])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)])
+    model.ir_version = 10
+    return model
+
+
+def _make_tensor_scatter_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 5, 1])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 2, 1])
+    write_indices = helper.make_tensor_value_info("write_indices", TensorProto.INT64, [2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 5, 1])
+    node = helper.make_node(
+        "TensorScatter",
+        ["data", "updates", "write_indices"],
+        ["y"],
+        name="TensorScatterNode",
+        axis=1,
+        mode="linear",
+    )
+    graph = helper.make_graph([node], "tensor_scatter_graph", [data, updates, write_indices], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_mel_weight_matrix_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [5, 4])
+    initializers = [
+        numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="num_mel_bins"),
+        numpy_helper.from_array(np.asarray(8, dtype=np.int64), name="dft_length"),
+        numpy_helper.from_array(np.asarray(16000.0, dtype=np.float32), name="sample_rate"),
+        numpy_helper.from_array(np.asarray(125.0, dtype=np.float32), name="lower_edge_hertz"),
+        numpy_helper.from_array(np.asarray(7600.0, dtype=np.float32), name="upper_edge_hertz"),
+    ]
+    node = helper.make_node(
+        "MelWeightMatrix",
+        ["num_mel_bins", "dft_length", "sample_rate", "lower_edge_hertz", "upper_edge_hertz"],
+        ["y"],
+        name="MelWeightMatrixNode",
+    )
+    graph = helper.make_graph([node], "mel_weight_matrix_graph", [], [y], initializer=initializers)
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)])
+    model.ir_version = 10
+    return model
+
+
+def _make_negative_log_likelihood_loss_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 2])
+    target = helper.make_tensor_value_info("target", TensorProto.INT64, [2, 2])
+    weight = helper.make_tensor_value_info("weight", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+    node = helper.make_node(
+        "NegativeLogLikelihoodLoss",
+        ["x", "target", "weight"],
+        ["y"],
+        name="NegativeLogLikelihoodLossNode",
+        reduction="mean",
+        ignore_index=-1,
+    )
+    graph = helper.make_graph([node], "negative_log_likelihood_loss_graph", [x, target, weight], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_softmax_cross_entropy_loss_model() -> onnx.ModelProto:
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, [2, 3, 2])
+    labels = helper.make_tensor_value_info("labels", TensorProto.INT64, [2, 2])
+    weight = helper.make_tensor_value_info("weight", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+    log_prob = helper.make_tensor_value_info("log_prob", TensorProto.FLOAT, [2, 3, 2])
+    node = helper.make_node(
+        "SoftmaxCrossEntropyLoss",
+        ["scores", "labels", "weight"],
+        ["y", "log_prob"],
+        name="SoftmaxCrossEntropyLossNode",
+        reduction="mean",
+        ignore_index=-1,
+    )
+    graph = helper.make_graph([node], "softmax_cross_entropy_loss_graph", [scores, labels, weight], [y, log_prob])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_max_unpool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 4, 4])
+    output_shape = numpy_helper.from_array(np.asarray([1, 1, 4, 4], dtype=np.int64), name="output_shape")
+    node = helper.make_node(
+        "MaxUnpool",
+        ["x", "indices", "output_shape"],
+        ["y"],
+        name="MaxUnpoolNode",
+        kernel_shape=[2, 2],
+        strides=[2, 2],
+    )
+    graph = helper.make_graph([node], "max_unpool_graph", [x, indices], [y], initializer=[output_shape])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
+    model.ir_version = 10
+    return model
+
+
+def _make_rotary_embedding_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    cos_cache = helper.make_tensor_value_info("cos_cache", TensorProto.FLOAT, [3, 2])
+    sin_cache = helper.make_tensor_value_info("sin_cache", TensorProto.FLOAT, [3, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    node = helper.make_node(
+        "RotaryEmbedding",
+        ["x", "cos_cache", "sin_cache"],
+        ["y"],
+        name="RotaryEmbeddingNode",
+        rotary_embedding_dim=4,
+        interleaved=0,
+    )
+    graph = helper.make_graph([node], "rotary_embedding_graph", [x, cos_cache, sin_cache], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 23)])
+    model.ir_version = 10
+    return model
+
+
+def _make_dft_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
+    dft_length = numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="dft_length")
+    axis = numpy_helper.from_array(np.asarray(-2, dtype=np.int64), name="axis")
+    node = helper.make_node(
+        "DFT",
+        ["x", "dft_length", "axis"],
+        ["y"],
+        name="DFTNode",
+        onesided=1,
+        inverse=0,
+    )
+    graph = helper.make_graph([node], "dft_graph", [x], [y], initializer=[dft_length, axis])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 20)])
+    model.ir_version = 10
+    return model
+
+
+def _make_stft_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 6])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 2])
+    frame_step = numpy_helper.from_array(np.asarray(2, dtype=np.int64), name="frame_step")
+    window = numpy_helper.from_array(np.asarray([1.0, 1.0, 1.0, 1.0], dtype=np.float32), name="window")
+    frame_length = numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="frame_length")
+    node = helper.make_node(
+        "STFT",
+        ["x", "frame_step", "window", "frame_length"],
+        ["y"],
+        name="STFTNode",
+        onesided=1,
+    )
+    graph = helper.make_graph([node], "stft_graph", [x], [y], initializer=[frame_step, window, frame_length])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)])
+    model.ir_version = 10
+    return model
+
+
+def _make_max_roi_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 1, 2, 2])
+    rois = numpy_helper.from_array(
+        np.asarray(
+            [
+                [0.0, 0.0, 0.0, 3.0, 3.0],
+                [0.0, 1.0, 1.0, 3.0, 3.0],
+            ],
+            dtype=np.float32,
+        ),
+        name="rois",
+    )
+    node = helper.make_node(
+        "MaxRoiPool",
+        ["x", "rois"],
+        ["y"],
+        name="MaxRoiPoolNode",
+        pooled_shape=[2, 2],
+        spatial_scale=1.0,
+    )
+    graph = helper.make_graph([node], "max_roi_pool_graph", [x], [y], initializer=[rois])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 12)])
+    model.ir_version = 10
+    return model
+
+
+def test_op_coverage_reverse_sequence_scatter_groupnorm_builtin_dispatch() -> None:
+    cases = [
+        (_make_reverse_sequence_model(), "ReverseSequence"),
+        (_make_scatter_alias_model(), "Scatter"),
+        (_make_group_normalization_model(), "GroupNormalization"),
+    ]
+    for model, op_name in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name=f"{op_name.lower()}_builtin_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_op_coverage_attention_det_lp_pool_builtin_dispatch() -> None:
+    cases = [
+        (_make_attention_model(), "Attention"),
+        (_make_det_model(), "Det"),
+        (_make_lp_pool_model(), "LpPool"),
+        (_make_global_lp_pool_model(), "GlobalLpPool"),
+    ]
+    for model, op_name in cases:
+        report = build_op_coverage_report(
+            onnx_graph=model,
+            output_file_name=f"{op_name.lower()}_builtin_snapshot",
+        )
+        assert report["unsupported_reason_counts"] == {}
+        assert report["graph_summary"]["unsupported_nodes"] == 0
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == op_name and node.get("dispatch_mode") == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_op_coverage_affine_grid_compress_builtin_dispatch() -> None:
+    cases = [
+        (_make_affine_grid_model(), "AffineGrid"),
+        (_make_compress_model(), "Compress"),
+        (_make_center_crop_pad_model(), "CenterCropPad"),
+        (_make_tensor_scatter_model(), "TensorScatter"),
+        (_make_mel_weight_matrix_model(), "MelWeightMatrix"),
+        (_make_negative_log_likelihood_loss_model(), "NegativeLogLikelihoodLoss"),
+        (_make_softmax_cross_entropy_loss_model(), "SoftmaxCrossEntropyLoss"),
+        (_make_max_unpool_model(), "MaxUnpool"),
+        (_make_rotary_embedding_model(), "RotaryEmbedding"),
+        (_make_dft_model(), "DFT"),
+        (_make_stft_model(), "STFT"),
+        (_make_max_roi_pool_model(), "MaxRoiPool"),
     ]
     for model, op_name in cases:
         report = build_op_coverage_report(

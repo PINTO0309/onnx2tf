@@ -3,8 +3,10 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import textwrap
 import types
 from contextlib import contextmanager
 from typing import Any
@@ -1815,6 +1817,227 @@ def _make_grouped_conv_model() -> onnx.ModelProto:
     )
     graph = helper.make_graph([node], "grouped_conv_graph", [x], [y], initializer=[w, b])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _deform_conv_reference_params(
+    *,
+    in_channels: int = 4,
+    out_channels: int = 4,
+    group: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    weights = np.linspace(
+        -0.35,
+        0.35,
+        num=int(out_channels) * int(in_channels // group) * 3 * 3,
+        dtype=np.float32,
+    ).reshape(int(out_channels), int(in_channels // group), 3, 3)
+    bias = np.linspace(-0.125, 0.125, num=int(out_channels), dtype=np.float32)
+    return weights, bias
+
+
+def _make_deform_conv_model(
+    *,
+    batch_dim: int | str = 1,
+    spatial_dim: int | str = 8,
+    group: int = 1,
+    offset_group: int = 1,
+    include_bias: bool = True,
+    include_mask: bool = True,
+) -> onnx.ModelProto:
+    in_channels = 4
+    out_channels = 4
+    weights, bias = _deform_conv_reference_params(
+        in_channels=int(in_channels),
+        out_channels=int(out_channels),
+        group=int(group),
+    )
+    kernel_area = 3 * 3
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [batch_dim, in_channels, spatial_dim, spatial_dim])
+    offset = helper.make_tensor_value_info(
+        "offset",
+        TensorProto.FLOAT,
+        [batch_dim, 2 * int(offset_group) * kernel_area, spatial_dim, spatial_dim],
+    )
+    graph_inputs = [x, offset]
+    node_inputs = ["x", "W", "offset"]
+    if include_bias:
+        node_inputs.append("B")
+    if include_mask:
+        mask = helper.make_tensor_value_info(
+            "mask",
+            TensorProto.FLOAT,
+            [batch_dim, int(offset_group) * kernel_area, spatial_dim, spatial_dim],
+        )
+        graph_inputs.append(mask)
+        if include_bias:
+            node_inputs.append("mask")
+        else:
+            node_inputs.extend(["", "mask"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [batch_dim, out_channels, spatial_dim, spatial_dim])
+    w = numpy_helper.from_array(weights, name="W")
+    initializers = [w]
+    if include_bias:
+        initializers.append(numpy_helper.from_array(bias, name="B"))
+    node = helper.make_node(
+        "DeformConv",
+        node_inputs,
+        ["y"],
+        name="DeformConvNode",
+        pads=[1, 1, 1, 1],
+        strides=[1, 1],
+        dilations=[1, 1],
+        group=int(group),
+        offset_group=int(offset_group),
+    )
+    graph = helper.make_graph([node], "deform_conv_graph", graph_inputs, [y], initializer=initializers)
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+
+
+def _deform_conv_reference_output(
+    *,
+    x: np.ndarray,
+    offset: np.ndarray,
+    weights: np.ndarray,
+    bias: np.ndarray | None,
+    mask: np.ndarray | None,
+    pads: tuple[int, int, int, int] = (1, 1, 1, 1),
+    strides: tuple[int, int] = (1, 1),
+    dilations: tuple[int, int] = (1, 1),
+) -> np.ndarray:
+    n, in_c, _, _ = x.shape
+    out_c, _, kh, kw = weights.shape
+    pad_top, pad_left, pad_bottom, pad_right = [int(v) for v in pads]
+    stride_h, stride_w = [int(v) for v in strides]
+    dilation_h, dilation_w = [int(v) for v in dilations]
+
+    x_padded = np.pad(
+        x.astype(np.float32),
+        ((0, 0), (0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+        mode="constant",
+    )
+    x_padded_nhwc = np.transpose(x_padded, (0, 2, 3, 1))
+    offset_nhwc = np.transpose(offset.astype(np.float32), (0, 2, 3, 1))
+    out_h = int(offset_nhwc.shape[1])
+    out_w = int(offset_nhwc.shape[2])
+    offset_coords = offset_nhwc.reshape(n, out_h, out_w, kh, kw, 2)
+    mask_values = None
+    if mask is not None:
+        mask_values = np.transpose(mask.astype(np.float32), (0, 2, 3, 1)).reshape(n, out_h, out_w, kh, kw, 1)
+
+    padded_h = int(x_padded_nhwc.shape[1])
+    padded_w = int(x_padded_nhwc.shape[2])
+    sampled = np.zeros((n, out_h, out_w, kh, kw, in_c), dtype=np.float32)
+
+    def _sample_at(batch: int, coord_y: float, coord_x: float) -> np.ndarray:
+        y0 = float(np.floor(coord_y))
+        x0 = float(np.floor(coord_x))
+        y1 = y0 + 1.0
+        x1 = x0 + 1.0
+        dy = float(coord_y - y0)
+        dx = float(coord_x - x0)
+
+        def _accumulate(yf: float, xf: float, weight: float) -> np.ndarray:
+            if weight == 0.0:
+                return np.zeros((in_c,), dtype=np.float32)
+            if yf < 0.0 or yf > float(padded_h - 1) or xf < 0.0 or xf > float(padded_w - 1):
+                return np.zeros((in_c,), dtype=np.float32)
+            yi = int(np.clip(yf, 0.0, float(padded_h - 1)))
+            xi = int(np.clip(xf, 0.0, float(padded_w - 1)))
+            return x_padded_nhwc[batch, yi, xi, :] * np.float32(weight)
+
+        return (
+            _accumulate(y0, x0, (1.0 - dy) * (1.0 - dx))
+            + _accumulate(y1, x0, dy * (1.0 - dx))
+            + _accumulate(y1, x1, dy * dx)
+            + _accumulate(y0, x1, (1.0 - dy) * dx)
+        )
+
+    for batch in range(n):
+        for oh in range(out_h):
+            for ow in range(out_w):
+                for ky in range(kh):
+                    for kx in range(kw):
+                        base_y = float(oh * stride_h + ky * dilation_h)
+                        base_x = float(ow * stride_w + kx * dilation_w)
+                        coord_y = base_y + float(offset_coords[batch, oh, ow, ky, kx, 0])
+                        coord_x = base_x + float(offset_coords[batch, oh, ow, ky, kx, 1])
+                        sampled_value = _sample_at(batch, coord_y, coord_x)
+                        if mask_values is not None:
+                            sampled_value = sampled_value * float(mask_values[batch, oh, ow, ky, kx, 0])
+                        sampled[batch, oh, ow, ky, kx, :] = sampled_value
+
+    cols = sampled.reshape(n * out_h * out_w, kh * kw * in_c)
+    weights_2d = np.transpose(weights.astype(np.float32), (2, 3, 1, 0)).reshape(kh * kw * in_c, out_c)
+    output_nhwc = cols @ weights_2d
+    output_nhwc = output_nhwc.reshape(n, out_h, out_w, out_c)
+    if bias is not None:
+        output_nhwc = output_nhwc + bias.astype(np.float32).reshape(1, 1, 1, out_c)
+    return np.transpose(output_nhwc, (0, 3, 1, 2))
+
+
+def _run_deform_conv_runtime_subprocess(*, include_mask: bool = True) -> subprocess.CompletedProcess[str]:
+    script = textwrap.dedent(
+        f"""
+        import os
+        import tempfile
+        import numpy as np
+        from tests.test_tflite_builder_direct import (
+            _convert,
+            _deform_conv_reference_output,
+            _deform_conv_reference_params,
+            _make_deform_conv_model,
+            _run_tflite_first_output,
+            _save_model,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model = _make_deform_conv_model(include_mask={str(bool(include_mask))})
+            model_path = _save_model(tmpdir, "deform_conv_runtime", model)
+            out_dir = os.path.join(tmpdir, "out")
+            tflite_path = _convert(
+                model_path,
+                out_dir,
+                "flatbuffer_direct",
+                flatbuffer_direct_allow_custom_ops=True,
+                flatbuffer_direct_custom_op_allowlist=["DeformConv"],
+            )
+            sample_inputs = {{
+                "x": np.linspace(-1.0, 1.0, num=1 * 4 * 8 * 8, dtype=np.float32).reshape(1, 4, 8, 8),
+                "offset": np.linspace(-0.25, 0.25, num=1 * 18 * 8 * 8, dtype=np.float32).reshape(1, 18, 8, 8),
+            }}
+            if {str(bool(include_mask))}:
+                sample_inputs["mask"] = np.linspace(0.25, 0.75, num=1 * 9 * 8 * 8, dtype=np.float32).reshape(1, 9, 8, 8)
+
+            weights, bias = _deform_conv_reference_params()
+            reference_output = _deform_conv_reference_output(
+                x=sample_inputs["x"],
+                offset=sample_inputs["offset"],
+                weights=weights,
+                bias=bias,
+                mask=sample_inputs.get("mask"),
+            ).astype(np.float32)
+            tflite_output = _run_tflite_first_output(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+            )
+            if tuple(tflite_output.shape) == tuple(reference_output.shape):
+                tflite_aligned = tflite_output
+            elif tuple(tflite_output.shape) == (1, 8, 8, 4):
+                tflite_aligned = np.transpose(tflite_output, (0, 3, 1, 2))
+            else:
+                raise AssertionError(f"Unexpected TFLite output shape: {{tflite_output.shape}}")
+            np.testing.assert_allclose(tflite_aligned, reference_output, rtol=1e-4, atol=1e-4)
+            print("deformconv_runtime_ok")
+        """
+    )
+    return subprocess.run(
+        [sys.executable, "-u", "-X", "faulthandler", "-c", script],
+        cwd=os.getcwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _make_pool_model() -> onnx.ModelProto:
@@ -6556,6 +6779,22 @@ def _collect_tensor_detail_dicts(tflite_path: str) -> list[dict[str, Any]]:
     interpreter = Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
     return [dict(v) for v in interpreter.get_tensor_details()]
+
+
+def _collect_output_shape_signature(
+    tflite_path: str,
+    *,
+    output_index: int = 0,
+) -> list[int]:
+    output_dir = os.path.dirname(tflite_path)
+    schema = load_schema_module(output_dir)
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    model = schema["ModelT"].InitFromObj(schema["Model"].GetRootAs(model_bytes, 0))
+    subgraph = model.subgraphs[0]
+    tensor_index = int(subgraph.outputs[output_index])
+    tensor = subgraph.tensors[tensor_index]
+    return [int(v) for v in list(tensor.shapeSignature)]
 
 
 def test_tflite_backend_matrix_add() -> None:
@@ -32448,6 +32687,126 @@ def test_flatbuffer_direct_dropout_emits_builtin_chain() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_builtin_preferred_over_custom() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        deform_model = _make_deform_conv_model()
+        deform_path = _save_model(tmpdir, "deformconv_builtin", deform_model)
+        deform_out_dir = os.path.join(tmpdir, "deform_out")
+        deform_tflite = _convert(
+            deform_path,
+            deform_out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["DeformConv"],
+            report_op_coverage=True,
+        )
+        custom_codes = _collect_custom_codes(deform_tflite)
+        assert "ONNX_DEFORMCONV" not in custom_codes
+
+        report_path = os.path.join(deform_out_dir, "deformconv_builtin_op_coverage_report.json")
+        assert os.path.isfile(report_path)
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_summary"]["custom_lowered_nodes"] == 0
+        assert "DeformConv" not in report["graph_custom_ops"]
+        assert any(
+            node["onnx_op"] == "DeformConv" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+        op_names = _collect_builtin_op_names(deform_tflite)
+        assert "BATCH_MATMUL" in op_names
+        assert "PAD" in op_names
+        assert "GATHER" in op_names
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_builtin_runtime_matches_onnx_in_subprocess() -> None:
+    completed = _run_deform_conv_runtime_subprocess(include_mask=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "deformconv_runtime_ok" in completed.stdout
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_nomask_runtime_matches_onnx_in_subprocess() -> None:
+    completed = _run_deform_conv_runtime_subprocess(include_mask=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "deformconv_runtime_ok" in completed.stdout
+
+
+def test_flatbuffer_direct_deformconv_ir_avoids_batchdims_gather() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_deform_conv_model(),
+        output_file_name="deformconv_ir_safe_gather_test",
+        allow_custom_ops=True,
+        custom_op_allowlist=["DeformConv"],
+    )
+    deform_gathers = [op for op in model_ir.operators if str(op.op_type) == "GATHER"]
+    assert deform_gathers
+    assert all(int(op.options.get("batchDims", 0)) == 0 for op in deform_gathers)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_preserves_dynamic_batch_output_signature() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_deform_conv_model(batch_dim="N")
+        model_path = _save_model(tmpdir, "deformconv_dynamic_batch", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["DeformConv"],
+        )
+        assert _collect_output_shape_signature(tflite_path) == [-1, 8, 8, 4]
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_grouped_pattern_custom_op_enabled_generates_custom_code() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_deform_conv_model(group=2, offset_group=2)
+        model_path = _save_model(tmpdir, "deformconv_grouped_custom_enabled", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["DeformConv"],
+            report_op_coverage=True,
+        )
+        assert os.path.isfile(tflite_path)
+        custom_codes = _collect_custom_codes(tflite_path)
+        assert "ONNX_DEFORMCONV" in custom_codes
+        report_path = os.path.join(out_dir, "deformconv_grouped_custom_enabled_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_summary"]["custom_lowered_nodes"] == 1
+        assert any(
+            node["onnx_op"] == "DeformConv" and node["dispatch_mode"] == "custom"
+            for node in report["graph_node_reports"]
+        )
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_deformconv_custom_op_enabled_generates_custom_code() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_deform_conv_model(batch_dim="N", spatial_dim="S")
+        model_path = _save_model(tmpdir, "deformconv_custom_enabled", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            flatbuffer_direct_allow_custom_ops=True,
+            flatbuffer_direct_custom_op_allowlist=["DeformConv"],
+        )
+        assert os.path.isfile(tflite_path)
+        custom_codes = _collect_custom_codes(tflite_path)
+        assert "ONNX_DEFORMCONV" in custom_codes
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_custom_op_candidate_disabled_fails() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_einsum_custom_model()
@@ -35120,3 +35479,1290 @@ def test_flatbuffer_direct_gaze_keep_shape_inputs_fuses_late_conv_relu_chain() -
 
     assert all(str(op.op_type) != "RELU" for op in model_ir.operators)
     assert "Conv__58_output_nhwc" not in model_ir.tensors
+
+
+def _make_wave1_unary_builtin_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    y_thr = helper.make_tensor_value_info("y_thr", TensorProto.FLOAT, [2, 3])
+    y_shrink = helper.make_tensor_value_info("y_shrink", TensorProto.FLOAT, [2, 3])
+    y_inf = helper.make_tensor_value_info("y_inf", TensorProto.BOOL, [2, 3])
+    y_nan = helper.make_tensor_value_info("y_nan", TensorProto.BOOL, [2, 3])
+    nodes = [
+        helper.make_node("LeakyRelu", ["x"], ["y"], name="LeakyReluNode", alpha=0.125),
+        helper.make_node("ThresholdedRelu", ["y"], ["y_thr"], name="ThresholdedReluNode", alpha=0.25),
+        helper.make_node("Shrink", ["y_thr"], ["y_shrink"], name="ShrinkNode", lambd=0.5, bias=0.125),
+        helper.make_node("IsInf", ["x"], ["y_inf"], name="IsInfNode"),
+        helper.make_node("IsNaN", ["x"], ["y_nan"], name="IsNaNNode"),
+    ]
+    graph = helper.make_graph(nodes, "wave1_unary_builtin_graph", [x], [y_shrink, y_inf, y_nan])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
+
+
+def _make_wave1_reduce_builtin_model() -> onnx.ModelProto:
+    x0 = helper.make_tensor_value_info("x0", TensorProto.FLOAT, [2, 3])
+    x1 = helper.make_tensor_value_info("x1", TensorProto.FLOAT, [2, 3])
+    y_mean = helper.make_tensor_value_info("y_mean", TensorProto.FLOAT, [2, 3])
+    y_logsum = helper.make_tensor_value_info("y_logsum", TensorProto.FLOAT, [2, 1])
+    y_logsumexp = helper.make_tensor_value_info("y_logsumexp", TensorProto.FLOAT, [2, 1])
+    y_sumsquare = helper.make_tensor_value_info("y_sumsquare", TensorProto.FLOAT, [2, 1])
+    axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="axes")
+    nodes = [
+        helper.make_node("Mean", ["x0", "x1"], ["y_mean"], name="MeanNode"),
+        helper.make_node("ReduceLogSum", ["x0", "axes"], ["y_logsum"], name="ReduceLogSumNode", keepdims=1),
+        helper.make_node(
+            "ReduceLogSumExp",
+            ["x0", "axes"],
+            ["y_logsumexp"],
+            name="ReduceLogSumExpNode",
+            keepdims=1,
+        ),
+        helper.make_node(
+            "ReduceSumSquare",
+            ["x0", "axes"],
+            ["y_sumsquare"],
+            name="ReduceSumSquareNode",
+            keepdims=1,
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "wave1_reduce_builtin_graph",
+        [x0, x1],
+        [y_mean, y_logsum, y_logsumexp, y_sumsquare],
+        initializer=[axes],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
+
+
+def _make_wave1_random_builtin_model() -> onnx.ModelProto:
+    probs = helper.make_tensor_value_info("probs", TensorProto.FLOAT, [2, 3])
+    size = helper.make_tensor_value_info("size", TensorProto.INT64, [1])
+    y_rn = helper.make_tensor_value_info("y_rn", TensorProto.FLOAT, [2, 3])
+    y_ru = helper.make_tensor_value_info("y_ru", TensorProto.FLOAT, [2, 3])
+    y_rul = helper.make_tensor_value_info("y_rul", TensorProto.FLOAT, [2, 3])
+    y_bern = helper.make_tensor_value_info("y_bern", TensorProto.INT32, [2, 3])
+    y_black = helper.make_tensor_value_info("y_black", TensorProto.FLOAT, [5])
+    y_hamming = helper.make_tensor_value_info("y_hamming", TensorProto.FLOAT, [5])
+    y_hann = helper.make_tensor_value_info("y_hann", TensorProto.FLOAT, [5])
+    nodes = [
+        helper.make_node(
+            "RandomNormal",
+            [],
+            ["y_rn"],
+            name="RandomNormalNode",
+            shape=[2, 3],
+            mean=0.25,
+            scale=1.5,
+            seed=7.0,
+        ),
+        helper.make_node(
+            "RandomUniform",
+            [],
+            ["y_ru"],
+            name="RandomUniformNode",
+            shape=[2, 3],
+            low=-0.5,
+            high=0.5,
+            seed=11.0,
+        ),
+        helper.make_node(
+            "RandomUniformLike",
+            ["probs"],
+            ["y_rul"],
+            name="RandomUniformLikeNode",
+            low=0.1,
+            high=0.9,
+            seed=13.0,
+        ),
+        helper.make_node(
+            "Bernoulli",
+            ["probs"],
+            ["y_bern"],
+            name="BernoulliNode",
+            dtype=TensorProto.INT32,
+            seed=17.0,
+        ),
+        helper.make_node("BlackmanWindow", ["size"], ["y_black"], name="BlackmanWindowNode"),
+        helper.make_node("HammingWindow", ["size"], ["y_hamming"], name="HammingWindowNode", periodic=0),
+        helper.make_node("HannWindow", ["size"], ["y_hann"], name="HannWindowNode"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "wave1_random_builtin_graph",
+        [probs, size],
+        [y_rn, y_ru, y_rul, y_bern, y_black, y_hamming, y_hann],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
+
+
+def test_flatbuffer_direct_wave1_unary_builtin_numeric_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_wave1_unary_builtin_model()
+        model_path = _save_model(tmpdir, "wave1_unary_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "wave1_unary_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert all(
+            node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+            if node["onnx_op"] in {"LeakyRelu", "ThresholdedRelu", "Shrink", "IsInf", "IsNaN"}
+        )
+
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        finite_inputs = {
+            "x": np.asarray([[0.0, -1.0, 1.5], [-2.0, 0.75, 3.5]], dtype=np.float32),
+        }
+        ort_outputs = ort_session.run(None, finite_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=finite_inputs,
+            tensor_names=["y_shrink"],
+        )
+        np.testing.assert_allclose(tflite_outputs["y_shrink"], ort_by_name["y_shrink"], rtol=1e-4, atol=1e-4)
+
+        special_inputs = {
+            "x": np.asarray([[0.0, np.inf, np.nan], [-2.0, 0.75, 3.5]], dtype=np.float32),
+        }
+        ort_outputs = ort_session.run(None, special_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=special_inputs,
+            tensor_names=["y_inf", "y_nan"],
+        )
+        np.testing.assert_array_equal(tflite_outputs["y_inf"], ort_by_name["y_inf"])
+        np.testing.assert_array_equal(tflite_outputs["y_nan"], ort_by_name["y_nan"])
+
+
+def test_flatbuffer_direct_wave1_reduce_builtin_numeric_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_wave1_reduce_builtin_model()
+        model_path = _save_model(tmpdir, "wave1_reduce_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "wave1_reduce_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert all(
+            node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+            if node["onnx_op"] in {"Mean", "ReduceLogSum", "ReduceLogSumExp", "ReduceSumSquare"}
+        )
+
+        sample_inputs = {
+            "x0": np.asarray([[0.5, 1.5, 2.5], [1.0, 2.0, 4.0]], dtype=np.float32),
+            "x1": np.asarray([[1.5, 2.5, 3.5], [2.0, 3.0, 5.0]], dtype=np.float32),
+        }
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        ort_outputs = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y_mean", "y_logsum", "y_logsumexp", "y_sumsquare"],
+        )
+        for name in ["y_mean", "y_logsum", "y_logsumexp", "y_sumsquare"]:
+            np.testing.assert_allclose(tflite_outputs[name], ort_by_name[name], rtol=1e-4, atol=1e-4)
+
+
+def test_flatbuffer_direct_wave1_random_window_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_wave1_random_builtin_model()
+        model_path = _save_model(tmpdir, "wave1_random_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "wave1_random_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        expected_ops = {
+            "RandomNormal",
+            "RandomUniform",
+            "RandomUniformLike",
+            "Bernoulli",
+            "BlackmanWindow",
+            "HammingWindow",
+            "HannWindow",
+        }
+        assert all(
+            node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+            if node["onnx_op"] in expected_ops
+        )
+
+
+def _make_reverse_sequence_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [3, 2, 2])
+    seq = helper.make_tensor_value_info("seq", TensorProto.INT64, [2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2, 2])
+    node = helper.make_node(
+        "ReverseSequence",
+        ["x", "seq"],
+        ["y"],
+        name="ReverseSequenceNode",
+        time_axis=0,
+        batch_axis=1,
+    )
+    graph = helper.make_graph([node], "reverse_sequence_graph", [x, seq], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
+
+
+def _make_scatter_alias_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 3])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        "Scatter",
+        ["data", "indices", "updates"],
+        ["y"],
+        name="ScatterAliasNode",
+        axis=1,
+    )
+    graph = helper.make_graph([node], "scatter_alias_graph", [data, indices, updates], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 10)])
+    model.ir_version = 10
+    return model
+
+
+def _make_group_normalization_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 2, 2])
+    scale = numpy_helper.from_array(np.ones((4,), dtype=np.float32), name="scale")
+    bias = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="bias")
+    node = helper.make_node(
+        "GroupNormalization",
+        ["x", "scale", "bias"],
+        ["y"],
+        name="GroupNormalizationNode",
+        epsilon=1e-5,
+        num_groups=2,
+        stash_type=1,
+    )
+    graph = helper.make_graph([node], "group_normalization_graph", [x], [y], initializer=[scale, bias])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 21)])
+    model.ir_version = 10
+    return model
+
+
+def _make_attention_model() -> onnx.ModelProto:
+    q = helper.make_tensor_value_info("q", TensorProto.FLOAT, [1, 3, 4])
+    k = helper.make_tensor_value_info("k", TensorProto.FLOAT, [1, 3, 4])
+    v = helper.make_tensor_value_info("v", TensorProto.FLOAT, [1, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
+    node = helper.make_node(
+        "Attention",
+        ["q", "k", "v"],
+        ["y"],
+        name="AttentionNode",
+        q_num_heads=2,
+        kv_num_heads=2,
+    )
+    graph = helper.make_graph([node], "attention_graph", [q, k, v], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 24)])
+    model.ir_version = 10
+    return model
+
+
+def _make_det_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])
+    node = helper.make_node("Det", ["x"], ["y"], name="DetNode")
+    graph = helper.make_graph([node], "det_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_lp_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 2, 2])
+    node = helper.make_node(
+        "LpPool",
+        ["x"],
+        ["y"],
+        name="LpPoolNode",
+        kernel_shape=[2, 2],
+        strides=[2, 2],
+        p=2,
+    )
+    graph = helper.make_graph([node], "lp_pool_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)])
+    model.ir_version = 10
+    return model
+
+
+def _make_global_lp_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
+    node = helper.make_node(
+        "GlobalLpPool",
+        ["x"],
+        ["y"],
+        name="GlobalLpPoolNode",
+        p=2,
+    )
+    graph = helper.make_graph([node], "global_lp_pool_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 22)])
+    model.ir_version = 10
+    return model
+
+
+def _make_compress_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 2])
+    node = helper.make_node(
+        "Compress",
+        ["x", "cond"],
+        ["y"],
+        name="CompressNode",
+        axis=1,
+    )
+    graph = helper.make_graph([node], "compress_graph", [x, cond], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
+    model.ir_version = 10
+    return model
+
+
+def _make_affine_grid_model() -> onnx.ModelProto:
+    theta = helper.make_tensor_value_info("theta", TensorProto.FLOAT, [1, 2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 2])
+    size = numpy_helper.from_array(np.asarray([1, 1, 2, 3], dtype=np.int64), name="size")
+    node = helper.make_node(
+        "AffineGrid",
+        ["theta", "size"],
+        ["y"],
+        name="AffineGridNode",
+        align_corners=0,
+    )
+    graph = helper.make_graph([node], "affine_grid_graph", [theta], [y], initializer=[size])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 20)])
+    model.ir_version = 10
+    return model
+
+
+def _make_center_crop_pad_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 4])
+    shape = numpy_helper.from_array(np.asarray([2, 4], dtype=np.int64), name="shape")
+    node = helper.make_node(
+        "CenterCropPad",
+        ["x", "shape"],
+        ["y"],
+        name="CenterCropPadNode",
+        axes=[2, 3],
+    )
+    graph = helper.make_graph([node], "center_crop_pad_graph", [x], [y], initializer=[shape])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)])
+    model.ir_version = 10
+    return model
+
+
+def _make_tensor_scatter_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 5, 1])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 2, 1])
+    write_indices = helper.make_tensor_value_info("write_indices", TensorProto.INT64, [2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 5, 1])
+    node = helper.make_node(
+        "TensorScatter",
+        ["data", "updates", "write_indices"],
+        ["y"],
+        name="TensorScatterNode",
+        axis=1,
+        mode="linear",
+    )
+    graph = helper.make_graph([node], "tensor_scatter_graph", [data, updates, write_indices], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_mel_weight_matrix_model() -> onnx.ModelProto:
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [5, 4])
+    initializers = [
+        numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="num_mel_bins"),
+        numpy_helper.from_array(np.asarray(8, dtype=np.int64), name="dft_length"),
+        numpy_helper.from_array(np.asarray(16000.0, dtype=np.float32), name="sample_rate"),
+        numpy_helper.from_array(np.asarray(125.0, dtype=np.float32), name="lower_edge_hertz"),
+        numpy_helper.from_array(np.asarray(7600.0, dtype=np.float32), name="upper_edge_hertz"),
+    ]
+    node = helper.make_node(
+        "MelWeightMatrix",
+        ["num_mel_bins", "dft_length", "sample_rate", "lower_edge_hertz", "upper_edge_hertz"],
+        ["y"],
+        name="MelWeightMatrixNode",
+    )
+    graph = helper.make_graph([node], "mel_weight_matrix_graph", [], [y], initializer=initializers)
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)])
+    model.ir_version = 10
+    return model
+
+
+def _mel_weight_matrix_reference() -> np.ndarray:
+    num_mel_bins = 4
+    dft_length = 8
+    sample_rate = 16000.0
+    lower_edge_hertz = 125.0
+    upper_edge_hertz = 7600.0
+    num_spectrogram_bins = dft_length // 2 + 1
+
+    def hz_to_mel(freq_hz: np.ndarray) -> np.ndarray:
+        return 2595.0 * np.log10(1.0 + (freq_hz / 700.0))
+
+    def mel_to_hz(mel_value: np.ndarray) -> np.ndarray:
+        return 700.0 * (np.power(10.0, mel_value / 2595.0) - 1.0)
+
+    linear_frequencies = np.linspace(0.0, sample_rate / 2.0, num_spectrogram_bins, dtype=np.float64)
+    mel_edges = np.linspace(
+        hz_to_mel(np.asarray(lower_edge_hertz, dtype=np.float64)),
+        hz_to_mel(np.asarray(upper_edge_hertz, dtype=np.float64)),
+        num=num_mel_bins + 2,
+        dtype=np.float64,
+    )
+    hz_edges = mel_to_hz(mel_edges)
+    lower_edges = hz_edges[:-2].reshape(1, num_mel_bins)
+    center_edges = hz_edges[1:-1].reshape(1, num_mel_bins)
+    upper_edges = hz_edges[2:].reshape(1, num_mel_bins)
+    freq_matrix = linear_frequencies.reshape(num_spectrogram_bins, 1)
+    lower_slopes = (freq_matrix - lower_edges) / np.maximum(center_edges - lower_edges, np.finfo(np.float64).eps)
+    upper_slopes = (upper_edges - freq_matrix) / np.maximum(upper_edges - center_edges, np.finfo(np.float64).eps)
+    return np.maximum(0.0, np.minimum(lower_slopes, upper_slopes)).astype(np.float32)
+
+
+def _make_negative_log_likelihood_loss_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 2])
+    target = helper.make_tensor_value_info("target", TensorProto.INT64, [2, 2])
+    weight = helper.make_tensor_value_info("weight", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+    node = helper.make_node(
+        "NegativeLogLikelihoodLoss",
+        ["x", "target", "weight"],
+        ["y"],
+        name="NegativeLogLikelihoodLossNode",
+        reduction="mean",
+        ignore_index=-1,
+    )
+    graph = helper.make_graph([node], "negative_log_likelihood_loss_graph", [x, target, weight], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_softmax_cross_entropy_loss_model() -> onnx.ModelProto:
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, [2, 3, 2])
+    labels = helper.make_tensor_value_info("labels", TensorProto.INT64, [2, 2])
+    weight = helper.make_tensor_value_info("weight", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+    log_prob = helper.make_tensor_value_info("log_prob", TensorProto.FLOAT, [2, 3, 2])
+    node = helper.make_node(
+        "SoftmaxCrossEntropyLoss",
+        ["scores", "labels", "weight"],
+        ["y", "log_prob"],
+        name="SoftmaxCrossEntropyLossNode",
+        reduction="mean",
+        ignore_index=-1,
+    )
+    graph = helper.make_graph([node], "softmax_cross_entropy_loss_graph", [scores, labels, weight], [y, log_prob])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_max_unpool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 4, 4])
+    output_shape = numpy_helper.from_array(np.asarray([1, 1, 4, 4], dtype=np.int64), name="output_shape")
+    node = helper.make_node(
+        "MaxUnpool",
+        ["x", "indices", "output_shape"],
+        ["y"],
+        name="MaxUnpoolNode",
+        kernel_shape=[2, 2],
+        strides=[2, 2],
+    )
+    graph = helper.make_graph([node], "max_unpool_graph", [x, indices], [y], initializer=[output_shape])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
+    model.ir_version = 10
+    return model
+
+
+def _make_rotary_embedding_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, 4])
+    cos_cache = helper.make_tensor_value_info("cos_cache", TensorProto.FLOAT, [3, 2])
+    sin_cache = helper.make_tensor_value_info("sin_cache", TensorProto.FLOAT, [3, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 4])
+    node = helper.make_node(
+        "RotaryEmbedding",
+        ["x", "cos_cache", "sin_cache"],
+        ["y"],
+        name="RotaryEmbeddingNode",
+        rotary_embedding_dim=4,
+        interleaved=0,
+    )
+    graph = helper.make_graph([node], "rotary_embedding_graph", [x, cos_cache, sin_cache], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 23)])
+    model.ir_version = 10
+    return model
+
+
+def _make_dft_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2])
+    dft_length = numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="dft_length")
+    axis = numpy_helper.from_array(np.asarray(-2, dtype=np.int64), name="axis")
+    node = helper.make_node(
+        "DFT",
+        ["x", "dft_length", "axis"],
+        ["y"],
+        name="DFTNode",
+        onesided=1,
+        inverse=0,
+    )
+    graph = helper.make_graph([node], "dft_graph", [x], [y], initializer=[dft_length, axis])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 20)])
+    model.ir_version = 10
+    return model
+
+
+def _make_stft_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 6])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 3, 2])
+    frame_step = numpy_helper.from_array(np.asarray(2, dtype=np.int64), name="frame_step")
+    window = numpy_helper.from_array(np.asarray([1.0, 1.0, 1.0, 1.0], dtype=np.float32), name="window")
+    frame_length = numpy_helper.from_array(np.asarray(4, dtype=np.int64), name="frame_length")
+    node = helper.make_node(
+        "STFT",
+        ["x", "frame_step", "window", "frame_length"],
+        ["y"],
+        name="STFTNode",
+        onesided=1,
+    )
+    graph = helper.make_graph([node], "stft_graph", [x], [y], initializer=[frame_step, window, frame_length])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)])
+    model.ir_version = 10
+    return model
+
+
+def _make_max_roi_pool_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 1, 2, 2])
+    rois = numpy_helper.from_array(
+        np.asarray(
+            [
+                [0.0, 0.0, 0.0, 3.0, 3.0],
+                [0.0, 1.0, 1.0, 3.0, 3.0],
+            ],
+            dtype=np.float32,
+        ),
+        name="rois",
+    )
+    node = helper.make_node(
+        "MaxRoiPool",
+        ["x", "rois"],
+        ["y"],
+        name="MaxRoiPoolNode",
+        pooled_shape=[2, 2],
+        spatial_scale=1.0,
+    )
+    graph = helper.make_graph([node], "max_roi_pool_graph", [x], [y], initializer=[rois])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 12)])
+    model.ir_version = 10
+    return model
+
+
+def test_flatbuffer_direct_reverse_sequence_and_scatter_builtin_parity() -> None:
+    cases = [
+        (
+            _make_reverse_sequence_model(),
+            "reverse_sequence_builtin",
+            {
+                "x": np.asarray(
+                    [
+                        [[1.0, 2.0], [3.0, 4.0]],
+                        [[5.0, 6.0], [7.0, 8.0]],
+                        [[9.0, 10.0], [11.0, 12.0]],
+                    ],
+                    dtype=np.float32,
+                ),
+                "seq": np.asarray([1, 3], dtype=np.int64),
+            },
+            ["y"],
+        ),
+        (
+            _make_scatter_alias_model(),
+            "scatter_alias_builtin",
+            {
+                "data": np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32),
+                "indices": np.asarray([[2, 1, 0], [0, 2, 1]], dtype=np.int64),
+                "updates": np.asarray([[9.0, 8.0, 7.0], [6.0, 5.0, 4.0]], dtype=np.float32),
+            },
+            ["y"],
+        ),
+    ]
+    for model, name, sample_inputs, tensor_names in cases:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = _save_model(tmpdir, name, model)
+            out_dir = os.path.join(tmpdir, "out")
+            tflite_path = _convert(
+                model_path,
+                out_dir,
+                backend="flatbuffer_direct",
+                report_op_coverage=True,
+            )
+            report_path = os.path.join(out_dir, f"{name}_op_coverage_report.json")
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            assert report["graph_custom_ops"] == []
+            assert all(node["dispatch_mode"] == "builtin" for node in report["graph_node_reports"])
+
+            ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            ort_outputs = ort_session.run(None, sample_inputs)
+            ort_by_name = {
+                output.name: np.asarray(value)
+                for output, value in zip(ort_session.get_outputs(), ort_outputs)
+            }
+            tflite_outputs = _run_tflite_and_collect_tensors(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+                tensor_names=tensor_names,
+            )
+            for tensor_name in tensor_names:
+                np.testing.assert_allclose(
+                    tflite_outputs[tensor_name],
+                    ort_by_name[tensor_name],
+                    rtol=1e-4,
+                    atol=1e-4,
+                )
+
+
+def test_flatbuffer_direct_group_normalization_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_group_normalization_model()
+        model_path = _save_model(tmpdir, "group_normalization_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "group_normalization_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "GroupNormalization" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_flatbuffer_direct_max_unpool_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_max_unpool_model()
+        model_path = _save_model(tmpdir, "max_unpool_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "max_unpool_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "MaxUnpool" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "x": np.asarray([[[[1.0, 2.0], [3.0, 4.0]]]], dtype=np.float32),
+            "indices": np.asarray([[[[0, 2], [8, 10]]]], dtype=np.int64),
+        }
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        ort_outputs = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            ort_by_name["y"],
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+
+def test_flatbuffer_direct_rotary_embedding_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_rotary_embedding_model()
+        model_path = _save_model(tmpdir, "rotary_embedding_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "rotary_embedding_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "RotaryEmbedding" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "x": np.asarray(
+                [
+                    [
+                        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]],
+                        [[13.0, 14.0, 15.0, 16.0], [17.0, 18.0, 19.0, 20.0], [21.0, 22.0, 23.0, 24.0]],
+                    ]
+                ],
+                dtype=np.float32,
+            ),
+            "cos_cache": np.asarray([[1.0, 1.0], [0.5, 0.25], [0.0, -0.5]], dtype=np.float32),
+            "sin_cache": np.asarray([[0.0, 0.0], [0.5, 0.75], [1.0, 0.5]], dtype=np.float32),
+        }
+        x_t = np.transpose(sample_inputs["x"], (0, 2, 1, 3))
+        x1 = x_t[..., :2]
+        x2 = x_t[..., 2:4]
+        cos = sample_inputs["cos_cache"].reshape(1, 3, 1, 2)
+        sin = sample_inputs["sin_cache"].reshape(1, 3, 1, 2)
+        expected = np.transpose(
+            np.concatenate([(cos * x1) - (sin * x2), (sin * x1) + (cos * x2)], axis=-1),
+            (0, 2, 1, 3),
+        )
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            expected,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+
+def test_flatbuffer_direct_dft_stft_builtin_parity() -> None:
+    cases = [
+        (
+            _make_dft_model(),
+            "dft_builtin",
+            {"x": np.asarray([[[1.0], [2.0], [3.0], [4.0]]], dtype=np.float32)},
+            lambda sample_inputs: np.stack(
+                [
+                    np.real(np.fft.rfft(sample_inputs["x"][0, :, 0], n=4)),
+                    np.imag(np.fft.rfft(sample_inputs["x"][0, :, 0], n=4)),
+                ],
+                axis=-1,
+            )[None, ...],
+        ),
+        (
+            _make_stft_model(),
+            "stft_builtin",
+            {"x": np.asarray([[1.0, 0.0, 1.0, 0.0, -1.0, 0.0]], dtype=np.float32)},
+            lambda sample_inputs: np.stack(
+                [
+                    np.stack(
+                        [
+                            np.real(np.fft.rfft(sample_inputs["x"][0, start : start + 4], n=4)),
+                            np.imag(np.fft.rfft(sample_inputs["x"][0, start : start + 4], n=4)),
+                        ],
+                        axis=-1,
+                    )
+                    for start in [0, 2]
+                ],
+                axis=0,
+            )[None, ...],
+        ),
+    ]
+    for model, name, sample_inputs, expected_fn in cases:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = _save_model(tmpdir, name, model)
+            out_dir = os.path.join(tmpdir, "out")
+            tflite_path = _convert(
+                model_path,
+                out_dir,
+                backend="flatbuffer_direct",
+                report_op_coverage=True,
+            )
+            report_path = os.path.join(out_dir, f"{name}_op_coverage_report.json")
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            assert report["graph_custom_ops"] == []
+            assert all(node["dispatch_mode"] == "builtin" for node in report["graph_node_reports"])
+            expected = expected_fn(sample_inputs).astype(np.float32)
+            tflite_outputs = _run_tflite_and_collect_tensors(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+                tensor_names=["y"],
+            )
+            np.testing.assert_allclose(
+                tflite_outputs["y"],
+                expected,
+                rtol=1e-4,
+                atol=1e-4,
+            )
+
+
+def test_flatbuffer_direct_max_roi_pool_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_max_roi_pool_model()
+        model_path = _save_model(tmpdir, "max_roi_pool_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "max_roi_pool_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "MaxRoiPool" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "x": np.asarray(
+                [[[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0], [13.0, 14.0, 15.0, 16.0]]]],
+                dtype=np.float32,
+            ),
+        }
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        ort_outputs = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            ort_by_name["y"],
+            rtol=1e-5,
+            atol=1e-5,
+        )
+
+
+def test_flatbuffer_direct_attention_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_attention_model()
+        model_path = _save_model(tmpdir, "attention_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "attention_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "Attention" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_flatbuffer_direct_det_lp_pool_builtin_parity() -> None:
+    cases = [
+        (
+            _make_det_model(),
+            "det_builtin",
+            {
+                "x": np.asarray(
+                    [
+                        [[1.0, 2.0, 3.0], [0.0, 1.0, 4.0], [5.0, 6.0, 0.0]],
+                        [[2.0, 0.0, 1.0], [3.0, 0.0, 0.0], [5.0, 1.0, 1.0]],
+                    ],
+                    dtype=np.float32,
+                ),
+            },
+            ["y"],
+        ),
+        (
+            _make_lp_pool_model(),
+            "lppool_builtin",
+            {
+                "x": np.asarray(
+                    np.arange(1, 1 + 1 * 2 * 4 * 4, dtype=np.float32).reshape(1, 2, 4, 4)
+                ),
+            },
+            ["y"],
+        ),
+    ]
+    for model, name, sample_inputs, tensor_names in cases:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = _save_model(tmpdir, name, model)
+            out_dir = os.path.join(tmpdir, "out")
+            tflite_path = _convert(
+                model_path,
+                out_dir,
+                backend="flatbuffer_direct",
+                report_op_coverage=True,
+            )
+            report_path = os.path.join(out_dir, f"{name}_op_coverage_report.json")
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            assert report["graph_custom_ops"] == []
+            assert all(node["dispatch_mode"] == "builtin" for node in report["graph_node_reports"])
+
+            ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            ort_outputs = ort_session.run(None, sample_inputs)
+            ort_by_name = {
+                output.name: np.asarray(value)
+                for output, value in zip(ort_session.get_outputs(), ort_outputs)
+            }
+            tflite_outputs = _run_tflite_and_collect_tensors(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+                tensor_names=tensor_names,
+            )
+            for tensor_name in tensor_names:
+                np.testing.assert_allclose(
+                    tflite_outputs[tensor_name],
+                    ort_by_name[tensor_name],
+                    rtol=1e-4,
+                    atol=1e-4,
+                )
+
+
+def test_flatbuffer_direct_global_lp_pool_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_global_lp_pool_model()
+        model_path = _save_model(tmpdir, "global_lppool_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "global_lppool_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "GlobalLpPool" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_flatbuffer_direct_compress_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_compress_model()
+        model_path = _save_model(tmpdir, "compress_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "compress_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "Compress" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "x": np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32),
+            "cond": np.asarray([True, False, True], dtype=bool),
+        }
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        ort_outputs = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            ort_by_name["y"],
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+
+def test_flatbuffer_direct_affine_grid_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_affine_grid_model()
+        model_path = _save_model(tmpdir, "affine_grid_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "affine_grid_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "AffineGrid" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+
+def test_flatbuffer_direct_center_crop_pad_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_center_crop_pad_model()
+        model_path = _save_model(tmpdir, "center_crop_pad_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "center_crop_pad_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "CenterCropPad" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "x": np.asarray(
+                [[[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]]],
+                dtype=np.float32,
+            ),
+        }
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        ort_outputs = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_outputs)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            ort_by_name["y"],
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+
+def test_flatbuffer_direct_tensor_scatter_builtin_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_tensor_scatter_model()
+        model_path = _save_model(tmpdir, "tensor_scatter_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "tensor_scatter_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "TensorScatter" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample_inputs = {
+            "data": np.asarray(
+                [
+                    [[1.0], [2.0], [3.0], [4.0], [5.0]],
+                    [[6.0], [7.0], [8.0], [9.0], [10.0]],
+                ],
+                dtype=np.float32,
+            ),
+            "updates": np.asarray(
+                [
+                    [[101.0], [102.0]],
+                    [[201.0], [202.0]],
+                ],
+                dtype=np.float32,
+            ),
+            "write_indices": np.asarray([1, 2], dtype=np.int64),
+        }
+        expected = np.array(sample_inputs["data"], copy=True)
+        for batch in range(expected.shape[0]):
+            start = int(sample_inputs["write_indices"][batch])
+            expected[batch, start : start + sample_inputs["updates"].shape[1], :] = sample_inputs["updates"][batch]
+
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            expected,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+
+def test_flatbuffer_direct_mel_weight_matrix_builtin_parity() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_mel_weight_matrix_model(),
+        output_file_name="mel_weight_matrix_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    np.testing.assert_allclose(
+        np.asarray(model_ir.tensors["y"].data),
+        _mel_weight_matrix_reference(),
+        rtol=1e-4,
+        atol=1e-4,
+    )
+
+
+def test_flatbuffer_direct_loss_builtin_parity() -> None:
+    logits = np.asarray(
+        [
+            [[2.0, -1.0], [0.5, 0.2], [-0.3, 1.5]],
+            [[1.0, 0.1], [-0.5, 1.2], [0.7, -0.8]],
+        ],
+        dtype=np.float32,
+    )
+    exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
+    log_probs = np.log(exp_logits / np.sum(exp_logits, axis=1, keepdims=True))
+    weight = np.asarray([1.0, 0.5, 2.0], dtype=np.float32)
+    labels = np.asarray([[0, -1], [2, 1]], dtype=np.int64)
+
+    cases = [
+        (
+            _make_negative_log_likelihood_loss_model(),
+            "nll_loss_builtin",
+            {"x": log_probs, "target": labels, "weight": weight},
+            ["y"],
+        ),
+        (
+            _make_softmax_cross_entropy_loss_model(),
+            "softmax_ce_loss_builtin",
+            {"scores": logits, "labels": labels, "weight": weight},
+            ["y"],
+        ),
+    ]
+    for model, name, sample_inputs, tensor_names in cases:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = _save_model(tmpdir, name, model)
+            out_dir = os.path.join(tmpdir, "out")
+            tflite_path = _convert(
+                model_path,
+                out_dir,
+                backend="flatbuffer_direct",
+                report_op_coverage=True,
+            )
+            report_path = os.path.join(out_dir, f"{name}_op_coverage_report.json")
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            assert report["graph_custom_ops"] == []
+            assert all(node["dispatch_mode"] == "builtin" for node in report["graph_node_reports"])
+
+            ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            ort_outputs = ort_session.run(None, sample_inputs)
+            ort_by_name = {
+                output.name: np.asarray(value)
+                for output, value in zip(ort_session.get_outputs(), ort_outputs)
+            }
+            if name == "softmax_ce_loss_builtin":
+                interpreter = _create_tflite_interpreter(model_path=tflite_path)
+                interpreter.allocate_tensors()
+                assert "log_prob" in {
+                    str(detail["name"]).split(":")[0]
+                    for detail in interpreter.get_output_details()
+                }
+            tflite_outputs = _run_tflite_and_collect_tensors(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+                tensor_names=tensor_names,
+            )
+            for tensor_name in tensor_names:
+                np.testing.assert_allclose(
+                    tflite_outputs[tensor_name],
+                    ort_by_name[tensor_name],
+                    rtol=1e-4,
+                    atol=1e-4,
+                )

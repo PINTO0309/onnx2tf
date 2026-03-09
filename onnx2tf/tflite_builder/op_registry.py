@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.op_builders import (
     build_abs_op,
     build_acos_op,
     build_acosh_op,
+    build_affine_grid_op,
     build_argmin_op,
     build_argmax_op,
     build_asin_op,
@@ -18,18 +19,22 @@ from onnx2tf.tflite_builder.op_builders import (
     build_atanh_op,
     build_batch_normalization_op,
     build_instance_normalization_op,
+    build_attention_op,
     build_binary_op,
     build_bitshift_op,
     build_bitwise_not_op,
     build_cast_op,
     build_castlike_op,
+    build_center_crop_pad_op,
     build_celu_op,
     build_clip_op,
     build_col2im_op,
+    build_compress_op,
     build_concat_op,
     build_constant_of_shape_op,
     build_conv2d_or_depthwise_op,
     build_conv_transpose_op,
+    build_deform_conv_op,
     build_fused_conv_op,
     build_dropout_op,
     build_cosh_op,
@@ -37,17 +42,26 @@ from onnx2tf.tflite_builder.op_builders import (
     build_conv_integer_op,
     build_dequantize_linear_op,
     build_depth_to_space_op,
+    build_dft_op,
     build_dynamic_quantize_linear_op,
     build_div_op,
+    build_det_op,
     build_einsum_op,
     build_erf_op,
     build_eyelike_op,
     build_expand_op,
     build_flatten_op,
     build_grid_sample_op,
+    build_hamming_window_op,
+    build_hann_window_op,
+    build_mel_weight_matrix_op,
     build_fused_matmul_op,
     build_fully_connected_from_gemm_or_matmul,
     build_gru_op,
+    build_group_normalization_op,
+    build_is_inf_op,
+    build_is_nan_op,
+    build_leaky_relu_op,
     build_multi_head_attention_op,
     build_matmul_op,
     build_gather_op,
@@ -57,11 +71,14 @@ from onnx2tf.tflite_builder.op_builders import (
     build_roi_align_op,
     build_scatter_elements_op,
     build_scatter_nd_op,
+    build_tensor_scatter_op,
     build_unique_op,
     build_non_max_suppression_op,
     build_hardsigmoid_op,
     build_global_average_pool_op,
+    build_global_lp_pool_op,
     build_global_max_pool_op,
+    build_negative_log_likelihood_loss_op,
     build_logsoftmax_op,
     build_max_op,
     build_min_op,
@@ -83,7 +100,11 @@ from onnx2tf.tflite_builder.op_builders import (
     build_mean_variance_normalization_op,
     build_lrn_op,
     build_logistic_op,
+    build_mean_op,
     build_matmul_integer_op,
+    build_lp_pool_op,
+    build_max_roi_pool_op,
+    build_max_unpool_op,
     build_pool2d_op,
     build_pow_op,
     build_prelu_op,
@@ -98,17 +119,28 @@ from onnx2tf.tflite_builder.op_builders import (
     build_qlinear_sigmoid_op,
     build_qlinear_softmax_op,
     build_quantize_linear_op,
+    build_random_normal_op,
     build_random_normal_like_op,
+    build_random_uniform_op,
+    build_random_uniform_like_op,
     build_range_op,
+    build_bernoulli_op,
+    build_blackman_window_op,
     build_cumprod_op,
     build_cumsum_op,
+    build_reduce_log_sum_exp_op,
+    build_reduce_log_sum_op,
     build_reduce_l1_op,
     build_reduce_l2_op,
     build_reduce_op,
+    build_reduce_sum_square_op,
+    build_softmax_cross_entropy_loss_op,
     build_reciprocal_op,
+    build_reverse_sequence_op,
     build_resize_op,
     build_reshape_op,
     build_rnn_op,
+    build_rotary_embedding_op,
     build_selu_op,
     build_shape_op,
     build_size_op,
@@ -116,14 +148,17 @@ from onnx2tf.tflite_builder.op_builders import (
     build_slice_op,
     build_split_op,
     build_space_to_depth_op,
+    build_stft_op,
     build_string_normalizer_op,
     build_squeeze_op,
     build_tile_op,
     build_softmax_op,
     build_softplus_op,
     build_softsign_op,
+    build_shrink_op,
     build_sum_op,
     build_tan_op,
+    build_thresholded_relu_op,
     build_transpose_op,
     build_trilu_op,
     build_unary_op,
@@ -1982,6 +2017,285 @@ def _validate_global_max_pool(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_global_lp_pool(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    if len(input_shape) < 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"GlobalLpPool input rank must be >=3. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "GlobalLpPool input/output dtype must be FLOAT16/FLOAT32. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    p = float(node.attrs.get("p", 2.0))
+    if not np.isfinite(p) or p <= 0.0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"GlobalLpPool p must be finite and > 0. p={p}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_max_unpool(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    indices_shape = _tensor_shape_with_signature(ctx, node.inputs[1].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) != 4 or len(indices_shape) != 4 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "MaxUnpool supports rank-4 input/indices/output only in flatbuffer_direct. "
+                f"input_shape={input_shape} indices_shape={indices_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(a) != int(b) for a, b in zip(input_shape, indices_shape)):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MaxUnpool input and indices shapes must match in flatbuffer_direct. "
+                f"input_shape={input_shape} indices_shape={indices_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not all(int(v) > 0 for v in input_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MaxUnpool input shape must be static positive in flatbuffer_direct. "
+                f"input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not all(int(v) > 0 for v in output_shape):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MaxUnpool output shape must be static positive in flatbuffer_direct. "
+                f"output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(output_shape[0]) != int(input_shape[0]) or int(output_shape[1]) != int(input_shape[1]):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MaxUnpool output batch/channel dimensions must match input in flatbuffer_direct. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    indices_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if not _is_numeric_dtype(input_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"MaxUnpool input dtype must be numeric. input_dtype={input_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not _is_integer_dtype(indices_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"MaxUnpool indices dtype must be integer. indices_dtype={indices_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if str(output_dtype) != str(input_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "MaxUnpool output dtype must match input dtype in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    kernel_shape = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    if len(kernel_shape) != 2 or any(int(v) <= 0 for v in kernel_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MaxUnpool kernel_shape must be length-2 positive. kernel_shape={kernel_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    if len(strides) == 0:
+        strides = [1, 1]
+    elif len(strides) == 1:
+        strides = [int(strides[0]), int(strides[0])]
+    if len(strides) != 2 or any(int(v) <= 0 for v in strides):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MaxUnpool strides must be length-2 positive. strides={strides}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    pads = [int(v) for v in list(node.attrs.get("pads", []))]
+    if len(pads) not in {0, 4}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MaxUnpool pads must be empty or length-4. pads={pads}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) != 0 for v in pads):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MaxUnpool builtin path currently supports zero pads only. pads={pads}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if len(node.inputs) > 2 and str(node.inputs[2].name) != "":
+        output_shape_const = ctx.get_constant_array(node.inputs[2].name)
+        if output_shape_const is None:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message="MaxUnpool output_shape input must be constant in flatbuffer_direct.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        output_shape_values = [int(v) for v in np.asarray(output_shape_const).reshape(-1).tolist()]
+        if len(output_shape_values) != 4 or not all(int(v) > 0 for v in output_shape_values):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "MaxUnpool output_shape input must contain 4 positive values in flatbuffer_direct. "
+                    f"output_shape_values={output_shape_values}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if any(int(a) != int(b) for a, b in zip(output_shape_values, output_shape)):
+            raise NodeValidationError(
+                reason_code="invalid_output_shape",
+                message=(
+                    "MaxUnpool output_shape input must match graph output shape in flatbuffer_direct. "
+                    f"output_shape_values={output_shape_values} output_shape={output_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_max_roi_pool(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "MaxRoiPool builtin path currently supports rank-4 input/output only. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "MaxRoiPool builtin path requires static positive input/output shapes. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "MaxRoiPool input/output dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(output_shape[1]) != int(input_shape[1]):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MaxRoiPool output channels must match input channels. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    pooled_shape = [int(v) for v in list(node.attrs.get("pooled_shape", []))]
+    if len(pooled_shape) != 2 or any(int(v) <= 0 for v in pooled_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"MaxRoiPool pooled_shape must be length-2 positive. pooled_shape={pooled_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(output_shape[2]) != int(pooled_shape[0]) or int(output_shape[3]) != int(pooled_shape[1]):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MaxRoiPool output pooled dims must match pooled_shape. "
+                f"output_shape={output_shape} pooled_shape={pooled_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    rois = ctx.get_constant_array(node.inputs[1].name)
+    if rois is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="MaxRoiPool builtin path currently requires constant rois input.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    rois_arr = np.asarray(rois, dtype=np.float32).reshape(-1, 5)
+    if int(rois_arr.shape[0]) != int(output_shape[0]):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MaxRoiPool output batch dimension must equal number of constant rois. "
+                f"rois_shape={list(rois_arr.shape)} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    batch_size = int(input_shape[0])
+    for roi in rois_arr:
+        batch_idx = int(roi[0])
+        if batch_idx < 0 or batch_idx >= batch_size:
+            raise NodeValidationError(
+                reason_code="unsupported_input_value",
+                message=(
+                    "MaxRoiPool roi batch index is out of range for builtin path. "
+                    f"batch_idx={batch_idx} batch_size={batch_size}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _validate_conv_transpose(node: Any, ctx: Any) -> None:
     weights = _require_const_input(node, ctx, 1, "convtranspose weights")
     if weights.ndim not in [3, 4, 5]:
@@ -2196,6 +2510,242 @@ def _validate_conv_transpose(node: Any, ctx: Any) -> None:
         _require_const_input(node, ctx, 2, "convtranspose bias")
 
 
+def _validate_deform_conv(node: Any, ctx: Any) -> None:
+    input_name = str(node.inputs[0].name)
+    weight_name = str(node.inputs[1].name)
+    offset_name = str(node.inputs[2].name)
+    bias_name = str(node.inputs[3].name) if len(node.inputs) >= 4 else ""
+    mask_name = str(node.inputs[4].name) if len(node.inputs) >= 5 else ""
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    offset_shape = _tensor_shape_with_signature(ctx, offset_name)
+    if len(input_shape) != 4 or len(output_shape) != 4 or len(offset_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "DeformConv supports rank-4 input/output/offset only in flatbuffer_direct. "
+                f"input_shape={input_shape} offset_shape={offset_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    offset_dtype = str(ctx.get_tensor_dtype(offset_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"DeformConv input dtype must be FLOAT16/FLOAT32. input_dtype={input_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if offset_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"DeformConv offset dtype must be FLOAT16/FLOAT32. offset_dtype={offset_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"DeformConv output dtype must be FLOAT16/FLOAT32. output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    weights = ctx.get_constant_array(weight_name)
+    if weights is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message=f"DeformConv weights must be constant. weight={weight_name}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    weights = np.asarray(weights)
+    if weights.ndim != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_weight_rank",
+            message=f"DeformConv weights must be rank-4. weight_shape={list(weights.shape)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    group = int(node.attrs.get("group", 1))
+    offset_group = int(node.attrs.get("offset_group", 1))
+    if group <= 0 or offset_group <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"DeformConv group and offset_group must be positive. group={group} offset_group={offset_group}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if group != 1 or offset_group != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "DeformConv builtin lowering is currently limited to group=1 and offset_group=1 for LiteRT runtime safety. "
+                f"group={group} offset_group={offset_group}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+    if len(dilations) != 2 or len(strides) != 2 or len(pads) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "DeformConv dilations/strides/pads must have lengths 2/2/4. "
+                f"dilations={dilations} strides={strides} pads={pads}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    kernel_shape = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    if len(kernel_shape) == 0:
+        kernel_shape = [int(weights.shape[2]), int(weights.shape[3])]
+    if len(kernel_shape) != 2 or any(int(v) <= 0 for v in kernel_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"DeformConv kernel shape must resolve to 2 positive dims. kernel_shape={kernel_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(weights.shape[2]) != int(kernel_shape[0]) or int(weights.shape[3]) != int(kernel_shape[1]):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv kernel_shape attribute must match weights. "
+                f"kernel_shape={kernel_shape} weight_shape={list(weights.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    in_channels = int(input_shape[1])
+    in_h = int(input_shape[2])
+    in_w = int(input_shape[3])
+    out_channels = int(output_shape[1])
+    out_h = int(output_shape[2])
+    out_w = int(output_shape[3])
+    if any(int(v) <= 0 for v in [in_channels, in_h, in_w, out_channels, out_h, out_w]):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv currently requires static positive channel/spatial dims. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if in_channels % group != 0 or in_channels % offset_group != 0 or out_channels % group != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv channels must be divisible by group/offset_group. "
+                f"in_channels={in_channels} out_channels={out_channels} group={group} offset_group={offset_group}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(weights.shape[0]) != out_channels:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv output channels must match weights. "
+                f"out_channels={out_channels} weight_shape={list(weights.shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(weights.shape[1]) != int(in_channels // group):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv weights/input channels are inconsistent with group. "
+                f"weight_shape={list(weights.shape)} in_channels={in_channels} group={group}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    expected_offset_channels = int(2 * offset_group * kernel_shape[0] * kernel_shape[1])
+    if int(offset_shape[1]) != expected_offset_channels:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv offset channels are inconsistent with offset_group/kernel_shape. "
+                f"offset_shape={offset_shape} expected_offset_channels={expected_offset_channels}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(offset_shape[2]) != out_h or int(offset_shape[3]) != out_w:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DeformConv offset spatial dims must match output spatial dims. "
+                f"offset_shape={offset_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if bias_name != "":
+        bias = ctx.get_constant_array(bias_name)
+        if bias is None:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message="DeformConv bias must be constant when provided.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        bias = np.asarray(bias).reshape(-1)
+        if int(bias.size) != out_channels:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "DeformConv bias size must match output channels. "
+                    f"bias_size={int(bias.size)} out_channels={out_channels}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    if mask_name != "":
+        mask_shape = _tensor_shape_with_signature(ctx, mask_name)
+        if len(mask_shape) != 4:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=f"DeformConv mask must be rank-4 when provided. mask_shape={mask_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        mask_dtype = str(ctx.get_tensor_dtype(mask_name)).upper()
+        if mask_dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=f"DeformConv mask dtype must be FLOAT16/FLOAT32. mask_dtype={mask_dtype}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        expected_mask_channels = int(offset_group * kernel_shape[0] * kernel_shape[1])
+        if int(mask_shape[1]) != expected_mask_channels or int(mask_shape[2]) != out_h or int(mask_shape[3]) != out_w:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "DeformConv mask shape must match output spatial dims and offset_group*kernel area. "
+                    f"mask_shape={mask_shape} expected_mask_channels={expected_mask_channels} output_shape={output_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
 def _validate_pool(node: Any, ctx: Any) -> None:
     ceil_mode = int(node.attrs.get("ceil_mode", 0))
     if node.op == "MaxPool":
@@ -2352,6 +2902,78 @@ def _validate_pool(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
+
+
+def _validate_lp_pool(node: Any, ctx: Any) -> None:
+    input_shape = ctx.get_tensor_shape(node.inputs[0].name)
+    output_shape = ctx.get_tensor_shape(node.outputs[0].name)
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"LpPool supports rank-4 input/output only. input_shape={input_shape} output_shape={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "LpPool input/output dtype must be FLOAT16/FLOAT32. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    kernel = [int(v) for v in list(node.attrs.get("kernel_shape", []))]
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    if len(kernel) != 2 or len(strides) != 2 or len(dilations) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "LpPool requires 2D kernel/strides/dilations. "
+                f"kernel_shape={kernel} strides={strides} dilations={dilations}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if dilations != [1, 1]:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LpPool currently supports dilations=[1,1] only. dilations={dilations}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    p = float(node.attrs.get("p", 2.0))
+    if not np.isfinite(p) or p <= 0.0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LpPool p must be finite and > 0. p={p}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    count_include_pad = int(node.attrs.get("count_include_pad", 0))
+    raw_pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
+    zero_pad = all(int(v) == 0 for v in raw_pads)
+    if count_include_pad not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"LpPool count_include_pad must be 0 or 1. count_include_pad={count_include_pad}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if count_include_pad != 1 and not zero_pad:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "LpPool builtin decomposition requires count_include_pad=1 when pads are non-zero. "
+                f"count_include_pad={count_include_pad} pads={raw_pads}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_fc(node: Any, ctx: Any) -> None:
@@ -2530,6 +3152,123 @@ def _validate_multi_head_attention(node: Any, ctx: Any) -> None:
                 "MultiHeadAttention query/key head dimensions must match. "
                 f"query_head_dim={int(query_hidden // num_heads)} key_head_dim={int(key_hidden // num_heads)}"
             ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_attention(node: Any, ctx: Any) -> None:
+    original_inputs = [str(v.name) for v in node.inputs]
+    unsupported_optional_inputs = [
+        str(original_inputs[idx])
+        for idx in range(3, len(original_inputs))
+        if str(original_inputs[idx]) != ""
+    ]
+    if len(unsupported_optional_inputs) > 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_count",
+            message=(
+                "Attention builtin lowering currently supports 3-input form only "
+                f"(query,key,value). unsupported_optional_inputs={unsupported_optional_inputs}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(node.outputs) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_output_count",
+            message=f"Attention builtin lowering supports 1 output only. outputs={len(node.outputs)}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    q_num_heads = int(node.attrs.get("q_num_heads", node.attrs.get("num_heads", 0)))
+    kv_num_heads = int(node.attrs.get("kv_num_heads", q_num_heads))
+    if q_num_heads <= 0 or kv_num_heads <= 0 or q_num_heads != kv_num_heads:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Attention builtin lowering requires q_num_heads and kv_num_heads to be equal positive integers. "
+                f"q_num_heads={q_num_heads} kv_num_heads={kv_num_heads}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(node.attrs.get("is_causal", 0)) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Attention builtin lowering currently supports is_causal=0 only. is_causal={int(node.attrs.get('is_causal', 0))}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(node.attrs.get("qk_matmul_output_mode", 0)) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "Attention builtin lowering currently supports qk_matmul_output_mode=0 only. "
+                f"qk_matmul_output_mode={int(node.attrs.get('qk_matmul_output_mode', 0))}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    softcap = float(node.attrs.get("softcap", 0.0))
+    if not np.isfinite(softcap) or abs(softcap) > 1e-12:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"Attention builtin lowering currently supports softcap=0 only. softcap={softcap}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    proxy_node = type("AttentionProxyNode", (), {})()
+    proxy_node.name = str(node.name)
+    proxy_node.op = "MultiHeadAttention"
+    proxy_node.inputs = node.inputs
+    proxy_node.outputs = node.outputs
+    proxy_node.attrs = dict(node.attrs)
+    proxy_node.attrs["num_heads"] = int(q_num_heads)
+    proxy_node.attrs["unidirectional"] = 0
+    _validate_multi_head_attention(proxy_node, ctx)
+
+
+def _validate_det(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) < 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Det input rank must be >= 2. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "Det input/output dtype must be FLOAT16/FLOAT32. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    rows = int(input_shape[-2])
+    cols = int(input_shape[-1])
+    if rows != cols or rows not in {2, 3}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Det builtin lowering currently supports static square 2x2/3x3 matrices only. "
+                f"input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_output_rank = int(len(input_shape) - 2)
+    if len(output_shape) not in {expected_output_rank, 1 if expected_output_rank == 0 else expected_output_rank}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_shape",
+            message=f"Det output rank must match input rank-2. input_shape={input_shape} output_shape={output_shape}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -4226,6 +4965,460 @@ def _validate_scatter_elements(node: Any, ctx: Any) -> None:
         )
 
 
+def _validate_tensor_scatter(node: Any, ctx: Any) -> None:
+    data_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    updates_shape = _tensor_shape_with_signature(ctx, node.inputs[1].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    rank = int(len(data_shape))
+    if int(rank) < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"TensorScatter data rank must be >= 1. data_shape={data_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(updates_shape) != int(rank):
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "TensorScatter updates rank must match data rank in flatbuffer_direct. "
+                f"data_shape={data_shape} updates_shape={updates_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(output_shape) != int(rank):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "TensorScatter output rank must match data rank in flatbuffer_direct. "
+                f"data_shape={data_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not all(int(v) > 0 for v in updates_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "TensorScatter builtin lowering requires static positive updates shape. "
+                f"updates_shape={updates_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for out_dim, data_dim in zip(output_shape, data_shape):
+        if int(out_dim) > 0 and int(data_dim) > 0 and int(out_dim) != int(data_dim):
+            raise NodeValidationError(
+                reason_code="invalid_output_shape",
+                message=(
+                    "TensorScatter output shape must match data shape in flatbuffer_direct. "
+                    f"data_shape={data_shape} output_shape={output_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    axis = int(node.attrs.get("axis", -2))
+    if axis < 0:
+        axis += int(rank)
+    if axis < 0 or axis >= int(rank):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"TensorScatter axis is out of range. axis={node.attrs.get('axis', -2)} rank={rank}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    mode = str(node.attrs.get("mode", "linear")).lower()
+    if mode not in {"linear", "circular"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"TensorScatter mode must be 'linear' or 'circular'. mode={mode}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if mode == "circular" and int(data_shape[axis]) <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "TensorScatter circular mode requires static positive axis dimension in flatbuffer_direct. "
+                f"data_shape={data_shape} axis={axis}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    data_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    updates_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if not _is_numeric_dtype(data_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"TensorScatter data dtype must be numeric. data_dtype={data_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not _is_numeric_dtype(updates_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"TensorScatter updates dtype must be numeric. updates_dtype={updates_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if str(output_dtype) != str(data_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "TensorScatter output dtype must match data dtype in flatbuffer_direct. "
+                f"data_dtype={data_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if len(node.inputs) > 2 and str(node.inputs[2].name) != "":
+        write_indices_shape = _tensor_shape_with_signature(ctx, node.inputs[2].name)
+        write_indices_dtype = str(ctx.get_tensor_dtype(node.inputs[2].name)).upper()
+        if len(write_indices_shape) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=(
+                    "TensorScatter write_indices must be rank-1 in flatbuffer_direct. "
+                    f"write_indices_shape={write_indices_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if int(write_indices_shape[0]) > 0 and int(updates_shape[0]) > 0 and int(write_indices_shape[0]) < int(updates_shape[0]):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "TensorScatter write_indices length must be >= updates batch dimension in flatbuffer_direct. "
+                    f"write_indices_shape={write_indices_shape} updates_shape={updates_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if not _is_integer_dtype(write_indices_dtype):
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=(
+                    "TensorScatter write_indices dtype must be integer in flatbuffer_direct. "
+                    f"write_indices_dtype={write_indices_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    if int(data_shape[axis]) > 0 and int(updates_shape[axis]) > 0:
+        if len(node.inputs) <= 2 or str(node.inputs[2].name) == "":
+            if int(updates_shape[axis]) > int(data_shape[axis]):
+                raise NodeValidationError(
+                    reason_code="unsupported_input_shape",
+                    message=(
+                        "TensorScatter without write_indices requires updates axis dim <= data axis dim "
+                        "in flatbuffer_direct. "
+                        f"data_shape={data_shape} updates_shape={updates_shape} axis={axis}"
+                    ),
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+        elif mode == "linear":
+            write_indices_const = ctx.get_constant_array(node.inputs[2].name)
+            if write_indices_const is not None:
+                write_indices_arr = np.asarray(write_indices_const, dtype=np.int64).reshape(-1)
+                if write_indices_arr.size > 0:
+                    if int(np.min(write_indices_arr)) < 0:
+                        raise NodeValidationError(
+                            reason_code="unsupported_input_value",
+                            message=(
+                                "TensorScatter linear mode requires non-negative constant write_indices in "
+                                "flatbuffer_direct. "
+                                f"write_indices={write_indices_arr.tolist()}"
+                            ),
+                            node_name=node.name,
+                            node_op=node.op,
+                        )
+                    if int(np.max(write_indices_arr)) + int(updates_shape[axis]) > int(data_shape[axis]):
+                        raise NodeValidationError(
+                            reason_code="unsupported_input_value",
+                            message=(
+                                "TensorScatter linear mode constant write_indices exceed data axis range in "
+                                "flatbuffer_direct. "
+                                f"data_shape={data_shape} updates_shape={updates_shape} axis={axis} "
+                                f"write_indices={write_indices_arr.tolist()}"
+                            ),
+                            node_name=node.name,
+                            node_op=node.op,
+                        )
+
+
+def _validate_mel_weight_matrix(node: Any, ctx: Any) -> None:
+    scalar_values: list[float] = []
+    for input_tensor in node.inputs[:5]:
+        scalar_arr = ctx.get_constant_array(input_tensor.name)
+        if scalar_arr is None:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message="MelWeightMatrix requires all five inputs to be constant scalars in flatbuffer_direct.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        arr = np.asarray(scalar_arr)
+        if int(arr.size) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "MelWeightMatrix requires scalar-like inputs (shape [] or [1]) in flatbuffer_direct. "
+                    f"input={input_tensor.name} shape={list(arr.shape)}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        scalar_values.append(float(arr.reshape(-1)[0]))
+
+    num_mel_bins = int(scalar_values[0])
+    dft_length = int(scalar_values[1])
+    sample_rate = float(scalar_values[2])
+    lower_edge_hertz = float(scalar_values[3])
+    upper_edge_hertz = float(scalar_values[4])
+    if int(num_mel_bins) <= 0 or int(dft_length) <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=(
+                "MelWeightMatrix requires positive num_mel_bins and dft_length in flatbuffer_direct. "
+                f"num_mel_bins={num_mel_bins} dft_length={dft_length}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not (float(sample_rate) > 0.0):
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=f"MelWeightMatrix sample_rate must be positive. sample_rate={sample_rate}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not (0.0 <= float(lower_edge_hertz) < float(upper_edge_hertz) <= float(sample_rate) / 2.0):
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=(
+                "MelWeightMatrix requires 0 <= lower_edge_hertz < upper_edge_hertz <= sample_rate/2 "
+                "in flatbuffer_direct. "
+                f"lower_edge_hertz={lower_edge_hertz} upper_edge_hertz={upper_edge_hertz} sample_rate={sample_rate}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "MelWeightMatrix output dtype must be FLOAT16 or FLOAT32 in flatbuffer_direct. "
+                f"output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    expected_shape = [int(dft_length // 2 + 1), int(num_mel_bins)]
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(output_shape) != 2:
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "MelWeightMatrix output must be rank-2 in flatbuffer_direct. "
+                f"output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for out_dim, exp_dim in zip(output_shape, expected_shape):
+        if int(out_dim) > 0 and int(out_dim) != int(exp_dim):
+            raise NodeValidationError(
+                reason_code="invalid_output_shape",
+                message=(
+                    "MelWeightMatrix output shape mismatch in flatbuffer_direct. "
+                    f"output_shape={output_shape} expected={expected_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_loss_common(node: Any, ctx: Any, *, allow_second_output: bool) -> None:
+    input_name = node.inputs[0].name
+    target_name = node.inputs[1].name
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    target_shape = _tensor_shape_with_signature(ctx, target_name)
+    input_rank = int(len(input_shape))
+    if int(input_rank) < 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"{node.op} input rank must be >= 2 in flatbuffer_direct. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    class_dim = int(input_shape[1])
+    if int(class_dim) <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"{node.op} requires static positive class dimension at axis 1. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_target_shape = [int(v) for idx, v in enumerate(input_shape) if int(idx) != 1]
+    if len(target_shape) != len(expected_target_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                f"{node.op} target rank must equal input rank - 1 in flatbuffer_direct. "
+                f"input_shape={input_shape} target_shape={target_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for tgt_dim, exp_dim in zip(target_shape, expected_target_shape):
+        if int(tgt_dim) > 0 and int(exp_dim) > 0 and int(tgt_dim) != int(exp_dim):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    f"{node.op} target shape mismatch in flatbuffer_direct. "
+                    f"input_shape={input_shape} target_shape={target_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    target_dtype = str(ctx.get_tensor_dtype(target_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"{node.op} input dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. input_dtype={input_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"{node.op} output dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not _is_integer_dtype(target_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"{node.op} target dtype must be integer in flatbuffer_direct. target_dtype={target_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if len(node.inputs) > 2 and str(node.inputs[2].name) != "":
+        weight_shape = _tensor_shape_with_signature(ctx, node.inputs[2].name)
+        weight_dtype = str(ctx.get_tensor_dtype(node.inputs[2].name)).upper()
+        if len(weight_shape) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_input_rank",
+                message=f"{node.op} weight input must be rank-1 in flatbuffer_direct. weight_shape={weight_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if int(weight_shape[0]) > 0 and int(weight_shape[0]) != int(class_dim):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    f"{node.op} weight length must match class dimension in flatbuffer_direct. "
+                    f"weight_shape={weight_shape} input_shape={input_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if weight_dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=f"{node.op} weight dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. weight_dtype={weight_dtype}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+    reduction = str(node.attrs.get("reduction", "mean")).lower()
+    if reduction not in {"none", "sum", "mean"}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"{node.op} reduction must be one of none/sum/mean. reduction={reduction}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    output0_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if reduction == "none":
+        if len(output0_shape) != len(target_shape):
+            raise NodeValidationError(
+                reason_code="invalid_output_shape",
+                message=(
+                    f"{node.op} output[0] rank must match target rank when reduction=none. "
+                    f"output_shape={output0_shape} target_shape={target_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+    elif len(output0_shape) not in {0, 1} or (len(output0_shape) == 1 and int(output0_shape[0]) not in {-1, 1}):
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                f"{node.op} output[0] must be scalar-like when reduction={reduction}. "
+                f"output_shape={output0_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    if not allow_second_output and len(node.outputs) > 1:
+        for output_index in range(1, len(node.outputs)):
+            output_name = str(node.outputs[output_index].name)
+            if output_name != "":
+                raise NodeValidationError(
+                    reason_code="unsupported_output_count",
+                    message=f"{node.op} builtin lowering supports output[0] only in flatbuffer_direct.",
+                    node_name=node.name,
+                    node_op=node.op,
+                )
+
+    if allow_second_output and len(node.outputs) > 1 and str(node.outputs[1].name) != "":
+        output1_shape = _tensor_shape_with_signature(ctx, node.outputs[1].name)
+        output1_dtype = str(ctx.get_tensor_dtype(node.outputs[1].name)).upper()
+        if len(output1_shape) != len(input_shape):
+            raise NodeValidationError(
+                reason_code="invalid_output_shape",
+                message=(
+                    f"{node.op} output[1] rank must match input rank in flatbuffer_direct. "
+                    f"input_shape={input_shape} output1_shape={output1_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if output1_dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NodeValidationError(
+                reason_code="unsupported_output_dtype",
+                message=f"{node.op} output[1] dtype must be FLOAT16/FLOAT32 in flatbuffer_direct. output1_dtype={output1_dtype}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_negative_log_likelihood_loss(node: Any, ctx: Any) -> None:
+    _validate_loss_common(node, ctx, allow_second_output=False)
+
+
+def _validate_softmax_cross_entropy_loss(node: Any, ctx: Any) -> None:
+    _validate_loss_common(node, ctx, allow_second_output=True)
+
+
 def _validate_mod(node: Any, _ctx: Any) -> None:
     fmod = int(node.attrs.get("fmod", 0))
     if fmod != 0:
@@ -4258,6 +5451,62 @@ def _validate_float_unary(node: Any, ctx: Any) -> None:
             reason_code="unsupported_input_dtype",
             message=(
                 "This op currently supports FLOAT16/FLOAT32 input/output in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_float_to_bool_unary(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype != "BOOL":
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "This op currently supports FLOAT16/FLOAT32 input and BOOL output in "
+                "flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_mean(node: Any, ctx: Any) -> None:
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"Mean output must be FLOAT16/FLOAT32. output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for idx, input_obj in enumerate(node.inputs):
+        input_dtype = str(ctx.get_tensor_dtype(input_obj.name)).upper()
+        if input_dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=(
+                    "Mean builtin lowering currently supports FLOAT16/FLOAT32 inputs only. "
+                    f"input_index={idx} input_dtype={input_dtype}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_float_reduce(node: Any, ctx: Any) -> None:
+    _validate_reduce(node, ctx)
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "This reduce op currently supports FLOAT16/FLOAT32 input/output in "
+                "flatbuffer_direct. "
                 f"input_dtype={input_dtype} output_dtype={output_dtype}"
             ),
             node_name=node.name,
@@ -4322,6 +5571,798 @@ def _validate_random_normal_like(node: Any, ctx: Any) -> None:
         node_name=node.name,
         node_op=node.op,
     )
+
+
+def _validate_random_float_output(node: Any, ctx: Any) -> None:
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_type",
+            message=(
+                "Random builtin lowering currently supports FLOAT16/FLOAT32 output only. "
+                f"dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_random_normal(node: Any, ctx: Any) -> None:
+    _validate_random_float_output(node, ctx)
+    shape_attr = node.attrs.get("shape", None)
+    if not isinstance(shape_attr, (list, tuple, np.ndarray)) or len(list(shape_attr)) == 0:
+        raise NodeValidationError(
+            reason_code="missing_required_attribute",
+            message="RandomNormal requires non-empty `shape` attribute in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_random_uniform(node: Any, ctx: Any) -> None:
+    _validate_random_normal(node, ctx)
+
+
+def _validate_random_uniform_like(node: Any, ctx: Any) -> None:
+    _validate_random_float_output(node, ctx)
+
+
+def _validate_bernoulli(node: Any, ctx: Any) -> None:
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "Bernoulli builtin lowering currently supports FLOAT16/FLOAT32 inputs only. "
+                f"input_dtype={input_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {
+        "BOOL",
+        "FLOAT16",
+        "FLOAT32",
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }:
+        raise NodeValidationError(
+            reason_code="unsupported_output_type",
+            message=f"Bernoulli output dtype is not supported in flatbuffer_direct. dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_window_op(node: Any, ctx: Any) -> None:
+    input_shape = [int(v) for v in ctx.get_tensor_shape(node.inputs[0].name)]
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if len(input_shape) != 1 or int(input_shape[0]) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "Window ops require scalar-like rank-1 length-1 input in flatbuffer_direct. "
+                f"input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_reverse_sequence(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    seq_lengths_name = node.inputs[1].name
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    seq_shape = [int(v) for v in ctx.get_tensor_shape(seq_lengths_name)]
+    input_rank = int(len(input_shape))
+    if input_rank < 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"ReverseSequence input rank must be >= 2. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(seq_shape) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"ReverseSequence seq_lengths must be rank-1. seq_shape={seq_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    seq_dtype = str(ctx.get_tensor_dtype(seq_lengths_name)).upper()
+    if not _is_integer_dtype(seq_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"ReverseSequence seq_lengths must be integer tensor. dtype={seq_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    batch_axis = int(node.attrs.get("batch_axis", 1))
+    time_axis = int(node.attrs.get("time_axis", 0))
+    if batch_axis < 0:
+        batch_axis += input_rank
+    if time_axis < 0:
+        time_axis += input_rank
+    if batch_axis < 0 or batch_axis >= input_rank or time_axis < 0 or time_axis >= input_rank:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "ReverseSequence batch_axis/time_axis must be in range. "
+                f"batch_axis={batch_axis} time_axis={time_axis} rank={input_rank}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if batch_axis == time_axis:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message="ReverseSequence batch_axis and time_axis must differ.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    batch_dim = int(input_shape[batch_axis])
+    if batch_dim > 0 and len(seq_shape) == 1 and int(seq_shape[0]) > 0 and int(seq_shape[0]) != batch_dim:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "ReverseSequence seq_lengths length must match batch dimension when static. "
+                f"seq_shape={seq_shape} batch_dim={batch_dim}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_rotary_embedding(node: Any, ctx: Any) -> None:
+    if len(node.inputs) > 3 and str(node.inputs[3].name) != "":
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message="RotaryEmbedding builtin path currently does not support position_ids input.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if bool(node.attrs.get("interleaved", 0)):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message="RotaryEmbedding builtin path currently supports interleaved=0 only.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    cos_shape = _tensor_shape_with_signature(ctx, node.inputs[1].name)
+    sin_shape = _tensor_shape_with_signature(ctx, node.inputs[2].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) != 4 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "RotaryEmbedding builtin path currently supports rank-4 input/output only. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if input_shape != output_shape:
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "RotaryEmbedding output shape must match input shape in flatbuffer_direct. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(cos_shape) != 2 or len(sin_shape) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "RotaryEmbedding cos/sin inputs must be rank-2 in flatbuffer_direct. "
+                f"cos_shape={cos_shape} sin_shape={sin_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in input_shape + cos_shape + sin_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "RotaryEmbedding builtin path requires static positive input/cos/sin shapes. "
+                f"input_shape={input_shape} cos_shape={cos_shape} sin_shape={sin_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    cos_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    sin_dtype = str(ctx.get_tensor_dtype(node.inputs[2].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    for label, dtype in [
+        ("input", input_dtype),
+        ("cos", cos_dtype),
+        ("sin", sin_dtype),
+        ("output", output_dtype),
+    ]:
+        if dtype not in {"FLOAT16", "FLOAT32"}:
+            raise NodeValidationError(
+                reason_code="unsupported_input_dtype",
+                message=f"RotaryEmbedding {label} dtype must be FLOAT16/FLOAT32. dtype={dtype}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    if str(output_dtype) != str(input_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=(
+                "RotaryEmbedding output dtype must match input dtype in flatbuffer_direct. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    seq_len = int(input_shape[2])
+    head_size = int(input_shape[3])
+    rotary_dim = int(node.attrs.get("rotary_embedding_dim", 0))
+    if rotary_dim == 0:
+        rotary_dim = int(head_size)
+    if rotary_dim <= 0 or rotary_dim > int(head_size) or int(rotary_dim % 2) != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "RotaryEmbedding rotary_embedding_dim must be positive, even, and <= head_size. "
+                f"rotary_embedding_dim={rotary_dim} head_size={head_size}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_cache_shape = [int(seq_len), int(rotary_dim // 2)]
+    if cos_shape != expected_cache_shape or sin_shape != expected_cache_shape:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "RotaryEmbedding cos/sin shapes must match [seq_len, rotary_embedding_dim/2] in flatbuffer_direct. "
+                f"cos_shape={cos_shape} sin_shape={sin_shape} expected={expected_cache_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_dft(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) < 2 or len(output_shape) < 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"DFT input/output rank must be >= 2. input_shape={input_shape} output_shape={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DFT builtin path requires static positive input/output shapes. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(input_shape[-1]) != 1 or int(output_shape[-1]) != 2:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "DFT builtin path currently supports real input [...,N,1] and complex-pair output [...,K,2] only. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if bool(int(node.attrs.get("inverse", 0))) or not bool(int(node.attrs.get("onesided", 0))):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "DFT builtin path currently supports onesided=1 and inverse=0 only. "
+                f"onesided={node.attrs.get('onesided', 0)} inverse={node.attrs.get('inverse', 0)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    axis_value = int(node.attrs.get("axis", -2))
+    if len(node.inputs) > 2 and str(node.inputs[2].name) != "":
+        axis_const = ctx.get_constant_array(node.inputs[2].name)
+        if axis_const is None or int(np.asarray(axis_const).size) != 1:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message="DFT axis input must be a constant scalar in flatbuffer_direct.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        axis_value = int(np.asarray(axis_const).reshape(-1)[0])
+    if axis_value < 0:
+        axis_value += len(input_shape)
+    if int(axis_value) != int(len(input_shape) - 2):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "DFT builtin path currently supports transform axis at rank-2 only. "
+                f"axis={axis_value} input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    dft_length = int(input_shape[-2])
+    if len(node.inputs) > 1 and str(node.inputs[1].name) != "":
+        dft_const = ctx.get_constant_array(node.inputs[1].name)
+        if dft_const is None or int(np.asarray(dft_const).size) != 1:
+            raise NodeValidationError(
+                reason_code="requires_constant_input",
+                message="DFT dft_length input must be a constant scalar in flatbuffer_direct.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        dft_length = int(np.asarray(dft_const).reshape(-1)[0])
+    expected_output_shape = [int(v) for v in input_shape[:-2]] + [int(dft_length // 2 + 1), 2]
+    if output_shape != expected_output_shape:
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "DFT output shape mismatch for constrained builtin path. "
+                f"output_shape={output_shape} expected={expected_output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"DFT input/output dtype must be FLOAT16/FLOAT32. input_dtype={input_dtype} output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_stft(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) != 2 or len(output_shape) != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=(
+                "STFT builtin path currently supports rank-2 input and rank-4 output only. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "STFT builtin path requires static positive input/output shapes. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if not bool(int(node.attrs.get("onesided", 1))):
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message="STFT builtin path currently supports onesided=1 only.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    frame_step_arr = ctx.get_constant_array(node.inputs[1].name)
+    window_arr = ctx.get_constant_array(node.inputs[2].name)
+    frame_length_arr = ctx.get_constant_array(node.inputs[3].name)
+    if frame_step_arr is None or frame_length_arr is None or window_arr is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="STFT frame_step/window/frame_length inputs must be constant in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(np.asarray(frame_step_arr).size) != 1 or int(np.asarray(frame_length_arr).size) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message="STFT frame_step and frame_length must be scalar-like in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    frame_step = int(np.asarray(frame_step_arr).reshape(-1)[0])
+    frame_length = int(np.asarray(frame_length_arr).reshape(-1)[0])
+    if frame_step <= 0 or frame_length <= 0:
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message=f"STFT frame_step/frame_length must be positive. frame_step={frame_step} frame_length={frame_length}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(np.asarray(window_arr).size) != int(frame_length):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "STFT window length must equal frame_length in flatbuffer_direct. "
+                f"window_shape={list(np.asarray(window_arr).shape)} frame_length={frame_length}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    signal_length = int(input_shape[1])
+    if signal_length < frame_length:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "STFT builtin path requires signal_length >= frame_length. "
+                f"signal_length={signal_length} frame_length={frame_length}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_output_shape = [
+        int(input_shape[0]),
+        int((signal_length - frame_length) // frame_step + 1),
+        int(frame_length // 2 + 1),
+        2,
+    ]
+    if output_shape != expected_output_shape:
+        raise NodeValidationError(
+            reason_code="invalid_output_shape",
+            message=(
+                "STFT output shape mismatch for constrained builtin path. "
+                f"output_shape={output_shape} expected={expected_output_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"STFT input/output dtype must be FLOAT16/FLOAT32. input_dtype={input_dtype} output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_compress(node: Any, ctx: Any) -> None:
+    data_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    condition_shape = _tensor_shape_with_signature(ctx, node.inputs[1].name)
+    if len(data_shape) < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Compress data rank must be >= 1. data_shape={data_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(condition_shape) != 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"Compress condition must be rank-1. condition_shape={condition_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    condition_dtype = str(ctx.get_tensor_dtype(node.inputs[1].name)).upper()
+    if condition_dtype != "BOOL" and not _is_integer_dtype(condition_dtype):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"Compress condition must be BOOL or integer tensor. dtype={condition_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    data_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if data_dtype != output_dtype:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"Compress output dtype must match data dtype. data_dtype={data_dtype} output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    axis_attr = node.attrs.get("axis", None)
+    if axis_attr is None:
+        if len(output_shape) != 1:
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=f"Compress without axis must produce rank-1 output. output_shape={output_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    else:
+        axis = int(axis_attr)
+        if axis < -len(data_shape) or axis >= len(data_shape):
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message=f"Compress axis out of range. axis={axis} data_shape={data_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        normalized_axis = int(axis if axis >= 0 else axis + len(data_shape))
+        if len(output_shape) != len(data_shape):
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=f"Compress with axis must preserve rank. data_shape={data_shape} output_shape={output_shape}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        axis_dim = int(data_shape[normalized_axis])
+        condition_len = int(condition_shape[0])
+        if axis_dim > 0 and condition_len > 0 and axis_dim != condition_len:
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Compress condition length must match selected axis dimension when both are static. "
+                    f"axis={normalized_axis} data_shape={data_shape} condition_shape={condition_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_affine_grid(node: Any, ctx: Any) -> None:
+    theta_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    theta_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if theta_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "AffineGrid input/output dtype must be FLOAT16/FLOAT32. "
+                f"theta_dtype={theta_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(theta_shape) != 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"AffineGrid theta rank must be 3. theta_shape={theta_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    size_arr = ctx.get_constant_array(node.inputs[1].name)
+    if size_arr is None:
+        raise NodeValidationError(
+            reason_code="unsupported_input_value",
+            message="AffineGrid requires constant size input in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    size_values = [int(v) for v in np.asarray(size_arr).reshape(-1).tolist()]
+    if len(size_values) not in {4, 5}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"AffineGrid size input must have length 4 or 5. size={size_values}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(int(v) <= 0 for v in size_values):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"AffineGrid size input must be static positive. size={size_values}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_theta_tail = [2, 3] if len(size_values) == 4 else [3, 4]
+    if [int(theta_shape[1]), int(theta_shape[2])] != expected_theta_tail:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "AffineGrid theta shape must match dimensionality. "
+                f"theta_shape={theta_shape} expected_tail={expected_theta_tail}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if int(theta_shape[0]) > 0 and int(theta_shape[0]) != int(size_values[0]):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "AffineGrid theta batch must match size batch when static. "
+                f"theta_shape={theta_shape} size={size_values}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_output = (
+        [int(size_values[0]), int(size_values[2]), int(size_values[3]), 2]
+        if len(size_values) == 4
+        else [int(size_values[0]), int(size_values[2]), int(size_values[3]), int(size_values[4]), 3]
+    )
+    if len(output_shape) != len(expected_output):
+        raise NodeValidationError(
+            reason_code="unsupported_output_shape",
+            message=f"AffineGrid output rank mismatch. output_shape={output_shape} expected={expected_output}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    for actual, expected in zip(output_shape, expected_output):
+        if int(actual) > 0 and int(actual) != int(expected):
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=f"AffineGrid output shape mismatch. output_shape={output_shape} expected={expected_output}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+    align_corners = int(node.attrs.get("align_corners", 0))
+    if align_corners not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"AffineGrid align_corners must be 0 or 1. align_corners={align_corners}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+
+def _validate_center_crop_pad(node: Any, ctx: Any) -> None:
+    input_shape = _tensor_shape_with_signature(ctx, node.inputs[0].name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if len(input_shape) < 1:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"CenterCropPad input rank must be >= 1. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if input_dtype != output_dtype:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"CenterCropPad output dtype must match input dtype. input_dtype={input_dtype} output_dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if input_dtype == "STRING":
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message="CenterCropPad string dtype is unsupported in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    target_shape_arr = ctx.get_constant_array(node.inputs[1].name)
+    if target_shape_arr is None:
+        raise NodeValidationError(
+            reason_code="requires_constant_input",
+            message="CenterCropPad requires constant target shape input in flatbuffer_direct.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    target_values = [int(v) for v in np.asarray(target_shape_arr).reshape(-1).tolist()]
+    if any(int(v) <= 0 for v in target_values):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=f"CenterCropPad target shape values must be static positive. target_shape={target_values}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    axes_attr = node.attrs.get("axes", None)
+    if axes_attr is None:
+        axes = [int(v) for v in range(len(input_shape))]
+    elif isinstance(axes_attr, np.ndarray):
+        axes = [int(v) for v in np.asarray(axes_attr).reshape(-1).tolist()]
+    elif isinstance(axes_attr, (list, tuple)):
+        axes = [int(v) for v in axes_attr]
+    else:
+        axes = [int(axes_attr)]
+    normalized_axes = _normalize_axes_for_rank(axes=axes, rank=len(input_shape), node=node)
+    if len(target_values) != len(normalized_axes):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "CenterCropPad target shape length must match axes length. "
+                f"target_shape={target_values} axes={normalized_axes}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if len(output_shape) != len(input_shape):
+        raise NodeValidationError(
+            reason_code="unsupported_output_shape",
+            message=f"CenterCropPad output rank must match input rank. input_shape={input_shape} output_shape={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    expected_output = [int(v) for v in input_shape]
+    for axis, size_value in zip(normalized_axes, target_values):
+        expected_output[int(axis)] = int(size_value)
+    for actual, expected in zip(output_shape, expected_output):
+        if int(actual) > 0 and int(actual) != int(expected):
+            raise NodeValidationError(
+                reason_code="unsupported_output_shape",
+                message=f"CenterCropPad output shape mismatch. output_shape={output_shape} expected={expected_output}",
+                node_name=node.name,
+                node_op=node.op,
+            )
+
+
+def _validate_group_normalization(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    scale = _require_const_input(node, ctx, 1, "GroupNormalization scale")
+    bias = _require_const_input(node, ctx, 2, "GroupNormalization bias")
+    input_shape = _tensor_shape_with_signature(ctx, input_name)
+    output_shape = _tensor_shape_with_signature(ctx, node.outputs[0].name)
+    if len(input_shape) < 3:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message=f"GroupNormalization input rank must be >= 3. input_shape={input_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if input_shape != output_shape:
+        raise NodeValidationError(
+            reason_code="unsupported_output_shape",
+            message=f"GroupNormalization output shape must match input shape. input={input_shape} output={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    if input_dtype not in {"FLOAT16", "FLOAT32"} or output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "GroupNormalization input/output dtype must be FLOAT16/FLOAT32. "
+                f"input_dtype={input_dtype} output_dtype={output_dtype}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    channels = int(input_shape[1])
+    if channels <= 0 or any(int(v) <= 0 for v in input_shape[2:]):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization builtin lowering requires static positive channel/spatial dims. "
+                f"input_shape={input_shape}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    num_groups = int(node.attrs.get("num_groups", 1))
+    if num_groups <= 0 or channels % num_groups != 0:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=(
+                "GroupNormalization num_groups must be > 0 and divide channels. "
+                f"num_groups={num_groups} channels={channels}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if np.asarray(scale).reshape(-1).size != channels or np.asarray(bias).reshape(-1).size != channels:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization scale/bias must be length=C constants for builtin lowering. "
+                f"scale_shape={list(np.asarray(scale).shape)} bias_shape={list(np.asarray(bias).shape)} channels={channels}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    stash_type = int(node.attrs.get("stash_type", 1))
+    if stash_type not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"GroupNormalization stash_type must be 0 or 1. stash_type={stash_type}",
+            node_name=node.name,
+            node_op=node.op,
+        )
 
 
 def _validate_bitwise_not(node: Any, ctx: Any) -> None:
@@ -7309,6 +9350,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_mean_variance_normalization,
     ),
+    "GroupNormalization": DispatchEntry(
+        onnx_op="GroupNormalization",
+        tflite_ops=["RESHAPE", "MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST"],
+        builder=build_group_normalization_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_group_normalization,
+    ),
     "LayerNormalization": DispatchEntry(
         onnx_op="LayerNormalization",
         tflite_ops=["MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST"],
@@ -7329,6 +9377,27 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=lambda node, ctx: build_reduce_op(node, ctx, "SUM"),
         validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_reduce,
+    ),
+    "ReduceLogSum": DispatchEntry(
+        onnx_op="ReduceLogSum",
+        tflite_ops=["SUM", "LOG", "CAST"],
+        builder=build_reduce_log_sum_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_reduce,
+    ),
+    "ReduceLogSumExp": DispatchEntry(
+        onnx_op="ReduceLogSumExp",
+        tflite_ops=["EXP", "SUM", "LOG", "CAST"],
+        builder=build_reduce_log_sum_exp_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_reduce,
+    ),
+    "ReduceSumSquare": DispatchEntry(
+        onnx_op="ReduceSumSquare",
+        tflite_ops=["MUL", "SUM", "CAST"],
+        builder=build_reduce_sum_square_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_reduce,
     ),
     "CumSum": DispatchEntry(
         onnx_op="CumSum",
@@ -7468,6 +9537,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=_make_unary_builder("RELU"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),
+    "LeakyRelu": DispatchEntry(
+        onnx_op="LeakyRelu",
+        tflite_ops=["LEAKY_RELU"],
+        builder=build_leaky_relu_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_unary,
+    ),
     "Elu": DispatchEntry(
         onnx_op="Elu",
         tflite_ops=["ELU"],
@@ -7574,6 +9650,34 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_float_unary,
     ),
+    "ThresholdedRelu": DispatchEntry(
+        onnx_op="ThresholdedRelu",
+        tflite_ops=["GREATER", "CAST", "MUL"],
+        builder=build_thresholded_relu_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_unary,
+    ),
+    "Shrink": DispatchEntry(
+        onnx_op="Shrink",
+        tflite_ops=["ADD", "SUB", "LESS", "GREATER", "SELECT_V2", "CAST"],
+        builder=build_shrink_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_unary,
+    ),
+    "IsInf": DispatchEntry(
+        onnx_op="IsInf",
+        tflite_ops=["ABS", "EQUAL", "LESS", "GREATER", "LOGICAL_AND"],
+        builder=build_is_inf_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_to_bool_unary,
+    ),
+    "IsNaN": DispatchEntry(
+        onnx_op="IsNaN",
+        tflite_ops=["NOT_EQUAL"],
+        builder=build_is_nan_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_float_to_bool_unary,
+    ),
     "Ceil": DispatchEntry(
         onnx_op="Ceil",
         tflite_ops=["CEIL"],
@@ -7617,11 +9721,32 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_pow,
     ),
+    "Mean": DispatchEntry(
+        onnx_op="Mean",
+        tflite_ops=["ADD", "DIV", "CAST"],
+        builder=build_mean_op,
+        validation=ValidationSpec(min_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_mean,
+    ),
+    "Det": DispatchEntry(
+        onnx_op="Det",
+        tflite_ops=["GATHER", "MUL", "SUB", "ADD"],
+        builder=build_det_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_det,
+    ),
     "Pad": DispatchEntry(
         onnx_op="Pad",
         tflite_ops=["PAD", "PADV2", "MIRROR_PAD"],
         builder=build_pad_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
+    ),
+    "DFT": DispatchEntry(
+        onnx_op="DFT",
+        tflite_ops=["RESHAPE", "BATCH_MATMUL", "CONCATENATION", "CAST"],
+        builder=build_dft_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_dft,
     ),
     "PRelu": DispatchEntry(
         onnx_op="PRelu",
@@ -7665,6 +9790,48 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_softmax,
     ),
+    "NegativeLogLikelihoodLoss": DispatchEntry(
+        onnx_op="NegativeLogLikelihoodLoss",
+        tflite_ops=[
+            "CAST",
+            "TRANSPOSE",
+            "EQUAL",
+            "SELECT_V2",
+            "ONE_HOT",
+            "MUL",
+            "SUM",
+            "SUB",
+            "GATHER",
+            "MEAN",
+            "GREATER",
+            "DIV",
+        ],
+        builder=build_negative_log_likelihood_loss_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_negative_log_likelihood_loss,
+    ),
+    "SoftmaxCrossEntropyLoss": DispatchEntry(
+        onnx_op="SoftmaxCrossEntropyLoss",
+        tflite_ops=[
+            "TRANSPOSE",
+            "SOFTMAX",
+            "LOG",
+            "CAST",
+            "EQUAL",
+            "SELECT_V2",
+            "ONE_HOT",
+            "MUL",
+            "SUM",
+            "SUB",
+            "GATHER",
+            "MEAN",
+            "GREATER",
+            "DIV",
+        ],
+        builder=build_softmax_cross_entropy_loss_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=2),
+        extra_validator=_validate_softmax_cross_entropy_loss,
+    ),
     "Where": DispatchEntry(
         onnx_op="Where",
         tflite_ops=["CAST", "SELECT", "SELECT_V2"],
@@ -7685,6 +9852,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_size_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),
+    "STFT": DispatchEntry(
+        onnx_op="STFT",
+        tflite_ops=["SLICE", "MUL", "RESHAPE", "BATCH_MATMUL", "CONCATENATION", "CAST"],
+        builder=build_stft_op,
+        validation=ValidationSpec(min_inputs=4, max_inputs=4, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_stft,
+    ),
     "Range": DispatchEntry(
         onnx_op="Range",
         tflite_ops=["CAST", "SQUEEZE", "RANGE"],
@@ -7692,12 +9866,101 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_range,
     ),
+    "ReverseSequence": DispatchEntry(
+        onnx_op="ReverseSequence",
+        tflite_ops=["CAST", "REVERSE_SEQUENCE"],
+        builder=build_reverse_sequence_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_reverse_sequence,
+    ),
+    "Compress": DispatchEntry(
+        onnx_op="Compress",
+        tflite_ops=["NOT_EQUAL", "WHERE", "RESHAPE", "CAST", "GATHER"],
+        builder=build_compress_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_compress,
+    ),
+    "CenterCropPad": DispatchEntry(
+        onnx_op="CenterCropPad",
+        tflite_ops=["SLICE", "PAD", "RESHAPE"],
+        builder=build_center_crop_pad_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_center_crop_pad,
+    ),
     "RandomNormalLike": DispatchEntry(
         onnx_op="RandomNormalLike",
         tflite_ops=["SHAPE", "RANDOM_STANDARD_NORMAL", "MUL", "ADD", "CAST"],
         builder=build_random_normal_like_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
         extra_validator=_validate_random_normal_like,
+    ),
+    "RandomNormal": DispatchEntry(
+        onnx_op="RandomNormal",
+        tflite_ops=["RANDOM_STANDARD_NORMAL", "MUL", "ADD", "CAST"],
+        builder=build_random_normal_op,
+        validation=ValidationSpec(
+            min_inputs=0,
+            max_inputs=0,
+            min_outputs=1,
+            max_outputs=1,
+            required_attrs=["shape"],
+        ),
+        extra_validator=_validate_random_normal,
+    ),
+    "RandomUniform": DispatchEntry(
+        onnx_op="RandomUniform",
+        tflite_ops=["RANDOM_UNIFORM", "MUL", "ADD", "CAST"],
+        builder=build_random_uniform_op,
+        validation=ValidationSpec(
+            min_inputs=0,
+            max_inputs=0,
+            min_outputs=1,
+            max_outputs=1,
+            required_attrs=["shape"],
+        ),
+        extra_validator=_validate_random_uniform,
+    ),
+    "RandomUniformLike": DispatchEntry(
+        onnx_op="RandomUniformLike",
+        tflite_ops=["SHAPE", "RANDOM_UNIFORM", "MUL", "ADD", "CAST"],
+        builder=build_random_uniform_like_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_random_uniform_like,
+    ),
+    "Bernoulli": DispatchEntry(
+        onnx_op="Bernoulli",
+        tflite_ops=["SHAPE", "RANDOM_UNIFORM", "LESS", "CAST"],
+        builder=build_bernoulli_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_bernoulli,
+    ),
+    "BlackmanWindow": DispatchEntry(
+        onnx_op="BlackmanWindow",
+        tflite_ops=["CAST", "SQUEEZE", "RANGE", "MUL", "DIV", "COS", "SUB", "ADD", "MAXIMUM"],
+        builder=build_blackman_window_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_window_op,
+    ),
+    "HammingWindow": DispatchEntry(
+        onnx_op="HammingWindow",
+        tflite_ops=["CAST", "SQUEEZE", "RANGE", "MUL", "DIV", "COS", "SUB", "MAXIMUM"],
+        builder=build_hamming_window_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_window_op,
+    ),
+    "HannWindow": DispatchEntry(
+        onnx_op="HannWindow",
+        tflite_ops=["CAST", "SQUEEZE", "RANGE", "MUL", "DIV", "COS", "SUB", "MAXIMUM"],
+        builder=build_hann_window_op,
+        validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_window_op,
+    ),
+    "MelWeightMatrix": DispatchEntry(
+        onnx_op="MelWeightMatrix",
+        tflite_ops=[],
+        builder=build_mel_weight_matrix_op,
+        validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_mel_weight_matrix,
     ),
     "EyeLike": DispatchEntry(
         onnx_op="EyeLike",
@@ -7880,6 +10143,46 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_scatter_elements,
     ),
+    "Scatter": DispatchEntry(
+        onnx_op="Scatter",
+        tflite_ops=[
+            "CAST",
+            "LESS",
+            "SELECT",
+            "SHAPE",
+            "GATHER",
+            "RANGE",
+            "RESHAPE",
+            "TILE",
+            "CONCATENATION",
+            "MUL",
+            "ADD",
+            "SUB",
+            "FILL",
+            "SCATTER_ND",
+        ],
+        builder=build_scatter_elements_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_scatter_elements,
+    ),
+    "TensorScatter": DispatchEntry(
+        onnx_op="TensorScatter",
+        tflite_ops=[
+            "CAST",
+            "GATHER",
+            "RESHAPE",
+            "ADD",
+            "FLOOR_MOD",
+            "CONCATENATION",
+            "FILL",
+            "MUL",
+            "SUB",
+            "SCATTER_ND",
+        ],
+        builder=build_tensor_scatter_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_tensor_scatter,
+    ),
     "GatherElements": DispatchEntry(
         onnx_op="GatherElements",
         tflite_ops=["CAST", "RESHAPE", "CONCATENATION", "GATHER_ND"],
@@ -8005,6 +10308,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
         extra_validator=_validate_grid_sample,
     ),
+    "AffineGrid": DispatchEntry(
+        onnx_op="AffineGrid",
+        tflite_ops=["BATCH_MATMUL", "TRANSPOSE", "RESHAPE"],
+        builder=build_affine_grid_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_affine_grid,
+    ),
     "RoiAlign": DispatchEntry(
         onnx_op="RoiAlign",
         tflite_ops=[
@@ -8027,6 +10337,53 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_roi_align_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_roi_align,
+    ),
+    "RotaryEmbedding": DispatchEntry(
+        onnx_op="RotaryEmbedding",
+        tflite_ops=["TRANSPOSE", "SLICE", "RESHAPE", "CAST", "MUL", "SUB", "ADD", "CONCATENATION"],
+        builder=build_rotary_embedding_op,
+        validation=ValidationSpec(
+            min_inputs=3,
+            max_inputs=4,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [4], 1: [2], 2: [2], 3: [1, 2]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_rotary_embedding,
+    ),
+    "DeformConv": DispatchEntry(
+        onnx_op="DeformConv",
+        tflite_ops=[
+            "PAD",
+            "RESHAPE",
+            "TRANSPOSE",
+            "SHAPE",
+            "RANGE",
+            "SQUEEZE",
+            "GATHER",
+            "FLOOR",
+            "MAXIMUM",
+            "MINIMUM",
+            "CAST",
+            "MUL",
+            "ADD",
+            "SUB",
+            "BATCH_MATMUL",
+            "GREATER_EQUAL",
+            "LESS_EQUAL",
+            "LOGICAL_AND",
+        ],
+        builder=build_deform_conv_op,
+        validation=ValidationSpec(
+            min_inputs=3,
+            max_inputs=5,
+            min_outputs=1,
+            max_outputs=1,
+            input_rank={0: [4], 2: [4]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_deform_conv,
     ),
     "SpaceToDepth": DispatchEntry(
         onnx_op="SpaceToDepth",
@@ -8147,6 +10504,18 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         ),
         extra_validator=_validate_global_max_pool,
     ),
+    "GlobalLpPool": DispatchEntry(
+        onnx_op="GlobalLpPool",
+        tflite_ops=["ABS", "POW", "SUM", "RESHAPE", "CAST"],
+        builder=build_global_lp_pool_op,
+        validation=ValidationSpec(
+            min_inputs=1,
+            max_inputs=1,
+            min_outputs=1,
+            max_outputs=1,
+        ),
+        extra_validator=_validate_global_lp_pool,
+    ),
     "AveragePool": DispatchEntry(
         onnx_op="AveragePool",
         tflite_ops=["AVERAGE_POOL_2D"],
@@ -8162,6 +10531,28 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         ),
         extra_validator=_validate_pool,
     ),
+    "LpPool": DispatchEntry(
+        onnx_op="LpPool",
+        tflite_ops=["ABS", "POW", "AVERAGE_POOL_2D", "MUL", "RESHAPE", "CAST"],
+        builder=build_lp_pool_op,
+        validation=ValidationSpec(
+            min_inputs=1,
+            max_inputs=1,
+            min_outputs=1,
+            max_outputs=1,
+            required_attrs=["kernel_shape"],
+            input_rank={0: [4]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_lp_pool,
+    ),
+    "MaxRoiPool": DispatchEntry(
+        onnx_op="MaxRoiPool",
+        tflite_ops=["TRANSPOSE", "SLICE", "MAX_POOL_2D", "CONCATENATION"],
+        builder=build_max_roi_pool_op,
+        validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_max_roi_pool,
+    ),
     "MaxPool": DispatchEntry(
         onnx_op="MaxPool",
         tflite_ops=["MAX_POOL_2D"],
@@ -8176,6 +10567,21 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             output_rank={0: [1, 3, 4, 5], 1: [1, 3, 4, 5]},
         ),
         extra_validator=_validate_pool,
+    ),
+    "MaxUnpool": DispatchEntry(
+        onnx_op="MaxUnpool",
+        tflite_ops=["CAST", "RESHAPE", "SCATTER_ND"],
+        builder=build_max_unpool_op,
+        validation=ValidationSpec(
+            min_inputs=2,
+            max_inputs=3,
+            min_outputs=1,
+            max_outputs=1,
+            required_attrs=["kernel_shape"],
+            input_rank={0: [4], 1: [4], 2: [1]},
+            output_rank={0: [4]},
+        ),
+        extra_validator=_validate_max_unpool,
     ),
     "Gemm": DispatchEntry(
         onnx_op="Gemm",
@@ -8197,6 +10603,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         builder=build_multi_head_attention_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_multi_head_attention,
+    ),
+    "Attention": DispatchEntry(
+        onnx_op="Attention",
+        tflite_ops=["RESHAPE", "TRANSPOSE", "BATCH_MATMUL", "MUL", "SOFTMAX", "CAST"],
+        builder=build_attention_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=7, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_attention,
     ),
     "FusedMatMul": DispatchEntry(
         onnx_op="FusedMatMul",

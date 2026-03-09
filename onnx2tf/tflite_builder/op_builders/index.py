@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import numpy as np
@@ -1261,7 +1262,13 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
     # ONNX ScatterND accepts negative indices (wrap-around by each indexed axis).
     # TFLite SCATTER_ND rejects them, so normalize before scattering.
     k_dim = int(indices_meta_shape[-1]) if len(indices_meta_shape) > 0 else -1
-    if int(k_dim) > 0 and int(rank) > 0 and int(k_dim) <= int(rank):
+    normalize_negative_indices = bool(node.attrs.get("normalize_negative_indices", True))
+    if (
+        bool(normalize_negative_indices)
+        and int(k_dim) > 0
+        and int(rank) > 0
+        and int(k_dim) <= int(rank)
+    ):
         shape_prefix_name = ""
         static_shape_prefix: np.ndarray | None = None
         if all(int(v) > 0 for v in data_meta_shape[:k_dim]):
@@ -1482,6 +1489,229 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
+
+
+def build_tensor_scatter_op(node: Any, ctx: Any) -> None:
+    data_name = node.inputs[0].name
+    updates_name = node.inputs[1].name
+    write_indices_name = node.inputs[2].name if len(node.inputs) > 2 else ""
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(data_name)
+    ctx.ensure_tensor(updates_name)
+    if str(write_indices_name) != "":
+        ctx.ensure_tensor(write_indices_name)
+    ctx.ensure_tensor(output_name)
+
+    data_shape = _tensor_shape_with_signature(ctx, data_name)
+    updates_shape = _tensor_shape_with_signature(ctx, updates_name)
+    rank = int(len(data_shape))
+    axis = _normalize_axis_for_rank(int(node.attrs.get("axis", -2)), rank)
+    mode = str(node.attrs.get("mode", "linear")).lower()
+    if mode not in {"linear", "circular"}:
+        raise NotImplementedError(
+            f"TensorScatter supports mode=linear or mode=circular only. op={node.name} mode={mode}"
+        )
+
+    data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
+    output_tensor = ctx.model_ir.tensors[output_name]
+    data_tensor = ctx.model_ir.tensors[data_name]
+    output_tensor.dtype = data_dtype
+    output_tensor.quantization = _clone_quantization(data_tensor.quantization)
+    _propagate_shape(ctx, data_name, output_name)
+
+    write_indices_i32_name = write_indices_name
+    if str(write_indices_name) == "":
+        write_indices_i32_name = ctx.add_const_tensor(
+            f"{output_name}_tensor_scatter_write_indices_zero",
+            np.zeros((int(updates_shape[0]),), dtype=np.int32),
+        )
+    else:
+        write_indices_dtype = str(ctx.get_tensor_dtype(write_indices_name)).upper()
+        if write_indices_dtype != "INT32":
+            write_indices_const = ctx.get_constant_array(write_indices_name)
+            if write_indices_const is not None:
+                write_indices_i32_name = ctx.add_const_tensor(
+                    f"{output_name}_tensor_scatter_write_indices_i32",
+                    np.asarray(write_indices_const, dtype=np.int32),
+                )
+            else:
+                write_indices_i32_name = ctx.add_intermediate_tensor(
+                    f"{output_name}_tensor_scatter_write_indices_i32",
+                    dtype="INT32",
+                    shape=[int(v) for v in _tensor_shape_with_signature(ctx, write_indices_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[write_indices_name],
+                        outputs=[write_indices_i32_name],
+                        options={
+                            "inDataType": write_indices_dtype,
+                            "outDataType": "INT32",
+                        },
+                    )
+                )
+
+    updates_shape_static = [int(v) for v in updates_shape]
+    num_updates = int(np.prod(np.asarray(updates_shape_static, dtype=np.int64)))
+    batch_index_grid = np.broadcast_to(
+        np.arange(int(updates_shape_static[0]), dtype=np.int32).reshape(
+            [int(updates_shape_static[0])] + [1] * int(rank - 1)
+        ),
+        tuple(int(v) for v in updates_shape_static),
+    )
+    batch_index_flat_name = ctx.add_const_tensor(
+        f"{output_name}_tensor_scatter_batch_index_flat",
+        batch_index_grid.reshape(-1),
+    )
+    write_offsets_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tensor_scatter_write_offsets_flat",
+        dtype="INT32",
+        shape=[int(num_updates)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GATHER",
+            inputs=[write_indices_i32_name, batch_index_flat_name],
+            outputs=[write_offsets_flat_name],
+            options={"axis": 0, "batchDims": 0},
+        )
+    )
+    write_offsets_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tensor_scatter_write_offsets",
+        dtype="INT32",
+        shape=[int(v) for v in updates_shape_static],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=write_offsets_flat_name,
+        output_name=write_offsets_name,
+        new_shape=[int(v) for v in updates_shape_static],
+    )
+
+    axis_coord_grid = np.broadcast_to(
+        np.arange(int(updates_shape_static[axis]), dtype=np.int32).reshape(
+            [1] * int(axis) + [int(updates_shape_static[axis])] + [1] * int(rank - axis - 1)
+        ),
+        tuple(int(v) for v in updates_shape_static),
+    )
+    axis_coord_name = ctx.add_const_tensor(
+        f"{output_name}_tensor_scatter_axis_coord",
+        axis_coord_grid,
+    )
+    axis_indices_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tensor_scatter_axis_indices",
+        dtype="INT32",
+        shape=[int(v) for v in updates_shape_static],
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="ADD",
+        lhs_name=axis_coord_name,
+        rhs_name=write_offsets_name,
+        output_name=axis_indices_name,
+    )
+    if mode == "circular":
+        axis_dim_name = ctx.add_const_tensor(
+            f"{output_name}_tensor_scatter_axis_dim",
+            np.asarray(int(data_shape[axis]), dtype=np.int32),
+        )
+        axis_wrapped_name = ctx.add_intermediate_tensor(
+            f"{output_name}_tensor_scatter_axis_indices_wrapped",
+            dtype="INT32",
+            shape=[int(v) for v in updates_shape_static],
+        )
+        _add_binary_op(
+            ctx=ctx,
+            op_type="FLOOR_MOD",
+            lhs_name=axis_indices_name,
+            rhs_name=axis_dim_name,
+            output_name=axis_wrapped_name,
+        )
+        axis_indices_name = axis_wrapped_name
+
+    coord_expanded_names: list[str] = []
+    coord_expanded_shape = [int(v) for v in updates_shape_static] + [1]
+    for dim in range(rank):
+        if int(dim) == int(axis):
+            coord_name = ctx.add_intermediate_tensor(
+                f"{output_name}_tensor_scatter_dim_{dim}_coord",
+                dtype="INT32",
+                shape=coord_expanded_shape,
+            )
+            _add_reshape_operator(
+                ctx=ctx,
+                input_name=axis_indices_name,
+                output_name=coord_name,
+                new_shape=coord_expanded_shape,
+            )
+        else:
+            coord_grid = np.broadcast_to(
+                np.arange(int(updates_shape_static[dim]), dtype=np.int32).reshape(
+                    [1] * int(dim)
+                    + [int(updates_shape_static[dim])]
+                    + [1] * int(rank - dim - 1)
+                ),
+                tuple(int(v) for v in updates_shape_static),
+            )
+            coord_name = ctx.add_const_tensor(
+                f"{output_name}_tensor_scatter_dim_{dim}_coord",
+                np.expand_dims(coord_grid, axis=-1),
+            )
+        coord_expanded_names.append(coord_name)
+
+    coordinates_name = coord_expanded_names[0]
+    if len(coord_expanded_names) > 1:
+        coordinates_name = ctx.add_intermediate_tensor(
+            f"{output_name}_tensor_scatter_coordinates",
+            dtype="INT32",
+            shape=[int(v) for v in updates_shape_static] + [int(rank)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=coord_expanded_names,
+                outputs=[coordinates_name],
+                options={"axis": int(rank), "fusedActivationFunction": "NONE"},
+            )
+        )
+
+    indices_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tensor_scatter_indices_flat",
+        dtype="INT32",
+        shape=[int(num_updates), int(rank)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=coordinates_name,
+        output_name=indices_flat_name,
+        new_shape=[int(num_updates), int(rank)],
+    )
+
+    updates_flat_name = ctx.add_intermediate_tensor(
+        f"{output_name}_tensor_scatter_updates_flat",
+        dtype=str(ctx.get_tensor_dtype(updates_name)).upper(),
+        shape=[int(num_updates)],
+    )
+    _add_reshape_operator(
+        ctx=ctx,
+        input_name=updates_name,
+        output_name=updates_flat_name,
+        new_shape=[int(num_updates)],
+    )
+
+    scatter_proxy_node = SimpleNamespace(
+        name=f"{node.name}_tensor_scatter_proxy",
+        op="ScatterND",
+        attrs={"normalize_negative_indices": False},
+        inputs=[
+            SimpleNamespace(name=data_name),
+            SimpleNamespace(name=indices_flat_name),
+            SimpleNamespace(name=updates_flat_name),
+        ],
+        outputs=[SimpleNamespace(name=output_name)],
+    )
+    build_scatter_nd_op(scatter_proxy_node, ctx)
 
 
 def build_unique_op(node: Any, ctx: Any) -> None:

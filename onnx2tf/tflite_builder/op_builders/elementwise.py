@@ -209,6 +209,61 @@ def _add_scalar_const(ctx: Any, base_name: str, value: float, dtype: str) -> str
     )
 
 
+def _add_slice_last_axis(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    input_shape: list[int],
+    input_signature: list[int],
+    begin_last: int,
+    size_last: int,
+) -> None:
+    rank = int(len(input_shape))
+    begin = [0] * rank
+    size = [-1] * rank
+    begin[-1] = int(begin_last)
+    size[-1] = int(size_last)
+    begin_name = ctx.add_const_tensor(
+        f"{output_name}_slice_begin",
+        np.asarray(begin, dtype=np.int32),
+    )
+    size_name = ctx.add_const_tensor(
+        f"{output_name}_slice_size",
+        np.asarray(size, dtype=np.int32),
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) for v in list(input_shape[:-1])] + [int(size_last)]
+        output_tensor.shape_signature = [int(v) for v in list(input_signature[:-1])] + [int(size_last)]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[input_name, begin_name, size_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def _add_binary_tensor_op(
+    *,
+    ctx: Any,
+    op_type: str,
+    lhs_name: str,
+    rhs_name: str,
+    output_name: str,
+) -> None:
+    options = {"fusedActivationFunction": "NONE"} if op_type in {"ADD", "SUB", "MUL", "DIV"} else {}
+    ctx.add_operator(
+        OperatorIR(
+            op_type=op_type,
+            inputs=[lhs_name, rhs_name],
+            outputs=[output_name],
+            options=options,
+        )
+    )
+
+
 def _sanitize_where_arithmetic_operand_if_constant_nonfinite(
     *,
     ctx: Any,
@@ -699,6 +754,261 @@ def build_sum_op(node: Any, ctx: Any) -> None:
 
     if output_tensor is not None:
         output_tensor.shape_signature = [int(v) for v in output_signature]
+
+
+def build_mean_op(node: Any, ctx: Any) -> None:
+    input_names = [i.name for i in node.inputs]
+    output_name = node.outputs[0].name
+    if len(input_names) < 1:
+        raise NotImplementedError(
+            f"Mean requires at least 1 input in flatbuffer_direct. op={node.name}"
+        )
+    for name in input_names:
+        ctx.ensure_tensor(name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_names[0], output_name)
+
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    output_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor is not None and output_tensor.shape_signature is not None
+        else [int(v) for v in output_shape]
+    )
+
+    casted_inputs = [
+        _cast_tensor_if_needed(
+            ctx=ctx,
+            src_name=name,
+            dst_dtype=compute_dtype,
+            base_name=f"{output_name}_mean_input_{idx}_cast",
+        )
+        for idx, name in enumerate(input_names)
+    ]
+
+    current_name = casted_inputs[0]
+    for idx, rhs_name in enumerate(casted_inputs[1:], start=1):
+        add_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_mean_add_{idx}",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[current_name, rhs_name],
+                outputs=[add_output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = add_output_name
+
+    div_output_name = output_name
+    if output_dtype != compute_dtype:
+        div_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_mean_div",
+            dtype=compute_dtype,
+            shape=output_shape,
+        )
+    divisor_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_mean_divisor",
+        float(len(casted_inputs)),
+        compute_dtype,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="DIV",
+            inputs=[current_name, divisor_name],
+            outputs=[div_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    if output_dtype != compute_dtype:
+        _finalize_float_compute_output(
+            ctx=ctx,
+            compute_output_name=div_output_name,
+            output_name=output_name,
+            compute_dtype=compute_dtype,
+            output_dtype=output_dtype,
+        )
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in output_signature]
+
+
+def _det_tensor_shape_with_signature(ctx: Any, tensor_name: str) -> list[int]:
+    tensor = ctx.model_ir.tensors.get(tensor_name, None)
+    if tensor is not None and tensor.shape_signature is not None:
+        return [int(v) for v in list(tensor.shape_signature)]
+    return [int(v) for v in list(ctx.get_tensor_shape(tensor_name))]
+
+
+def _det_gather_scalar(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    axis: int,
+    index: int,
+    dtype: str,
+) -> str:
+    input_sig = _det_tensor_shape_with_signature(ctx, input_name)
+    rank = len(input_sig)
+    normalized_axis = int(axis if axis >= 0 else axis + rank)
+    output_sig = [int(v) for i, v in enumerate(input_sig) if i != normalized_axis]
+    output_shape = [int(v) if int(v) > 0 else 1 for v in output_sig]
+    gathered_shape = (
+        [int(v) if i != normalized_axis else 1 for i, v in enumerate(input_sig)]
+        if len(input_sig) > 0
+        else [1]
+    )
+    gathered_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gathered",
+        dtype=dtype,
+        shape=[int(v) if int(v) > 0 else 1 for v in gathered_shape],
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is None:
+        ctx.add_intermediate_tensor(
+            output_name,
+            dtype=dtype,
+            shape=output_shape,
+        )
+        output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape_signature = [int(v) for v in output_sig]
+    index_name = ctx.add_const_tensor(
+        f"{output_name}_index",
+        np.asarray(int(index), dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GATHER",
+            inputs=[input_name, index_name],
+            outputs=[gathered_name],
+            options={"axis": int(normalized_axis), "batchDims": 0},
+        )
+    )
+    shape_name = ctx.add_const_tensor(
+        f"{output_name}_shape",
+        np.asarray([int(v) for v in output_shape], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[gathered_name, shape_name],
+            outputs=[output_name],
+            options={"newShape": [int(v) for v in output_shape]},
+        )
+    )
+    return str(output_name)
+
+
+def build_det_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    input_sig = _det_tensor_shape_with_signature(ctx, input_name)
+    rank = len(input_sig)
+    matrix_dim = int(input_sig[-1])
+
+    row0_name = _det_gather_scalar(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=f"{node.name}_det_row0",
+        axis=rank - 2,
+        index=0,
+        dtype=input_dtype,
+    )
+    row1_name = _det_gather_scalar(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=f"{node.name}_det_row1",
+        axis=rank - 2,
+        index=1,
+        dtype=input_dtype,
+    )
+
+    def _mul(lhs: str, rhs: str, suffix: str) -> str:
+        name = ctx.add_intermediate_tensor(
+            f"{node.name}_{suffix}",
+            dtype=input_dtype,
+            shape=ctx.get_tensor_shape(output_name),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[lhs, rhs],
+                outputs=[name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return str(name)
+
+    def _sub(lhs: str, rhs: str, suffix: str) -> str:
+        name = ctx.add_intermediate_tensor(
+            f"{node.name}_{suffix}",
+            dtype=input_dtype,
+            shape=ctx.get_tensor_shape(output_name),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[lhs, rhs],
+                outputs=[name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return str(name)
+
+    a_name = _det_gather_scalar(ctx=ctx, input_name=row0_name, output_name=f"{node.name}_det_a", axis=rank - 2, index=0, dtype=input_dtype)
+    b_name = _det_gather_scalar(ctx=ctx, input_name=row0_name, output_name=f"{node.name}_det_b", axis=rank - 2, index=1, dtype=input_dtype)
+    c_name = _det_gather_scalar(ctx=ctx, input_name=row1_name, output_name=f"{node.name}_det_c", axis=rank - 2, index=0, dtype=input_dtype)
+    d_name = _det_gather_scalar(ctx=ctx, input_name=row1_name, output_name=f"{node.name}_det_d", axis=rank - 2, index=1, dtype=input_dtype)
+
+    if matrix_dim == 2:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[_mul(a_name, d_name, "det_ad"), _mul(b_name, c_name, "det_bc")],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
+    row2_name = _det_gather_scalar(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=f"{node.name}_det_row2",
+        axis=rank - 2,
+        index=2,
+        dtype=input_dtype,
+    )
+    c01_name = _det_gather_scalar(ctx=ctx, input_name=row0_name, output_name=f"{node.name}_det_c01", axis=rank - 2, index=2, dtype=input_dtype)
+    e_name = _det_gather_scalar(ctx=ctx, input_name=row1_name, output_name=f"{node.name}_det_e", axis=rank - 2, index=1, dtype=input_dtype)
+    f_name = _det_gather_scalar(ctx=ctx, input_name=row1_name, output_name=f"{node.name}_det_f", axis=rank - 2, index=2, dtype=input_dtype)
+    g_name = _det_gather_scalar(ctx=ctx, input_name=row2_name, output_name=f"{node.name}_det_g", axis=rank - 2, index=0, dtype=input_dtype)
+    h_name = _det_gather_scalar(ctx=ctx, input_name=row2_name, output_name=f"{node.name}_det_h", axis=rank - 2, index=1, dtype=input_dtype)
+    i_name = _det_gather_scalar(ctx=ctx, input_name=row2_name, output_name=f"{node.name}_det_i", axis=rank - 2, index=2, dtype=input_dtype)
+
+    term1_name = _mul(a_name, _sub(_mul(e_name, i_name, "det_ei"), _mul(f_name, h_name, "det_fh"), "det_m1"), "det_t1")
+    term2_name = _mul(b_name, _sub(_mul(c_name, i_name, "det_ci"), _mul(f_name, g_name, "det_fg"), "det_m2"), "det_t2")
+    term3_name = _mul(c01_name, _sub(_mul(c_name, h_name, "det_ch"), _mul(e_name, g_name, "det_eg"), "det_m3"), "det_t3")
+    partial_name = _sub(term1_name, term2_name, "det_partial")
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[partial_name, term3_name],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
 
 
 def build_pow_op(node: Any, ctx: Any) -> None:
@@ -1262,6 +1572,207 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
         OperatorIR(
             op_type=op_type,
             inputs=[runtime_input_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def build_leaky_relu_op(node: Any, ctx: Any) -> None:
+    (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        _,
+    ) = _prepare_float_compute(node, ctx, tag="leaky_relu")
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LEAKY_RELU",
+            inputs=[compute_input_name],
+            outputs=[compute_output_name],
+            options={"alpha": float(node.attrs.get("alpha", 0.01))},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_thresholded_relu_op(node: Any, ctx: Any) -> None:
+    (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        out_shape,
+    ) = _prepare_float_compute(node, ctx, tag="thresholded_relu")
+    alpha_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_thresholded_relu_alpha",
+        float(node.attrs.get("alpha", 1.0)),
+        compute_dtype,
+    )
+    greater_name = ctx.add_intermediate_tensor(
+        f"{output_name}_thresholded_relu_greater",
+        dtype="BOOL",
+        shape=out_shape,
+    )
+    mask_name = ctx.add_intermediate_tensor(
+        f"{output_name}_thresholded_relu_mask",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GREATER",
+            inputs=[compute_input_name, alpha_name],
+            outputs=[greater_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[greater_name],
+            outputs=[mask_name],
+            options={
+                "inDataType": "BOOL",
+                "outDataType": compute_dtype,
+            },
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[compute_input_name, mask_name],
+            outputs=[compute_output_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_is_nan_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="NOT_EQUAL",
+            inputs=[input_name, input_name],
+            outputs=[output_name],
+        )
+    )
+
+
+def build_is_inf_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(output_name)
+    _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
+
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    out_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    np_dtype = np.float16 if input_dtype == "FLOAT16" else np.float32
+    detect_negative = bool(int(node.attrs.get("detect_negative", 1)))
+    detect_positive = bool(int(node.attrs.get("detect_positive", 1)))
+
+    if detect_negative and detect_positive:
+        abs_name = ctx.add_intermediate_tensor(
+            f"{output_name}_is_inf_abs",
+            dtype=input_dtype,
+            shape=out_shape,
+        )
+        inf_name = ctx.add_const_tensor(
+            f"{output_name}_is_inf_abs_inf",
+            np.asarray(np.inf, dtype=np_dtype),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ABS",
+                inputs=[input_name],
+                outputs=[abs_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EQUAL",
+                inputs=[abs_name, inf_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    if detect_positive or detect_negative:
+        inf_name = ctx.add_const_tensor(
+            f"{output_name}_is_inf_target",
+            np.asarray(np.inf if detect_positive else -np.inf, dtype=np_dtype),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="EQUAL",
+                inputs=[input_name, inf_name],
+                outputs=[output_name],
+            )
+        )
+        return
+
+    zero_name = ctx.add_const_tensor(
+        f"{output_name}_is_inf_zero",
+        np.asarray(0.0, dtype=np_dtype),
+    )
+    less_name = ctx.add_intermediate_tensor(
+        f"{output_name}_is_inf_less",
+        dtype="BOOL",
+        shape=out_shape,
+    )
+    greater_name = ctx.add_intermediate_tensor(
+        f"{output_name}_is_inf_greater",
+        dtype="BOOL",
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LESS",
+            inputs=[input_name, zero_name],
+            outputs=[less_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GREATER",
+            inputs=[input_name, zero_name],
+            outputs=[greater_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LOGICAL_AND",
+            inputs=[less_name, greater_name],
             outputs=[output_name],
         )
     )
@@ -3778,3 +4289,378 @@ def build_prelu_op(node: Any, ctx: Any) -> None:
             outputs=[output_name],
         )
     )
+
+
+def build_shrink_op(node: Any, ctx: Any) -> None:
+    (
+        compute_input_name,
+        compute_output_name,
+        output_name,
+        output_dtype,
+        compute_dtype,
+        out_shape,
+    ) = _prepare_float_compute(node, ctx, tag="shrink")
+    lambd = float(node.attrs.get("lambd", 0.5))
+    bias = float(node.attrs.get("bias", 0.0))
+    pos_lambd_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_shrink_pos_lambd",
+        lambd,
+        compute_dtype,
+    )
+    neg_lambd_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_shrink_neg_lambd",
+        -lambd,
+        compute_dtype,
+    )
+    bias_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_shrink_bias",
+        bias,
+        compute_dtype,
+    )
+    zero_name = _add_scalar_const(
+        ctx,
+        f"{output_name}_shrink_zero",
+        0.0,
+        compute_dtype,
+    )
+
+    plus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_shrink_plus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    minus_name = ctx.add_intermediate_tensor(
+        f"{output_name}_shrink_minus",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    less_name = ctx.add_intermediate_tensor(
+        f"{output_name}_shrink_less",
+        dtype="BOOL",
+        shape=out_shape,
+    )
+    greater_name = ctx.add_intermediate_tensor(
+        f"{output_name}_shrink_greater",
+        dtype="BOOL",
+        shape=out_shape,
+    )
+    greater_select_name = ctx.add_intermediate_tensor(
+        f"{output_name}_shrink_greater_select",
+        dtype=compute_dtype,
+        shape=out_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[compute_input_name, bias_name],
+            outputs=[plus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SUB",
+            inputs=[compute_input_name, bias_name],
+            outputs=[minus_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="LESS",
+            inputs=[compute_input_name, neg_lambd_name],
+            outputs=[less_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GREATER",
+            inputs=[compute_input_name, pos_lambd_name],
+            outputs=[greater_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[greater_name, minus_name, zero_name],
+            outputs=[greater_select_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[less_name, plus_name, greater_select_name],
+            outputs=[compute_output_name],
+        )
+    )
+    _finalize_float_compute_output(
+        ctx=ctx,
+        compute_output_name=compute_output_name,
+        output_name=output_name,
+        compute_dtype=compute_dtype,
+        output_dtype=output_dtype,
+    )
+
+
+def build_rotary_embedding_op(node: Any, ctx: Any) -> None:
+    input_name = node.inputs[0].name
+    cos_name = node.inputs[1].name
+    sin_name = node.inputs[2].name
+    output_name = node.outputs[0].name
+    ctx.ensure_tensor(input_name)
+    ctx.ensure_tensor(cos_name)
+    ctx.ensure_tensor(sin_name)
+    ctx.ensure_tensor(output_name)
+
+    input_shape, input_signature = _tensor_shape_and_signature(tensor_name=input_name, ctx=ctx)
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    compute_dtype = str(input_dtype)
+
+    transpose_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_transposed",
+        dtype=compute_dtype,
+        shape=[int(input_shape[0]), int(input_shape[2]), int(input_shape[1]), int(input_shape[3])],
+    )
+    transpose_name = make_transpose(ctx, input_name, transpose_name, [0, 2, 1, 3])
+    transposed_shape, transposed_signature = _tensor_shape_and_signature(tensor_name=transpose_name, ctx=ctx)
+
+    head_size = int(transposed_shape[-1])
+    rotary_dim_attr = int(node.attrs.get("rotary_embedding_dim", 0))
+    rotary_dim = int(head_size if rotary_dim_attr == 0 else rotary_dim_attr)
+    half_rotary_dim = int(rotary_dim // 2)
+    rotated_shape = [int(v) for v in transposed_shape[:-1]] + [int(rotary_dim)]
+    rotated_signature = [int(v) for v in transposed_signature[:-1]] + [int(rotary_dim)]
+    half_shape = [int(v) for v in transposed_shape[:-1]] + [int(half_rotary_dim)]
+    half_signature = [int(v) for v in transposed_signature[:-1]] + [int(half_rotary_dim)]
+
+    x_rotate_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_rotate",
+        dtype=compute_dtype,
+        shape=rotated_shape,
+    )
+    _add_slice_last_axis(
+        ctx=ctx,
+        input_name=transpose_name,
+        output_name=x_rotate_name,
+        input_shape=transposed_shape,
+        input_signature=transposed_signature,
+        begin_last=0,
+        size_last=rotary_dim,
+    )
+
+    x_rest_name = ""
+    if int(rotary_dim) < int(head_size):
+        x_rest_name = ctx.add_intermediate_tensor(
+            f"{output_name}_rotary_rest",
+            dtype=compute_dtype,
+            shape=[int(v) for v in transposed_shape[:-1]] + [int(head_size - rotary_dim)],
+        )
+        _add_slice_last_axis(
+            ctx=ctx,
+            input_name=transpose_name,
+            output_name=x_rest_name,
+            input_shape=transposed_shape,
+            input_signature=transposed_signature,
+            begin_last=rotary_dim,
+            size_last=int(head_size - rotary_dim),
+        )
+
+    x1_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_x1",
+        dtype=compute_dtype,
+        shape=half_shape,
+    )
+    x2_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_x2",
+        dtype=compute_dtype,
+        shape=half_shape,
+    )
+    _add_slice_last_axis(
+        ctx=ctx,
+        input_name=x_rotate_name,
+        output_name=x1_name,
+        input_shape=rotated_shape,
+        input_signature=rotated_signature,
+        begin_last=0,
+        size_last=half_rotary_dim,
+    )
+    _add_slice_last_axis(
+        ctx=ctx,
+        input_name=x_rotate_name,
+        output_name=x2_name,
+        input_shape=rotated_shape,
+        input_signature=rotated_signature,
+        begin_last=half_rotary_dim,
+        size_last=half_rotary_dim,
+    )
+
+    cos_working_name = cos_name
+    sin_working_name = sin_name
+    cos_dtype = str(ctx.get_tensor_dtype(cos_name)).upper()
+    sin_dtype = str(ctx.get_tensor_dtype(sin_name)).upper()
+    cache_shape = [1, int(transposed_shape[1]), 1, int(half_rotary_dim)]
+    if cos_dtype != compute_dtype:
+        cos_cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_rotary_cos_cast",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(cos_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[cos_name],
+                outputs=[cos_cast_name],
+                options={"inDataType": cos_dtype, "outDataType": compute_dtype},
+            )
+        )
+        cos_working_name = cos_cast_name
+    if sin_dtype != compute_dtype:
+        sin_cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_rotary_sin_cast",
+            dtype=compute_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(sin_name)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[sin_name],
+                outputs=[sin_cast_name],
+                options={"inDataType": sin_dtype, "outDataType": compute_dtype},
+            )
+        )
+        sin_working_name = sin_cast_name
+
+    cache_shape_name = ctx.add_const_tensor(
+        f"{output_name}_rotary_cache_shape",
+        np.asarray(cache_shape, dtype=np.int32),
+    )
+    cos_broadcast_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_cos_broadcast",
+        dtype=compute_dtype,
+        shape=cache_shape,
+    )
+    sin_broadcast_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_sin_broadcast",
+        dtype=compute_dtype,
+        shape=cache_shape,
+    )
+    for tensor_name in [cos_broadcast_name, sin_broadcast_name]:
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.shape_signature = [int(v) for v in cache_shape]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[cos_working_name, cache_shape_name],
+            outputs=[cos_broadcast_name],
+            options={"newShape": [int(v) for v in cache_shape]},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[sin_working_name, cache_shape_name],
+            outputs=[sin_broadcast_name],
+            options={"newShape": [int(v) for v in cache_shape]},
+        )
+    )
+
+    mul_output_names = {
+        "cos_x1": ctx.add_intermediate_tensor(f"{output_name}_rotary_cos_x1", dtype=compute_dtype, shape=half_shape),
+        "sin_x2": ctx.add_intermediate_tensor(f"{output_name}_rotary_sin_x2", dtype=compute_dtype, shape=half_shape),
+        "sin_x1": ctx.add_intermediate_tensor(f"{output_name}_rotary_sin_x1", dtype=compute_dtype, shape=half_shape),
+        "cos_x2": ctx.add_intermediate_tensor(f"{output_name}_rotary_cos_x2", dtype=compute_dtype, shape=half_shape),
+    }
+    for tensor_name in list(mul_output_names.values()):
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.shape_signature = [int(v) for v in half_signature]
+    _add_binary_tensor_op(ctx=ctx, op_type="MUL", lhs_name=cos_broadcast_name, rhs_name=x1_name, output_name=mul_output_names["cos_x1"])
+    _add_binary_tensor_op(ctx=ctx, op_type="MUL", lhs_name=sin_broadcast_name, rhs_name=x2_name, output_name=mul_output_names["sin_x2"])
+    _add_binary_tensor_op(ctx=ctx, op_type="MUL", lhs_name=sin_broadcast_name, rhs_name=x1_name, output_name=mul_output_names["sin_x1"])
+    _add_binary_tensor_op(ctx=ctx, op_type="MUL", lhs_name=cos_broadcast_name, rhs_name=x2_name, output_name=mul_output_names["cos_x2"])
+
+    real_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_real",
+        dtype=compute_dtype,
+        shape=half_shape,
+    )
+    imag_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_imag",
+        dtype=compute_dtype,
+        shape=half_shape,
+    )
+    for tensor_name in [real_name, imag_name]:
+        tensor = ctx.model_ir.tensors.get(tensor_name, None)
+        if tensor is not None:
+            tensor.shape_signature = [int(v) for v in half_signature]
+    _add_binary_tensor_op(
+        ctx=ctx,
+        op_type="SUB",
+        lhs_name=mul_output_names["cos_x1"],
+        rhs_name=mul_output_names["sin_x2"],
+        output_name=real_name,
+    )
+    _add_binary_tensor_op(
+        ctx=ctx,
+        op_type="ADD",
+        lhs_name=mul_output_names["sin_x1"],
+        rhs_name=mul_output_names["cos_x2"],
+        output_name=imag_name,
+    )
+
+    rotated_out_name = ctx.add_intermediate_tensor(
+        f"{output_name}_rotary_rotated",
+        dtype=compute_dtype,
+        shape=rotated_shape,
+    )
+    rotated_out_tensor = ctx.model_ir.tensors.get(rotated_out_name, None)
+    if rotated_out_tensor is not None:
+        rotated_out_tensor.shape_signature = [int(v) for v in rotated_signature]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=[real_name, imag_name],
+            outputs=[rotated_out_name],
+            options={"axis": 3, "fusedActivationFunction": "NONE"},
+        )
+    )
+
+    transposed_output_name = rotated_out_name
+    if str(x_rest_name) != "":
+        transposed_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_rotary_concat",
+            dtype=compute_dtype,
+            shape=transposed_shape,
+        )
+        transposed_output_tensor = ctx.model_ir.tensors.get(transposed_output_name, None)
+        if transposed_output_tensor is not None:
+            transposed_output_tensor.shape_signature = [int(v) for v in transposed_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[rotated_out_name, x_rest_name],
+                outputs=[transposed_output_name],
+                options={"axis": 3, "fusedActivationFunction": "NONE"},
+            )
+        )
+
+    final_compute_name = output_name if output_dtype == compute_dtype else f"{output_name}_rotary_transpose_back"
+    final_compute_name = make_transpose(ctx, transposed_output_name, final_compute_name, [0, 2, 1, 3])
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) for v in input_shape]
+        output_tensor.shape_signature = [int(v) for v in input_signature]
+    if final_compute_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[final_compute_name],
+                outputs=[output_name],
+                options={"inDataType": compute_dtype, "outDataType": output_dtype},
+            )
+        )
