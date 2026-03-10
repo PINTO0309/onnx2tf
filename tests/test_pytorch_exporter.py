@@ -195,6 +195,101 @@ def _make_gather_concat_scalar_model_ir() -> ModelIR:
     return model_ir
 
 
+def _make_sigmoid_mul_nchw_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="sigmoid_mul_nchw_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y_nhwc"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["sigmoid_out_nhwc"] = TensorIR(
+        name="sigmoid_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="SIGMOID",
+                inputs=["x"],
+                outputs=["sigmoid_out_nhwc"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="MUL",
+                inputs=["x", "sigmoid_out_nhwc"],
+                outputs=["y_nhwc"],
+                options={},
+            ),
+        ]
+    )
+    return model_ir
+
+
+def _make_resize_concat_nchw_model_ir(*, resize_op_type: str) -> ModelIR:
+    model_ir = ModelIR(name=f"resize_concat_{resize_op_type.lower()}_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y_nhwc"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["resize_size"] = TensorIR(
+        name="resize_size",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([8, 8], dtype=np.int32),
+    )
+    model_ir.tensors["up_nhwc"] = TensorIR(
+        name="up_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 3, 8, 8],
+        shape_signature=[1, 3, 8, 8],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 6, 8, 8],
+        shape_signature=[1, 6, 8, 8],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type=resize_op_type,
+                inputs=["x", "resize_size"],
+                outputs=["up_nhwc"],
+                options={"alignCorners": False},
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["up_nhwc", "up_nhwc"],
+                outputs=["y_nhwc"],
+                options={"axis": 1, "fusedActivationFunction": "NONE"},
+            ),
+        ]
+    )
+    return model_ir
+
+
 def _make_unsupported_add_model_ir() -> ModelIR:
     model_ir = _make_add_model_ir()
     model_ir.name = "unsupported_add_model_ir"
@@ -1501,6 +1596,7 @@ def test_export_pytorch_package_model_source_is_pytorch_like_for_fused_conv_relu
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
     assert "self.conv2d_1 = torch.nn.Conv2d(" in model_source
     assert "_apply_module_conv2d" not in model_source
+    assert "_forward_stage_" not in model_source
     assert "x = self.conv_block_0(x)" in model_source
     assert "x = self.conv2d_1(x)" in model_source
     assert model_source.count("x = torch.relu(x)") >= 1
@@ -1553,30 +1649,51 @@ def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_av
     assert "cast(torch.Tensor, self." not in model_source
     assert "def _init_constants(self) -> None:" in model_source
     assert model_source.count("_apply_") <= 24
+    assert "_forward_stage_0" in model_source
+
+
+def test_export_pytorch_package_generates_native_yolox_package_when_model_is_available(tmp_path) -> None:
+    model_path = Path("yolox_s.onnx")
+    if not model_path.exists():
+        pytest.skip("yolox_s.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = lower_onnx_to_ir(
+        model_proto,
+        output_file_name="yolox_native_codegen_test",
+        show_progress=False,
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "yolox_native_pytorch"),
+        fallback_saved_model_path=str(tmp_path / "saved_model_fallback"),
+    )
+    package_dir = Path(package_path)
+    metadata = json.loads((package_dir / "metadata.json").read_text())
+    model_source = (package_dir / "model.py").read_text()
+    assert "execution_backend" not in metadata
+    assert "load_generated_model_package" not in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
     assert "_apply_gather(" not in model_source
     assert "_apply_gather_nd(" not in model_source
     assert "_apply_slice(" not in model_source
     assert "_apply_strided_slice(" not in model_source
-    assert "def _run_nms_0(" in model_source
     assert model_source.count("register_buffer(") <= 12
     assert "class _Conv2dBlock(torch.nn.Module):" in model_source
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
+    assert "_forward_stage_0" in model_source
 
     pkg = _import_generated_package(package_path)
     loaded_model = pkg.Model(load_weights=True, eval_mode=True)
     reloaded_model = pkg.Model(load_weights=False, eval_mode=True)
     reloaded_model.load_state_dict(torch.load(package_dir / "state_dict.pth", map_location="cpu"), strict=True)
-    x = torch.randn(1, 3, 480, 640)
+    x = torch.randn(1, 3, 640, 640)
     with torch.no_grad():
         loaded_outputs = loaded_model(x)
         reloaded_outputs = reloaded_model(x)
-    assert isinstance(loaded_outputs, tuple)
-    assert isinstance(reloaded_outputs, tuple)
-    assert len(loaded_outputs) == 2
-    assert len(reloaded_outputs) == 2
-    for loaded_output, reloaded_output in zip(loaded_outputs, reloaded_outputs):
-        assert list(loaded_output.shape) == list(reloaded_output.shape)
-        assert torch.allclose(loaded_output, reloaded_output)
+    assert isinstance(loaded_outputs, torch.Tensor)
+    assert isinstance(reloaded_outputs, torch.Tensor)
+    assert list(loaded_outputs.shape) == list(reloaded_outputs.shape)
+    assert torch.allclose(loaded_outputs, reloaded_outputs)
 
 
 def test_export_pytorch_package_conv2d_nchw(tmp_path) -> None:
@@ -1829,6 +1946,49 @@ def test_export_pytorch_package_codegen_supports_gather_without_wrapper(
     out = model(x)
     expected = x[:, [0, 2]]
     assert torch.allclose(out, expected)
+
+
+def test_codegen_sigmoid_mul_chain_stays_channel_first_without_align(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_sigmoid_mul_nchw_model_ir(),
+        output_folder_path=str(tmp_path / "sigmoid_mul_pytorch"),
+    )
+    model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_align_tensor_to_target_shape(" not in model_py
+    assert "sigmoid_out_nhwc =" not in model_py
+    assert "y_nhwc =" not in model_py
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.randn(1, 3, 4, 4)
+    out = model(x)
+    assert torch.allclose(out, x * torch.sigmoid(x), atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("resize_op_type", ["RESIZE_NEAREST_NEIGHBOR", "RESIZE_BILINEAR"])
+def test_codegen_resize_concat_chain_avoids_stale_nhwc_and_align(
+    tmp_path,
+    resize_op_type: str,
+) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_resize_concat_nchw_model_ir(resize_op_type=resize_op_type),
+        output_folder_path=str(tmp_path / f"{resize_op_type.lower()}_concat_pytorch"),
+    )
+    model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "F.interpolate(" in model_py
+    assert "_align_tensor_to_target_shape(" not in model_py
+    assert "up_nhwc =" not in model_py
+    assert "y_nhwc =" not in model_py
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.randn(1, 3, 4, 4)
+    out = model(x)
+    mode = "nearest" if resize_op_type == "RESIZE_NEAREST_NEIGHBOR" else "bilinear"
+    kwargs = {} if mode == "nearest" else {"align_corners": False}
+    expected = torch.cat(
+        [F.interpolate(x, size=(8, 8), mode=mode, **kwargs)] * 2,
+        dim=1,
+    )
+    assert torch.allclose(out, expected, atol=1e-5, rtol=1e-5)
 
 
 def test_direct_codegen_concat_accepts_scalar_constant_input(tmp_path) -> None:
