@@ -1,3 +1,4 @@
+import builtins
 import json
 import os
 import subprocess
@@ -1488,6 +1489,33 @@ def test_tflite_direct_input_saved_model_smoke() -> None:
     model_ir = _make_add_model_ir()
     with tempfile.TemporaryDirectory() as tmpdir:
         tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+        )
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+
+
+def test_tflite_direct_input_without_fdopt_does_not_import_pytorch_exporters(
+    monkeypatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name in {
+            "onnx2tf.tflite_builder.pytorch_exporter",
+            "onnx2tf.tflite_builder.split_pytorch_exporter",
+        }:
+            raise AssertionError(f"unexpected import: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _guarded_import)
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_no_fdopt", model_ir)
         output_dir = os.path.join(tmpdir, "sm_out")
         onnx2tf.convert(
             input_tflite_file_path=tflite_path,

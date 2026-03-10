@@ -4127,9 +4127,6 @@ def convert(
             from onnx2tf.tflite_builder.saved_model_exporter import (
                 export_saved_model_from_model_ir,
             )
-            from onnx2tf.tflite_builder.pytorch_exporter import (
-                export_pytorch_package_from_model_ir,
-            )
             from onnx2tf.tflite_builder.schema_loader import (
                 load_schema_module,
             )
@@ -4144,9 +4141,6 @@ def convert(
             )
             from onnx2tf.tflite_builder.split_saved_model_exporter import (
                 export_split_saved_models,
-            )
-            from onnx2tf.tflite_builder.split_pytorch_exporter import (
-                export_split_pytorch_packages,
             )
             from onnx2tf.tflite_builder.tflite_importer import (
                 import_model_ir_from_tflite,
@@ -4279,6 +4273,9 @@ def convert(
                         source_label='tflite_direct_input',
                     )
                 if flatbuffer_direct_output_pytorch:
+                    from onnx2tf.tflite_builder.split_pytorch_exporter import (
+                        export_split_pytorch_packages,
+                    )
                     split_pytorch_outputs = export_split_pytorch_packages(
                         model_ir=model_ir,
                         split_manifest_path=split_outputs['split_manifest_path'],
@@ -4368,6 +4365,9 @@ def convert(
                     output_folder_path=saved_model_output_folder_path,
                 )
             if flatbuffer_direct_output_pytorch:
+                from onnx2tf.tflite_builder.pytorch_exporter import (
+                    export_pytorch_package_from_model_ir,
+                )
                 pytorch_package_path = export_pytorch_package_from_model_ir(
                     model_ir=model_ir_fp32,
                     output_folder_path=os.path.join(
