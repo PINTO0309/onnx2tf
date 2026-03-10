@@ -17,8 +17,8 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _align_output_layout_for_compare,
     _build_eval_inputs_for_sample,
     _collect_onnx_input_specs,
-    _generate_seeded_input,
     _judge_metrics,
+    _load_custom_input_data,
     _MetricAccumulator,
     _normalize_tensor_name,
     _resolve_metric_thresholds,
@@ -78,6 +78,7 @@ def _generate_string_input(
 def _build_pytorch_eval_inputs_for_sample(
     *,
     input_specs: Sequence[Tuple[str, np.dtype, Tuple[int, ...]]],
+    custom_inputs: Dict[str, np.ndarray],
     sample_index: int,
     rng: np.random.Generator,
 ) -> Dict[str, np.ndarray]:
@@ -91,7 +92,7 @@ def _build_pytorch_eval_inputs_for_sample(
             continue
         inputs[str(input_name)] = _build_eval_inputs_for_sample(
             input_specs=[(input_name, input_dtype, input_shape)],
-            custom_inputs={},
+            custom_inputs=custom_inputs,
             sample_index=sample_index,
             rng=rng,
         )[str(input_name)]
@@ -250,6 +251,7 @@ def evaluate_pytorch_package_outputs(
     rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     metric_thresholds: Optional[Dict[str, float]] = None,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     import onnxruntime as ort
 
@@ -260,6 +262,7 @@ def evaluate_pytorch_package_outputs(
 
     rng = np.random.default_rng(seed=int(seed))
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     onnx_output_names = [str(output.name) for output in onnx_graph.graph.output]
     ort_session = None
     ort_fallback_identity = False
@@ -290,6 +293,11 @@ def evaluate_pytorch_package_outputs(
             "num_samples": int(num_samples),
             "rtol": float(rtol),
             "atol": float(atol),
+            "inputs_source": (
+                "custom_input_op_name_np_data_path"
+                if len(custom_inputs) > 0
+                else "seeded_random"
+            ),
             "evaluation_pass": None,
             "evaluation_skipped": True,
             "skip_reason": "onnxruntime_reference_error",
@@ -318,6 +326,7 @@ def evaluate_pytorch_package_outputs(
     for sample_index in range(int(num_samples)):
         onnx_inputs = _build_pytorch_eval_inputs_for_sample(
             input_specs=input_specs,
+            custom_inputs=custom_inputs,
             sample_index=sample_index,
             rng=rng,
         )
@@ -349,6 +358,11 @@ def evaluate_pytorch_package_outputs(
                 "num_samples": int(num_samples),
                 "rtol": float(rtol),
                 "atol": float(atol),
+                "inputs_source": (
+                    "custom_input_op_name_np_data_path"
+                    if len(custom_inputs) > 0
+                    else "seeded_random"
+                ),
                 "evaluation_pass": None,
                 "evaluation_skipped": True,
                 "skip_reason": "onnxruntime_reference_error",
@@ -447,6 +461,11 @@ def evaluate_pytorch_package_outputs(
         "num_samples": int(num_samples),
         "rtol": float(rtol),
         "atol": float(atol),
+        "inputs_source": (
+            "custom_input_op_name_np_data_path"
+            if len(custom_inputs) > 0
+            else "seeded_random"
+        ),
         "evaluation_pass": bool(
             metric_judgement["pass"]
             and len(exact_match_failures) == 0

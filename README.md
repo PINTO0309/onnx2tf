@@ -335,6 +335,88 @@ These options have the following constraints:
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
+### PyTorch export tutorial (`yolov7_tiny_head_0.768_post_480x640.onnx`)
+
+If you want LiteRT output, a reloadable PyTorch package, and accuracy reports from the same run, use:
+
+```bash
+onnx2tf \
+  -i yolov7_tiny_head_0.768_post_480x640.onnx \
+  -o tmp_yolov7_tiny_head_0.768_post_480x640 \
+  -tb flatbuffer_direct \
+  -fdopt \
+  -cotof
+```
+
+The output directory contains:
+
+- `yolov7_tiny_head_0.768_post_480x640_float32.tflite`
+- `yolov7_tiny_head_0.768_post_480x640_pytorch/`
+- `yolov7_tiny_head_0.768_post_480x640_accuracy_report.json` (`ONNX↔TFLite`)
+- `yolov7_tiny_head_0.768_post_480x640_pytorch_accuracy_report.json` (`ONNX↔PyTorch`)
+- `yolov7_tiny_head_0.768_post_480x640_accuracy_comparison_report.json` (same-input summary of both)
+
+The generated PyTorch package is a normal `torch.nn.Module` package. The example below loads it from disk and runs inference:
+
+```python
+import hashlib
+import importlib.util
+import sys
+from pathlib import Path
+
+import torch
+
+package_dir = Path(
+    "tmp_yolov7_tiny_head_0.768_post_480x640/"
+    "yolov7_tiny_head_0.768_post_480x640_pytorch"
+).resolve()
+package_init = package_dir / "__init__.py"
+
+module_name = (
+    "_onnx2tf_generated_"
+    + hashlib.sha256(str(package_dir).encode("utf-8")).hexdigest()
+)
+spec = importlib.util.spec_from_file_location(
+    module_name,
+    str(package_init),
+    submodule_search_locations=[str(package_dir)],
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = module
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(module)
+
+model = module.load_model(device="cpu", eval_mode=True)
+x = torch.zeros((1, 3, 480, 640), dtype=torch.float32)
+
+with torch.no_grad():
+    score, batchno_classid_x1y1x2y2 = model(x)
+
+print(score.shape, score.dtype)
+print(batchno_classid_x1y1x2y2.shape, batchno_classid_x1y1x2y2.dtype)
+print(model.forward_named(x).keys())
+```
+
+Expected output for the current `yolov7_tiny_head_0.768_post_480x640` package:
+
+```python
+torch.Size([20, 1]) torch.float32
+torch.Size([20, 6]) torch.int32
+dict_keys(['score', 'batchno_classid_x1y1x2y2'])
+```
+
+You can also load the bundled `state_dict.pth` explicitly with standard PyTorch APIs:
+
+```python
+import torch
+
+model = module.Model(load_weights=False, eval_mode=True)
+state_dict = torch.load(package_dir / "state_dict.pth", map_location="cpu")
+model.load_state_dict(state_dict, strict=True)
+```
+
+The generated `state_dict.pth` is saved in `load_state_dict`-compatible format for native PyTorch packages.
+
 <details><summary>Click to expand</summary>
 
 - Scope: ONNX ops listed in the `Supported layers` table above.
@@ -1000,7 +1082,7 @@ Quick difference between `-tdnp` and `-cind`:
 - `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`. For multi-input models, this single array is reused across inputs (per-input mapping is not supported).
 - `-cind` (`--custom_input_op_name_np_data_path`): Per-input custom data mapping by input name. Supports multi-input/non-image inputs. Also used for INT8 calibration (`-oiqt`) with optional `mean/std`.
 
-The `-cotof` option only compares the original ONNX and converted TensorFlow (Keras) models at Float32 precision, not at Float16 or INT8 precision.
+The `-cotof` option evaluates Float32 accuracy only. In the default path it checks ONNX against TensorFlow/TFLite outputs. When `--tflite_backend flatbuffer_direct` is used, the base report is ONNX↔TFLite. If `--flatbuffer_direct_output_pytorch` is also enabled, onnx2tf additionally emits ONNX↔PyTorch and combined comparison reports using the same input samples.
 
 ```
 onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
@@ -2085,6 +2167,8 @@ optional arguments:
     Output a reloadable PyTorch package directly from flatbuffer_direct ModelIR.
     Public spatial inputs/outputs use NCW/NCHW/NCDHW.
     Unsupported/CUSTOM ops and residual channel-last layout bridges fail explicitly.
+    When used with -cotof, also outputs `<model_name>_pytorch_accuracy_report.json`
+    and `<model_name>_accuracy_comparison_report.json` in the output directory.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
@@ -2541,6 +2625,11 @@ optional arguments:
     values are compared, causing OutOfMemory.
     It is very time consuming because it performs as many inferences as
     there are operations.
+    With `--tflite_backend flatbuffer_direct`, the base report is
+    `<model_name>_accuracy_report.json` (`ONNX↔TFLite`).
+    If `--flatbuffer_direct_output_pytorch` is also enabled, onnx2tf additionally
+    emits `<model_name>_pytorch_accuracy_report.json` (`ONNX↔PyTorch`) and
+    `<model_name>_accuracy_comparison_report.json` using the same input samples.
     When --input_tflite_file_path is specified, this runs SavedModel inference
     plus SavedModel vs input TFLite output comparison and emits
     `<model_name>_saved_model_validation_report.json`.

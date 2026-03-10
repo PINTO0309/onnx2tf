@@ -2019,6 +2019,45 @@ def test_flatbuffer_direct_output_saved_model_cotof_smoke() -> None:
         assert report["overall_pass"] is True
 
 
+def test_flatbuffer_direct_output_pytorch_cotof_generates_comparison_report() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_pytorch_cotof", _make_add_model())
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=tmpdir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            flatbuffer_direct_output_pytorch=True,
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+        tflite_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_accuracy_report.json",
+        )
+        pytorch_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_pytorch_accuracy_report.json",
+        )
+        comparison_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_accuracy_comparison_report.json",
+        )
+        assert os.path.exists(tflite_report_path)
+        assert os.path.exists(pytorch_report_path)
+        assert os.path.exists(comparison_report_path)
+        with open(comparison_report_path, "r", encoding="utf-8") as f:
+            comparison_report = json.load(f)
+        assert comparison_report["inputs_source"] == "seeded_random"
+        assert comparison_report["onnx_tflite"] is not None
+        assert comparison_report["onnx_pytorch"] is not None
+        assert comparison_report["onnx_tflite"]["report_path"] == tflite_report_path
+        assert comparison_report["onnx_pytorch"]["report_path"] == pytorch_report_path
+        assert comparison_report["onnx_tflite"]["evaluation_pass"] is True
+        assert "evaluation_pass" in comparison_report["onnx_pytorch"]
+        assert "overall_metrics" in comparison_report["onnx_pytorch"]
+
+
 def test_flatbuffer_direct_output_saved_model_split_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model_path = _save_model(tmpdir, "add_split_sm", _make_add_model())

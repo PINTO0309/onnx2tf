@@ -1083,6 +1083,87 @@ def _kernel_gather_nd(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[st
     executor._assign_outputs(op, [y], env)
 
 
+def _box_iou(boxes: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
+    x1 = torch.maximum(boxes[:, 0], box[0])
+    y1 = torch.maximum(boxes[:, 1], box[1])
+    x2 = torch.minimum(boxes[:, 2], box[2])
+    y2 = torch.minimum(boxes[:, 3], box[3])
+    inter_w = torch.clamp(x2 - x1, min=0.0)
+    inter_h = torch.clamp(y2 - y1, min=0.0)
+    inter = inter_w * inter_h
+    boxes_area = torch.clamp(boxes[:, 2] - boxes[:, 0], min=0.0) * torch.clamp(
+        boxes[:, 3] - boxes[:, 1], min=0.0
+    )
+    box_area = torch.clamp(box[2] - box[0], min=0.0) * torch.clamp(box[3] - box[1], min=0.0)
+    union = boxes_area + box_area - inter
+    safe_union = torch.where(union > 0, union, torch.ones_like(union))
+    iou = inter / safe_union
+    return torch.where(union > 0, iou, torch.zeros_like(iou))
+
+
+def _run_non_max_suppression_v4(
+    *,
+    boxes: torch.Tensor,
+    scores: torch.Tensor,
+    max_output_size: torch.Tensor,
+    iou_threshold: torch.Tensor,
+    score_threshold: torch.Tensor,
+    pad_to_max_output_size: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    flat_boxes = boxes.to(dtype=torch.float32).reshape(-1, 4)
+    flat_scores = scores.to(dtype=torch.float32).reshape(-1)
+    max_outputs = max(0, int(max_output_size.reshape(-1)[0].to(dtype=torch.int64).item()))
+    iou_thresh = float(iou_threshold.reshape(-1)[0].item())
+    score_thresh = float(score_threshold.reshape(-1)[0].item())
+    if max_outputs == 0 or int(flat_boxes.shape[0]) == 0 or int(flat_scores.shape[0]) == 0:
+        empty = torch.zeros([max_outputs], dtype=torch.int32, device=flat_boxes.device)
+        valid = torch.zeros([], dtype=torch.int32, device=flat_boxes.device)
+        return empty, valid
+    candidate_indices = torch.nonzero(flat_scores > score_thresh, as_tuple=False).reshape(-1)
+    if int(candidate_indices.numel()) == 0:
+        empty = torch.zeros([max_outputs], dtype=torch.int32, device=flat_boxes.device)
+        valid = torch.zeros([], dtype=torch.int32, device=flat_boxes.device)
+        return empty, valid
+    order = candidate_indices[torch.argsort(flat_scores[candidate_indices], descending=True)]
+    selected: List[int] = []
+    while int(order.numel()) > 0 and len(selected) < max_outputs:
+        current = int(order[0].item())
+        selected.append(current)
+        if int(order.numel()) == 1:
+            break
+        remaining = order[1:]
+        ious = _box_iou(flat_boxes[remaining], flat_boxes[current])
+        order = remaining[ious <= iou_thresh]
+    selected_tensor = torch.as_tensor(selected, dtype=torch.int32, device=flat_boxes.device)
+    valid_count = torch.as_tensor(int(selected_tensor.numel()), dtype=torch.int32, device=flat_boxes.device)
+    if pad_to_max_output_size and int(selected_tensor.numel()) < max_outputs:
+        pad_count = max_outputs - int(selected_tensor.numel())
+        selected_tensor = torch.cat(
+            [
+                selected_tensor,
+                torch.zeros([pad_count], dtype=torch.int32, device=flat_boxes.device),
+            ],
+            dim=0,
+        )
+    return selected_tensor, valid_count
+
+
+def _kernel_non_max_suppression_v4(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
+    boxes = executor._resolve_tensor(str(op["inputs"][0]), env)
+    scores = executor._resolve_tensor(str(op["inputs"][1]), env)
+    max_output_size = executor._resolve_tensor(str(op["inputs"][2]), env)
+    iou_threshold = executor._resolve_tensor(str(op["inputs"][3]), env)
+    score_threshold = executor._resolve_tensor(str(op["inputs"][4]), env)
+    selected_indices, valid_count = _run_non_max_suppression_v4(
+        boxes=boxes,
+        scores=scores,
+        max_output_size=max_output_size,
+        iou_threshold=iou_threshold,
+        score_threshold=score_threshold,
+    )
+    executor._assign_outputs(op, [selected_indices, valid_count], env)
+
+
 def _kernel_scatter_nd(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
     indices = executor._resolve_tensor(str(op["inputs"][0]), env).to(dtype=torch.int64)
     updates = executor._resolve_tensor(str(op["inputs"][1]), env)
@@ -1453,6 +1534,7 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
         "SELECT_V2": _kernel_where,
         "GATHER": _kernel_gather,
         "GATHER_ND": _kernel_gather_nd,
+        "NON_MAX_SUPPRESSION_V4": _kernel_non_max_suppression_v4,
         "SCATTER_ND": _kernel_scatter_nd,
         "TILE": _kernel_tile,
         "BROADCAST_TO": _kernel_broadcast_to,

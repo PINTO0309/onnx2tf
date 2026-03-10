@@ -2208,9 +2208,9 @@ def convert(
         source_label: str,
         contains_custom_ops: bool = False,
         split_manifest_path: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         if not run_onnx_tflite_output_check:
-            return
+            return None
         explicit_eval = bool(eval_with_onnx)
         required = bool(explicit_eval)
         if contains_custom_ops and not explicit_eval:
@@ -2221,7 +2221,7 @@ def convert(
                     f'source={source_label}'
                 )
             )
-            return
+            return None
         report_path = os.path.join(
             runtime_output_folder_path,
             f'{output_file_name}_accuracy_report.json',
@@ -2261,7 +2261,7 @@ def convert(
             if required:
                 raise RuntimeError(msg) from ex
             warn(msg)
-            return
+            return None
 
         target_key = str(eval_target_tflite) if explicit_eval else 'float32'
         tflite_path = tflite_paths.get(target_key, None)
@@ -2278,7 +2278,7 @@ def convert(
                 warn(
                     'ONNX/TFLite output check was skipped because no TFLite path is available.'
                 )
-                return
+                return None
             tflite_path = fallback_path
             target_key = 'float32'
 
@@ -2324,7 +2324,7 @@ def convert(
                         f'source={source_label} target={target_key}'
                     )
                 )
-                return
+                return None
             if (
                 not required
                 and 'Worker exited abnormally' in ex_str
@@ -2341,7 +2341,7 @@ def convert(
                     f'the generated model (likely runtime-side issue). source={source_label} target={target_key} '
                     f'reason={ex}'
                 )
-                return
+                return None
             msg = (
                 'ONNX/TFLite output check failed. '
                 f'source={source_label} target={target_key} reason={ex}'
@@ -2349,7 +2349,7 @@ def convert(
             if required:
                 raise RuntimeError(msg) from ex
             warn(msg)
-            return
+            return None
 
         trigger = '--eval_with_onnx' if explicit_eval else '-cotof(auto)'
         info(
@@ -2372,6 +2372,129 @@ def convert(
                     'partitions sequentially.'
                 )
             )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'target_key': str(target_key),
+            'source_label': str(source_label),
+        }
+
+    def _run_onnx_pytorch_output_check(
+        *,
+        package_dir: Optional[str],
+        source_label: str,
+    ) -> Optional[Dict[str, Any]]:
+        if not bool(check_onnx_tf_outputs_elementwise_close_full):
+            return None
+        if package_dir is None or str(package_dir) == '' or not os.path.exists(package_dir):
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_pytorch_accuracy_report.json',
+        )
+        try:
+            from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
+                evaluate_pytorch_package_outputs,
+            )
+        except Exception as ex:
+            warn(
+                'ONNX/PyTorch output check was skipped because evaluator dependencies are unavailable. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        eval_num_samples_local = int(eval_num_samples) if bool(eval_with_onnx) else 1
+        try:
+            onnx_graph_for_eval = _prepare_onnx_graph_for_runtime_checks(
+                source_onnx_graph=onnx_graph,
+            )
+            if onnx_graph_for_eval is None:
+                raise RuntimeError('ONNX graph is unavailable for evaluation.')
+            report = evaluate_pytorch_package_outputs(
+                onnx_graph=onnx_graph_for_eval,
+                package_dir=str(package_dir),
+                output_report_path=report_path,
+                num_samples=eval_num_samples_local,
+                seed=0,
+                rtol=eval_rtol,
+                atol=eval_atol,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            )
+        except Exception as ex:
+            warn(
+                'ONNX/PyTorch output check failed. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        overall_metrics = report.get('overall_metrics', {}) or {}
+        info(
+            Color.GREEN(
+                'ONNX/PyTorch output check complete! '
+                f'({report_path}) '
+                f'trigger=-cotof(auto) source={source_label} '
+                f'max_abs={float(overall_metrics.get("max_abs", 0.0)):.6g} '
+                f'rmse={float(overall_metrics.get("rmse", 0.0)):.6g} '
+                f'cosine={float(overall_metrics.get("cosine_similarity", 0.0)):.6g} '
+                f'pass={report.get("evaluation_pass", None)}'
+            )
+        )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'source_label': str(source_label),
+        }
+
+    def _write_accuracy_comparison_report(
+        *,
+        tflite_result: Optional[Dict[str, Any]],
+        pytorch_result: Optional[Dict[str, Any]],
+        source_label: str,
+    ) -> Optional[str]:
+        if tflite_result is None and pytorch_result is None:
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_accuracy_comparison_report.json',
+        )
+        report: Dict[str, Any] = {
+            'schema_version': 1,
+            'source_label': str(source_label),
+            'seed': 0,
+            'num_samples': int(eval_num_samples) if bool(eval_with_onnx) else 1,
+            'rtol': float(eval_rtol),
+            'atol': float(eval_atol),
+            'inputs_source': (
+                'custom_input_op_name_np_data_path'
+                if custom_input_op_name_np_data_path
+                else 'seeded_random'
+            ),
+            'onnx_tflite': None,
+            'onnx_pytorch': None,
+        }
+        if tflite_result is not None:
+            report['onnx_tflite'] = {
+                'report_path': str(tflite_result.get('report_path')),
+                'target_key': str(tflite_result.get('target_key', 'float32')),
+                'evaluation_pass': tflite_result.get('report', {}).get('evaluation_pass', None),
+                'overall_metrics': tflite_result.get('report', {}).get('overall_metrics', {}),
+            }
+        if pytorch_result is not None:
+            report['onnx_pytorch'] = {
+                'report_path': str(pytorch_result.get('report_path')),
+                'evaluation_pass': pytorch_result.get('report', {}).get('evaluation_pass', None),
+                'evaluation_skipped': pytorch_result.get('report', {}).get('evaluation_skipped', False),
+                'overall_metrics': pytorch_result.get('report', {}).get('overall_metrics', {}),
+            }
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        info(
+            Color.GREEN(
+                'Combined accuracy comparison report output complete! '
+                f'({report_path})'
+            )
+        )
+        return report_path
 
     def _run_saved_model_tflite_direct_check(
         *,
@@ -5594,11 +5717,20 @@ def convert(
             direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
         if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
             direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-        _run_onnx_tflite_output_check(
+        tflite_eval_result = _run_onnx_tflite_output_check(
             tflite_paths=direct_eval_paths,
             source_label=source_label,
             contains_custom_ops=direct_contains_custom_ops,
             split_manifest_path=direct_outputs.get('split_manifest_path', None),
+        )
+        pytorch_eval_result = _run_onnx_pytorch_output_check(
+            package_dir=direct_outputs.get('pytorch_package_path', None),
+            source_label=source_label,
+        )
+        _write_accuracy_comparison_report(
+            tflite_result=tflite_eval_result,
+            pytorch_result=pytorch_eval_result,
+            source_label=source_label,
         )
         if 'split_saved_model_dirs' in direct_outputs:
             _maybe_run_split_saved_model_inference_check(
@@ -6272,11 +6404,20 @@ def convert(
                             direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
                         if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
                             direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                        _run_onnx_tflite_output_check(
+                        tflite_eval_result = _run_onnx_tflite_output_check(
                             tflite_paths=direct_eval_paths,
                             source_label='flatbuffer_direct',
                             contains_custom_ops=direct_contains_custom_ops,
                             split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                        )
+                        pytorch_eval_result = _run_onnx_pytorch_output_check(
+                            package_dir=direct_outputs.get('pytorch_package_path', None),
+                            source_label='flatbuffer_direct',
+                        )
+                        _write_accuracy_comparison_report(
+                            tflite_result=tflite_eval_result,
+                            pytorch_result=pytorch_eval_result,
+                            source_label='flatbuffer_direct',
                         )
                         if 'split_saved_model_dirs' in direct_outputs:
                             _maybe_run_split_saved_model_inference_check(
@@ -6820,11 +6961,20 @@ def convert(
                     direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
                 if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
                     direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                _run_onnx_tflite_output_check(
+                tflite_eval_result = _run_onnx_tflite_output_check(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',
                     contains_custom_ops=direct_contains_custom_ops,
                     split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                )
+                pytorch_eval_result = _run_onnx_pytorch_output_check(
+                    package_dir=direct_outputs.get('pytorch_package_path', None),
+                    source_label='flatbuffer_direct',
+                )
+                _write_accuracy_comparison_report(
+                    tflite_result=tflite_eval_result,
+                    pytorch_result=pytorch_eval_result,
+                    source_label='flatbuffer_direct',
                 )
                 if 'split_saved_model_dirs' in direct_outputs:
                     _maybe_run_split_saved_model_inference_check(

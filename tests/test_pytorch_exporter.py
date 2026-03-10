@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.ir import (
     TensorIR,
     infer_model_ir_logical_layouts,
 )
+from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
 from onnx2tf.tflite_builder.model_writer import write_model_file
 from onnx2tf.tflite_builder.pytorch_package_runtime import (
     _infer_spatial_shape_for_transposed_conv2d,
@@ -509,6 +510,108 @@ def _make_conv2d_relu_model_ir() -> ModelIR:
         ),
         OperatorIR(op_type="RELU", inputs=["conv"], outputs=["y"], options={}),
     ]
+    return model_ir
+
+
+def _make_fused_conv_relu_style_model_ir() -> ModelIR:
+    rng = np.random.default_rng(7)
+    model_ir = ModelIR(name="fused_conv_relu_style_model_ir")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["output"]
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int32),
+    )
+    model_ir.tensors["padded"] = TensorIR(
+        name="padded",
+        dtype="FLOAT32",
+        shape=[1, 3, 6, 6],
+        shape_signature=[1, 3, 6, 6],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["w0"] = TensorIR(
+        name="w0",
+        dtype="FLOAT32",
+        shape=[3, 3, 3, 3],
+        shape_signature=[3, 3, 3, 3],
+        data=rng.standard_normal((3, 3, 3, 3)).astype(np.float32),
+    )
+    model_ir.tensors["b0"] = TensorIR(
+        name="b0",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=rng.standard_normal((3,)).astype(np.float32),
+    )
+    model_ir.tensors["hidden"] = TensorIR(
+        name="hidden",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["w1"] = TensorIR(
+        name="w1",
+        dtype="FLOAT32",
+        shape=[3, 3, 3, 3],
+        shape_signature=[3, 3, 3, 3],
+        data=rng.standard_normal((3, 3, 3, 3)).astype(np.float32),
+    )
+    model_ir.tensors["b1"] = TensorIR(
+        name="b1",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=rng.standard_normal((3,)).astype(np.float32),
+    )
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(op_type="PAD", inputs=["input", "pads"], outputs=["padded"], options={}),
+            OperatorIR(
+                op_type="CONV_2D",
+                inputs=["padded", "w0", "b0"],
+                outputs=["hidden"],
+                options={
+                    "padding": "VALID",
+                    "strideH": 1,
+                    "strideW": 1,
+                    "dilationHFactor": 1,
+                    "dilationWFactor": 1,
+                    "fusedActivationFunction": "RELU",
+                },
+            ),
+            OperatorIR(
+                op_type="CONV_2D",
+                inputs=["hidden", "w1", "b1"],
+                outputs=["output"],
+                options={
+                    "padding": "SAME",
+                    "strideH": 1,
+                    "strideW": 1,
+                    "dilationHFactor": 1,
+                    "dilationWFactor": 1,
+                    "fusedActivationFunction": "RELU",
+                },
+            ),
+        ]
+    )
     return model_ir
 
 
@@ -1247,12 +1350,20 @@ def test_export_pytorch_package_model_class_is_directly_importable(tmp_path) -> 
     x = torch.arange(1, 1 + (1 * 3 * 4 * 4), dtype=torch.float32).reshape(1, 3, 4, 4)
     out = model(x)
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    runtime_source = (Path(package_path) / "runtime.py").read_text(encoding="utf-8")
+    saved_state_dict = torch.load(Path(package_path) / "state_dict.pth", map_location="cpu")
     assert "class Model(torch.nn.Module):" in model_source
-    assert "MODEL_METADATA = json.loads" in model_source
     assert "load_generated_model_package" not in model_source
     assert "_GraphExecutor" not in model_source
-    assert "self.op_0_conv_2d = torch.nn.Conv2d(" in model_source
-    assert "def _apply_module_conv2d(" in model_source
+    assert "from .runtime import (" in model_source
+    assert "load_generated_weights(" in model_source
+    assert "self.conv2d_0 = torch.nn.Conv2d(" in model_source
+    assert "LOAD_SPECS" not in model_source
+    assert "_copy_tensor_data" not in model_source
+    assert "_validate_state_dict_keys" not in model_source
+    assert "def _copy_tensor_data" in runtime_source
+    assert "def load_generated_weights(" in runtime_source
+    assert set(saved_state_dict.keys()) == set(model.state_dict().keys())
     assert len(model.state_dict()) > 0
     w = torch.as_tensor(model_ir.tensors["w"].data).permute(0, 3, 1, 2)
     b = torch.as_tensor(model_ir.tensors["b"].data)
@@ -1360,8 +1471,112 @@ def test_export_pytorch_package_model_source_mixes_module_and_functional_ops(tmp
     out_loaded = pkg.load_model()(x)
     assert torch.allclose(out_direct, out_loaded, atol=1e-5, rtol=1e-5)
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "self.op_0_conv_2d = torch.nn.Conv2d(" in model_source
-    assert "torch.relu(conv)" in model_source
+    assert "self.conv_block_0 = _Conv2dBlock(" in model_source
+    assert "torch.relu(x)" in model_source
+
+
+def test_export_pytorch_package_model_source_is_pytorch_like_for_fused_conv_relu(tmp_path) -> None:
+    model_ir = _make_fused_conv_relu_style_model_ir()
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "fused_conv_relu_like_pytorch"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.Model()
+    reloaded_model = pkg.Model(load_weights=False)
+    reloaded_model.load_state_dict(torch.load(Path(package_path) / "state_dict.pth", map_location="cpu"))
+    x = torch.arange(1, 1 + (1 * 3 * 4 * 4), dtype=torch.float32).reshape(1, 3, 4, 4)
+    out = model(x)
+    out_reloaded = reloaded_model(x)
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    runtime_source = (Path(package_path) / "runtime.py").read_text(encoding="utf-8")
+    saved_state_dict = torch.load(Path(package_path) / "state_dict.pth", map_location="cpu")
+
+    assert "_copy_tensor_data" not in model_source
+    assert "_validate_state_dict_keys" not in model_source
+    assert "_torch_dtype(" not in model_source
+    assert "cast(torch.Tensor, self." not in model_source
+    assert "load_generated_weights(" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
+    assert "self.conv_block_0 = _Conv2dBlock(" in model_source
+    assert "self.conv2d_1 = torch.nn.Conv2d(" in model_source
+    assert "_apply_module_conv2d" not in model_source
+    assert "x = self.conv_block_0(x)" in model_source
+    assert "x = self.conv2d_1(x)" in model_source
+    assert model_source.count("x = torch.relu(x)") >= 1
+    assert "def _copy_tensor_data" in runtime_source
+    assert "def load_generated_weights(" in runtime_source
+    assert list(saved_state_dict.keys()) == list(model.state_dict().keys())
+    assert torch.allclose(out, out_reloaded, atol=1e-5, rtol=1e-5)
+
+    ref = model.conv_block_0(x)
+    ref = torch.relu(model.conv2d_1(ref))
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_state_dict_is_load_state_dict_compatible(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_conv2d_relu_model_ir(),
+        output_folder_path=str(tmp_path / "conv_relu_state_dict_compatible"),
+    )
+    pkg = _import_generated_package(package_path)
+    direct_model = pkg.Model()
+    loaded_model = pkg.Model(load_weights=False)
+    loaded_model.load_state_dict(torch.load(Path(package_path) / "state_dict.pth", map_location="cpu"))
+    x = torch.arange(1, 1 + (1 * 3 * 4 * 4), dtype=torch.float32).reshape(1, 3, 4, 4)
+    assert list(torch.load(Path(package_path) / "state_dict.pth", map_location="cpu").keys()) == list(direct_model.state_dict().keys())
+    assert torch.allclose(direct_model(x), loaded_model(x), atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_available(tmp_path) -> None:
+    model_path = Path("yolov7_tiny_head_0.768_post_480x640.onnx")
+    if not model_path.exists():
+        pytest.skip("yolov7_tiny_head_0.768_post_480x640.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = lower_onnx_to_ir(
+        model_proto,
+        output_file_name="yolov7_native_codegen_test",
+        show_progress=False,
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "yolov7_native_pytorch"),
+    )
+    package_dir = Path(package_path)
+    metadata = json.loads((package_dir / "metadata.json").read_text())
+    model_source = (package_dir / "model.py").read_text()
+    assert "execution_backend" not in metadata
+    assert "load_generated_model_package" not in model_source
+    assert "TENSOR_STORAGE_NAMES" not in model_source
+    assert "resolve_model_tensor" not in model_source
+    assert "_torch_dtype(" not in model_source
+    assert "cast(torch.Tensor, self." not in model_source
+    assert "def _init_constants(self) -> None:" in model_source
+    assert model_source.count("_apply_") <= 24
+    assert "_apply_gather(" not in model_source
+    assert "_apply_gather_nd(" not in model_source
+    assert "_apply_slice(" not in model_source
+    assert "_apply_strided_slice(" not in model_source
+    assert "def _run_nms_0(" in model_source
+    assert model_source.count("register_buffer(") <= 12
+    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
+    assert "self.conv_block_0 = _Conv2dBlock(" in model_source
+
+    pkg = _import_generated_package(package_path)
+    loaded_model = pkg.Model(load_weights=True, eval_mode=True)
+    reloaded_model = pkg.Model(load_weights=False, eval_mode=True)
+    reloaded_model.load_state_dict(torch.load(package_dir / "state_dict.pth", map_location="cpu"), strict=True)
+    x = torch.randn(1, 3, 480, 640)
+    with torch.no_grad():
+        loaded_outputs = loaded_model(x)
+        reloaded_outputs = reloaded_model(x)
+    assert isinstance(loaded_outputs, tuple)
+    assert isinstance(reloaded_outputs, tuple)
+    assert len(loaded_outputs) == 2
+    assert len(reloaded_outputs) == 2
+    for loaded_output, reloaded_output in zip(loaded_outputs, reloaded_outputs):
+        assert list(loaded_output.shape) == list(reloaded_output.shape)
+        assert torch.allclose(loaded_output, reloaded_output)
 
 
 def test_export_pytorch_package_conv2d_nchw(tmp_path) -> None:
@@ -1596,7 +1811,7 @@ def test_export_pytorch_package_prefers_reimported_native_wrapper_before_tflite_
     assert torch.allclose(out, x + y)
 
 
-def test_export_pytorch_package_keeps_native_runtime_wrapper_for_supported_non_codegen_ops(
+def test_export_pytorch_package_codegen_supports_gather_without_wrapper(
     tmp_path,
 ) -> None:
     package_path = export_pytorch_package_from_model_ir(
@@ -1606,7 +1821,8 @@ def test_export_pytorch_package_keeps_native_runtime_wrapper_for_supported_non_c
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
     assert "execution_backend" not in metadata
     model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "load_generated_model_package" in model_py
+    assert "load_generated_model_package" not in model_py
+    assert "_apply_gather" not in model_py
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
     x = torch.tensor([[10.0, 20.0, 30.0, 40.0]], dtype=torch.float32)
