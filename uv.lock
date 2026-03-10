@@ -651,20 +651,8 @@ wheels = [
 ]
 
 [[package]]
-name = "onnx-graphsurgeon"
-version = "0.5.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "onnx" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/53/98334c4f64a9e289a8cb48f5e7966b8ff015414d0bf26587cf46d764f1d8/onnx_graphsurgeon-0.5.8-py2.py3-none-any.whl", hash = "sha256:6f611ea29a8e4740fbab1aae52bf4c40b8b9918f8459058d20b99acc79fce121", size = 57923, upload-time = "2025-04-10T18:49:24.483Z" },
-]
-
-[[package]]
 name = "onnx2tf"
-version = "2.3.4"
+version = "2.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "ai-edge-litert" },
@@ -689,9 +677,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "onnx-graphsurgeon" },
-]
 torch = [
     { name = "torch" },
 ]
@@ -704,7 +689,6 @@ requires-dist = [
     { name = "ml-dtypes", specifier = "==0.5.1" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "onnx", specifier = "==1.20.1" },
-    { name = "onnx-graphsurgeon", marker = "extra == 'dev'", specifier = "==0.5.8" },
     { name = "onnxoptimizer", specifier = "==0.4.2" },
     { name = "onnxruntime", specifier = "==1.24.3" },
     { name = "onnxsim-prebuilt", specifier = "==0.4.39.post2" },
@@ -720,7 +704,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = "==2.9.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = "==4.67.1" },
 ]
-provides-extras = ["torch", "dev"]
+provides-extras = ["torch"]
 
 [[package]]
 name = "onnxoptimizer"
