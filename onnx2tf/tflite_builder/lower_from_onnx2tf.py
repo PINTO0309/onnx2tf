@@ -21,7 +21,9 @@ from onnx2tf.tflite_builder.ir import (
     OperatorIR,
     QuantParamIR,
     TensorIR,
+    infer_model_ir_logical_layouts,
     normalize_onnx_shape,
+    validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
@@ -1801,18 +1803,29 @@ def _resolve_dynamic_reshape_shapes(
                     ),
                 )
         else:
-            resolved_shape = _resolve_reshape_new_shape_from_static_input(
-                new_shape=_sanitize_reshape_template(
-                    template=new_shape,
-                    input_dims=signature_for_resolve,
-                ),
-                input_signature=signature_for_resolve,
-                allow_zero=(
-                    bool(op.options.get("allowZero"))
-                    if "allowZero" in op.options
-                    else None
-                ),
-            )
+            if (
+                any(int(dim) == -1 for dim in new_shape)
+                and any(int(dim) <= 0 for dim in input_signature)
+                and not any(int(dim) == 0 for dim in new_shape)
+            ):
+                # Keep runtime-inferable `-1` templates for shape-tensor driven
+                # reshapes when the source rank is still dynamic. Concretizing
+                # them from placeholder static metadata can freeze valid dynamic
+                # extents to `1` and break runtime element counts.
+                resolved_shape = [int(v) for v in new_shape]
+            else:
+                resolved_shape = _resolve_reshape_new_shape_from_static_input(
+                    new_shape=_sanitize_reshape_template(
+                        template=new_shape,
+                        input_dims=signature_for_resolve,
+                    ),
+                    input_signature=signature_for_resolve,
+                    allow_zero=(
+                        bool(op.options.get("allowZero"))
+                        if "allowZero" in op.options
+                        else None
+                    ),
+                )
         if resolved_shape is None and len(new_shape) > 0:
             fallback_shape = _sanitize_reshape_template(
                 template=new_shape,
@@ -1898,6 +1911,125 @@ def _resolve_dynamic_reshape_shapes(
             resolved_count += 1
 
     return {"resolved_dynamic_reshape_shapes": int(resolved_count)}
+
+
+def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    def _unique_tensor_name(base: str) -> str:
+        if str(base) not in model_ir.tensors:
+            return str(base)
+        index = 1
+        while f"{base}_{index}" in model_ir.tensors:
+            index += 1
+        return f"{base}_{index}"
+
+    rewritten = 0
+    rewritten_ops: List[OperatorIR] = []
+    for op in model_ir.operators:
+        if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2 or len(op.outputs) != 1:
+            rewritten_ops.append(op)
+            continue
+
+        input_name = str(op.inputs[0])
+        shape_name = str(op.inputs[1])
+        output_name = str(op.outputs[0])
+        input_tensor = model_ir.tensors.get(input_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        shape_tensor = model_ir.tensors.get(shape_name, None)
+        if input_tensor is None or output_tensor is None or shape_tensor is None:
+            rewritten_ops.append(op)
+            continue
+        if shape_tensor.data is None:
+            rewritten_ops.append(op)
+            continue
+
+        input_signature = (
+            [int(v) for v in list(input_tensor.shape_signature)]
+            if input_tensor.shape_signature is not None
+            else [int(v) for v in list(input_tensor.shape)]
+        )
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_tensor.shape)]
+        )
+        try:
+            shape_values = [
+                int(v) for v in np.asarray(shape_tensor.data).reshape(-1).tolist()
+            ]
+        except Exception:
+            rewritten_ops.append(op)
+            continue
+
+        if len(input_signature) != 1:
+            rewritten_ops.append(op)
+            continue
+        if output_signature != [-1, 1] and output_signature != [1, -1]:
+            rewritten_ops.append(op)
+            continue
+        if (
+            shape_values not in ([-1, 1], [1, -1], [1, 1])
+            and list(op.options.get("newShape", [])) not in ([], [1, 1])
+        ):
+            rewritten_ops.append(op)
+            continue
+
+        runtime_shape_name = _unique_tensor_name(f"{output_name}_runtime_shape")
+        runtime_shape_tensor = TensorIR(
+            name=runtime_shape_name,
+            dtype="INT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        model_ir.tensors[runtime_shape_name] = runtime_shape_tensor
+        rewritten_ops.append(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[input_name],
+                outputs=[runtime_shape_name],
+                options={"outType": "INT32"},
+            )
+        )
+
+        one_name = _unique_tensor_name(f"{output_name}_unsqueeze_runtime_one")
+        model_ir.tensors[one_name] = TensorIR(
+            name=one_name,
+            dtype="INT32",
+            shape=[1],
+            shape_signature=[1],
+            data=np.asarray([1], dtype=np.int32),
+        )
+        merged_shape_name = _unique_tensor_name(f"{output_name}_unsqueeze_runtime_shape")
+        model_ir.tensors[merged_shape_name] = TensorIR(
+            name=merged_shape_name,
+            dtype="INT32",
+            shape=[2],
+            shape_signature=[2],
+        )
+        concat_inputs = [runtime_shape_name, one_name]
+        if output_signature == [1, -1]:
+            concat_inputs = [one_name, runtime_shape_name]
+        rewritten_ops.append(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=concat_inputs,
+                outputs=[merged_shape_name],
+                options={
+                    "axis": 0,
+                    "fusedActivationFunction": "NONE",
+                },
+            )
+        )
+
+        op.inputs[1] = merged_shape_name
+        op.options["newShape"] = []
+        rewritten_ops.append(op)
+        rewritten += 1
+
+    if rewritten > 0:
+        model_ir.operators = rewritten_ops
+    return {"rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": int(rewritten)}
 
 
 def _sanitize_hardswish_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
@@ -70060,6 +70192,7 @@ def lower_onnx_to_ir(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)
     if int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0:
@@ -70104,6 +70237,12 @@ def lower_onnx_to_ir(
             _optimize_consecutive_reshape_passthrough_chains(fallback_ir)
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
+        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
+        _topologically_sort_operators(fallback_ir)
+        infer_model_ir_logical_layouts(fallback_ir)
+        fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
+        if len(fallback_layout_problems) > 0:
+            fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
             "count": int(len(unbound_inputs)),
@@ -70129,7 +70268,12 @@ def lower_onnx_to_ir(
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)
+    infer_model_ir_logical_layouts(model_ir)
+    layout_problems = validate_model_ir_layout_annotations(model_ir)
+    if len(layout_problems) > 0:
+        model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_bar.close()

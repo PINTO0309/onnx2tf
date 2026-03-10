@@ -249,6 +249,7 @@ def build_partition_model_ir(
             inputs=list(op.inputs),
             outputs=list(op.outputs),
             options=dict(op.options),
+            axis_semantics=dict(op.axis_semantics),
             version=op.version,
         )
         for op in range_ops
@@ -269,6 +270,7 @@ def build_partition_model_ir(
             data=tensor.data.copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
             is_variable=bool(tensor.is_variable),
             quantization=tensor.quantization,
+            logical_layout=tensor.logical_layout,
         )
     return part_model
 
@@ -554,6 +556,7 @@ class _ModelIRRewriteBuilder:
         data: Optional[np.ndarray] = None,
         is_variable: bool = False,
         quantization: Any = None,
+        logical_layout: str = "UNKNOWN",
     ) -> str:
         name = self._next_name(base_name)
         norm_shape, norm_signature = normalize_onnx_shape(list(shape))
@@ -569,6 +572,7 @@ class _ModelIRRewriteBuilder:
             data=data,
             is_variable=bool(is_variable),
             quantization=copy.deepcopy(quantization),
+            logical_layout=str(logical_layout),
         )
         return name
 
@@ -608,6 +612,7 @@ class _ModelIRRewriteBuilder:
                 else bool(is_variable)
             ),
             quantization=source_tensor.quantization,
+            logical_layout=source_tensor.logical_layout,
         )
 
 

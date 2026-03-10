@@ -144,6 +144,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _find_unbound_nonconstant_operator_inputs,
     _repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
     _resolve_dynamic_reshape_shapes,
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
     _replace_unsupported_split_with_slice,
     _replace_expand_dims_and_squeeze_with_reshape,
     _sanitize_squeeze_axes_with_static_input_shapes,
@@ -11096,6 +11097,46 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, -1, 64, 64, 2]
 
 
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_runtime_minus_one_from_shape_tensor() -> None:
+    model_ir = ModelIR(name="reshape_fixup_runtime_minus_one_from_shape_tensor_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([-1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={"newShape": []},
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
+    assert list(model_ir.operators[0].options["newShape"]) == []
+    assert list(model_ir.tensors["y"].shape) == [1, 1]
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [-1, 1]
+
+
 def test_flatbuffer_direct_replace_squeeze_with_reshape_skips_all_ones_outputs() -> None:
     model_ir = ModelIR(name="squeeze_rewrite_all_ones_guard_test")
     model_ir.inputs = ["x"]
@@ -11124,6 +11165,110 @@ def test_flatbuffer_direct_replace_squeeze_with_reshape_skips_all_ones_outputs()
     stats = _replace_expand_dims_and_squeeze_with_reshape(model_ir)
     assert int(stats.get("replaced_expand_dims_and_squeeze_with_reshape", 0)) == 0
     assert str(model_ir.operators[0].op_type) == "SQUEEZE"
+
+
+def test_flatbuffer_direct_lower_min_normalizes_mixed_integer_inputs() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [7, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1])
+    k = helper.make_tensor(
+        "k",
+        TensorProto.INT64,
+        [1],
+        np.asarray([5], dtype=np.int64),
+    )
+    shape_node = helper.make_node("Shape", ["x"], ["shape"], name="ShapeNode")
+    min_node = helper.make_node("Min", ["k", "shape"], ["y"], name="MinNode")
+    graph = helper.make_graph([shape_node, min_node], "min_mixed_integer_graph", [x], [y], [k])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="min_mixed_integer_graph",
+    )
+
+    minimum_ops = [op for op in model_ir.operators if str(op.op_type) == "MINIMUM"]
+    assert len(minimum_ops) == 1
+    minimum_op = minimum_ops[0]
+    minimum_input_dtypes = [
+        str(model_ir.tensors[str(name)].dtype).upper()
+        for name in list(minimum_op.inputs)
+    ]
+    assert minimum_input_dtypes == ["INT32", "INT32"]
+    assert str(model_ir.tensors[str(minimum_op.outputs[0])].dtype).upper() == "INT32"
+
+
+def test_flatbuffer_direct_unsqueeze_dynamic_rank1_uses_runtime_shape_pipeline() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1])
+    axes = helper.make_tensor(
+        "axes",
+        TensorProto.INT64,
+        [1],
+        np.asarray([1], dtype=np.int64),
+    )
+    unsqueeze_node = helper.make_node("Unsqueeze", ["x", "axes"], ["y"], name="UnsqueezeNode")
+    graph = helper.make_graph([unsqueeze_node], "unsqueeze_dynamic_rank1_graph", [x], [y], [axes])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="unsqueeze_dynamic_rank1_graph",
+    )
+
+    reshape_ops = [
+        op for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE" and [str(v) for v in list(op.outputs)] == ["y"]
+    ]
+    assert len(reshape_ops) == 1
+    reshape_op = reshape_ops[0]
+    assert list(reshape_op.options.get("newShape", [])) == []
+    assert len(list(reshape_op.inputs)) == 2
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    assert shape_tensor.data is None
+    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1]
+
+
+def test_flatbuffer_direct_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs() -> None:
+    model_ir = ModelIR(name="rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={"newShape": [1, 1]},
+        )
+    )
+
+    stats = _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
+    assert stats["rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["SHAPE", "CONCATENATION", "RESHAPE"]
+    reshape_op = model_ir.operators[-1]
+    assert list(reshape_op.options.get("newShape", [])) == []
+    rewritten_shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    assert rewritten_shape_tensor.data is None
 
 
 def test_flatbuffer_direct_replace_squeeze_with_reshape_rewrites_dynamic_axes() -> None:

@@ -621,19 +621,53 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     )
 
 
-def build_min_op(node: Any, ctx: Any) -> None:
+def _build_nary_minmax_op(
+    *,
+    node: Any,
+    ctx: Any,
+    op_type: str,
+) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name
     if len(input_names) < 2:
         raise NotImplementedError(
-            f"Min requires at least 2 inputs in flatbuffer_direct. op={node.name}"
+            f"{op_type.title()} requires at least 2 inputs in flatbuffer_direct. op={node.name}"
         )
     for name in input_names:
         ctx.ensure_tensor(name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_names[0], output_name)
 
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    def _normalize_minmax_dtype(dtype: str) -> str:
+        dt = str(dtype).upper()
+        if dt == "INT64":
+            return "INT32"
+        if dt == "UINT64":
+            return "UINT32"
+        return dt
+
+    integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
+    unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
+    float_dtypes = {"FLOAT16", "FLOAT32", "FLOAT64"}
+
+    normalized_input_dtypes = [
+        _normalize_minmax_dtype(str(ctx.get_tensor_dtype(name)).upper())
+        for name in input_names
+    ]
+    unique_input_dtypes = set(normalized_input_dtypes)
+    if len(unique_input_dtypes) == 1:
+        target_dtype = normalized_input_dtypes[0]
+    elif all(str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes for name in input_names):
+        raw_dtypes = [str(ctx.get_tensor_dtype(name)).upper() for name in input_names]
+        target_dtype = "UINT32" if all(dt in unsigned_integer_dtypes for dt in raw_dtypes) else "INT32"
+    elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
+        target_dtype = "FLOAT32"
+    else:
+        raise NotImplementedError(
+            f"{op_type.title()} input dtypes must be compatible in flatbuffer_direct. "
+            f"op={node.name} input_dtypes={normalized_input_dtypes}"
+        )
+
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     output_signature = (
@@ -641,74 +675,80 @@ def build_min_op(node: Any, ctx: Any) -> None:
         if output_tensor is not None and output_tensor.shape_signature is not None
         else [int(v) for v in output_shape]
     )
+    casted_input_names: list[str] = []
+    for idx, name in enumerate(input_names):
+        input_dtype = str(ctx.get_tensor_dtype(name)).upper()
+        normalized_input_dtype = _normalize_minmax_dtype(input_dtype)
+        if normalized_input_dtype == target_dtype and input_dtype == target_dtype:
+            casted_input_names.append(str(name))
+            continue
+        cast_name = ctx.add_intermediate_tensor(
+            f"{output_name}_{str(op_type).lower()}_input{idx}_{str(target_dtype).lower()}",
+            dtype=target_dtype,
+            shape=[int(v) for v in ctx.get_tensor_shape(name)],
+        )
+        src_tensor = ctx.model_ir.tensors.get(str(name), None)
+        cast_tensor = ctx.model_ir.tensors.get(str(cast_name), None)
+        if src_tensor is not None and cast_tensor is not None:
+            cast_tensor.shape_signature = (
+                [int(v) for v in list(src_tensor.shape_signature)]
+                if src_tensor.shape_signature is not None
+                else [int(v) for v in list(src_tensor.shape)]
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[str(name)],
+                outputs=[cast_name],
+                options={
+                    "inDataType": input_dtype,
+                    "outDataType": target_dtype,
+                },
+            )
+        )
+        casted_input_names.append(cast_name)
 
-    current_name = input_names[0]
-    for idx, rhs_name in enumerate(input_names[1:], start=1):
+    current_name = casted_input_names[0]
+    for idx, rhs_name in enumerate(casted_input_names[1:], start=1):
         is_last = idx == int(len(input_names) - 1)
-        min_output_name = output_name
+        reduced_output_name = output_name
         if not is_last:
-            min_output_name = ctx.add_intermediate_tensor(
-                f"{output_name}_min_{idx}",
-                dtype=output_dtype,
+            reduced_output_name = ctx.add_intermediate_tensor(
+                f"{output_name}_{str(op_type).lower()}_{idx}",
+                dtype=target_dtype,
                 shape=output_shape,
             )
         ctx.add_operator(
             OperatorIR(
-                op_type="MINIMUM",
+                op_type=op_type,
                 inputs=[current_name, rhs_name],
-                outputs=[min_output_name],
+                outputs=[reduced_output_name],
                 options={},
             )
         )
-        current_name = min_output_name
+        current_name = reduced_output_name
 
     if output_tensor is not None:
+        output_tensor.dtype = target_dtype
         output_tensor.shape_signature = [int(v) for v in output_signature]
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = target_dtype
+
+
+def build_min_op(node: Any, ctx: Any) -> None:
+    _build_nary_minmax_op(
+        node=node,
+        ctx=ctx,
+        op_type="MINIMUM",
+    )
 
 
 def build_max_op(node: Any, ctx: Any) -> None:
-    input_names = [i.name for i in node.inputs]
-    output_name = node.outputs[0].name
-    if len(input_names) < 2:
-        raise NotImplementedError(
-            f"Max requires at least 2 inputs in flatbuffer_direct. op={node.name}"
-        )
-    for name in input_names:
-        ctx.ensure_tensor(name)
-    ctx.ensure_tensor(output_name)
-    _propagate_shape(ctx, input_names[0], output_name)
-
-    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
-    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
-    output_tensor = ctx.model_ir.tensors.get(output_name, None)
-    output_signature = (
-        [int(v) for v in list(output_tensor.shape_signature)]
-        if output_tensor is not None and output_tensor.shape_signature is not None
-        else [int(v) for v in output_shape]
+    _build_nary_minmax_op(
+        node=node,
+        ctx=ctx,
+        op_type="MAXIMUM",
     )
-
-    current_name = input_names[0]
-    for idx, rhs_name in enumerate(input_names[1:], start=1):
-        is_last = idx == int(len(input_names) - 1)
-        max_output_name = output_name
-        if not is_last:
-            max_output_name = ctx.add_intermediate_tensor(
-                f"{output_name}_max_{idx}",
-                dtype=output_dtype,
-                shape=output_shape,
-            )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="MAXIMUM",
-                inputs=[current_name, rhs_name],
-                outputs=[max_output_name],
-                options={},
-            )
-        )
-        current_name = max_output_name
-
-    if output_tensor is not None:
-        output_tensor.shape_signature = [int(v) for v in output_signature]
 
 
 def build_sum_op(node: Any, ctx: Any) -> None:

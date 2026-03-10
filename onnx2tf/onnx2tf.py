@@ -87,7 +87,7 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
 import onnx2tf.gs as gs
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, cast
 from argparse import ArgumentParser, SUPPRESS
 
 import importlib
@@ -124,6 +124,15 @@ from sng4onnx import generate as op_name_auto_generate
 _SAVED_MODEL_BRIDGE_SIGNATURE_CACHE: Dict[tuple[str, str], Any] = {}
 
 
+def _get_trackable_signatures(trackable_obj: Any) -> Dict[str, Any]:
+    signatures = getattr(trackable_obj, 'signatures', None)
+    if signatures is None:
+        raise RuntimeError(
+            'SavedModel object does not expose signatures.'
+        )
+    return cast(Dict[str, Any], signatures)
+
+
 def _get_saved_model_bridge_signature(
     saved_model_path: str,
     endpoint: str = 'serving_default',
@@ -131,7 +140,8 @@ def _get_saved_model_bridge_signature(
     cache_key = (os.path.abspath(str(saved_model_path)), str(endpoint))
     if cache_key not in _SAVED_MODEL_BRIDGE_SIGNATURE_CACHE:
         module = tf.saved_model.load(str(saved_model_path))
-        signature_fn = module.signatures.get(str(endpoint), None)
+        signatures = _get_trackable_signatures(module)
+        signature_fn = signatures.get(str(endpoint), None)
         if signature_fn is None:
             raise RuntimeError(
                 'SavedModel bridge endpoint is unavailable. '
@@ -1239,6 +1249,7 @@ def convert(
     eval_split_fail_on_threshold: Optional[bool] = False,
     report_op_coverage: Optional[bool] = False,
     flatbuffer_direct_output_saved_model: Optional[bool] = False,
+    flatbuffer_direct_output_pytorch: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
     flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
@@ -1432,6 +1443,17 @@ def convert(
         instead of a single root SavedModel.\n
         With `check_onnx_tf_outputs_elementwise_close_full=True`, onnx2tf writes
         `<model_name>_saved_model_validation_report.json`.
+
+    flatbuffer_direct_output_pytorch: Optional[bool]
+        Export a reloadable PyTorch package directly from flatbuffer_direct
+        ModelIR using channel-first execution.\n
+        Public spatial inputs/outputs use NCW/NCHW/NCDHW order.\n
+        When used together with split output, partition PyTorch packages are
+        emitted instead of a single root package.\n
+        Unsupported/CUSTOM ops or residual channel-last layout bridges are
+        rejected with an explicit error.\n
+        With `input_tflite_file_path`, this is also available and `-cotof`
+        compares `TFLite↔PyTorch` with the same seeded inputs.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1826,6 +1848,8 @@ def convert(
         between the output of onnx and that of TF. This is because when undefined\n
         dimensions are present, a situation often arises where very large index\n
         values are compared, causing OutOfMemory.\n
+        With `input_tflite_file_path` + `flatbuffer_direct_output_pytorch`, this
+        emits `TFLite↔PyTorch` comparison reports instead of ONNX-based reports.\n
         It is very time consuming because it performs as many inferences as\n
         there are operations.
 
@@ -1946,6 +1970,9 @@ def convert(
     report_op_coverage = bool(report_op_coverage)
     flatbuffer_direct_output_saved_model = bool(
         flatbuffer_direct_output_saved_model
+    )
+    flatbuffer_direct_output_pytorch = bool(
+        flatbuffer_direct_output_pytorch
     )
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
     replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
@@ -2070,6 +2097,11 @@ def convert(
             'flatbuffer_direct_output_saved_model currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
+    if flatbuffer_direct_output_pytorch and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_output_pytorch currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
     if flatbuffer_direct_output_saved_model and disable_model_save:
         error(
             'flatbuffer_direct_output_saved_model cannot be used with disable_model_save=True.'
@@ -2180,9 +2212,9 @@ def convert(
         source_label: str,
         contains_custom_ops: bool = False,
         split_manifest_path: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         if not run_onnx_tflite_output_check:
-            return
+            return None
         explicit_eval = bool(eval_with_onnx)
         required = bool(explicit_eval)
         if contains_custom_ops and not explicit_eval:
@@ -2193,7 +2225,7 @@ def convert(
                     f'source={source_label}'
                 )
             )
-            return
+            return None
         report_path = os.path.join(
             runtime_output_folder_path,
             f'{output_file_name}_accuracy_report.json',
@@ -2233,7 +2265,7 @@ def convert(
             if required:
                 raise RuntimeError(msg) from ex
             warn(msg)
-            return
+            return None
 
         target_key = str(eval_target_tflite) if explicit_eval else 'float32'
         tflite_path = tflite_paths.get(target_key, None)
@@ -2250,7 +2282,7 @@ def convert(
                 warn(
                     'ONNX/TFLite output check was skipped because no TFLite path is available.'
                 )
-                return
+                return None
             tflite_path = fallback_path
             target_key = 'float32'
 
@@ -2296,7 +2328,7 @@ def convert(
                         f'source={source_label} target={target_key}'
                     )
                 )
-                return
+                return None
             if (
                 not required
                 and 'Worker exited abnormally' in ex_str
@@ -2313,7 +2345,7 @@ def convert(
                     f'the generated model (likely runtime-side issue). source={source_label} target={target_key} '
                     f'reason={ex}'
                 )
-                return
+                return None
             msg = (
                 'ONNX/TFLite output check failed. '
                 f'source={source_label} target={target_key} reason={ex}'
@@ -2321,7 +2353,7 @@ def convert(
             if required:
                 raise RuntimeError(msg) from ex
             warn(msg)
-            return
+            return None
 
         trigger = '--eval_with_onnx' if explicit_eval else '-cotof(auto)'
         info(
@@ -2344,6 +2376,208 @@ def convert(
                     'partitions sequentially.'
                 )
             )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'target_key': str(target_key),
+            'source_label': str(source_label),
+        }
+
+    def _run_onnx_pytorch_output_check(
+        *,
+        package_dir: Optional[str],
+        source_label: str,
+    ) -> Optional[Dict[str, Any]]:
+        if not bool(check_onnx_tf_outputs_elementwise_close_full):
+            return None
+        if package_dir is None or str(package_dir) == '' or not os.path.exists(package_dir):
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_pytorch_accuracy_report.json',
+        )
+        try:
+            from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
+                evaluate_pytorch_package_outputs,
+            )
+        except Exception as ex:
+            warn(
+                'ONNX/PyTorch output check was skipped because evaluator dependencies are unavailable. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        eval_num_samples_local = int(eval_num_samples) if bool(eval_with_onnx) else 1
+        try:
+            onnx_graph_for_eval = _prepare_onnx_graph_for_runtime_checks(
+                source_onnx_graph=onnx_graph,
+            )
+            if onnx_graph_for_eval is None:
+                raise RuntimeError('ONNX graph is unavailable for evaluation.')
+            report = evaluate_pytorch_package_outputs(
+                onnx_graph=onnx_graph_for_eval,
+                package_dir=str(package_dir),
+                output_report_path=report_path,
+                num_samples=eval_num_samples_local,
+                seed=0,
+                rtol=eval_rtol,
+                atol=eval_atol,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            )
+        except Exception as ex:
+            warn(
+                'ONNX/PyTorch output check failed. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        overall_metrics = report.get('overall_metrics', {}) or {}
+        info(
+            Color.GREEN(
+                'ONNX/PyTorch output check complete! '
+                f'({report_path}) '
+                f'trigger=-cotof(auto) source={source_label} '
+                f'max_abs={float(overall_metrics.get("max_abs", 0.0)):.6g} '
+                f'rmse={float(overall_metrics.get("rmse", 0.0)):.6g} '
+                f'cosine={float(overall_metrics.get("cosine_similarity", 0.0)):.6g} '
+                f'pass={report.get("evaluation_pass", None)}'
+            )
+        )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'source_label': str(source_label),
+        }
+
+    def _run_tflite_pytorch_output_check(
+        *,
+        tflite_path: Optional[str],
+        package_dir: Optional[str],
+        source_label: str,
+    ) -> Optional[Dict[str, Any]]:
+        if not bool(check_onnx_tf_outputs_elementwise_close_full):
+            return None
+        if tflite_path is None or str(tflite_path) == '' or not os.path.exists(tflite_path):
+            return None
+        if package_dir is None or str(package_dir) == '' or not os.path.exists(package_dir):
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_pytorch_accuracy_report.json',
+        )
+        try:
+            from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
+                evaluate_tflite_pytorch_package_outputs,
+            )
+        except Exception as ex:
+            warn(
+                'TFLite/PyTorch output check was skipped because evaluator dependencies are unavailable. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        try:
+            report = evaluate_tflite_pytorch_package_outputs(
+                tflite_path=str(tflite_path),
+                package_dir=str(package_dir),
+                output_report_path=report_path,
+                num_samples=1,
+                seed=0,
+                rtol=eval_rtol,
+                atol=eval_atol,
+            )
+        except Exception as ex:
+            warn(
+                'TFLite/PyTorch output check failed. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        overall_metrics = report.get('overall_metrics', {}) or {}
+        info(
+            Color.GREEN(
+                'TFLite/PyTorch output check complete! '
+                f'({report_path}) '
+                f'trigger=-cotof(auto) source={source_label} '
+                f'max_abs={float(overall_metrics.get("max_abs", 0.0)):.6g} '
+                f'rmse={float(overall_metrics.get("rmse", 0.0)):.6g} '
+                f'cosine={float(overall_metrics.get("cosine_similarity", 0.0)):.6g} '
+                f'pass={report.get("evaluation_pass", None)}'
+            )
+        )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'source_label': str(source_label),
+        }
+
+    def _write_accuracy_comparison_report(
+        *,
+        tflite_result: Optional[Dict[str, Any]],
+        pytorch_result: Optional[Dict[str, Any]],
+        tflite_pytorch_result: Optional[Dict[str, Any]] = None,
+        source_label: str,
+    ) -> Optional[str]:
+        if (
+            tflite_result is None
+            and pytorch_result is None
+            and tflite_pytorch_result is None
+        ):
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_accuracy_comparison_report.json',
+        )
+        report: Dict[str, Any] = {
+            'schema_version': 1,
+            'source_label': str(source_label),
+            'seed': 0,
+            'num_samples': int(eval_num_samples) if bool(eval_with_onnx) else 1,
+            'rtol': float(eval_rtol),
+            'atol': float(eval_atol),
+            'inputs_source': (
+                'custom_input_op_name_np_data_path'
+                if custom_input_op_name_np_data_path
+                else 'seeded_random'
+            ),
+            'onnx_tflite': None,
+            'onnx_pytorch': None,
+            'tflite_pytorch': None,
+            'reference_backend': 'onnx',
+            'pytorch_backend': 'pytorch_package' if pytorch_result is not None else None,
+        }
+        if tflite_result is not None:
+            report['onnx_tflite'] = {
+                'report_path': str(tflite_result.get('report_path')),
+                'target_key': str(tflite_result.get('target_key', 'float32')),
+                'evaluation_pass': tflite_result.get('report', {}).get('evaluation_pass', None),
+                'overall_metrics': tflite_result.get('report', {}).get('overall_metrics', {}),
+            }
+        if pytorch_result is not None:
+            report['onnx_pytorch'] = {
+                'report_path': str(pytorch_result.get('report_path')),
+                'evaluation_pass': pytorch_result.get('report', {}).get('evaluation_pass', None),
+                'evaluation_skipped': pytorch_result.get('report', {}).get('evaluation_skipped', False),
+                'overall_metrics': pytorch_result.get('report', {}).get('overall_metrics', {}),
+            }
+        if tflite_pytorch_result is not None:
+            report['reference_backend'] = 'tflite'
+            report['pytorch_backend'] = 'pytorch_package'
+            report['tflite_pytorch'] = {
+                'report_path': str(tflite_pytorch_result.get('report_path')),
+                'evaluation_pass': tflite_pytorch_result.get('report', {}).get('evaluation_pass', None),
+                'evaluation_skipped': tflite_pytorch_result.get('report', {}).get('evaluation_skipped', False),
+                'overall_metrics': tflite_pytorch_result.get('report', {}).get('overall_metrics', {}),
+            }
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        info(
+            Color.GREEN(
+                'Combined accuracy comparison report output complete! '
+                f'({report_path})'
+            )
+        )
+        return report_path
 
     def _run_saved_model_tflite_direct_check(
         *,
@@ -2466,11 +2700,12 @@ def convert(
         failure_reason = ''
         try:
             module = tf.saved_model.load(saved_model_path)
-            signature_fn = module.signatures.get('serving_default', None)
+            signatures = _get_trackable_signatures(module)
+            signature_fn = signatures.get('serving_default', None)
             if signature_fn is None:
                 raise RuntimeError(
                     'serving_default signature is missing in generated SavedModel. '
-                    f'available_signatures={list(module.signatures.keys())}'
+                    f'available_signatures={list(signatures.keys())}'
                 )
             signature_inputs = signature_fn.structured_input_signature[1]
             if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
@@ -2882,11 +3117,12 @@ def convert(
                 raise RuntimeError('Evaluator helpers are unavailable.') from import_ex
 
             module = tf.saved_model.load(saved_model_path)
-            signature_fn = module.signatures.get('serving_default', None)
+            signatures = _get_trackable_signatures(module)
+            signature_fn = signatures.get('serving_default', None)
             if signature_fn is None:
                 raise RuntimeError(
                     'serving_default signature is missing in generated SavedModel. '
-                    f'available_signatures={list(module.signatures.keys())}'
+                    f'available_signatures={list(signatures.keys())}'
                 )
             signature_inputs = signature_fn.structured_input_signature[1]
             if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
@@ -3769,7 +4005,7 @@ def convert(
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
                 imported = tf.saved_model.load(saved_model_path)
-                signature_fn = imported.signatures['serving_default']
+                signature_fn = _get_trackable_signatures(imported)['serving_default']
                 frozen_func = convert_variables_to_constants_v2(signature_fn)
                 frozen_func.graph.as_graph_def()
                 tf.io.write_graph(
@@ -3874,7 +4110,9 @@ def convert(
                 prefix='onnx2tf_tflite_direct_',
             )
             tflite_direct_output_folder_path = tflite_direct_staging_dir.name
-            runtime_output_folder_path = tflite_direct_output_folder_path
+            runtime_output_folder_path = output_folder_path
+            if flatbuffer_direct_output_pytorch:
+                os.makedirs(output_folder_path, exist_ok=True)
         else:
             os.makedirs(output_folder_path, exist_ok=True)
         try:
@@ -4034,6 +4272,22 @@ def convert(
                         reference_tflite_path=base_tflite_path,
                         source_label='tflite_direct_input',
                     )
+                if flatbuffer_direct_output_pytorch:
+                    from onnx2tf.tflite_builder.split_pytorch_exporter import (
+                        export_split_pytorch_packages,
+                    )
+                    split_pytorch_outputs = export_split_pytorch_packages(
+                        model_ir=model_ir,
+                        split_manifest_path=split_outputs['split_manifest_path'],
+                        output_folder_path=output_folder_path,
+                        output_file_name=output_file_name,
+                    )
+                    info(
+                        Color.GREEN(
+                            'Split PyTorch package output complete! '
+                            f'partitions={split_pytorch_outputs["split_pytorch_package_count"]}'
+                        )
+                    )
                 elif (not disable_model_save) or run_saved_model_inference_check:
                     model_ir_fp32 = clone_model_ir_with_float32(model_ir)
                     prune_identity_cast_operators(
@@ -4075,6 +4329,7 @@ def convert(
                 or run_saved_model_inference_check
             )
             saved_model_path = None
+            pytorch_package_path = None
             if should_export_tflite_direct_saved_model:
                 saved_model_output_folder_path = tflite_direct_output_folder_path
                 if not persist_tflite_direct_saved_model:
@@ -4109,13 +4364,24 @@ def convert(
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,
                 )
+            if flatbuffer_direct_output_pytorch:
+                from onnx2tf.tflite_builder.pytorch_exporter import (
+                    export_pytorch_package_from_model_ir,
+                )
+                pytorch_package_path = export_pytorch_package_from_model_ir(
+                    model_ir=model_ir_fp32,
+                    output_folder_path=os.path.join(
+                        output_folder_path,
+                        f'{output_file_name}_pytorch',
+                    ),
+                )
         except Exception as ex:
             if tflite_direct_bridge_saved_model_dir is not None:
                 tflite_direct_bridge_saved_model_dir.cleanup()
             if tflite_direct_staging_dir is not None:
                 tflite_direct_staging_dir.cleanup()
             raise RuntimeError(
-                'tflite direct input SavedModel export failed.'
+                'tflite direct input artifact export failed.'
             ) from ex
 
         try:
@@ -4133,6 +4399,19 @@ def convert(
                 _run_saved_model_tflite_direct_check(
                     saved_model_path=saved_model_path,
                     float32_tflite_path=input_tflite_file_path,
+                    source_label='tflite_direct_input',
+                )
+            if pytorch_package_path is not None:
+                info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
+                tflite_pytorch_eval_result = _run_tflite_pytorch_output_check(
+                    tflite_path=input_tflite_file_path,
+                    package_dir=pytorch_package_path,
+                    source_label='tflite_direct_input',
+                )
+                _write_accuracy_comparison_report(
+                    tflite_result=None,
+                    pytorch_result=None,
+                    tflite_pytorch_result=tflite_pytorch_eval_result,
                     source_label='tflite_direct_input',
                 )
         finally:
@@ -4700,6 +4979,7 @@ def convert(
                     'eval_split_fail_on_threshold': eval_split_fail_on_threshold,
                     'report_op_coverage': report_op_coverage,
                     'flatbuffer_direct_output_saved_model': flatbuffer_direct_output_saved_model,
+                    'flatbuffer_direct_output_pytorch': flatbuffer_direct_output_pytorch,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
                     'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
@@ -5131,12 +5411,18 @@ def convert(
     flatbuffer_direct_bridge_saved_model_dir = None
     flatbuffer_direct_output_folder_path = output_folder_path
     flatbuffer_direct_saved_model_output_folder_path = None
+    flatbuffer_direct_pytorch_output_folder_path = os.path.join(
+        output_folder_path,
+        f'{output_file_name}_pytorch',
+    )
     if tflite_backend == 'flatbuffer_direct':
         if disable_model_save:
             flatbuffer_direct_staging_dir = tempfile.TemporaryDirectory(
                 prefix='onnx2tf_flatbuffer_direct_',
             )
             flatbuffer_direct_output_folder_path = flatbuffer_direct_staging_dir.name
+            if flatbuffer_direct_output_pytorch:
+                os.makedirs(output_folder_path, exist_ok=True)
         else:
             os.makedirs(output_folder_path, exist_ok=True)
         runtime_output_folder_path = flatbuffer_direct_output_folder_path
@@ -5247,7 +5533,9 @@ def convert(
         *,
         export_output_folder_path: str,
         output_saved_model_from_model_ir: bool,
+        output_pytorch_from_model_ir: bool,
         saved_model_output_folder_path: Optional[str],
+        pytorch_output_folder_path: Optional[str],
         persist_saved_model_output: bool,
         custom_retry_context: str = '',
     ) -> Dict[str, Any]:
@@ -5280,7 +5568,9 @@ def convert(
                         force_split_manifest=force_split_manifest,
                         report_op_coverage=report_op_coverage,
                         output_saved_model_from_model_ir=output_saved_model_from_model_ir,
+                        output_pytorch_from_model_ir=output_pytorch_from_model_ir,
                         saved_model_output_folder_path=saved_model_output_folder_path,
+                        pytorch_output_folder_path=pytorch_output_folder_path,
                         persist_saved_model_output=persist_saved_model_output,
                         flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
@@ -5386,6 +5676,20 @@ def convert(
             info(
                 Color.GREEN(
                     f'{saved_model_message}({direct_outputs["saved_model_path"]})'
+                )
+            )
+        if 'pytorch_package_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'PyTorch package output complete! '
+                    f'({direct_outputs["pytorch_package_path"]})'
+                )
+            )
+        if 'split_pytorch_package_dirs' in direct_outputs:
+            info(
+                Color.GREEN(
+                    'Split PyTorch package output complete! '
+                    f'partitions={direct_outputs["split_pytorch_package_count"]}'
                 )
             )
         _log_flatbuffer_direct_split_outputs(
@@ -5507,11 +5811,20 @@ def convert(
             direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
         if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
             direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-        _run_onnx_tflite_output_check(
+        tflite_eval_result = _run_onnx_tflite_output_check(
             tflite_paths=direct_eval_paths,
             source_label=source_label,
             contains_custom_ops=direct_contains_custom_ops,
             split_manifest_path=direct_outputs.get('split_manifest_path', None),
+        )
+        pytorch_eval_result = _run_onnx_pytorch_output_check(
+            package_dir=direct_outputs.get('pytorch_package_path', None),
+            source_label=source_label,
+        )
+        _write_accuracy_comparison_report(
+            tflite_result=tflite_eval_result,
+            pytorch_result=pytorch_eval_result,
+            source_label=source_label,
         )
         if 'split_saved_model_dirs' in direct_outputs:
             _maybe_run_split_saved_model_inference_check(
@@ -5575,7 +5888,11 @@ def convert(
                     output_saved_model_from_model_ir=bool(
                         flatbuffer_direct_output_saved_model or needs_saved_model_bridge
                     ),
+                    output_pytorch_from_model_ir=bool(
+                        flatbuffer_direct_output_pytorch
+                    ),
                     saved_model_output_folder_path=flatbuffer_direct_saved_model_output_folder_path,
+                    pytorch_output_folder_path=flatbuffer_direct_pytorch_output_folder_path,
                     persist_saved_model_output=bool(flatbuffer_direct_output_saved_model),
                 )
             except ValueError as ex:
@@ -6059,6 +6376,11 @@ def convert(
                                     force_split_manifest=force_split_manifest,
                                     report_op_coverage=report_op_coverage,
                                     output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
+                                    output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
+                                    pytorch_output_folder_path=os.path.join(
+                                        output_folder_path,
+                                        f'{output_file_name}_pytorch',
+                                    ),
                                     flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                     flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                     keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -6142,6 +6464,12 @@ def convert(
                                     f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
                                 )
                             )
+                        if 'pytorch_package_path' in direct_outputs:
+                            info(
+                                Color.GREEN(
+                                    f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
+                                )
+                            )
                         direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
                         _log_flatbuffer_direct_custom_op_summary(
                             direct_outputs=direct_outputs,
@@ -6170,11 +6498,20 @@ def convert(
                             direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
                         if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
                             direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                        _run_onnx_tflite_output_check(
+                        tflite_eval_result = _run_onnx_tflite_output_check(
                             tflite_paths=direct_eval_paths,
                             source_label='flatbuffer_direct',
                             contains_custom_ops=direct_contains_custom_ops,
                             split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                        )
+                        pytorch_eval_result = _run_onnx_pytorch_output_check(
+                            package_dir=direct_outputs.get('pytorch_package_path', None),
+                            source_label='flatbuffer_direct',
+                        )
+                        _write_accuracy_comparison_report(
+                            tflite_result=tflite_eval_result,
+                            pytorch_result=pytorch_eval_result,
+                            source_label='flatbuffer_direct',
                         )
                         if 'split_saved_model_dirs' in direct_outputs:
                             _maybe_run_split_saved_model_inference_check(
@@ -6451,7 +6788,7 @@ def convert(
                 info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
                 imported = tf.saved_model.load(output_folder_path)
-                f = imported.signatures[SIGNATURE_KEY]
+                f = _get_trackable_signatures(imported)[SIGNATURE_KEY]
                 frozen_func = convert_variables_to_constants_v2(f)
                 frozen_func.graph.as_graph_def()
                 tf.io.write_graph(
@@ -6510,6 +6847,11 @@ def convert(
                                 force_split_manifest=force_split_manifest,
                                 report_op_coverage=report_op_coverage,
                                 output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
+                                output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
+                                pytorch_output_folder_path=os.path.join(
+                                    output_folder_path,
+                                    f'{output_file_name}_pytorch',
+                                ),
                                 flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
                                 flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
                                 keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
@@ -6597,6 +6939,12 @@ def convert(
                     info(
                         Color.GREEN(
                             f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
+                        )
+                    )
+                if 'pytorch_package_path' in direct_outputs:
+                    info(
+                        Color.GREEN(
+                            f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
                         )
                     )
                 _log_flatbuffer_direct_split_outputs(
@@ -6707,11 +7055,20 @@ def convert(
                     direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
                 if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
                     direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                _run_onnx_tflite_output_check(
+                tflite_eval_result = _run_onnx_tflite_output_check(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',
                     contains_custom_ops=direct_contains_custom_ops,
                     split_manifest_path=direct_outputs.get('split_manifest_path', None),
+                )
+                pytorch_eval_result = _run_onnx_pytorch_output_check(
+                    package_dir=direct_outputs.get('pytorch_package_path', None),
+                    source_label='flatbuffer_direct',
+                )
+                _write_accuracy_comparison_report(
+                    tflite_result=tflite_eval_result,
+                    pytorch_result=pytorch_eval_result,
+                    source_label='flatbuffer_direct',
                 )
                 if 'split_saved_model_dirs' in direct_outputs:
                     _maybe_run_split_saved_model_inference_check(
@@ -6894,7 +7251,7 @@ def convert(
                 tf.saved_model.load(
                     output_folder_path
                 )
-            loaded_saved_model: _WrapperFunction = trackable_obj.signatures[SIGNATURE_KEY]
+            loaded_saved_model: _WrapperFunction = _get_trackable_signatures(trackable_obj)[SIGNATURE_KEY]
             structured_input_signature: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_input_signature[1]
             structured_outputs: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_outputs
 
@@ -7885,6 +8242,15 @@ def main():
             'With split output, partition SavedModels are emitted instead of a single root SavedModel.'
     )
     parser.add_argument(
+        '-fdopt',
+        '--flatbuffer_direct_output_pytorch',
+        action='store_true',
+        help=\
+            'Output a reloadable PyTorch package directly from flatbuffer_direct ModelIR. \n' +
+            'Public spatial inputs/outputs use NCW/NCHW/NCDHW. \n' +
+            'Also available with -it/--input_tflite_file_path.'
+    )
+    parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
         action='store_true',
         help=\
@@ -8482,6 +8848,7 @@ def main():
             'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
             'there are operations. '+
+            'With -it and -fdopt, this compares TFLite and PyTorch outputs instead of ONNX-based outputs. '+
             'In addition, final ONNX vs generated TFLite output error check is automatically executed.'
     )
     parser.add_argument(
@@ -8644,6 +9011,7 @@ def main():
         eval_split_fail_on_threshold=args.eval_split_fail_on_threshold,
         report_op_coverage=args.report_op_coverage,
         flatbuffer_direct_output_saved_model=args.flatbuffer_direct_output_saved_model,
+        flatbuffer_direct_output_pytorch=args.flatbuffer_direct_output_pytorch,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,

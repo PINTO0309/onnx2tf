@@ -1,3 +1,4 @@
+import builtins
 import json
 import os
 import subprocess
@@ -1290,6 +1291,7 @@ def test_flatbuffer_direct_output_h5_without_tf_converter_fallback(
             compile=False,
             safe_mode=False,
         )
+        assert loaded is not None
         outputs = loaded(
             [
                 np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
@@ -1326,6 +1328,7 @@ def test_flatbuffer_direct_output_keras_v3_without_tf_converter_fallback(
             compile=False,
             safe_mode=False,
         )
+        assert loaded is not None
         outputs = loaded(
             [
                 np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
@@ -1496,6 +1499,33 @@ def test_tflite_direct_input_saved_model_smoke() -> None:
         assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
 
 
+def test_tflite_direct_input_without_fdopt_does_not_import_pytorch_exporters(
+    monkeypatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name in {
+            "onnx2tf.tflite_builder.pytorch_exporter",
+            "onnx2tf.tflite_builder.split_pytorch_exporter",
+        }:
+            raise AssertionError(f"unexpected import: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _guarded_import)
+    model_ir = _make_add_model_ir()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_direct_input_no_fdopt", model_ir)
+        output_dir = os.path.join(tmpdir, "sm_out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+        )
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+
+
 def test_tflite_direct_input_output_h5_smoke() -> None:
     model_ir = _make_add_model_ir()
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1519,6 +1549,7 @@ def test_tflite_direct_input_output_h5_smoke() -> None:
             compile=False,
             safe_mode=False,
         )
+        assert loaded is not None
         outputs = loaded(
             [
                 np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
@@ -1559,6 +1590,7 @@ def test_tflite_direct_input_output_keras_v3_smoke() -> None:
             compile=False,
             safe_mode=False,
         )
+        assert loaded is not None
         outputs = loaded(
             [
                 np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32),
@@ -1741,7 +1773,7 @@ def test_tflite_direct_input_split_saved_model_smoke() -> None:
             flatbuffer_direct_output_saved_model=True,
         )
         assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split_sm.tflite"))
-        assert not os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
         manifest_path = os.path.join(output_dir, "add_tflite_direct_input_split_sm_split_manifest.json")
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
@@ -1772,7 +1804,7 @@ def test_tflite_direct_input_split_saved_model_cotof_smoke() -> None:
         assert os.path.exists(report_path)
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
-        assert report["mode"] == "split_saved_model"
+        assert report["source_label"] == "tflite_direct_input"
         assert report["comparison"]["status"] == "passed"
         assert report["comparison"]["pass"] is True
         assert report["overall_pass"] is True
@@ -2017,6 +2049,78 @@ def test_flatbuffer_direct_output_saved_model_cotof_smoke() -> None:
         assert report["comparison"]["status"] == "passed"
         assert report["comparison"]["pass"] is True
         assert report["overall_pass"] is True
+
+
+def test_flatbuffer_direct_output_pytorch_cotof_generates_comparison_report() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "add_pytorch_cotof", _make_add_model())
+        onnx2tf.convert(
+            input_onnx_file_path=model_path,
+            output_folder_path=tmpdir,
+            verbosity="error",
+            disable_strict_mode=True,
+            tflite_backend="flatbuffer_direct",
+            flatbuffer_direct_output_pytorch=True,
+            check_onnx_tf_outputs_elementwise_close_full=True,
+        )
+        tflite_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_accuracy_report.json",
+        )
+        pytorch_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_pytorch_accuracy_report.json",
+        )
+        comparison_report_path = os.path.join(
+            tmpdir,
+            "add_pytorch_cotof_accuracy_comparison_report.json",
+        )
+        assert os.path.exists(tflite_report_path)
+        assert os.path.exists(pytorch_report_path)
+        assert os.path.exists(comparison_report_path)
+        with open(comparison_report_path, "r", encoding="utf-8") as f:
+            comparison_report = json.load(f)
+        assert comparison_report["inputs_source"] == "seeded_random"
+        assert comparison_report["onnx_tflite"] is not None
+        assert comparison_report["onnx_pytorch"] is not None
+        assert comparison_report["onnx_tflite"]["report_path"] == tflite_report_path
+        assert comparison_report["onnx_pytorch"]["report_path"] == pytorch_report_path
+
+
+def test_tflite_direct_input_pytorch_cotof_generates_comparison_report() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_ir = _make_add_model_ir()
+        tflite_path = _write_model_ir_as_tflite(tmpdir, "add_tflite_input_pytorch_cotof", model_ir)
+        output_dir = os.path.join(tmpdir, "out")
+        onnx2tf.convert(
+            input_tflite_file_path=tflite_path,
+            output_folder_path=output_dir,
+            verbosity="error",
+            tflite_backend="flatbuffer_direct",
+            flatbuffer_direct_output_pytorch=True,
+            check_onnx_tf_outputs_elementwise_close_full=True,
+            disable_model_save=True,
+        )
+        pytorch_report_path = os.path.join(
+            output_dir,
+            "add_tflite_input_pytorch_cotof_pytorch_accuracy_report.json",
+        )
+        comparison_report_path = os.path.join(
+            output_dir,
+            "add_tflite_input_pytorch_cotof_accuracy_comparison_report.json",
+        )
+        assert os.path.exists(pytorch_report_path)
+        assert os.path.exists(comparison_report_path)
+        with open(comparison_report_path, "r", encoding="utf-8") as f:
+            comparison_report = json.load(f)
+        assert comparison_report["inputs_source"] == "seeded_random"
+        assert comparison_report["reference_backend"] == "tflite"
+        assert comparison_report["onnx_tflite"] is None
+        assert comparison_report["onnx_pytorch"] is None
+        assert comparison_report["tflite_pytorch"] is not None
+        assert comparison_report["tflite_pytorch"]["report_path"] == pytorch_report_path
+        assert comparison_report["tflite_pytorch"]["evaluation_pass"] is True
+        assert "overall_metrics" in comparison_report["tflite_pytorch"]
 
 
 def test_flatbuffer_direct_output_saved_model_split_smoke() -> None:

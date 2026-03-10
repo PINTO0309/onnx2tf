@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.ir import (
     clone_model_ir_with_float16,
@@ -118,6 +118,7 @@ def _build_export_progress_labels(
     output_integer_quantized_tflite: bool,
     output_weights: bool,
     output_saved_model_from_model_ir: bool,
+    output_pytorch_from_model_ir: bool,
 ) -> List[str]:
     labels: List[str] = [
         "tensor correspondence report",
@@ -130,11 +131,14 @@ def _build_export_progress_labels(
         [
             "write float32 tflite",
             "write saved_model",
+            "write pytorch",
             "write float16 tflite",
         ]
     )
     if not output_saved_model_from_model_ir:
         labels.remove("write saved_model")
+    if not output_pytorch_from_model_ir:
+        labels.remove("write pytorch")
     if output_dynamic_range_quantized_tflite:
         labels.append("write dynamic range quant tflite")
     if output_integer_quantized_tflite:
@@ -260,12 +264,24 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_saved_model_from_model_ir = bool(
         kwargs.get("output_saved_model_from_model_ir", False)
     )
+    output_pytorch_from_model_ir = bool(
+        kwargs.get("output_pytorch_from_model_ir", False)
+    )
     saved_model_output_folder_path = kwargs.get(
         "saved_model_output_folder_path",
         None,
     )
     if saved_model_output_folder_path is None:
         saved_model_output_folder_path = output_folder_path
+    pytorch_output_folder_path = kwargs.get(
+        "pytorch_output_folder_path",
+        None,
+    )
+    if pytorch_output_folder_path is None:
+        pytorch_output_folder_path = os.path.join(
+            output_folder_path,
+            f"{output_file_name}_pytorch",
+        )
     persist_saved_model_output = bool(
         kwargs.get(
             "persist_saved_model_output",
@@ -563,6 +579,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         output_integer_quantized_tflite=output_integer_quantized_tflite,
         output_weights=output_weights,
         output_saved_model_from_model_ir=output_saved_model_from_model_ir,
+        output_pytorch_from_model_ir=output_pytorch_from_model_ir,
     )
     export_progress_total = int(len(export_progress_labels))
     export_progress_step = 0
@@ -656,6 +673,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         split_partition_count = 0
         write_timing_report: Dict[str, Dict[str, Any]] = {}
         split_saved_model_dirs = None
+        pytorch_package_path = None
+        split_pytorch_package_dirs = None
         if split_plan_requested:
             _set_export_progress_desc("split planning")
             split_plan_report = plan_contiguous_partitions_by_size(
@@ -745,6 +764,60 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 saved_model_path = export_saved_model_from_model_ir(
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,
+                )
+            _advance_export_progress()
+
+        if output_pytorch_from_model_ir:
+            _set_export_progress_desc("write pytorch")
+            if split_manifest_path is not None:
+                from onnx2tf.tflite_builder.split_pytorch_exporter import (
+                    export_split_pytorch_packages,
+                )
+
+                split_pytorch_outputs = export_split_pytorch_packages(
+                    model_ir=model_ir,
+                    split_manifest_path=split_manifest_path,
+                    output_folder_path=output_folder_path,
+                    output_file_name=output_file_name,
+                )
+                split_pytorch_package_dirs = split_pytorch_outputs["split_pytorch_package_dirs"]
+            else:
+                from onnx2tf.tflite_builder.pytorch_exporter import (
+                    export_pytorch_package_from_model_ir,
+                )
+                fallback_saved_model_path = saved_model_path
+
+                def _ensure_pytorch_saved_model_bridge() -> Optional[str]:
+                    nonlocal fallback_saved_model_path
+                    if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != "":
+                        return str(fallback_saved_model_path)
+                    try:
+                        from onnx2tf.tflite_builder.saved_model_exporter import (
+                            export_saved_model_from_model_ir,
+                        )
+                        fallback_saved_model_path = export_saved_model_from_model_ir(
+                            model_ir=model_ir_fp32,
+                            output_folder_path=os.path.join(
+                                output_folder_path,
+                                f".{output_file_name}_pytorch_saved_model_bridge",
+                            ),
+                        )
+                    except Exception:
+                        fallback_saved_model_path = None
+                    return (
+                        str(fallback_saved_model_path)
+                        if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != ""
+                        else None
+                    )
+
+                pytorch_package_path = export_pytorch_package_from_model_ir(
+                    model_ir=model_ir_fp32,
+                    output_folder_path=pytorch_output_folder_path,
+                    fallback_tflite_path=float32_path,
+                    fallback_onnx_graph=onnx_graph,
+                    fallback_saved_model_path=fallback_saved_model_path,
+                    fallback_saved_model_factory=_ensure_pytorch_saved_model_bridge,
+                    fallback_tflite_has_custom_ops=bool(len(custom_ops_used) > 0),
                 )
             _advance_export_progress()
 
@@ -1027,6 +1100,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if saved_model_path is not None:
         outputs["saved_model_path"] = str(saved_model_path)
         outputs["saved_model_persisted"] = bool(persist_saved_model_output)
+    if pytorch_package_path is not None:
+        outputs["pytorch_package_path"] = str(pytorch_package_path)
     if len(write_timing_report) > 0:
         outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:
@@ -1052,6 +1127,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if split_saved_model_dirs is not None:
         outputs["split_saved_model_dirs"] = list(split_saved_model_dirs)
         outputs["split_saved_model_count"] = int(len(split_saved_model_dirs))
+    if split_pytorch_package_dirs is not None:
+        outputs["split_pytorch_package_dirs"] = list(split_pytorch_package_dirs)
+        outputs["split_pytorch_package_count"] = int(len(split_pytorch_package_dirs))
     if op_coverage_report_path is not None:
         outputs["op_coverage_report_path"] = op_coverage_report_path
     outputs["tensor_correspondence_report_path"] = tensor_correspondence_report_path

@@ -5327,7 +5327,12 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
             )
         )
         return
-    if input_rank == 1 and len(normalized_axes) == 1:
+    if (
+        input_rank == 1
+        and len(normalized_axes) == 1
+        and all(int(v) >= 0 for v in input_signature)
+        and all(int(v) >= 0 for v in output_signature)
+    ):
         axis = int(normalized_axes[0])
         if axis not in (0, 1):
             raise NotImplementedError(

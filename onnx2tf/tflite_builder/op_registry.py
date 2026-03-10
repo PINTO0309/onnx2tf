@@ -1064,12 +1064,16 @@ def _validate_gru(node: Any, ctx: Any) -> None:
     initial_h_name = _input_name(5)
     if initial_h_name != "":
         initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
-        if initial_h_shape != [expected_num_directions, int(batch_dim), hidden_size]:
+        accepted_shapes = {
+            (expected_num_directions, int(batch_dim), hidden_size),
+            (expected_num_directions, hidden_size, int(batch_dim)),
+        }
+        if tuple(initial_h_shape) not in accepted_shapes:
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",
                 message=(
                     "GRU initial_h shape must be [num_directions, batch, hidden_size] "
-                    "for builtin lowering. "
+                    "or [num_directions, hidden_size, batch] for builtin lowering. "
                     f"direction={direction} expected_num_directions={expected_num_directions} "
                     f"initial_h_shape={initial_h_shape} batch={int(batch_dim)} hidden_size={hidden_size}"
                 ),

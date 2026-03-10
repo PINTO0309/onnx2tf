@@ -6,6 +6,25 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 
+LOGICAL_LAYOUT_UNKNOWN = "UNKNOWN"
+LOGICAL_LAYOUT_NCW = "NCW"
+LOGICAL_LAYOUT_NWC = "NWC"
+LOGICAL_LAYOUT_NCHW = "NCHW"
+LOGICAL_LAYOUT_NHWC = "NHWC"
+LOGICAL_LAYOUT_NCDHW = "NCDHW"
+LOGICAL_LAYOUT_NDHWC = "NDHWC"
+
+_VALID_LOGICAL_LAYOUTS = {
+    LOGICAL_LAYOUT_UNKNOWN,
+    LOGICAL_LAYOUT_NCW,
+    LOGICAL_LAYOUT_NWC,
+    LOGICAL_LAYOUT_NCHW,
+    LOGICAL_LAYOUT_NHWC,
+    LOGICAL_LAYOUT_NCDHW,
+    LOGICAL_LAYOUT_NDHWC,
+}
+
+
 @dataclass
 class QuantParamIR:
     scale: List[float]
@@ -24,6 +43,7 @@ class TensorIR:
     data: Optional[np.ndarray] = None
     is_variable: bool = False
     quantization: Optional[Union[Dict[str, Any], QuantParamIR]] = None
+    logical_layout: str = LOGICAL_LAYOUT_UNKNOWN
 
 
 @dataclass
@@ -32,6 +52,7 @@ class OperatorIR:
     inputs: List[str]
     outputs: List[str]
     options: Dict[str, Any] = field(default_factory=dict)
+    axis_semantics: Dict[str, str] = field(default_factory=dict)
     version: int = 1
 
 
@@ -69,6 +90,136 @@ def normalize_onnx_shape(shape: Optional[List[Any]]) -> Tuple[List[int], List[in
     return norm_shape, signature
 
 
+def normalize_logical_layout(layout: Optional[str]) -> str:
+    normalized = str(layout or LOGICAL_LAYOUT_UNKNOWN).upper()
+    if normalized not in _VALID_LOGICAL_LAYOUTS:
+        return LOGICAL_LAYOUT_UNKNOWN
+    return normalized
+
+
+def channel_first_logical_layout(rank: int) -> str:
+    if int(rank) == 3:
+        return LOGICAL_LAYOUT_NCW
+    if int(rank) == 4:
+        return LOGICAL_LAYOUT_NCHW
+    if int(rank) == 5:
+        return LOGICAL_LAYOUT_NCDHW
+    return LOGICAL_LAYOUT_UNKNOWN
+
+
+def channel_last_logical_layout(rank: int) -> str:
+    if int(rank) == 3:
+        return LOGICAL_LAYOUT_NWC
+    if int(rank) == 4:
+        return LOGICAL_LAYOUT_NHWC
+    if int(rank) == 5:
+        return LOGICAL_LAYOUT_NDHWC
+    return LOGICAL_LAYOUT_UNKNOWN
+
+
+def is_channel_first_logical_layout(layout: Optional[str]) -> bool:
+    return normalize_logical_layout(layout) in {
+        LOGICAL_LAYOUT_NCW,
+        LOGICAL_LAYOUT_NCHW,
+        LOGICAL_LAYOUT_NCDHW,
+    }
+
+
+def is_channel_last_logical_layout(layout: Optional[str]) -> bool:
+    return normalize_logical_layout(layout) in {
+        LOGICAL_LAYOUT_NWC,
+        LOGICAL_LAYOUT_NHWC,
+        LOGICAL_LAYOUT_NDHWC,
+    }
+
+
+def logical_layout_rank(layout: Optional[str]) -> int:
+    normalized = normalize_logical_layout(layout)
+    if normalized in {LOGICAL_LAYOUT_NCW, LOGICAL_LAYOUT_NWC}:
+        return 3
+    if normalized in {LOGICAL_LAYOUT_NCHW, LOGICAL_LAYOUT_NHWC}:
+        return 4
+    if normalized in {LOGICAL_LAYOUT_NCDHW, LOGICAL_LAYOUT_NDHWC}:
+        return 5
+    return -1
+
+
+def logical_layout_permutation(
+    *,
+    source_layout: Optional[str],
+    target_layout: Optional[str],
+) -> Optional[List[int]]:
+    source = normalize_logical_layout(source_layout)
+    target = normalize_logical_layout(target_layout)
+    source_rank = logical_layout_rank(source)
+    target_rank = logical_layout_rank(target)
+    if source_rank <= 0 or int(source_rank) != int(target_rank):
+        return None
+    if source == target:
+        return list(range(source_rank))
+    if is_channel_last_logical_layout(source) and is_channel_first_logical_layout(target):
+        if int(source_rank) == 3:
+            return [0, 2, 1]
+        if int(source_rank) == 4:
+            return [0, 3, 1, 2]
+        if int(source_rank) == 5:
+            return [0, 4, 1, 2, 3]
+    if is_channel_first_logical_layout(source) and is_channel_last_logical_layout(target):
+        if int(source_rank) == 3:
+            return [0, 2, 1]
+        if int(source_rank) == 4:
+            return [0, 2, 3, 1]
+        if int(source_rank) == 5:
+            return [0, 2, 3, 4, 1]
+    return None
+
+
+def remap_layout_through_permute(
+    *,
+    layout: Optional[str],
+    perm: List[int],
+) -> str:
+    normalized = normalize_logical_layout(layout)
+    rank = logical_layout_rank(normalized)
+    if rank <= 0 or len(list(perm)) != int(rank):
+        return LOGICAL_LAYOUT_UNKNOWN
+    if list(perm) == logical_layout_permutation(
+        source_layout=normalized,
+        target_layout=channel_first_logical_layout(rank),
+    ):
+        return channel_first_logical_layout(rank)
+    if list(perm) == logical_layout_permutation(
+        source_layout=normalized,
+        target_layout=channel_last_logical_layout(rank),
+    ):
+        return channel_last_logical_layout(rank)
+    if list(perm) == list(range(rank)):
+        return normalized
+    return LOGICAL_LAYOUT_UNKNOWN
+
+
+def rewrite_axis_for_layout(
+    *,
+    axis: int,
+    source_layout: Optional[str],
+    target_layout: Optional[str],
+    rank: Optional[int] = None,
+) -> int:
+    effective_rank = int(rank) if rank is not None else logical_layout_rank(source_layout)
+    perm = logical_layout_permutation(
+        source_layout=source_layout,
+        target_layout=target_layout,
+    )
+    if perm is None or int(effective_rank) <= 0:
+        return int(axis)
+    resolved_axis = int(axis)
+    if resolved_axis < 0:
+        resolved_axis += int(effective_rank)
+    if resolved_axis < 0 or resolved_axis >= int(effective_rank):
+        return int(axis)
+    return int(perm.index(resolved_axis))
+
+
 def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
     clone = ModelIR(
         name=model_ir.name,
@@ -84,6 +235,7 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
             inputs=list(op.inputs),
             outputs=list(op.outputs),
             options=dict(op.options),
+            axis_semantics=dict(op.axis_semantics),
             version=op.version,
         ) for op in model_ir.operators
     ]
@@ -118,6 +270,7 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
                 if isinstance(tensor.quantization, QuantParamIR)
                 else tensor.quantization
             ),
+            logical_layout=normalize_logical_layout(tensor.logical_layout),
         )
     return clone
 
@@ -152,6 +305,7 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
             inputs=list(op.inputs),
             outputs=list(op.outputs),
             options=_rewrite_float16_token_to_float32(dict(op.options)),
+            axis_semantics=dict(op.axis_semantics),
             version=op.version,
         ) for op in model_ir.operators
     ]
@@ -186,6 +340,7 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
                 if isinstance(tensor.quantization, QuantParamIR)
                 else tensor.quantization
             ),
+            logical_layout=normalize_logical_layout(tensor.logical_layout),
         )
     return clone
 
@@ -483,3 +638,327 @@ def optimize_redundant_transpose_operators(
         "removed_inverse_transpose_pairs": int(removed_inverse_pairs),
         "composed_consecutive_transpose_pairs": int(composed_pairs),
     }
+
+
+def _permute_shape(values: List[int], perm: List[int]) -> Optional[List[int]]:
+    if len(list(values)) != len(list(perm)):
+        return None
+    return [int(values[int(idx)]) for idx in perm]
+
+
+def _boundary_current_layout(
+    *,
+    tensor: TensorIR,
+    boundary_signature: Optional[List[int]],
+    assume_channel_last_names: set[str],
+) -> str:
+    rank = len(list(tensor.shape))
+    if rank not in {3, 4, 5}:
+        return LOGICAL_LAYOUT_UNKNOWN
+    if str(tensor.name) in assume_channel_last_names:
+        return channel_last_logical_layout(rank)
+    if isinstance(boundary_signature, list) and len(boundary_signature) == rank:
+        current_shape = [int(v) for v in list(tensor.shape)]
+        cf_shape = [int(v) if int(v) > 0 else 1 for v in list(boundary_signature)]
+        if current_shape == cf_shape:
+            return channel_first_logical_layout(rank)
+        cl_shape = _permute_shape(
+            cf_shape,
+            logical_layout_permutation(
+                source_layout=channel_first_logical_layout(rank),
+                target_layout=channel_last_logical_layout(rank),
+            ) or [],
+        )
+        if cl_shape is not None and current_shape == cl_shape:
+            return channel_last_logical_layout(rank)
+    lowered_name = str(tensor.name).lower()
+    if any(token in lowered_name for token in ["_nwc", "_nhwc", "_ndhwc"]):
+        return channel_last_logical_layout(rank)
+    if any(token in lowered_name for token in ["_ncw", "_nchw", "_ncdhw", "_onnx_ncx_internal"]):
+        return channel_first_logical_layout(rank)
+    return normalize_logical_layout(tensor.logical_layout)
+
+
+def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
+    boundary_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_map, dict):
+        boundary_map = {}
+    assume_channel_last_names = {
+        str(v)
+        for v in model_ir.metadata.get("assume_channel_last_layout_tensor_names", [])
+        if str(v) != ""
+    }
+    recurrent_public_boundary_context = any(
+        str(op.op_type) in {
+            "GRU",
+            "LSTM",
+            "RNN",
+            "UNIDIRECTIONAL_SEQUENCE_RNN",
+            "UNIDIRECTIONAL_SEQUENCE_LSTM",
+            "BIDIRECTIONAL_SEQUENCE_LSTM",
+        }
+        for op in model_ir.operators
+    )
+    public_layout_map: Dict[str, str] = {}
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        if rank in {3, 4, 5}:
+            if recurrent_public_boundary_context and rank == 3:
+                public_layout_map[str(tensor_name)] = channel_last_logical_layout(rank)
+            else:
+                public_layout_map[str(tensor_name)] = channel_first_logical_layout(rank)
+    model_ir.metadata["onnx_public_layout_map"] = dict(public_layout_map)
+
+    for tensor_name, tensor in model_ir.tensors.items():
+        tensor.logical_layout = normalize_logical_layout(tensor.logical_layout)
+        if str(tensor_name) in public_layout_map:
+            tensor.logical_layout = _boundary_current_layout(
+                tensor=tensor,
+                boundary_signature=boundary_map.get(str(tensor_name), None),
+                assume_channel_last_names=assume_channel_last_names,
+            )
+        elif tensor.logical_layout == LOGICAL_LAYOUT_UNKNOWN:
+            rank = len(list(tensor.shape))
+            lowered_name = str(tensor_name).lower()
+            if rank in {3, 4, 5} and any(token in lowered_name for token in ["_nwc", "_nhwc", "_ndhwc"]):
+                tensor.logical_layout = channel_last_logical_layout(rank)
+            elif rank in {3, 4, 5} and any(token in lowered_name for token in ["_ncw", "_nchw", "_ncdhw", "_onnx_ncx_internal"]):
+                tensor.logical_layout = channel_first_logical_layout(rank)
+
+    layout_passthrough_ops = {
+        "ABS",
+        "ADD",
+        "AVERAGE_POOL_2D",
+        "BROADCAST_TO",
+        "CAST",
+        "CEIL",
+        "CONV_2D",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "COS",
+        "DEPTHWISE_CONV_2D",
+        "DEPTH_TO_SPACE",
+        "DIV",
+        "ELU",
+        "EXP",
+        "EXPAND_DIMS",
+        "FLOOR",
+        "GATHER",
+        "GATHER_ND",
+        "IDENTITY",
+        "LEAKY_RELU",
+        "LOG",
+        "LOGICAL_AND",
+        "LOGICAL_NOT",
+        "LOGICAL_OR",
+        "LOGISTIC",
+        "L2_NORMALIZATION",
+        "MAXIMUM",
+        "MAX_POOL_2D",
+        "MEAN",
+        "MINIMUM",
+        "MIRROR_PAD",
+        "MUL",
+        "NEG",
+        "PAD",
+        "PADV2",
+        "PACK",
+        "POW",
+        "PRELU",
+        "RELU",
+        "RELU6",
+        "RELU_N1_TO_1",
+        "RELU_0_TO_1",
+        "RESHAPE",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "REVERSE_V2",
+        "SELECT",
+        "SELECT_V2",
+        "SHAPE",
+        "SIGN",
+        "SIN",
+        "SLICE",
+        "SOFTMAX",
+        "SPACE_TO_DEPTH",
+        "SQRT",
+        "SQUEEZE",
+        "STRIDED_SLICE",
+        "SUB",
+        "SUM",
+        "TANH",
+        "TILE",
+        "TRANSPOSE_CONV",
+        "UNPACK",
+        "WHERE",
+    }
+
+    max_iter = max(1, int(len(model_ir.operators)) * 4)
+    for _ in range(max_iter):
+        changed = False
+        for op in model_ir.operators:
+            op_type = str(op.op_type)
+            output_names = [str(v) for v in list(op.outputs)]
+            output_tensors = [model_ir.tensors.get(name, None) for name in output_names]
+            input_names = [str(v) for v in list(op.inputs)]
+            input_tensors = [model_ir.tensors.get(name, None) for name in input_names]
+
+            if op_type == "TRANSPOSE" and len(input_tensors) >= 1 and len(output_tensors) == 1:
+                source_tensor = input_tensors[0]
+                target_tensor = output_tensors[0]
+                if source_tensor is None or target_tensor is None:
+                    continue
+                perm = _read_transpose_perm(model_ir, op)
+                if perm is None:
+                    continue
+                source_layout = normalize_logical_layout(source_tensor.logical_layout)
+                target_layout = normalize_logical_layout(target_tensor.logical_layout)
+                if source_layout != LOGICAL_LAYOUT_UNKNOWN:
+                    remapped = remap_layout_through_permute(layout=source_layout, perm=perm)
+                    if remapped != LOGICAL_LAYOUT_UNKNOWN and remapped != target_layout:
+                        target_tensor.logical_layout = remapped
+                        changed = True
+                elif target_layout != LOGICAL_LAYOUT_UNKNOWN:
+                    for candidate_rank in [len(perm)]:
+                        cf_layout = channel_first_logical_layout(candidate_rank)
+                        cl_layout = channel_last_logical_layout(candidate_rank)
+                        for candidate in [cf_layout, cl_layout]:
+                            if remap_layout_through_permute(layout=candidate, perm=perm) == target_layout:
+                                source_tensor.logical_layout = candidate
+                                changed = True
+                                break
+                continue
+
+            if op_type == "SPLIT":
+                data_input = input_tensors[1] if len(input_tensors) >= 2 else input_tensors[0] if len(input_tensors) >= 1 else None
+                if data_input is None:
+                    continue
+                data_layout = normalize_logical_layout(data_input.logical_layout)
+                if data_layout != LOGICAL_LAYOUT_UNKNOWN:
+                    for output_tensor in output_tensors:
+                        if output_tensor is not None and normalize_logical_layout(output_tensor.logical_layout) != data_layout:
+                            output_tensor.logical_layout = data_layout
+                            changed = True
+                else:
+                    known_output_layouts = {
+                        normalize_logical_layout(t.logical_layout)
+                        for t in output_tensors
+                        if t is not None and normalize_logical_layout(t.logical_layout) != LOGICAL_LAYOUT_UNKNOWN
+                    }
+                    if len(known_output_layouts) == 1:
+                        resolved = next(iter(known_output_layouts))
+                        data_input.logical_layout = resolved
+                        changed = True
+                continue
+
+            if op_type == "CONCATENATION":
+                known_input_layouts = {
+                    normalize_logical_layout(t.logical_layout)
+                    for t in input_tensors
+                    if t is not None and normalize_logical_layout(t.logical_layout) != LOGICAL_LAYOUT_UNKNOWN
+                }
+                if len(known_input_layouts) == 1:
+                    resolved = next(iter(known_input_layouts))
+                    for output_tensor in output_tensors:
+                        if output_tensor is not None and normalize_logical_layout(output_tensor.logical_layout) != resolved:
+                            output_tensor.logical_layout = resolved
+                            changed = True
+                else:
+                    known_output_layouts = {
+                        normalize_logical_layout(t.logical_layout)
+                        for t in output_tensors
+                        if t is not None and normalize_logical_layout(t.logical_layout) != LOGICAL_LAYOUT_UNKNOWN
+                    }
+                    if len(known_output_layouts) == 1:
+                        resolved = next(iter(known_output_layouts))
+                        for input_tensor in input_tensors:
+                            if input_tensor is None:
+                                continue
+                            input_rank = len(list(input_tensor.shape))
+                            if input_rank not in {3, 4, 5}:
+                                continue
+                            target_layout = resolved
+                            if is_channel_first_logical_layout(resolved):
+                                target_layout = channel_first_logical_layout(input_rank)
+                            elif is_channel_last_logical_layout(resolved):
+                                target_layout = channel_last_logical_layout(input_rank)
+                            if normalize_logical_layout(input_tensor.logical_layout) != target_layout:
+                                input_tensor.logical_layout = target_layout
+                                changed = True
+                continue
+
+            if op_type in layout_passthrough_ops:
+                resolved_layout = LOGICAL_LAYOUT_UNKNOWN
+                for input_tensor in input_tensors:
+                    if input_tensor is None:
+                        continue
+                    candidate = normalize_logical_layout(input_tensor.logical_layout)
+                    if candidate == LOGICAL_LAYOUT_UNKNOWN:
+                        continue
+                    resolved_layout = candidate
+                    break
+                if resolved_layout == LOGICAL_LAYOUT_UNKNOWN:
+                    known_outputs = {
+                        normalize_logical_layout(t.logical_layout)
+                        for t in output_tensors
+                        if t is not None and normalize_logical_layout(t.logical_layout) != LOGICAL_LAYOUT_UNKNOWN
+                    }
+                    if len(known_outputs) == 1:
+                        resolved_layout = next(iter(known_outputs))
+                if resolved_layout == LOGICAL_LAYOUT_UNKNOWN:
+                    continue
+                for input_tensor in input_tensors:
+                    if input_tensor is None:
+                        continue
+                    input_rank = len(list(input_tensor.shape))
+                    if input_rank not in {3, 4, 5}:
+                        continue
+                    if is_channel_first_logical_layout(resolved_layout):
+                        input_target_layout = channel_first_logical_layout(input_rank)
+                    elif is_channel_last_logical_layout(resolved_layout):
+                        input_target_layout = channel_last_logical_layout(input_rank)
+                    else:
+                        input_target_layout = LOGICAL_LAYOUT_UNKNOWN
+                    if input_target_layout != LOGICAL_LAYOUT_UNKNOWN and normalize_logical_layout(input_tensor.logical_layout) != input_target_layout:
+                        input_tensor.logical_layout = input_target_layout
+                        changed = True
+                for output_tensor in output_tensors:
+                    if output_tensor is None:
+                        continue
+                    output_rank = len(list(output_tensor.shape))
+                    if output_rank in {3, 4, 5}:
+                        if is_channel_first_logical_layout(resolved_layout):
+                            target_layout = channel_first_logical_layout(output_rank)
+                        elif is_channel_last_logical_layout(resolved_layout):
+                            target_layout = channel_last_logical_layout(output_rank)
+                        else:
+                            target_layout = LOGICAL_LAYOUT_UNKNOWN
+                        if target_layout != LOGICAL_LAYOUT_UNKNOWN and normalize_logical_layout(output_tensor.logical_layout) != target_layout:
+                            output_tensor.logical_layout = target_layout
+                            changed = True
+        if not changed:
+            break
+
+    return {
+        str(name): normalize_logical_layout(tensor.logical_layout)
+        for name, tensor in model_ir.tensors.items()
+    }
+
+
+def validate_model_ir_layout_annotations(model_ir: ModelIR) -> List[str]:
+    problems: List[str] = []
+    for tensor_name, tensor in sorted(model_ir.tensors.items()):
+        layout = normalize_logical_layout(tensor.logical_layout)
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        if layout == LOGICAL_LAYOUT_UNKNOWN:
+            continue
+        if logical_layout_rank(layout) != int(rank):
+            problems.append(
+                f"tensor={tensor_name} shape={list(tensor.shape)} logical_layout={layout}"
+            )
+    return problems

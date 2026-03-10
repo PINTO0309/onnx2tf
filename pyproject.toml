@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "onnx2tf"
-version = "2.3.4"
+version = "2.3.5"
 description = "Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in onnx-tensorflow (onnx-tf)."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -47,13 +47,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "onnx-graphsurgeon==0.5.8",
+torch = [
+    "torch==2.9.0+cu128",
 ]
 
 [project.scripts]
 onnx2tf = "onnx2tf:main"
 onnx2tf-tflite2sm-bulk = "onnx2tf.utils.tflite2sm_bulk_runner:main"
+onnx2tf-pytorch-bulk = "onnx2tf.utils.pytorch_bulk_runner:main"
 
 [project.urls]
 Homepage = "https://github.com/PINTO0309/onnx2tf"
@@ -71,6 +72,16 @@ override-dependencies = [
 
 [tool.uv.build-backend]
 module-root = ""
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.pyright]
 exclude = [

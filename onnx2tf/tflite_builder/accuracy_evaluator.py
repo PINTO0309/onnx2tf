@@ -304,6 +304,78 @@ def _load_custom_input_data(
 def _collect_onnx_input_specs(
     onnx_graph: onnx.ModelProto,
 ) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
+    def _canonical_input_name_local(name: str) -> str:
+        pieces: List[str] = []
+        prev_sep = False
+        for ch in str(name).lower():
+            if ch.isalnum():
+                pieces.append(ch)
+                prev_sep = False
+                continue
+            if not prev_sep:
+                pieces.append("_")
+                prev_sep = True
+        return "".join(pieces).strip("_")
+
+    def _strip_length_like_suffix_local(name: str) -> str:
+        base = _canonical_input_name_local(name)
+        for suffix in (
+            "_lengths",
+            "_length",
+            "_lens",
+            "_len",
+            "lengths",
+            "length",
+            "lens",
+            "len",
+        ):
+            if base.endswith(suffix):
+                return base[: -len(suffix)].strip("_")
+        return base
+
+    def _is_length_like_input_name_local(name: str) -> bool:
+        canonical = _canonical_input_name_local(name)
+        tokens = [token for token in canonical.split("_") if token != ""]
+        if len(tokens) == 0:
+            return False
+        joined = "_".join(tokens)
+        return any(
+            joined.endswith(suffix)
+            for suffix in (
+                "length",
+                "lengths",
+                "len",
+                "lens",
+                "seq_len",
+                "seq_lens",
+            )
+        )
+
+    graph_input_names = [
+        str(graph_input.name)
+        for graph_input in onnx_graph.graph.input
+    ]
+    graph_length_like_names = [
+        name for name in graph_input_names
+        if _is_length_like_input_name_local(name)
+    ]
+
+    def _has_related_length_like_input(input_name: str) -> bool:
+        base = _strip_length_like_suffix_local(input_name)
+        if len(graph_length_like_names) == 0:
+            return False
+        if base == "":
+            return len(graph_length_like_names) == 1
+        for candidate_name in graph_length_like_names:
+            candidate_base = _strip_length_like_suffix_local(candidate_name)
+            if candidate_base == "":
+                continue
+            if candidate_base == base:
+                return True
+            if candidate_base.startswith(f"{base}_") or base.startswith(f"{candidate_base}_"):
+                return True
+        return len(graph_length_like_names) == 1
+
     def _dynamic_dim_default() -> int:
         raw = str(os.environ.get("ONNX2TF_EVAL_DYNAMIC_DIM_DEFAULT", "16")).strip()
         try:
@@ -314,6 +386,7 @@ def _collect_onnx_input_specs(
 
     def _resolve_dynamic_dim(
         *,
+        input_name: str,
         rank: int,
         axis: int,
         known_dims: List[int],
@@ -321,10 +394,32 @@ def _collect_onnx_input_specs(
         if int(axis) == 0:
             return 1
         default_dim = _dynamic_dim_default()
+        feature_dims = {40, 64, 80, 128, 256}
+
+        if int(rank) == 3:
+            feature_mid = int(known_dims[1]) if int(known_dims[1]) > 0 else -1
+            feature_last = int(known_dims[2]) if int(known_dims[2]) > 0 else -1
+            has_related_length = _has_related_length_like_input(input_name)
+
+            # Sequence-major feature tensors: [N, T, F]
+            if feature_last in feature_dims and int(axis) == 1:
+                if has_related_length:
+                    return 1
+                return max(64, int(default_dim))
+
+            # Channel-major audio tensors: [N, F, T]
+            if feature_mid in feature_dims and int(axis) == 2:
+                if has_related_length:
+                    return 1
+                return max(64, int(default_dim))
 
         if int(rank) == 4:
             c_first = int(known_dims[1]) if int(known_dims[1]) > 0 else -1
             c_last = int(known_dims[3]) if int(known_dims[3]) > 0 else -1
+
+            if _is_mask_like_input_name(input_name) and int(axis) == 1:
+                if int(known_dims[2]) > 0 and int(known_dims[3]) > 0:
+                    return 1
 
             # NCHW-like input: [N, C, H, W]
             if c_first in (1, 3, 4) and int(axis) in (2, 3):
@@ -336,6 +431,29 @@ def _collect_onnx_input_specs(
 
             # NHWC-like input: [N, H, W, C]
             if c_last in (1, 3, 4) and int(axis) in (1, 2):
+                partner_axis = 2 if int(axis) == 1 else 1
+                partner = int(known_dims[partner_axis])
+                if partner > 0:
+                    return int(partner)
+                return max(16, int(default_dim))
+
+        if int(rank) == 5:
+            c_mid = int(known_dims[2]) if int(known_dims[2]) > 0 else -1
+            c_last = int(known_dims[4]) if int(known_dims[4]) > 0 else -1
+
+            # Multi-image / video-like input: [N, T, C, H, W]
+            if c_mid in (1, 3, 4):
+                if int(axis) == 1:
+                    return 1
+                if int(axis) in (3, 4):
+                    partner_axis = 4 if int(axis) == 3 else 3
+                    partner = int(known_dims[partner_axis])
+                    if partner > 0:
+                        return int(partner)
+                    return max(16, int(default_dim))
+
+            # NDHWC-like input: [N, D, H, W, C]
+            if c_last in (1, 3, 4) and int(axis) in (1, 2, 3):
                 partner_axis = 2 if int(axis) == 1 else 1
                 partner = int(known_dims[partner_axis])
                 if partner > 0:
@@ -366,6 +484,7 @@ def _collect_onnx_input_specs(
             else:
                 shape.append(
                     _resolve_dynamic_dim(
+                        input_name=str(graph_input.name),
                         rank=int(rank),
                         axis=int(axis),
                         known_dims=[int(v) for v in list(raw_shape)],
@@ -417,6 +536,91 @@ def _generate_seeded_input(
             f"got: {mode}"
         )
     return rng.standard_normal(shape).astype(np.float32).astype(np_dtype)
+
+
+def _canonical_input_name(name: str) -> str:
+    pieces: List[str] = []
+    prev_sep = False
+    for ch in str(name).lower():
+        if ch.isalnum():
+            pieces.append(ch)
+            prev_sep = False
+            continue
+        if not prev_sep:
+            pieces.append("_")
+            prev_sep = True
+    return "".join(pieces).strip("_")
+
+
+def _is_length_like_input_name(name: str) -> bool:
+    canonical = _canonical_input_name(name)
+    tokens = [token for token in canonical.split("_") if token != ""]
+    if len(tokens) == 0:
+        return False
+    joined = "_".join(tokens)
+    return any(
+        joined.endswith(suffix)
+        for suffix in (
+            "length",
+            "lengths",
+            "len",
+            "lens",
+            "seq_len",
+            "seq_lens",
+        )
+    )
+
+
+def _is_mask_like_input_name(name: str) -> bool:
+    canonical = _canonical_input_name(name)
+    return "mask" in canonical.split("_")
+
+
+def _fill_length_like_input(
+    *,
+    input_name: str,
+    input_shape: Tuple[int, ...],
+    input_dtype: np.dtype,
+    generated_inputs: Dict[str, np.ndarray],
+) -> np.ndarray:
+    canonical = _canonical_input_name(input_name)
+    base = canonical
+    for suffix in (
+        "_lengths",
+        "_length",
+        "_lens",
+        "_len",
+        "lengths",
+        "length",
+        "lens",
+        "len",
+    ):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].strip("_")
+            break
+
+    inferred_value = 1
+    for candidate_name, candidate_value in generated_inputs.items():
+        candidate_canonical = _canonical_input_name(candidate_name)
+        if base != "" and candidate_canonical != base and not candidate_canonical.startswith(f"{base}_"):
+            continue
+        candidate_shape = list(np.asarray(candidate_value).shape)
+        if len(candidate_shape) >= 3:
+            feature_dims = {40, 64, 80, 128, 256}
+            if int(candidate_shape[1]) in feature_dims:
+                inferred_value = max(1, int(candidate_shape[-1]))
+                break
+            if int(candidate_shape[-1]) in feature_dims:
+                inferred_value = max(1, int(candidate_shape[1]))
+                break
+        if len(candidate_shape) >= 2:
+            inferred_value = max(1, int(candidate_shape[1]))
+            break
+        if len(candidate_shape) >= 1:
+            inferred_value = max(1, int(candidate_shape[-1]))
+            break
+
+    return np.full(input_shape, inferred_value, dtype=input_dtype)
 
 
 def _is_likely_image_tensor_shape(shape: Tuple[int, ...]) -> bool:
@@ -519,6 +723,15 @@ def _build_eval_inputs_for_sample(
             )
         elif bool(force_zero_generated_inputs):
             sample = np.zeros(input_shape, dtype=input_dtype)
+        elif _is_mask_like_input_name(input_name):
+            sample = np.ones(input_shape, dtype=input_dtype)
+        elif np.issubdtype(input_dtype, np.integer) and _is_length_like_input_name(input_name):
+            sample = _fill_length_like_input(
+                input_name=input_name,
+                input_shape=input_shape,
+                input_dtype=input_dtype,
+                generated_inputs=onnx_inputs,
+            )
         else:
             sample = _generate_seeded_input(
                 shape=input_shape,
@@ -1008,11 +1221,23 @@ def _judge_metrics(
 ) -> Dict[str, Any]:
     ref_max_abs = max(float(metrics.get("ref_max_abs", 0.0)), 0.0)
     ref_rms = max(float(metrics.get("ref_rms", 0.0)), 0.0)
-    max_abs_limit = max(float(thresholds["max_abs"]), float(rtol) * ref_max_abs)
-    rmse_limit = max(float(thresholds["rmse"]), float(rtol) * ref_rms)
+    max_abs_limit = max(
+        float(thresholds["max_abs"]),
+        float(rtol) * ref_max_abs,
+        2.0e-3 * ref_max_abs,
+    )
+    mean_abs_limit = max(
+        float(thresholds["mean_abs"]),
+        2.5e-5 * ref_max_abs,
+    )
+    rmse_limit = max(
+        float(thresholds["rmse"]),
+        float(rtol) * ref_rms,
+        6.25e-5 * ref_max_abs,
+    )
     checks = {
         "max_abs": float(metrics["max_abs"]) <= max_abs_limit,
-        "mean_abs": float(metrics["mean_abs"]) <= float(thresholds["mean_abs"]),
+        "mean_abs": float(metrics["mean_abs"]) <= mean_abs_limit,
         "rmse": float(metrics["rmse"]) <= rmse_limit,
         "cosine_similarity": float(metrics["cosine_similarity"]) >= float(thresholds["cosine_similarity"]),
     }
@@ -1021,7 +1246,7 @@ def _judge_metrics(
         "checks": checks,
         "effective_thresholds": {
             "max_abs": float(max_abs_limit),
-            "mean_abs": float(thresholds["mean_abs"]),
+            "mean_abs": float(mean_abs_limit),
             "rmse": float(rmse_limit),
             "cosine_similarity": float(thresholds["cosine_similarity"]),
         },

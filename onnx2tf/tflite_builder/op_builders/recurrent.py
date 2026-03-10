@@ -1944,9 +1944,29 @@ def build_gru_op(node: Any, ctx: Any) -> None:
     if initial_h_name != "":
         ctx.ensure_tensor(initial_h_name)
         initial_h_shape = [int(v) for v in ctx.get_tensor_shape(initial_h_name)]
+        if initial_h_shape == [expected_num_directions, hidden_size, batch]:
+            transposed_initial_h_name = ctx.add_intermediate_tensor(
+                f"{node.name}_gru_initial_h_nbh",
+                dtype="FLOAT32",
+                shape=[expected_num_directions, batch, hidden_size],
+            )
+            perm_name = ctx.add_const_tensor(
+                f"{node.name}_gru_initial_h_nbh_perm",
+                np.asarray([0, 2, 1], dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[initial_h_name, perm_name],
+                    outputs=[transposed_initial_h_name],
+                )
+            )
+            initial_h_name = transposed_initial_h_name
+            initial_h_shape = [expected_num_directions, batch, hidden_size]
         if initial_h_shape != [expected_num_directions, batch, hidden_size]:
             raise NotImplementedError(
-                "GRU initial_h shape must be [num_directions, batch, hidden_size] in flatbuffer_direct. "
+                "GRU initial_h shape must be [num_directions, batch, hidden_size] "
+                "or [num_directions, hidden_size, batch] in flatbuffer_direct. "
                 f"op={node.name} initial_h_shape={initial_h_shape} num_directions={expected_num_directions}"
             )
 
