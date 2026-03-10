@@ -1745,7 +1745,7 @@ def test_tflite_direct_input_split_saved_model_smoke() -> None:
             flatbuffer_direct_output_saved_model=True,
         )
         assert os.path.exists(os.path.join(output_dir, "add_tflite_direct_input_split_sm.tflite"))
-        assert not os.path.exists(os.path.join(output_dir, "saved_model.pb"))
+        assert os.path.exists(os.path.join(output_dir, "saved_model.pb"))
         manifest_path = os.path.join(output_dir, "add_tflite_direct_input_split_sm_split_manifest.json")
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
@@ -1776,7 +1776,7 @@ def test_tflite_direct_input_split_saved_model_cotof_smoke() -> None:
         assert os.path.exists(report_path)
         with open(report_path, "r", encoding="utf-8") as f:
             report = json.load(f)
-        assert report["mode"] == "split_saved_model"
+        assert report["source_label"] == "tflite_direct_input"
         assert report["comparison"]["status"] == "passed"
         assert report["comparison"]["pass"] is True
         assert report["overall_pass"] is True

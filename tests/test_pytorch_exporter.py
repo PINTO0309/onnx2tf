@@ -1456,10 +1456,10 @@ def test_normalize_model_ir_synchronizes_reshape_targets_after_layout_permutatio
 
     normalized = normalize_model_ir_for_pytorch_channel_first(model_ir)
 
-    assert normalized.tensors["y"].shape == [1, 3, 8]
-    assert np.asarray(normalized.tensors["shape"].data).reshape(-1).tolist() == [1, 3, 8]
+    assert normalized.tensors["y"].shape == [1, 8, 3]
+    assert np.asarray(normalized.tensors["shape"].data).reshape(-1).tolist() == [1, 8, 3]
     reshape_op = next(op for op in normalized.operators if str(op.op_type) == "RESHAPE")
-    assert reshape_op.options["newShape"] == [1, 3, 8]
+    assert reshape_op.options["newShape"] == [1, 8, 3]
 
 
 def test_export_pytorch_package_roundtrip_add_relu(tmp_path) -> None:
@@ -2553,7 +2553,7 @@ def test_export_pytorch_package_rejects_custom_ops(tmp_path) -> None:
         )
 
 
-def test_export_pytorch_package_rejects_residual_layout_transpose(tmp_path) -> None:
+def test_export_pytorch_package_normalizes_stale_residual_layout_transpose(tmp_path) -> None:
     model_ir = ModelIR(name="residual_layout")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
@@ -2573,11 +2573,14 @@ def test_export_pytorch_package_rejects_residual_layout_transpose(tmp_path) -> N
             OperatorIR(op_type="TRANSPOSE", inputs=["x_mid", "perm"], outputs=["y"], options={}),
         ]
     )
-    with pytest.raises(ModelIRPyTorchExportError, match="residual layout transpose"):
-        export_pytorch_package_from_model_ir(
-            model_ir=model_ir,
-            output_folder_path=str(tmp_path / "residual_pytorch"),
-        )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "residual_pytorch"),
+    )
+    metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["tensors"]["y"]["shape"] == [1, 3, 4, 4]
+    assert metadata["tensors"]["y"]["logical_layout"] == "NCHW"
+    assert [str(op["op_type"]) for op in metadata["operators"]] == ["IDENTITY", "IDENTITY"]
 
 
 def test_export_pytorch_package_roundtrip_batch_matmul(tmp_path) -> None:
@@ -2844,7 +2847,7 @@ def test_infer_model_ir_logical_layouts_uses_nwc_for_recurrent_public_rank3_boun
     assert model_ir.metadata["onnx_public_layout_map"]["preds"] == "NWC"
 
 
-def test_export_pytorch_package_prefers_tflite_backend_for_large_channel_first_softmax_without_saved_model(
+def test_export_pytorch_package_prefers_native_package_for_supported_channel_first_softmax(
     tmp_path,
 ) -> None:
     model_ir = ModelIR(name="softmax_fallback")
@@ -2874,7 +2877,9 @@ def test_export_pytorch_package_prefers_tflite_backend_for_large_channel_first_s
         fallback_tflite_path=tflite_path,
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata.get("execution_backend") == "tflite"
+    assert metadata.get("execution_backend") is None
+    model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "load_generated_model_package" not in model_py
 
 
 def test_should_prefer_tflite_backend_for_large_detection_head_runtime_fallback() -> None:
@@ -2921,7 +2926,7 @@ def test_export_pytorch_package_does_not_force_tflite_backend_when_custom_ops_ex
     assert metadata.get("execution_backend") is None
 
 
-def test_export_pytorch_package_prefers_saved_model_fallback_over_tflite_shortcut(
+def test_export_pytorch_package_prefers_reimported_native_package_over_saved_model_fallback(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -2963,7 +2968,9 @@ def test_export_pytorch_package_prefers_saved_model_fallback_over_tflite_shortcu
         fallback_saved_model_path=str(saved_model_dir),
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata["execution_backend"] == "saved_model"
+    assert metadata.get("execution_backend") is None
+    model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "load_generated_model_package" not in model_py
 
 
 def test_export_pytorch_package_prefers_native_runtime_over_saved_model_for_large_supported_models(

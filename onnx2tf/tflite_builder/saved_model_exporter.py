@@ -1052,6 +1052,24 @@ def _kernel_reverse_v2(
     executor._assign_outputs(op, [tf.reverse(x, axis=axis)], env)
 
 
+def _kernel_reverse_sequence(
+    executor: _GraphExecutor,
+    op: OperatorIR,
+    env: Dict[str, tf.Tensor],
+) -> None:
+    x = executor._resolve_tensor(op.inputs[0], env)
+    seq_lengths = tf.cast(executor._resolve_tensor(op.inputs[1], env), tf.int32)
+    seq_axis = int(op.options.get("seqDim", 0))
+    batch_axis = int(op.options.get("batchDim", 1))
+    y = tf.reverse_sequence(
+        x,
+        seq_lengths=seq_lengths,
+        seq_axis=seq_axis,
+        batch_axis=batch_axis,
+    )
+    executor._assign_outputs(op, [y], env)
+
+
 def _kernel_one_hot(
     executor: _GraphExecutor,
     op: OperatorIR,
@@ -1169,6 +1187,25 @@ def _kernel_random_standard_normal(
     if seed != 0:
         tf.random.set_seed(seed ^ seed2)
     y = tf.random.normal(shape=shape, dtype=out_dtype)
+    executor._assign_outputs(op, [y], env)
+
+
+def _kernel_random_uniform(
+    executor: _GraphExecutor,
+    op: OperatorIR,
+    env: Dict[str, tf.Tensor],
+) -> None:
+    shape = tf.cast(executor._resolve_tensor(op.inputs[0], env), tf.int32)
+    out_tensor = executor.model_ir.tensors.get(str(op.outputs[0]), None)
+    out_dtype = _tf_dtype_from_tensor_ir(out_tensor) if out_tensor is not None else tf.float32
+    seed = int(op.options.get("seed", 0))
+    seed2 = int(op.options.get("seed2", 0))
+    if seed != 0:
+        tf.random.set_seed(seed ^ seed2)
+    sample_dtype = out_dtype if out_dtype.is_floating else tf.float32
+    y = tf.random.uniform(shape=shape, dtype=sample_dtype)
+    if sample_dtype != out_dtype:
+        y = tf.cast(y, out_dtype)
     executor._assign_outputs(op, [y], env)
 
 
@@ -1761,6 +1798,8 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Operato
     kernels["SPACE_TO_DEPTH"] = _kernel_space_to_depth
     kernels["MIRROR_PAD"] = _kernel_mirror_pad
     kernels["RANDOM_STANDARD_NORMAL"] = _kernel_random_standard_normal
+    kernels["RANDOM_UNIFORM"] = _kernel_random_uniform
+    kernels["REVERSE_SEQUENCE"] = _kernel_reverse_sequence
     kernels["FULLY_CONNECTED"] = _kernel_fully_connected
     kernels["BATCH_MATMUL"] = _kernel_batch_matmul
     kernels["CONV_2D"] = _kernel_conv2d
