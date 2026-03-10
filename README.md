@@ -3623,6 +3623,7 @@ Do not submit an issue that only contains an amount of information that cannot b
 9. [litert-torch](https://github.com/google-ai-edge/litert-torch)
 10. [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer)
 11. [LiteRT.js](https://ai.google.dev/edge/litert/web)
+12. [pnnx](https://github.com/pnnx/pnnx)
 
 ## Acknowledgement
 1. https://github.com/onnx/models
