@@ -87,7 +87,7 @@ absl_logging.set_verbosity(absl_logging.ERROR)
 
 import onnx
 import onnx2tf.gs as gs
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, cast
 from argparse import ArgumentParser, SUPPRESS
 
 import importlib
@@ -124,6 +124,15 @@ from sng4onnx import generate as op_name_auto_generate
 _SAVED_MODEL_BRIDGE_SIGNATURE_CACHE: Dict[tuple[str, str], Any] = {}
 
 
+def _get_trackable_signatures(trackable_obj: Any) -> Dict[str, Any]:
+    signatures = getattr(trackable_obj, 'signatures', None)
+    if signatures is None:
+        raise RuntimeError(
+            'SavedModel object does not expose signatures.'
+        )
+    return cast(Dict[str, Any], signatures)
+
+
 def _get_saved_model_bridge_signature(
     saved_model_path: str,
     endpoint: str = 'serving_default',
@@ -131,7 +140,8 @@ def _get_saved_model_bridge_signature(
     cache_key = (os.path.abspath(str(saved_model_path)), str(endpoint))
     if cache_key not in _SAVED_MODEL_BRIDGE_SIGNATURE_CACHE:
         module = tf.saved_model.load(str(saved_model_path))
-        signature_fn = module.signatures.get(str(endpoint), None)
+        signatures = _get_trackable_signatures(module)
+        signature_fn = signatures.get(str(endpoint), None)
         if signature_fn is None:
             raise RuntimeError(
                 'SavedModel bridge endpoint is unavailable. '
@@ -2484,11 +2494,12 @@ def convert(
         failure_reason = ''
         try:
             module = tf.saved_model.load(saved_model_path)
-            signature_fn = module.signatures.get('serving_default', None)
+            signatures = _get_trackable_signatures(module)
+            signature_fn = signatures.get('serving_default', None)
             if signature_fn is None:
                 raise RuntimeError(
                     'serving_default signature is missing in generated SavedModel. '
-                    f'available_signatures={list(module.signatures.keys())}'
+                    f'available_signatures={list(signatures.keys())}'
                 )
             signature_inputs = signature_fn.structured_input_signature[1]
             if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
@@ -2900,11 +2911,12 @@ def convert(
                 raise RuntimeError('Evaluator helpers are unavailable.') from import_ex
 
             module = tf.saved_model.load(saved_model_path)
-            signature_fn = module.signatures.get('serving_default', None)
+            signatures = _get_trackable_signatures(module)
+            signature_fn = signatures.get('serving_default', None)
             if signature_fn is None:
                 raise RuntimeError(
                     'serving_default signature is missing in generated SavedModel. '
-                    f'available_signatures={list(module.signatures.keys())}'
+                    f'available_signatures={list(signatures.keys())}'
                 )
             signature_inputs = signature_fn.structured_input_signature[1]
             if not isinstance(signature_inputs, dict) or len(signature_inputs) == 0:
@@ -3787,7 +3799,7 @@ def convert(
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
                 imported = tf.saved_model.load(saved_model_path)
-                signature_fn = imported.signatures['serving_default']
+                signature_fn = _get_trackable_signatures(imported)['serving_default']
                 frozen_func = convert_variables_to_constants_v2(signature_fn)
                 frozen_func.graph.as_graph_def()
                 tf.io.write_graph(
@@ -6541,7 +6553,7 @@ def convert(
                 info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
                 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
                 imported = tf.saved_model.load(output_folder_path)
-                f = imported.signatures[SIGNATURE_KEY]
+                f = _get_trackable_signatures(imported)[SIGNATURE_KEY]
                 frozen_func = convert_variables_to_constants_v2(f)
                 frozen_func.graph.as_graph_def()
                 tf.io.write_graph(
@@ -6995,7 +7007,7 @@ def convert(
                 tf.saved_model.load(
                     output_folder_path
                 )
-            loaded_saved_model: _WrapperFunction = trackable_obj.signatures[SIGNATURE_KEY]
+            loaded_saved_model: _WrapperFunction = _get_trackable_signatures(trackable_obj)[SIGNATURE_KEY]
             structured_input_signature: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_input_signature[1]
             structured_outputs: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_outputs
 

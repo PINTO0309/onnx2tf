@@ -57,6 +57,7 @@ dev = [
 [project.scripts]
 onnx2tf = "onnx2tf:main"
 onnx2tf-tflite2sm-bulk = "onnx2tf.utils.tflite2sm_bulk_runner:main"
+onnx2tf-pytorch-bulk = "onnx2tf.utils.pytorch_bulk_runner:main"
 
 [project.urls]
 Homepage = "https://github.com/PINTO0309/onnx2tf"

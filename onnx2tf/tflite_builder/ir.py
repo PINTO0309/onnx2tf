@@ -688,6 +688,17 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
         for v in model_ir.metadata.get("assume_channel_last_layout_tensor_names", [])
         if str(v) != ""
     }
+    recurrent_public_boundary_context = any(
+        str(op.op_type) in {
+            "GRU",
+            "LSTM",
+            "RNN",
+            "UNIDIRECTIONAL_SEQUENCE_RNN",
+            "UNIDIRECTIONAL_SEQUENCE_LSTM",
+            "BIDIRECTIONAL_SEQUENCE_LSTM",
+        }
+        for op in model_ir.operators
+    )
     public_layout_map: Dict[str, str] = {}
     for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
         tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -695,7 +706,10 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
             continue
         rank = len(list(tensor.shape))
         if rank in {3, 4, 5}:
-            public_layout_map[str(tensor_name)] = channel_first_logical_layout(rank)
+            if recurrent_public_boundary_context and rank == 3:
+                public_layout_map[str(tensor_name)] = channel_last_logical_layout(rank)
+            else:
+                public_layout_map[str(tensor_name)] = channel_first_logical_layout(rank)
     model_ir.metadata["onnx_public_layout_map"] = dict(public_layout_map)
 
     for tensor_name, tensor in model_ir.tensors.items():

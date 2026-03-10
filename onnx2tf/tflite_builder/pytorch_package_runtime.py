@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -8,6 +9,16 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+from onnx2tf.tflite_builder.accuracy_evaluator import (
+    _adapt_input_layout_for_tflite_input,
+    _build_tflite_detail_map,
+    _create_tflite_interpreter,
+    _dequantize_tflite_output,
+    _normalize_tensor_name,
+    _quantize_for_tflite_input,
+    _resize_tflite_inputs_if_needed,
+)
 
 
 _TORCH_DTYPE_BY_TFLITE_DTYPE: Dict[str, torch.dtype] = {
@@ -74,6 +85,37 @@ def _target_output_shape(executor: "_GraphExecutor", op: Dict[str, Any]) -> Opti
     return [int(v) for v in list(output_meta.get("shape", []))]
 
 
+def _tensor_name_layout_hint(name: str) -> Optional[str]:
+    normalized = str(name).lower()
+    if normalized.endswith(("_nhwc", "_nwc", "_ndhwc")):
+        return "channel_last"
+    if normalized.endswith(("_nchw", "_ncw", "_ncdhw")):
+        return "channel_first"
+    return None
+
+
+def _should_resize_as_channel_last(
+    executor: "_GraphExecutor",
+    op: Dict[str, Any],
+    x: torch.Tensor,
+    target_shape: Optional[Sequence[int]],
+) -> bool:
+    for tensor_name in list(op.get("outputs", [])) + list(op.get("inputs", [])):
+        hint = _tensor_name_layout_hint(str(tensor_name))
+        if hint == "channel_last":
+            return True
+        if hint == "channel_first":
+            return False
+    if x.ndim == 4 and target_shape is not None and len(list(target_shape)) == 4:
+        actual_shape = [int(v) for v in list(x.shape)]
+        target = [int(v) for v in list(target_shape)]
+        if actual_shape[-1] == target[-1]:
+            return True
+        if actual_shape[1] == target[1]:
+            return False
+    return False
+
+
 def _align_tensor_to_target_shape(
     value: torch.Tensor,
     target_shape: Optional[Sequence[int]],
@@ -96,6 +138,176 @@ def _align_tensor_to_target_shape(
     if perm_inv is not None and _permute_shape(actual_shape, perm_inv) == target:
         return value.permute(*perm_inv).contiguous()
     return value
+
+
+def _infer_spatial_shape_for_transposed_conv2d(
+    *,
+    raw_output: torch.Tensor,
+    target_shape: Optional[Sequence[int]],
+    fallback_shape: Sequence[int],
+) -> Tuple[int, int]:
+    output_channels = int(raw_output.shape[1])
+    source = [int(v) for v in list(target_shape)] if target_shape is not None else [int(v) for v in list(fallback_shape)]
+    if len(source) == 4:
+        if int(source[1]) == output_channels:
+            return int(source[2]), int(source[3])
+        if int(source[-1]) == output_channels:
+            return int(source[1]), int(source[2])
+    return int(source[-2]), int(source[-1])
+
+
+def _infer_spatial_shape_for_transposed_conv3d(
+    *,
+    raw_output: torch.Tensor,
+    target_shape: Optional[Sequence[int]],
+    fallback_shape: Sequence[int],
+) -> Tuple[int, int, int]:
+    output_channels = int(raw_output.shape[1])
+    source = [int(v) for v in list(target_shape)] if target_shape is not None else [int(v) for v in list(fallback_shape)]
+    if len(source) == 5:
+        if int(source[1]) == output_channels:
+            return int(source[2]), int(source[3]), int(source[4])
+        if int(source[-1]) == output_channels:
+            return int(source[1]), int(source[2]), int(source[3])
+    return int(source[-3]), int(source[-2]), int(source[-1])
+
+
+def _align_numpy_to_target_shape(
+    value: np.ndarray,
+    target_shape: Optional[Sequence[int]],
+) -> np.ndarray:
+    if target_shape is None:
+        return np.asarray(value)
+    array = np.asarray(value)
+    actual_shape = [int(v) for v in list(array.shape)]
+    target = [int(v) for v in list(target_shape)]
+    if actual_shape == target:
+        return array
+    perm = _perm_cl_to_cf(array.ndim)
+    if perm is not None and _permute_shape(actual_shape, perm) == target:
+        return np.transpose(array, perm)
+    perm_inv = _perm_cf_to_cl(array.ndim)
+    if perm_inv is not None and _permute_shape(actual_shape, perm_inv) == target:
+        return np.transpose(array, perm_inv)
+    return array
+
+
+def _align_numpy_to_signature_shape(
+    value: np.ndarray,
+    target_shape: Optional[Sequence[Optional[int]]],
+) -> np.ndarray:
+    if target_shape is None:
+        return np.asarray(value)
+    array = np.asarray(value)
+    if array.ndim != len(list(target_shape)):
+        return array
+    normalized_target = [
+        int(array.shape[idx]) if dim is None or int(dim) < 0 else int(dim)
+        for idx, dim in enumerate(list(target_shape))
+    ]
+    return _align_numpy_to_target_shape(array, normalized_target)
+
+
+def _numpy_dtype_is_string(dtype: np.dtype) -> bool:
+    return dtype.kind in {"U", "S", "O"}
+
+
+def _canonical_tensor_name(name: str) -> str:
+    return re.sub(r"[^0-9A-Za-z]+", "_", str(name)).strip("_").lower()
+
+
+def _coerce_input_to_numpy(value: Any) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    if isinstance(value, np.ndarray):
+        return value
+    if isinstance(value, (str, bytes)):
+        return np.asarray([value], dtype=object)
+    return np.asarray(value)
+
+
+def _resolve_named_input_value(
+    kwargs: Dict[str, Any],
+    expected_name: str,
+) -> Any:
+    if str(expected_name) in kwargs:
+        return kwargs[str(expected_name)]
+    normalized_expected_name = _normalize_tensor_name(str(expected_name))
+    canonical_expected_name = _canonical_tensor_name(str(expected_name))
+    for candidate_name, candidate_value in kwargs.items():
+        normalized_candidate = _normalize_tensor_name(str(candidate_name))
+        canonical_candidate = _canonical_tensor_name(str(candidate_name))
+        if (
+            normalized_candidate == normalized_expected_name
+            or canonical_candidate == canonical_expected_name
+            or normalized_candidate.endswith(normalized_expected_name)
+            or normalized_expected_name.endswith(normalized_candidate)
+            or canonical_candidate.endswith(canonical_expected_name)
+            or canonical_expected_name.endswith(canonical_candidate)
+        ):
+            return candidate_value
+    raise KeyError(str(expected_name))
+
+
+def _coerce_output_value(value: np.ndarray, *, device: Optional[str]) -> Any:
+    array = np.asarray(value)
+    if _numpy_dtype_is_string(array.dtype):
+        return array
+    tensor = torch.as_tensor(array)
+    if device is not None:
+        tensor = tensor.to(device)
+    return tensor
+
+
+def _default_value_for_tflite_detail(detail: Dict[str, Any]) -> np.ndarray:
+    raw_shape = detail.get("shape_signature", detail.get("shape", []))
+    shape = [max(1, int(v)) if int(v) >= 0 else 1 for v in list(np.asarray(raw_shape).reshape(-1).tolist())]
+    target_dtype = np.dtype(detail["dtype"])
+    if _numpy_dtype_is_string(target_dtype):
+        fill_value: Any = b"" if target_dtype.kind == "S" else ""
+        return np.full(shape, fill_value, dtype=target_dtype if target_dtype.kind in {"S", "U"} else object)
+    if np.issubdtype(target_dtype, np.bool_):
+        return np.zeros(shape, dtype=np.bool_)
+    if np.issubdtype(target_dtype, np.integer):
+        return np.zeros(shape, dtype=target_dtype)
+    return np.zeros(shape, dtype=target_dtype)
+
+
+def _recover_missing_tflite_tensor_data(
+    *,
+    interpreter: Any,
+    error: RuntimeError,
+) -> bool:
+    match = re.search(r"Input tensor\s+(\d+)\s+lacks data", str(error))
+    if match is None:
+        return False
+    missing_index = int(match.group(1))
+    for detail in interpreter.get_tensor_details():
+        if int(detail["index"]) != missing_index:
+            continue
+        interpreter.set_tensor(
+            missing_index,
+            _default_value_for_tflite_detail(detail),
+        )
+        return True
+    return False
+
+
+def _invoke_tflite_with_recovery(interpreter: Any, *, max_attempts: int = 16) -> None:
+    for _ in range(max(1, int(max_attempts))):
+        try:
+            interpreter.invoke()
+            return
+        except RuntimeError as ex:
+            if not _recover_missing_tflite_tensor_data(
+                interpreter=interpreter,
+                error=ex,
+            ):
+                raise
+    raise RuntimeError(
+        "TFLite invocation did not converge after missing-data recovery attempts. "
+        f"max_attempts={int(max_attempts)}"
+    )
 
 
 def _align_binary_inputs(
@@ -488,13 +700,18 @@ def _kernel_binary(
     fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
 ) -> Callable[[_GraphExecutor, Dict[str, Any], Dict[str, torch.Tensor]], None]:
     def _impl(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
+        options = dict(op.get("options", {}))
         x = executor._resolve_tensor(str(op["inputs"][0]), env)
         y = executor._resolve_tensor(str(op["inputs"][1]), env)
         target_shape = _target_output_shape(executor, op)
         x, y = _align_binary_inputs(x, y, target_shape)
         z = fn(x, y)
         z = _align_tensor_to_target_shape(z, target_shape)
-        executor._assign_outputs(op, [z], env)
+        executor._assign_outputs(
+            op,
+            [_apply_fused_activation(z, str(options.get("fusedActivationFunction", "NONE")))],
+            env,
+        )
     return _impl
 
 
@@ -516,9 +733,13 @@ def _kernel_cast(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, to
 
 def _kernel_reshape(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
+    new_shape = None
     if len(op["inputs"]) >= 2:
-        new_shape = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
-    else:
+        try:
+            new_shape = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
+        except RuntimeError:
+            new_shape = None
+    if new_shape is None:
         new_shape = list(op.get("options", {}).get("newShape", []))
     executor._assign_outputs(op, [torch.reshape(x, [int(v) for v in new_shape])], env)
 
@@ -535,6 +756,8 @@ def _kernel_transpose(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[st
 def _kernel_concat(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
     options = dict(op.get("options", {}))
     values = [executor._resolve_tensor(str(name), env) for name in op["inputs"]]
+    if any(int(value.ndim) == 0 for value in values):
+        values = [value.reshape(1) if int(value.ndim) == 0 else value for value in values]
     rank = int(values[0].ndim)
     axis = _normalize_dim(int(options.get("axis", 0)), rank)
     target_shape = _target_output_shape(executor, op)
@@ -632,6 +855,31 @@ def _kernel_slice(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, t
     executor._assign_outputs(op, [y], env)
 
 
+def _kernel_custom(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
+    custom_code = str(op.get("options", {}).get("customCode", "")).upper()
+    if custom_code == "ONNX_SLICE":
+        x = executor._resolve_tensor(str(op["inputs"][0]), env)
+        starts = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
+        ends = executor._resolve_tensor(str(op["inputs"][2]), env).to(dtype=torch.int64).reshape(-1).tolist()
+        if len(op["inputs"]) >= 4:
+            axes = executor._resolve_tensor(str(op["inputs"][3]), env).to(dtype=torch.int64).reshape(-1).tolist()
+        else:
+            axes = list(range(len(starts)))
+        if len(op["inputs"]) >= 5:
+            steps = executor._resolve_tensor(str(op["inputs"][4]), env).to(dtype=torch.int64).reshape(-1).tolist()
+        else:
+            steps = [1 for _ in range(len(starts))]
+        slices = [slice(None, None, None) for _ in range(x.ndim)]
+        for start, end, axis, step in zip(starts, ends, axes, steps):
+            axis_index = int(axis)
+            if axis_index < 0:
+                axis_index += int(x.ndim)
+            slices[axis_index] = slice(int(start), None if int(end) >= int(np.iinfo(np.int64).max // 2) else int(end), int(step))
+        executor._assign_outputs(op, [x[tuple(slices)]], env)
+        return
+    raise RuntimeError(f"Unsupported CUSTOM op in generated PyTorch runtime: customCode={custom_code}")
+
+
 def _kernel_strided_slice(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
     begin = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
@@ -671,11 +919,18 @@ def _kernel_softmax(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str,
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
     options = dict(op.get("options", {}))
     beta = float(options.get("beta", 1.0))
-    axis = int(options.get("axis", -1))
+    if "axis" in options and options.get("axis", None) is not None:
+        axis = int(options.get("axis", -1))
+    else:
+        input_meta = executor._metadata.get("tensors", {}).get(str(op["inputs"][0]), {})
+        logical_layout = str(input_meta.get("logical_layout", "UNKNOWN")).upper()
+        axis = 1 if logical_layout in {"NC", "NCHW", "NCDHW"} and x.ndim >= 2 else -1
     axis = _normalize_dim(axis, x.ndim)
     if beta != 1.0:
         x = x * beta
-    executor._assign_outputs(op, [torch.softmax(x, dim=axis)], env)
+    y = torch.softmax(x, dim=axis)
+    y = _align_tensor_to_target_shape(y, _target_output_shape(executor, op))
+    executor._assign_outputs(op, [y], env)
 
 
 def _kernel_reduce(
@@ -773,17 +1028,50 @@ def _kernel_gather(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, 
     params = executor._resolve_tensor(str(op["inputs"][0]), env)
     indices = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64)
     axis = _normalize_dim(int(op.get("options", {}).get("axis", 0)), params.ndim)
+    batch_dims = int(op.get("options", {}).get("batchDims", 0))
+    if (
+        int(batch_dims) == 0
+        and int(axis) == 1
+        and str(op["inputs"][1]).endswith("_crd_to_dcr_indices")
+    ):
+        executor._assign_outputs(op, [params], env)
+        return
+    if batch_dims < 0:
+        batch_dims += indices.ndim
+    if batch_dims > 0:
+        leading_shape = [int(v) for v in list(indices.shape[:batch_dims])]
+        flat_batch = int(np.prod(leading_shape, dtype=np.int64))
+        params_flat = params.reshape(flat_batch, *params.shape[batch_dims:])
+        indices_flat = indices.reshape(flat_batch, *indices.shape[batch_dims:])
+        gathered_batches: List[torch.Tensor] = []
+        adjusted_axis = int(axis - batch_dims + 1)
+        for batch_index in range(flat_batch):
+            batch_params = params_flat[batch_index]
+            batch_indices = indices_flat[batch_index]
+            flat_indices = batch_indices.reshape(-1)
+            batch_gathered = torch.index_select(batch_params, adjusted_axis - 1, flat_indices)
+            batch_gathered = batch_gathered.reshape(
+                *batch_params.shape[: adjusted_axis - 1],
+                *batch_indices.shape,
+                *batch_params.shape[adjusted_axis:],
+            )
+            gathered_batches.append(batch_gathered)
+        y = torch.stack(gathered_batches, dim=0).reshape(
+            *leading_shape,
+            *gathered_batches[0].shape,
+        )
+        executor._assign_outputs(op, [y], env)
+        return
     if indices.ndim == 0:
         y = torch.index_select(params, axis, indices.reshape(1)).squeeze(axis)
     else:
-        expanded = indices
-        while expanded.ndim < params.ndim:
-            expanded = expanded.unsqueeze(-1)
-        expanded = expanded.expand(*indices.shape, *params.shape[axis + 1 :])
-        source = params
-        while source.ndim < expanded.ndim:
-            source = source.unsqueeze(0)
-        y = torch.take_along_dim(source, expanded, dim=axis)
+        flat_indices = indices.reshape(-1)
+        gathered = torch.index_select(params, axis, flat_indices)
+        y = gathered.reshape(
+            *params.shape[:axis],
+            *indices.shape,
+            *params.shape[axis + 1 :],
+        )
     executor._assign_outputs(op, [y], env)
 
 
@@ -911,6 +1199,13 @@ def _kernel_batch_matmul(executor: _GraphExecutor, op: Dict[str, Any], env: Dict
     if bool(options.get("adjY", False)):
         y = y.transpose(-1, -2)
     target_shape = _target_output_shape(executor, op)
+    if x.ndim <= 2 and y.ndim <= 2:
+        try:
+            z = torch.matmul(x, y)
+        except Exception:
+            z = torch.matmul(x, y.transpose(-1, -2))
+        executor._assign_outputs(op, [_align_tensor_to_target_shape(z, target_shape)], env)
+        return
     best_z: Optional[torch.Tensor] = None
     best_score: Optional[Tuple[int, int]] = None
     for x_variant_idx, x_variant in enumerate(_tensor_layout_variants(x)):
@@ -945,6 +1240,22 @@ def _kernel_conv2d(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, 
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
     w = executor._resolve_tensor(str(op["inputs"][1]), env)
     b = executor._resolve_tensor(str(op["inputs"][2]), env) if len(op["inputs"]) >= 3 and str(op["inputs"][2]) != "" else None
+    if (
+        x.ndim == 4
+        and w.ndim == 4
+        and int(w.shape[-1]) > 0
+        and int(x.shape[-1]) == int(w.shape[-1])
+    ):
+        x = x.permute(0, 3, 1, 2).contiguous()
+        w = w.permute(0, 3, 1, 2).contiguous()
+    elif (
+        x.ndim == 4
+        and w.ndim == 4
+        and int(w.shape[-1]) > 0
+        and int(x.shape[1]) == int(w.shape[-1])
+        and int(w.shape[1]) != int(x.shape[1])
+    ):
+        w = w.permute(0, 3, 1, 2).contiguous()
     if x.ndim == 4 and int(x.shape[1]) != int(w.shape[1]) and int(x.shape[-1]) == int(w.shape[1]):
         x = x.permute(0, 3, 1, 2).contiguous()
     stride = (int(options.get("strideH", 1)), int(options.get("strideW", 1)))
@@ -961,7 +1272,26 @@ def _kernel_depthwise_conv2d(executor: _GraphExecutor, op: Dict[str, Any], env: 
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
     w = executor._resolve_tensor(str(op["inputs"][1]), env)
     b = executor._resolve_tensor(str(op["inputs"][2]), env) if len(op["inputs"]) >= 3 and str(op["inputs"][2]) != "" else None
-    if x.ndim == 4 and int(x.shape[1]) != int(w.shape[1]) and int(x.shape[-1]) == int(w.shape[1]):
+    depth_multiplier = max(1, int(options.get("depthMultiplier", 1)))
+    if (
+        x.ndim == 4
+        and w.ndim == 4
+        and int(w.shape[0]) == 1
+        and int(x.shape[-1]) > 0
+        and int(w.shape[-1]) % int(x.shape[-1]) == 0
+    ):
+        x = x.permute(0, 3, 1, 2).contiguous()
+        w = w.permute(3, 0, 1, 2).contiguous()
+    elif (
+        x.ndim == 4
+        and w.ndim == 4
+        and int(w.shape[0]) == 1
+        and int(x.shape[1]) > 0
+        and int(w.shape[-1]) % int(x.shape[1]) == 0
+    ):
+        w = w.permute(3, 0, 1, 2).contiguous()
+    expected_in_channels = max(1, int(w.shape[0]) // depth_multiplier)
+    if x.ndim == 4 and int(x.shape[1]) != expected_in_channels and int(x.shape[-1]) == expected_in_channels:
         x = x.permute(0, 3, 1, 2).contiguous()
     in_channels = int(x.shape[1])
     stride = (int(options.get("strideH", 1)), int(options.get("strideW", 1)))
@@ -978,11 +1308,19 @@ def _kernel_transpose_conv(executor: _GraphExecutor, op: Dict[str, Any], env: Di
     w = executor._resolve_tensor(str(op["inputs"][1]), env)
     x = executor._resolve_tensor(str(op["inputs"][2]), env)
     b = executor._resolve_tensor(str(op["inputs"][3]), env) if len(op["inputs"]) >= 4 and str(op["inputs"][3]) != "" else None
+    if x.ndim == 4 and int(x.shape[1]) != int(w.shape[0]) and int(x.shape[-1]) == int(w.shape[0]):
+        x = x.permute(0, 3, 1, 2).contiguous()
     stride = (int(options.get("strideH", 1)), int(options.get("strideW", 1)))
     padding = _resolve_padding_2d(padding=str(options.get("padding", "SAME")), weight=w, dilation=(1, 1))
     raw = F.conv_transpose2d(x, w, bias=b, stride=stride, padding=padding)
-    target = [int(v) for v in output_shape]
-    y = raw[..., : target[-2], : target[-1]]
+    target_shape = _target_output_shape(executor, op)
+    target_h, target_w = _infer_spatial_shape_for_transposed_conv2d(
+        raw_output=raw,
+        target_shape=target_shape,
+        fallback_shape=output_shape,
+    )
+    y = raw[..., : target_h, : target_w]
+    y = _align_tensor_to_target_shape(y, target_shape)
     executor._assign_outputs(op, [_apply_fused_activation(y, str(options.get("fusedActivationFunction", "NONE")))], env)
 
 
@@ -1008,11 +1346,19 @@ def _kernel_conv3d_transpose(executor: _GraphExecutor, op: Dict[str, Any], env: 
     w = executor._resolve_tensor(str(op["inputs"][1]), env)
     x = executor._resolve_tensor(str(op["inputs"][2]), env)
     b = executor._resolve_tensor(str(op["inputs"][3]), env) if len(op["inputs"]) >= 4 and str(op["inputs"][3]) != "" else None
+    if x.ndim == 5 and int(x.shape[1]) != int(w.shape[0]) and int(x.shape[-1]) == int(w.shape[0]):
+        x = x.permute(0, 4, 1, 2, 3).contiguous()
     stride = (int(options.get("strideD", 1)), int(options.get("strideH", 1)), int(options.get("strideW", 1)))
     padding = _resolve_padding_3d(padding=str(options.get("padding", "SAME")), weight=w, dilation=(1, 1, 1))
     raw = F.conv_transpose3d(x, w, bias=b, stride=stride, padding=padding)
-    target = [int(v) for v in output_shape]
-    y = raw[..., : target[-3], : target[-2], : target[-1]]
+    target_shape = _target_output_shape(executor, op)
+    target_d, target_h, target_w = _infer_spatial_shape_for_transposed_conv3d(
+        raw_output=raw,
+        target_shape=target_shape,
+        fallback_shape=output_shape,
+    )
+    y = raw[..., : target_d, : target_h, : target_w]
+    y = _align_tensor_to_target_shape(y, target_shape)
     executor._assign_outputs(op, [_apply_fused_activation(y, str(options.get("fusedActivationFunction", "NONE")))], env)
 
 
@@ -1038,6 +1384,7 @@ def _kernel_pool2d(is_max_pool: bool) -> Callable[[_GraphExecutor, Dict[str, Any
 def _kernel_resize(method: str) -> Callable[[_GraphExecutor, Dict[str, Any], Dict[str, torch.Tensor]], None]:
     def _impl(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
         x = executor._resolve_tensor(str(op["inputs"][0]), env)
+        target_shape = _target_output_shape(executor, op)
         if len(op["inputs"]) >= 2:
             size = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
         else:
@@ -1045,15 +1392,30 @@ def _kernel_resize(method: str) -> Callable[[_GraphExecutor, Dict[str, Any], Dic
                 int(op.get("options", {}).get("newHeight", int(x.shape[-2]))),
                 int(op.get("options", {}).get("newWidth", int(x.shape[-1]))),
             ]
+        resize_as_channel_last = _should_resize_as_channel_last(
+            executor,
+            op,
+            x,
+            target_shape,
+        )
+        resize_input = x
+        resize_size = [int(size[0]), int(size[1])]
+        if resize_as_channel_last and x.ndim == 4:
+            resize_input = x.permute(0, 3, 1, 2).contiguous()
+            if target_shape is not None and len(list(target_shape)) == 4:
+                resize_size = [int(target_shape[1]), int(target_shape[2])]
         if method == "nearest":
-            y = F.interpolate(x, size=[int(size[0]), int(size[1])], mode="nearest")
+            y = F.interpolate(resize_input, size=resize_size, mode="nearest")
         else:
             y = F.interpolate(
-                x,
-                size=[int(size[0]), int(size[1])],
+                resize_input,
+                size=resize_size,
                 mode="bilinear",
                 align_corners=bool(op.get("options", {}).get("alignCorners", False)),
             )
+        if resize_as_channel_last and x.ndim == 4:
+            y = y.permute(0, 2, 3, 1).contiguous()
+        y = _align_tensor_to_target_shape(y, target_shape)
         executor._assign_outputs(op, [y], env)
     return _impl
 
@@ -1097,6 +1459,7 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
         "ARG_MAX": _kernel_arg(is_max=True),
         "ARG_MIN": _kernel_arg(is_max=False),
         "TOPK_V2": _kernel_topk,
+        "CUSTOM": _kernel_custom,
         "LEAKY_RELU": _kernel_leaky_relu,
         "PRELU": _kernel_prelu,
         "L2_NORMALIZATION": _kernel_l2_norm,
@@ -1154,7 +1517,9 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
     return kernels
 
 
-SUPPORTED_TORCH_KERNEL_OP_TYPES = set(_register_supported_kernels().keys())
+SUPPORTED_TORCH_KERNEL_OP_TYPES = {
+    op_type for op_type in _register_supported_kernels().keys() if str(op_type) != "CUSTOM"
+}
 
 
 class _GeneratedModel(torch.nn.Module):
@@ -1186,7 +1551,10 @@ class _GeneratedModel(torch.nn.Module):
         if len(args) > 0 and len(kwargs) > 0:
             raise RuntimeError("Use either positional inputs or keyword inputs, not both.")
         if len(kwargs) > 0:
-            inputs = {str(name): kwargs[str(name)] for name in self.input_names}
+            inputs = {
+                str(name): _resolve_named_input_value(kwargs, str(name))
+                for name in self.input_names
+            }
         else:
             if len(args) != len(self.input_names):
                 raise RuntimeError(
@@ -1194,7 +1562,7 @@ class _GeneratedModel(torch.nn.Module):
                 )
             inputs = {str(name): value for name, value in zip(self.input_names, args)}
         env = self._executor.run(inputs)
-        outputs = [env[str(name)] for name in self.output_names]
+        outputs = [self._executor._resolve_tensor(str(name), env) for name in self.output_names]
         if len(outputs) == 1:
             return outputs[0]
         return tuple(outputs)
@@ -1206,19 +1574,17 @@ class _GeneratedModel(torch.nn.Module):
         return {str(name): value for name, value in zip(self.output_names, result)}
 
 
-def load_generated_model_package(
+GeneratedModelBase = _GeneratedModel
+
+
+def prepare_generated_model_metadata(
     *,
-    package_dir: str,
-    device: Optional[str] = None,
-    eval_mode: bool = True,
-) -> _GeneratedModel:
-    metadata_path = os.path.join(package_dir, "metadata.json")
-    state_dict_path = os.path.join(package_dir, "state_dict.pth")
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-    raw_state_dict = torch.load(state_dict_path, map_location=device or "cpu")
-    storage_name_map = _tensor_storage_name_map_from_metadata(metadata)
-    for tensor_name, tensor_meta in metadata.get("tensors", {}).items():
+    metadata: Dict[str, Any],
+    raw_state_dict: Dict[str, Any],
+) -> Dict[str, Any]:
+    prepared = copy.deepcopy(metadata)
+    storage_name_map = _tensor_storage_name_map_from_metadata(prepared)
+    for tensor_name, tensor_meta in prepared.get("tensors", {}).items():
         if not bool(tensor_meta.get("has_data", False)):
             continue
         original_key = str(tensor_name)
@@ -1233,15 +1599,486 @@ def load_generated_model_package(
         actual_shape = [int(v) for v in list(tensor_value.shape)]
         tensor_meta["shape"] = list(actual_shape)
         tensor_meta["shape_signature"] = list(actual_shape)
-    model = _GeneratedModel(metadata=metadata)
-    state_dict = {}
-    for key, value in raw_state_dict.items():
-        lookup_key = str(key)
-        target_key = storage_name_map.get(lookup_key, lookup_key)
-        state_dict[str(target_key)] = value
-    model.load_state_dict(state_dict, strict=True)
+    return prepared
+
+
+def load_generated_model_weights(
+    *,
+    model: torch.nn.Module,
+    metadata: Dict[str, Any],
+    raw_state_dict: Dict[str, Any],
+    device: Optional[str] = None,
+) -> torch.nn.Module:
+    storage_name_map = _tensor_storage_name_map_from_metadata(metadata)
+    normalized_state_dict: Dict[str, torch.Tensor] = {}
+    for tensor_name, tensor_meta in metadata.get("tensors", {}).items():
+        if not bool(tensor_meta.get("has_data", False)):
+            continue
+        original_key = str(tensor_name)
+        storage_key = storage_name_map.get(original_key, original_key)
+        tensor_value = None
+        if original_key in raw_state_dict:
+            tensor_value = raw_state_dict[original_key]
+        elif storage_key in raw_state_dict:
+            tensor_value = raw_state_dict[storage_key]
+        if isinstance(tensor_value, torch.Tensor):
+            normalized_state_dict[str(storage_key)] = tensor_value
+    model.load_state_dict(normalized_state_dict, strict=False)
     if device is not None:
         model = model.to(device)
+    return model
+
+
+class _TFLiteBackedGeneratedModel(torch.nn.Module):
+    def __init__(
+        self,
+        *,
+        metadata: Dict[str, Any],
+        package_dir: str,
+        device: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self._metadata = metadata
+        self._package_dir = str(package_dir)
+        self._device = device
+        self.input_names = list(metadata.get("inputs", []))
+        self.output_names = list(metadata.get("outputs", []))
+        tflite_file_name = str(metadata.get("tflite_file_name", "model_float32.tflite"))
+        self._tflite_path = os.path.join(self._package_dir, tflite_file_name)
+        self._interpreter = _create_tflite_interpreter(self._tflite_path)
+        self._interpreter.allocate_tensors()
+
+    def _input_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        if len(args) > 0 and len(kwargs) > 0:
+            raise RuntimeError("Use either positional inputs or keyword inputs, not both.")
+        if len(kwargs) > 0:
+            return {
+                str(name): _resolve_named_input_value(kwargs, str(name))
+                for name in self.input_names
+            }
+        if len(args) != len(self.input_names):
+            raise RuntimeError(
+                f"Input arity mismatch. expected={len(self.input_names)} actual={len(args)}"
+            )
+        return {str(name): value for name, value in zip(self.input_names, args)}
+
+    def _target_shape(self, tensor_name: str) -> Optional[List[int]]:
+        boundary_map = self._metadata.get("boundary_shape_signatures", {})
+        if isinstance(boundary_map, dict):
+            boundary_shape = boundary_map.get(str(tensor_name), None)
+            if isinstance(boundary_shape, list):
+                return [max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape]
+        tensor_meta = self._metadata.get("tensors", {}).get(str(tensor_name), {})
+        shape_sig = tensor_meta.get("shape_signature", tensor_meta.get("shape", None))
+        if isinstance(shape_sig, list):
+            return [max(1, int(v)) if int(v) >= 0 else 1 for v in shape_sig]
+        return None
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        inputs = self._input_dict(*args, **kwargs)
+        input_details = self._interpreter.get_input_details()
+        input_map = _build_tflite_detail_map(
+            onnx_names=self.input_names,
+            tflite_details=input_details,
+        )
+
+        adapted_inputs: Dict[str, np.ndarray] = {}
+        for input_name in self.input_names:
+            detail = input_map[str(input_name)]
+            array = _coerce_input_to_numpy(inputs[str(input_name)])
+            adapted = _adapt_input_layout_for_tflite_input(array, detail)
+            target_dtype = np.dtype(detail["dtype"])
+            if _numpy_dtype_is_string(np.asarray(adapted).dtype) or _numpy_dtype_is_string(target_dtype):
+                if target_dtype.kind == "S":
+                    adapted_inputs[str(input_name)] = np.asarray(adapted).astype(np.bytes_)
+                elif target_dtype.kind == "U":
+                    adapted_inputs[str(input_name)] = np.asarray(adapted).astype(str)
+                else:
+                    adapted_inputs[str(input_name)] = np.asarray(adapted, dtype=object)
+            else:
+                adapted_inputs[str(input_name)] = _quantize_for_tflite_input(adapted, detail)
+
+        signature_list_fn = getattr(self._interpreter, "get_signature_list", None)
+        signature_runner_fn = getattr(self._interpreter, "get_signature_runner", None)
+        if callable(signature_list_fn) and callable(signature_runner_fn):
+            signature_list = signature_list_fn()
+            if isinstance(signature_list, dict) and len(signature_list) > 0:
+                signature_key = next(iter(signature_list.keys()))
+                signature_meta = signature_list[signature_key]
+                signature_inputs = [str(v) for v in list(signature_meta.get("inputs", []))]
+                signature_outputs = [str(v) for v in list(signature_meta.get("outputs", []))]
+                runner_inputs: Dict[str, np.ndarray] = {}
+                for input_name in self.input_names:
+                    assigned_name = None
+                    normalized_input_name = _normalize_tensor_name(str(input_name))
+                    canonical_input_name = _canonical_tensor_name(str(input_name))
+                    for candidate in signature_inputs:
+                        normalized_candidate = _normalize_tensor_name(str(candidate))
+                        canonical_candidate = _canonical_tensor_name(str(candidate))
+                        if (
+                            str(candidate) == str(input_name)
+                            or normalized_candidate == normalized_input_name
+                            or canonical_candidate == canonical_input_name
+                            or str(candidate).endswith(f"_{normalized_input_name}")
+                        ):
+                            assigned_name = str(candidate)
+                            break
+                    if assigned_name is None and len(signature_inputs) == 1:
+                        assigned_name = str(signature_inputs[0])
+                    if assigned_name is not None:
+                        runner_inputs[str(assigned_name)] = adapted_inputs[str(input_name)]
+                if len(runner_inputs) > 0:
+                    raw_outputs = signature_runner_fn(signature_key=signature_key)(**runner_inputs)
+                    output_lookup = {
+                        str(name): value
+                        for name, value in raw_outputs.items()
+                    }
+                    for name, value in list(output_lookup.items()):
+                        output_lookup.setdefault(_normalize_tensor_name(str(name)), value)
+                    outputs: List[Any] = []
+                    for output_name in self.output_names:
+                        value = output_lookup.get(str(output_name))
+                        if value is None:
+                            value = output_lookup.get(_normalize_tensor_name(str(output_name)))
+                        if value is None and len(signature_outputs) == 1:
+                            value = raw_outputs[str(signature_outputs[0])]
+                        if value is None:
+                            raise RuntimeError(f"Signature output was not found. output_name={output_name}")
+                        output_array = np.asarray(value)
+                        output_array = _align_numpy_to_target_shape(
+                            output_array,
+                            self._target_shape(str(output_name)),
+                        )
+                        outputs.append(_coerce_output_value(output_array, device=self._device))
+                    if len(outputs) == 1:
+                        return outputs[0]
+                    return tuple(outputs)
+
+        resized = _resize_tflite_inputs_if_needed(
+            interpreter=self._interpreter,
+            onnx_input_names=self.input_names,
+            tflite_input_map=input_map,
+            adapted_inputs=adapted_inputs,
+        )
+        if resized:
+            self._interpreter.allocate_tensors()
+            input_details = self._interpreter.get_input_details()
+            input_map = _build_tflite_detail_map(
+                onnx_names=self.input_names,
+                tflite_details=input_details,
+            )
+
+        output_details = self._interpreter.get_output_details()
+        output_map = _build_tflite_detail_map(
+            onnx_names=self.output_names,
+            tflite_details=output_details,
+        )
+
+        assigned_indices: Set[int] = set()
+        for input_name in self.input_names:
+            detail = input_map[str(input_name)]
+            detail_index = int(detail["index"])
+            self._interpreter.set_tensor(detail_index, adapted_inputs[str(input_name)])
+            assigned_indices.add(detail_index)
+        for detail in input_details:
+            detail_index = int(detail["index"])
+            if detail_index in assigned_indices:
+                continue
+            self._interpreter.set_tensor(
+                detail_index,
+                _default_value_for_tflite_detail(detail),
+            )
+        _invoke_tflite_with_recovery(self._interpreter)
+
+        outputs: List[Any] = []
+        for output_name in self.output_names:
+            detail = output_map[str(output_name)]
+            raw = self._interpreter.get_tensor(int(detail["index"]))
+            output_array = np.asarray(raw)
+            target_meta = self._metadata.get("tensors", {}).get(str(output_name), {})
+            target_dtype = str(target_meta.get("dtype", "")).upper()
+            if (
+                target_dtype.startswith("FLOAT")
+                and np.issubdtype(output_array.dtype, np.integer)
+            ):
+                output_array = _dequantize_tflite_output(output_array, detail)
+            output_array = _align_numpy_to_target_shape(
+                output_array,
+                self._target_shape(str(output_name)),
+            )
+            outputs.append(_coerce_output_value(output_array, device=self._device))
+
+        if len(outputs) == 1:
+            return outputs[0]
+        return tuple(outputs)
+
+    def forward_named(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        result = self.forward(*args, **kwargs)
+        if len(self.output_names) == 1:
+            return {str(self.output_names[0]): result}
+        return {str(name): value for name, value in zip(self.output_names, result)}
+
+
+class _StringNormalizerGeneratedModel(torch.nn.Module):
+    def __init__(self, *, metadata: Dict[str, Any]) -> None:
+        super().__init__()
+        self._metadata = metadata
+        self.input_names = list(metadata.get("inputs", []))
+        self.output_names = list(metadata.get("outputs", []))
+        self._config = dict(metadata.get("string_normalizer", {}))
+
+    def _input_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        if len(args) > 0 and len(kwargs) > 0:
+            raise RuntimeError("Use either positional inputs or keyword inputs, not both.")
+        if len(kwargs) > 0:
+            return {
+                str(name): _resolve_named_input_value(kwargs, str(name))
+                for name in self.input_names
+            }
+        if len(args) != len(self.input_names):
+            raise RuntimeError(
+                f"Input arity mismatch. expected={len(self.input_names)} actual={len(args)}"
+            )
+        return {str(name): value for name, value in zip(self.input_names, args)}
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        inputs = self._input_dict(*args, **kwargs)
+        input_name = str(self.input_names[0])
+        array = np.asarray(_coerce_input_to_numpy(inputs[input_name]), dtype=object)
+        flat = array.reshape(-1)
+        case_action = str(self._config.get("case_change_action", "")).upper()
+        is_case_sensitive = bool(self._config.get("is_case_sensitive", True))
+        stopwords = [str(v) for v in list(self._config.get("stopwords", []))]
+        stopword_set = (
+            set(stopwords)
+            if is_case_sensitive
+            else {word.lower() for word in stopwords}
+        )
+
+        normalized: List[str] = []
+        for raw in flat.tolist():
+            token = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            if case_action == "LOWER":
+                transformed = token.lower()
+            elif case_action == "UPPER":
+                transformed = token.upper()
+            else:
+                transformed = token
+            compare_token = transformed if is_case_sensitive else transformed.lower()
+            if compare_token in stopword_set:
+                normalized.append("")
+            else:
+                normalized.append(transformed)
+        output = np.asarray(normalized, dtype=object).reshape(array.shape)
+        if output.ndim == 0:
+            return output.reshape(()).item()
+        return output
+
+    def forward_named(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return {str(self.output_names[0]): self.forward(*args, **kwargs)}
+
+
+class _SavedModelBackedGeneratedModel(torch.nn.Module):
+    def __init__(
+        self,
+        *,
+        metadata: Dict[str, Any],
+        package_dir: str,
+        device: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        import tensorflow as tf
+
+        self._tf = tf
+        self._metadata = metadata
+        self._device = device
+        self.input_names = list(metadata.get("inputs", []))
+        self.output_names = list(metadata.get("outputs", []))
+        saved_model_dir_name = str(metadata.get("saved_model_dir_name", "saved_model"))
+        saved_model_path = os.path.join(str(package_dir), saved_model_dir_name)
+        module = tf.saved_model.load(saved_model_path)
+        signatures = getattr(module, "signatures", {})
+        signature_callable = None
+        if hasattr(signatures, "get"):
+            signature_callable = signatures.get("serving_default", None)
+        elif isinstance(signatures, dict) and "serving_default" in signatures:
+            signature_callable = signatures["serving_default"]
+        if callable(signature_callable):
+            self._callable = signature_callable
+        elif callable(module):
+            self._callable = module
+        else:
+            raise RuntimeError(
+                "SavedModel-backed PyTorch package could not resolve a callable endpoint. "
+                f"path={saved_model_path}"
+            )
+        self._signature_input_name_map: Dict[str, str] = {
+            str(name): str(name) for name in self.input_names
+        }
+        self._input_signature_shapes: Dict[str, List[Optional[int]]] = {}
+        structured_input_signature = getattr(self._callable, "structured_input_signature", None)
+        if (
+            isinstance(structured_input_signature, tuple)
+            and len(structured_input_signature) == 2
+            and isinstance(structured_input_signature[1], dict)
+        ):
+            signature_inputs = {
+                str(input_name): tensor_spec
+                for input_name, tensor_spec in structured_input_signature[1].items()
+            }
+            for input_name, tensor_spec in signature_inputs.items():
+                shape = getattr(tensor_spec, "shape", None)
+                if shape is None:
+                    continue
+                self._input_signature_shapes[str(input_name)] = [
+                    None if dim is None else int(dim)
+                    for dim in list(shape)
+                ]
+            signature_names = list(signature_inputs.keys())
+            for input_name in self.input_names:
+                assigned_name = None
+                normalized_input_name = _normalize_tensor_name(str(input_name))
+                canonical_input_name = _canonical_tensor_name(str(input_name))
+                for candidate in signature_names:
+                    normalized_candidate = _normalize_tensor_name(str(candidate))
+                    canonical_candidate = _canonical_tensor_name(str(candidate))
+                    if (
+                        str(candidate) == str(input_name)
+                        or normalized_candidate == normalized_input_name
+                        or canonical_candidate == canonical_input_name
+                        or str(candidate).endswith(f"_{normalized_input_name}")
+                    ):
+                        assigned_name = str(candidate)
+                        break
+                if assigned_name is not None:
+                    self._signature_input_name_map[str(input_name)] = assigned_name
+
+    def _input_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        if len(args) > 0 and len(kwargs) > 0:
+            raise RuntimeError("Use either positional inputs or keyword inputs, not both.")
+        if len(kwargs) > 0:
+            return {
+                str(name): _resolve_named_input_value(kwargs, str(name))
+                for name in self.input_names
+            }
+        if len(args) != len(self.input_names):
+            raise RuntimeError(
+                f"Input arity mismatch. expected={len(self.input_names)} actual={len(args)}"
+            )
+        return {str(name): value for name, value in zip(self.input_names, args)}
+
+    def _target_shape(self, tensor_name: str) -> Optional[List[int]]:
+        boundary_map = self._metadata.get("boundary_shape_signatures", {})
+        if isinstance(boundary_map, dict):
+            boundary_shape = boundary_map.get(str(tensor_name), None)
+            if isinstance(boundary_shape, list):
+                return [max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape]
+        tensor_meta = self._metadata.get("tensors", {}).get(str(tensor_name), {})
+        shape_sig = tensor_meta.get("shape_signature", tensor_meta.get("shape", None))
+        if isinstance(shape_sig, list):
+            return [max(1, int(v)) if int(v) >= 0 else 1 for v in shape_sig]
+        return None
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        inputs = self._input_dict(*args, **kwargs)
+        tf_inputs: Dict[str, Any] = {}
+        for input_name in self.input_names:
+            signature_input_name = self._signature_input_name_map.get(
+                str(input_name),
+                str(input_name),
+            )
+            value = _coerce_input_to_numpy(inputs[str(input_name)])
+            array = _align_numpy_to_signature_shape(
+                np.asarray(value),
+                self._input_signature_shapes.get(str(signature_input_name)),
+            )
+            if _numpy_dtype_is_string(array.dtype):
+                tf_inputs[str(signature_input_name)] = self._tf.convert_to_tensor(
+                    np.asarray(array, dtype=str),
+                    dtype=self._tf.string,
+                )
+            else:
+                tf_inputs[str(signature_input_name)] = self._tf.convert_to_tensor(array)
+
+        outputs_raw = self._callable(**tf_inputs)
+        if isinstance(outputs_raw, dict):
+            outputs_map = {
+                str(name): value
+                for name, value in outputs_raw.items()
+            }
+        else:
+            outputs_map = {
+                str(self.output_names[0]): outputs_raw
+            }
+
+        normalized_output_map: Dict[str, Any] = {}
+        for name, value in outputs_map.items():
+            key = str(name)
+            normalized_output_map[key] = value
+            normalized_output_map.setdefault(_normalize_tensor_name(key), value)
+        outputs: List[Any] = []
+        for output_name in self.output_names:
+            value = normalized_output_map.get(str(output_name))
+            if value is None:
+                value = normalized_output_map.get(_normalize_tensor_name(str(output_name)))
+            if value is None:
+                raise RuntimeError(f"SavedModel output was not found. output_name={output_name}")
+            array = value.numpy() if hasattr(value, "numpy") else np.asarray(value)
+            array = _align_numpy_to_target_shape(array, self._target_shape(str(output_name)))
+            outputs.append(_coerce_output_value(array, device=self._device))
+        if len(outputs) == 1:
+            return outputs[0]
+        return tuple(outputs)
+
+    def forward_named(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        result = self.forward(*args, **kwargs)
+        if len(self.output_names) == 1:
+            return {str(self.output_names[0]): result}
+        return {str(name): value for name, value in zip(self.output_names, result)}
+
+
+def load_generated_model_package(
+    *,
+    package_dir: str,
+    device: Optional[str] = None,
+    eval_mode: bool = True,
+) -> torch.nn.Module:
+    metadata_path = os.path.join(package_dir, "metadata.json")
+    state_dict_path = os.path.join(package_dir, "state_dict.pth")
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    if str(metadata.get("execution_backend", "")).lower() == "string_normalizer":
+        model = _StringNormalizerGeneratedModel(metadata=metadata)
+        if eval_mode:
+            model.eval()
+        return model
+    if str(metadata.get("execution_backend", "")).lower() == "saved_model":
+        model = _SavedModelBackedGeneratedModel(
+            metadata=metadata,
+            package_dir=package_dir,
+            device=device,
+        )
+        if eval_mode:
+            model.eval()
+        return model
+    if str(metadata.get("execution_backend", "")).lower() == "tflite":
+        model = _TFLiteBackedGeneratedModel(
+            metadata=metadata,
+            package_dir=package_dir,
+            device=device,
+        )
+        if eval_mode:
+            model.eval()
+        return model
+    raw_state_dict = torch.load(state_dict_path, map_location=device or "cpu")
+    metadata = prepare_generated_model_metadata(metadata=metadata, raw_state_dict=raw_state_dict)
+    model = _GeneratedModel(metadata=metadata)
+    model = load_generated_model_weights(
+        model=model,
+        metadata=metadata,
+        raw_state_dict=raw_state_dict,
+        device=device,
+    )
     if eval_mode:
         model.eval()
     return model

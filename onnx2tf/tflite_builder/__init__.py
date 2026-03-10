@@ -785,10 +785,29 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 from onnx2tf.tflite_builder.pytorch_exporter import (
                     export_pytorch_package_from_model_ir,
                 )
+                fallback_saved_model_path = saved_model_path
+                if fallback_saved_model_path is None:
+                    try:
+                        from onnx2tf.tflite_builder.saved_model_exporter import (
+                            export_saved_model_from_model_ir,
+                        )
+                        fallback_saved_model_path = export_saved_model_from_model_ir(
+                            model_ir=model_ir_fp32,
+                            output_folder_path=os.path.join(
+                                output_folder_path,
+                                f".{output_file_name}_pytorch_saved_model_bridge",
+                            ),
+                        )
+                    except Exception:
+                        fallback_saved_model_path = None
 
                 pytorch_package_path = export_pytorch_package_from_model_ir(
                     model_ir=model_ir,
                     output_folder_path=pytorch_output_folder_path,
+                    fallback_tflite_path=float32_path,
+                    fallback_onnx_graph=onnx_graph,
+                    fallback_saved_model_path=fallback_saved_model_path,
+                    fallback_tflite_has_custom_ops=bool(len(custom_ops_used) > 0),
                 )
             _advance_export_progress()
 
