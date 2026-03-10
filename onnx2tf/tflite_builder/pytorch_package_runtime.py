@@ -315,13 +315,17 @@ def _align_binary_inputs(
     y: torch.Tensor,
     target_shape: Optional[Sequence[int]],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    target = [int(v) for v in list(target_shape)] if target_shape is not None else None
     if x.ndim != y.ndim:
         return x, y
     if [int(v) for v in list(x.shape)] == [int(v) for v in list(y.shape)]:
         return x, y
     try:
-        torch.broadcast_shapes(tuple(int(v) for v in x.shape), tuple(int(v) for v in y.shape))
-        return x, y
+        broadcast_shape = list(
+            torch.broadcast_shapes(tuple(int(v) for v in x.shape), tuple(int(v) for v in y.shape))
+        )
+        if target is None or [int(v) for v in broadcast_shape] == target:
+            return x, y
     except Exception:
         pass
     perm = _perm_cl_to_cf(x.ndim)
@@ -329,7 +333,6 @@ def _align_binary_inputs(
         return x, y
     x_shape = [int(v) for v in list(x.shape)]
     y_shape = [int(v) for v in list(y.shape)]
-    target = [int(v) for v in list(target_shape)] if target_shape is not None else None
     if _permute_shape(y_shape, perm) == x_shape:
         return x, y.permute(*perm).contiguous()
     if _permute_shape(x_shape, perm) == y_shape:
@@ -339,6 +342,38 @@ def _align_binary_inputs(
             return x, y.permute(*perm).contiguous()
         if _permute_shape(x_shape, perm) == target:
             return x.permute(*perm).contiguous(), y
+    if x.ndim <= 5:
+        import itertools
+
+        for generic_perm in itertools.permutations(range(x.ndim)):
+            if list(generic_perm) == list(range(x.ndim)):
+                continue
+            permuted_y_shape = _permute_shape(y_shape, generic_perm)
+            if permuted_y_shape is not None:
+                try:
+                    torch.broadcast_shapes(tuple(permuted_y_shape), tuple(x_shape))
+                    return x, y.permute(*generic_perm).contiguous()
+                except Exception:
+                    pass
+                if target is not None:
+                    try:
+                        torch.broadcast_shapes(tuple(permuted_y_shape), tuple(target))
+                        return x, y.permute(*generic_perm).contiguous()
+                    except Exception:
+                        pass
+            permuted_x_shape = _permute_shape(x_shape, generic_perm)
+            if permuted_x_shape is not None:
+                try:
+                    torch.broadcast_shapes(tuple(permuted_x_shape), tuple(y_shape))
+                    return x.permute(*generic_perm).contiguous(), y
+                except Exception:
+                    pass
+                if target is not None:
+                    try:
+                        torch.broadcast_shapes(tuple(permuted_x_shape), tuple(target))
+                        return x.permute(*generic_perm).contiguous(), y
+                    except Exception:
+                        pass
     return x, y
 
 

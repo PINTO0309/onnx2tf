@@ -740,6 +740,7 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
         "CONV_3D_TRANSPOSE",
         "COS",
         "DEPTHWISE_CONV_2D",
+        "DEPTH_TO_SPACE",
         "DIV",
         "ELU",
         "EXP",

@@ -811,7 +811,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     )
 
                 pytorch_package_path = export_pytorch_package_from_model_ir(
-                    model_ir=model_ir,
+                    model_ir=model_ir_fp32,
                     output_folder_path=pytorch_output_folder_path,
                     fallback_tflite_path=float32_path,
                     fallback_onnx_graph=onnx_graph,

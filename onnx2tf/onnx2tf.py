@@ -1451,7 +1451,9 @@ def convert(
         When used together with split output, partition PyTorch packages are
         emitted instead of a single root package.\n
         Unsupported/CUSTOM ops or residual channel-last layout bridges are
-        rejected with an explicit error.
+        rejected with an explicit error.\n
+        With `input_tflite_file_path`, this is also available and `-cotof`
+        compares `TFLite↔PyTorch` with the same seeded inputs.
 
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
@@ -1846,6 +1848,8 @@ def convert(
         between the output of onnx and that of TF. This is because when undefined\n
         dimensions are present, a situation often arises where very large index\n
         values are compared, causing OutOfMemory.\n
+        With `input_tflite_file_path` + `flatbuffer_direct_output_pytorch`, this
+        emits `TFLite↔PyTorch` comparison reports instead of ONNX-based reports.\n
         It is very time consuming because it performs as many inferences as\n
         there are operations.
 
@@ -2445,13 +2449,80 @@ def convert(
             'source_label': str(source_label),
         }
 
+    def _run_tflite_pytorch_output_check(
+        *,
+        tflite_path: Optional[str],
+        package_dir: Optional[str],
+        source_label: str,
+    ) -> Optional[Dict[str, Any]]:
+        if not bool(check_onnx_tf_outputs_elementwise_close_full):
+            return None
+        if tflite_path is None or str(tflite_path) == '' or not os.path.exists(tflite_path):
+            return None
+        if package_dir is None or str(package_dir) == '' or not os.path.exists(package_dir):
+            return None
+        report_path = os.path.join(
+            runtime_output_folder_path,
+            f'{output_file_name}_pytorch_accuracy_report.json',
+        )
+        try:
+            from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
+                evaluate_tflite_pytorch_package_outputs,
+            )
+        except Exception as ex:
+            warn(
+                'TFLite/PyTorch output check was skipped because evaluator dependencies are unavailable. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        try:
+            report = evaluate_tflite_pytorch_package_outputs(
+                tflite_path=str(tflite_path),
+                package_dir=str(package_dir),
+                output_report_path=report_path,
+                num_samples=1,
+                seed=0,
+                rtol=eval_rtol,
+                atol=eval_atol,
+            )
+        except Exception as ex:
+            warn(
+                'TFLite/PyTorch output check failed. '
+                f'source={source_label} reason={ex}'
+            )
+            return None
+
+        overall_metrics = report.get('overall_metrics', {}) or {}
+        info(
+            Color.GREEN(
+                'TFLite/PyTorch output check complete! '
+                f'({report_path}) '
+                f'trigger=-cotof(auto) source={source_label} '
+                f'max_abs={float(overall_metrics.get("max_abs", 0.0)):.6g} '
+                f'rmse={float(overall_metrics.get("rmse", 0.0)):.6g} '
+                f'cosine={float(overall_metrics.get("cosine_similarity", 0.0)):.6g} '
+                f'pass={report.get("evaluation_pass", None)}'
+            )
+        )
+        return {
+            'report': report,
+            'report_path': report_path,
+            'source_label': str(source_label),
+        }
+
     def _write_accuracy_comparison_report(
         *,
         tflite_result: Optional[Dict[str, Any]],
         pytorch_result: Optional[Dict[str, Any]],
+        tflite_pytorch_result: Optional[Dict[str, Any]] = None,
         source_label: str,
     ) -> Optional[str]:
-        if tflite_result is None and pytorch_result is None:
+        if (
+            tflite_result is None
+            and pytorch_result is None
+            and tflite_pytorch_result is None
+        ):
             return None
         report_path = os.path.join(
             runtime_output_folder_path,
@@ -2471,6 +2542,9 @@ def convert(
             ),
             'onnx_tflite': None,
             'onnx_pytorch': None,
+            'tflite_pytorch': None,
+            'reference_backend': 'onnx',
+            'pytorch_backend': 'pytorch_package' if pytorch_result is not None else None,
         }
         if tflite_result is not None:
             report['onnx_tflite'] = {
@@ -2485,6 +2559,15 @@ def convert(
                 'evaluation_pass': pytorch_result.get('report', {}).get('evaluation_pass', None),
                 'evaluation_skipped': pytorch_result.get('report', {}).get('evaluation_skipped', False),
                 'overall_metrics': pytorch_result.get('report', {}).get('overall_metrics', {}),
+            }
+        if tflite_pytorch_result is not None:
+            report['reference_backend'] = 'tflite'
+            report['pytorch_backend'] = 'pytorch_package'
+            report['tflite_pytorch'] = {
+                'report_path': str(tflite_pytorch_result.get('report_path')),
+                'evaluation_pass': tflite_pytorch_result.get('report', {}).get('evaluation_pass', None),
+                'evaluation_skipped': tflite_pytorch_result.get('report', {}).get('evaluation_skipped', False),
+                'overall_metrics': tflite_pytorch_result.get('report', {}).get('overall_metrics', {}),
             }
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
@@ -4027,7 +4110,7 @@ def convert(
                 prefix='onnx2tf_tflite_direct_',
             )
             tflite_direct_output_folder_path = tflite_direct_staging_dir.name
-            runtime_output_folder_path = tflite_direct_output_folder_path
+            runtime_output_folder_path = output_folder_path
             if flatbuffer_direct_output_pytorch:
                 os.makedirs(output_folder_path, exist_ok=True)
         else:
@@ -4286,7 +4369,7 @@ def convert(
                 )
             if flatbuffer_direct_output_pytorch:
                 pytorch_package_path = export_pytorch_package_from_model_ir(
-                    model_ir=model_ir,
+                    model_ir=model_ir_fp32,
                     output_folder_path=os.path.join(
                         output_folder_path,
                         f'{output_file_name}_pytorch',
@@ -4320,6 +4403,17 @@ def convert(
                 )
             if pytorch_package_path is not None:
                 info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
+                tflite_pytorch_eval_result = _run_tflite_pytorch_output_check(
+                    tflite_path=input_tflite_file_path,
+                    package_dir=pytorch_package_path,
+                    source_label='tflite_direct_input',
+                )
+                _write_accuracy_comparison_report(
+                    tflite_result=None,
+                    pytorch_result=None,
+                    tflite_pytorch_result=tflite_pytorch_eval_result,
+                    source_label='tflite_direct_input',
+                )
         finally:
             if tflite_direct_bridge_saved_model_dir is not None:
                 tflite_direct_bridge_saved_model_dir.cleanup()
@@ -8153,7 +8247,8 @@ def main():
         action='store_true',
         help=\
             'Output a reloadable PyTorch package directly from flatbuffer_direct ModelIR. \n' +
-            'Public spatial inputs/outputs use NCW/NCHW/NCDHW.'
+            'Public spatial inputs/outputs use NCW/NCHW/NCDHW. \n' +
+            'Also available with -it/--input_tflite_file_path.'
     )
     parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
@@ -8753,6 +8848,7 @@ def main():
             'values are compared, causing OutOfMemory. ' +
             'It is very time consuming because it performs as many inferences as '+
             'there are operations. '+
+            'With -it and -fdopt, this compares TFLite and PyTorch outputs instead of ONNX-based outputs. '+
             'In addition, final ONNX vs generated TFLite output error check is automatically executed.'
     )
     parser.add_argument(

@@ -335,7 +335,30 @@ These options have the following constraints:
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
-### PyTorch export tutorial (`yolox_s.onnx`)
+- e.g. Generate a PyTorch package directly from an existing LiteRT (`.tflite`) file
+  ```bash
+  onnx2tf \
+  -it iat_llie_180x320_float32.tflite \
+  -o tmp_iat_llie_180x320_from_tflite \
+  -tb flatbuffer_direct \
+  -fdopt
+  ```
+
+- e.g. Compare the input LiteRT model and the generated PyTorch package with the same seeded inputs
+  ```bash
+  onnx2tf \
+  -it iat_llie_180x320_float32.tflite \
+  -o tmp_iat_llie_180x320_from_tflite \
+  -tb flatbuffer_direct \
+  -fdopt \
+  -cotof
+  ```
+  This outputs:
+  - `iat_llie_180x320_float32_pytorch/`
+  - `iat_llie_180x320_float32_pytorch_accuracy_report.json` (`TFLite↔PyTorch`)
+  - `iat_llie_180x320_float32_accuracy_comparison_report.json`
+
+### [Ultra experimental] PyTorch export (`yolox_s.onnx`)
 
 If you want LiteRT output, a reloadable PyTorch package, and accuracy reports from the same run, use:
 
@@ -2156,6 +2179,8 @@ optional arguments:
     Unsupported/CUSTOM ops and residual channel-last layout bridges fail explicitly.
     When used with -cotof, also outputs `<model_name>_pytorch_accuracy_report.json`
     and `<model_name>_accuracy_comparison_report.json` in the output directory.
+    With `-it/--input_tflite_file_path`, these reports compare `TFLite↔PyTorch`
+    using the same seeded inputs.
 
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
@@ -2617,8 +2642,11 @@ optional arguments:
     If `--flatbuffer_direct_output_pytorch` is also enabled, onnx2tf additionally
     emits `<model_name>_pytorch_accuracy_report.json` (`ONNX↔PyTorch`) and
     `<model_name>_accuracy_comparison_report.json` using the same input samples.
-    When --input_tflite_file_path is specified, this runs SavedModel inference
-    plus SavedModel vs input TFLite output comparison and emits
+    When `--input_tflite_file_path` is specified together with
+    `--flatbuffer_direct_output_pytorch`, onnx2tf emits
+    `<model_name>_pytorch_accuracy_report.json` (`TFLite↔PyTorch`) and
+    `<model_name>_accuracy_comparison_report.json`.
+    SavedModel validation remains separate and, if enabled, emits
     `<model_name>_saved_model_validation_report.json`.
     If split SavedModels are emitted, they are executed sequentially in
     split-manifest order before comparison.

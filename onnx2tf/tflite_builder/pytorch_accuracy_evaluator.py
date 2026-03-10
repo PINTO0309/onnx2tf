@@ -16,11 +16,17 @@ import torch
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _align_output_layout_for_compare,
     _build_eval_inputs_for_sample,
+    _build_tflite_detail_map,
     _collect_onnx_input_specs,
+    _create_tflite_interpreter,
+    _dequantize_tflite_output,
+    _adapt_input_layout_for_tflite_input,
     _judge_metrics,
     _load_custom_input_data,
     _MetricAccumulator,
     _normalize_tensor_name,
+    _quantize_for_tflite_input,
+    _resize_tflite_inputs_if_needed,
     _resolve_metric_thresholds,
 )
 
@@ -58,6 +64,10 @@ def _import_generated_package(package_path: str) -> Any:
 
 def _is_string_dtype(np_dtype: np.dtype) -> bool:
     return np_dtype.kind in {"U", "S", "O"}
+
+
+def _is_integer_or_bool_dtype(np_dtype: np.dtype) -> bool:
+    return bool(np.issubdtype(np_dtype, np.integer) or np.issubdtype(np_dtype, np.bool_))
 
 
 def _generate_string_input(
@@ -105,6 +115,44 @@ def _load_package_metadata(package_dir: str) -> Dict[str, Any]:
         return {}
     with open(metadata_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _shape_list_from_detail_value(value: Any) -> List[int]:
+    if value is None:
+        return []
+    try:
+        return [int(v) for v in np.asarray(value).reshape(-1).tolist()]
+    except Exception:
+        return []
+
+
+def _sanitize_eval_shape(values: Sequence[int]) -> Tuple[int, ...]:
+    sanitized: List[int] = []
+    for value in values:
+        dim = int(value)
+        sanitized.append(dim if dim > 0 else 1)
+    return tuple(sanitized)
+
+
+def _collect_tflite_input_specs(
+    *,
+    input_names: Sequence[str],
+    tflite_input_map: Dict[str, Dict[str, Any]],
+) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
+    specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
+    for input_name in input_names:
+        detail = tflite_input_map[str(input_name)]
+        shape = _shape_list_from_detail_value(detail.get("shape_signature", None))
+        if len(shape) == 0:
+            shape = _shape_list_from_detail_value(detail.get("shape", None))
+        specs.append(
+            (
+                str(input_name),
+                np.dtype(detail["dtype"]),
+                _sanitize_eval_shape(shape),
+            )
+        )
+    return specs
 
 
 def _permute_shape(values: Sequence[int], perm: Sequence[int]) -> List[int]:
@@ -546,6 +594,258 @@ def evaluate_pytorch_package_outputs(
             if len(custom_inputs) > 0
             else "seeded_random"
         ),
+        "evaluation_pass": bool(
+            (metric_judgement["pass"] or numeric_outputs_pass)
+            and len(exact_match_failures) == 0
+        ),
+        "evaluation_skipped": False,
+        "skip_reason": None,
+        "onnxruntime_reference_error": None,
+        "overall_metrics": overall_metrics_dict,
+        "metric_judgement": metric_judgement,
+        "task_equivalent_numeric_outputs": sorted(set(task_equivalent_passes)),
+        "string_exact_match_failures": sorted(set(exact_match_failures)),
+        "numeric_allclose_failures": sorted(set(allclose_failures)),
+        "per_output": per_output_report,
+    }
+    os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
+    with open(output_report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    return report
+
+
+def evaluate_tflite_pytorch_package_outputs(
+    *,
+    tflite_path: str,
+    package_dir: str,
+    output_report_path: str,
+    num_samples: int = 1,
+    seed: int = 0,
+    rtol: float = 1.0e-4,
+    atol: float = 1.0e-4,
+    metric_thresholds: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    if int(num_samples) <= 0:
+        raise ValueError(f"num_samples must be > 0. got: {num_samples}")
+    if not os.path.exists(tflite_path):
+        raise FileNotFoundError(f"TFLite file does not exist. path={tflite_path}")
+    if not os.path.exists(package_dir):
+        raise FileNotFoundError(f"PyTorch package does not exist. path={package_dir}")
+
+    rng = np.random.default_rng(seed=int(seed))
+    pkg = _import_generated_package(package_dir)
+    package_metadata = _load_package_metadata(package_dir)
+    model = pkg.load_model(eval_mode=True)
+
+    interpreter = _create_tflite_interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+    tflite_input_details = interpreter.get_input_details()
+    tflite_output_details = interpreter.get_output_details()
+
+    package_input_names = [
+        str(name)
+        for name in list((package_metadata or {}).get("inputs", []) or [])
+    ]
+    if len(package_input_names) == 0:
+        package_input_names = [str(detail["name"]) for detail in tflite_input_details]
+    package_output_names = [
+        str(name)
+        for name in list((package_metadata or {}).get("outputs", []) or [])
+    ]
+    if len(package_output_names) == 0:
+        package_output_names = [str(detail["name"]) for detail in tflite_output_details]
+
+    tflite_input_map = _build_tflite_detail_map(
+        onnx_names=package_input_names,
+        tflite_details=tflite_input_details,
+    )
+    tflite_output_map = _build_tflite_detail_map(
+        onnx_names=package_output_names,
+        tflite_details=tflite_output_details,
+    )
+    input_specs = _collect_tflite_input_specs(
+        input_names=package_input_names,
+        tflite_input_map=tflite_input_map,
+    )
+
+    overall_metrics = _MetricAccumulator()
+    per_output_metrics: Dict[str, _MetricAccumulator] = {
+        output_name: _MetricAccumulator() for output_name in package_output_names
+    }
+    per_output_report: Dict[str, Dict[str, Any]] = {
+        output_name: {"kind": "numeric"} for output_name in package_output_names
+    }
+    exact_match_failures: List[str] = []
+    allclose_failures: List[str] = []
+    task_equivalent_passes: List[str] = []
+    has_quantized_outputs = any(
+        _is_integer_or_bool_dtype(np.dtype(detail["dtype"]))
+        for detail in tflite_output_details
+    )
+
+    for sample_index in range(int(num_samples)):
+        eval_inputs = _build_pytorch_eval_inputs_for_sample(
+            input_specs=input_specs,
+            custom_inputs={},
+            sample_index=sample_index,
+            rng=rng,
+        )
+        package_outputs = model.forward_named(
+            **_convert_inputs_for_package(
+                eval_inputs,
+                package_metadata=package_metadata,
+            )
+        )
+        adapted_inputs = {
+            input_name: _adapt_input_layout_for_tflite_input(
+                eval_inputs[input_name],
+                tflite_input_map[input_name],
+            )
+            for input_name in package_input_names
+        }
+        if _resize_tflite_inputs_if_needed(
+            interpreter=interpreter,
+            onnx_input_names=package_input_names,
+            tflite_input_map=tflite_input_map,
+            adapted_inputs=adapted_inputs,
+        ):
+            interpreter.allocate_tensors()
+            tflite_input_details = interpreter.get_input_details()
+            tflite_output_details = interpreter.get_output_details()
+            tflite_input_map = _build_tflite_detail_map(
+                onnx_names=package_input_names,
+                tflite_details=tflite_input_details,
+            )
+            tflite_output_map = _build_tflite_detail_map(
+                onnx_names=package_output_names,
+                tflite_details=tflite_output_details,
+            )
+            adapted_inputs = {
+                input_name: _adapt_input_layout_for_tflite_input(
+                    eval_inputs[input_name],
+                    tflite_input_map[input_name],
+                )
+                for input_name in package_input_names
+            }
+        for input_name in package_input_names:
+            detail = tflite_input_map[input_name]
+            interpreter.set_tensor(
+                detail["index"],
+                _quantize_for_tflite_input(adapted_inputs[input_name], detail),
+            )
+        interpreter.invoke()
+
+        for output_name in package_output_names:
+            detail = tflite_output_map[output_name]
+            reference_output = interpreter.get_tensor(detail["index"])
+            if has_quantized_outputs:
+                reference_output = _dequantize_tflite_output(reference_output, detail)
+            else:
+                reference_output = np.asarray(reference_output)
+            pred = _normalize_package_output(
+                _resolve_named_output_value(
+                    outputs=package_outputs,
+                    output_name=str(output_name),
+                )
+            )
+            if _is_string_dtype(np.asarray(reference_output).dtype) or _is_string_dtype(np.asarray(pred).dtype):
+                ref_obj = np.asarray(reference_output, dtype=object)
+                pred_obj = np.asarray(pred, dtype=object)
+                matched = bool(np.array_equal(ref_obj, pred_obj))
+                per_output_report[str(output_name)] = {
+                    "kind": "string",
+                    "exact_match": matched,
+                    "tflite_output_name": str(detail.get("name", output_name)),
+                }
+                if not matched:
+                    exact_match_failures.append(str(output_name))
+                continue
+            aligned_pred, align_mode, align_perm = _align_output_layout_for_compare(
+                onnx_output=np.asarray(reference_output),
+                tflite_output=np.asarray(pred),
+                rtol=float(rtol),
+                atol=float(atol),
+            )
+            per_output_metrics[str(output_name)].update(reference_output, aligned_pred)
+            overall_metrics.update(reference_output, aligned_pred)
+            allclose = bool(
+                np.allclose(
+                    np.asarray(reference_output),
+                    np.asarray(aligned_pred),
+                    rtol=float(rtol),
+                    atol=float(atol),
+                    equal_nan=True,
+                )
+            )
+            if not allclose:
+                allclose_failures.append(str(output_name))
+            probability_equivalence = _evaluate_probability_map_equivalence(
+                ref=np.asarray(reference_output),
+                pred=np.asarray(aligned_pred),
+                axis=_infer_probability_axis(
+                    output_name=str(output_name),
+                    output_value=np.asarray(reference_output),
+                    package_metadata=package_metadata,
+                ),
+            )
+            if probability_equivalence is not None and bool(probability_equivalence.get("pass", False)):
+                task_equivalent_passes.append(str(output_name))
+            per_output_report[str(output_name)] = {
+                "kind": "numeric",
+                "allclose": allclose,
+                "align_mode": str(align_mode),
+                "align_perm": [int(v) for v in align_perm] if align_perm is not None else None,
+                "probability_map_equivalence": probability_equivalence,
+                "tflite_output_name": str(detail.get("name", output_name)),
+            }
+
+    thresholds = _resolve_metric_thresholds(
+        metric_thresholds=(
+            dict(_PYTORCH_FLOAT_METRIC_THRESHOLDS)
+            if metric_thresholds is None
+            else metric_thresholds
+        ),
+        use_quant_defaults=has_quantized_outputs,
+    )
+    overall_metrics_dict = overall_metrics.to_dict()
+    metric_judgement = _judge_metrics(
+        metrics=overall_metrics_dict,
+        thresholds=thresholds,
+        rtol=float(rtol),
+    )
+    for output_name, metrics in per_output_metrics.items():
+        if per_output_report[str(output_name)].get("kind") != "numeric":
+            continue
+        output_metrics = metrics.to_dict()
+        per_output_report[str(output_name)]["metrics"] = output_metrics
+        per_output_report[str(output_name)]["metric_judgement"] = _judge_metrics(
+            metrics=output_metrics,
+            thresholds=thresholds,
+            rtol=float(rtol),
+        )
+
+    numeric_outputs_pass = True
+    for output_name in package_output_names:
+        output_report = per_output_report[str(output_name)]
+        if output_report.get("kind") != "numeric":
+            continue
+        if bool(output_report.get("metric_judgement", {}).get("pass", False)):
+            continue
+        if bool((output_report.get("probability_map_equivalence") or {}).get("pass", False)):
+            continue
+        numeric_outputs_pass = False
+        break
+
+    report = {
+        "schema_version": 1,
+        "backend": "pytorch_package",
+        "reference_backend": "tflite",
+        "tflite_path": str(tflite_path),
+        "package_dir": str(package_dir),
+        "num_samples": int(num_samples),
+        "rtol": float(rtol),
+        "atol": float(atol),
+        "inputs_source": "seeded_random",
         "evaluation_pass": bool(
             (metric_judgement["pass"] or numeric_outputs_pass)
             and len(exact_match_failures) == 0
