@@ -190,6 +190,62 @@ def _normalize_package_output(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _infer_probability_axis(
+    *,
+    output_name: str,
+    output_value: np.ndarray,
+    package_metadata: Optional[Dict[str, Any]],
+) -> Optional[int]:
+    if output_value.ndim < 3:
+        return None
+    tensor_meta_map = (package_metadata or {}).get("tensors", {}) if isinstance(package_metadata, dict) else {}
+    output_meta = tensor_meta_map.get(str(output_name), {}) if isinstance(tensor_meta_map, dict) else {}
+    logical_layout = str(output_meta.get("logical_layout", "UNKNOWN")).upper()
+    if logical_layout in {"NC", "NCW", "NCHW", "NCDHW"} and output_value.ndim >= 2:
+        return 1
+    if logical_layout in {"NWC", "NHWC", "NDHWC"} and output_value.ndim >= 2:
+        return output_value.ndim - 1
+    if output_value.ndim >= 2 and int(output_value.shape[1]) <= 8:
+        return 1
+    if int(output_value.shape[-1]) <= 8:
+        return output_value.ndim - 1
+    return None
+
+
+def _evaluate_probability_map_equivalence(
+    *,
+    ref: np.ndarray,
+    pred: np.ndarray,
+    axis: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    if axis is None or ref.ndim != pred.ndim or ref.ndim < 3:
+        return None
+    resolved_axis = int(axis)
+    if resolved_axis < 0:
+        resolved_axis += ref.ndim
+    if resolved_axis < 0 or resolved_axis >= ref.ndim:
+        return None
+    class_dim = int(ref.shape[resolved_axis])
+    if class_dim < 2 or class_dim > 8 or int(pred.shape[resolved_axis]) != class_dim:
+        return None
+    ref_sum = np.sum(ref, axis=resolved_axis)
+    pred_sum = np.sum(pred, axis=resolved_axis)
+    if not (
+        np.allclose(ref_sum, 1.0, atol=1.0e-3, rtol=1.0e-3)
+        and np.allclose(pred_sum, 1.0, atol=1.0e-3, rtol=1.0e-3)
+    ):
+        return None
+    ref_argmax = np.argmax(ref, axis=resolved_axis)
+    pred_argmax = np.argmax(pred, axis=resolved_axis)
+    match_ratio = float(np.mean(ref_argmax == pred_argmax))
+    return {
+        "class_axis": int(resolved_axis),
+        "class_count": int(class_dim),
+        "argmax_match_ratio": match_ratio,
+        "pass": bool(match_ratio == 1.0),
+    }
+
+
 def _canonical_tensor_name(name: str) -> str:
     pieces: List[str] = []
     prev_was_sep = False
@@ -322,6 +378,7 @@ def evaluate_pytorch_package_outputs(
     }
     exact_match_failures: List[str] = []
     allclose_failures: List[str] = []
+    task_equivalent_passes: List[str] = []
 
     for sample_index in range(int(num_samples)):
         onnx_inputs = _build_pytorch_eval_inputs_for_sample(
@@ -422,11 +479,23 @@ def evaluate_pytorch_package_outputs(
             )
             if not allclose:
                 allclose_failures.append(str(output_name))
+            probability_equivalence = _evaluate_probability_map_equivalence(
+                ref=np.asarray(ref),
+                pred=np.asarray(aligned_pred),
+                axis=_infer_probability_axis(
+                    output_name=str(output_name),
+                    output_value=np.asarray(ref),
+                    package_metadata=package_metadata,
+                ),
+            )
+            if probability_equivalence is not None and bool(probability_equivalence.get("pass", False)):
+                task_equivalent_passes.append(str(output_name))
             per_output_report[str(output_name)] = {
                 "kind": "numeric",
                 "allclose": allclose,
                 "align_mode": str(align_mode),
                 "align_perm": [int(v) for v in align_perm] if align_perm is not None else None,
+                "probability_map_equivalence": probability_equivalence,
             }
 
     thresholds = _resolve_metric_thresholds(
@@ -453,6 +522,17 @@ def evaluate_pytorch_package_outputs(
             thresholds=thresholds,
             rtol=float(rtol),
         )
+    numeric_outputs_pass = True
+    for output_name in onnx_output_names:
+        output_report = per_output_report[str(output_name)]
+        if output_report.get("kind") != "numeric":
+            continue
+        if bool(output_report.get("metric_judgement", {}).get("pass", False)):
+            continue
+        if bool((output_report.get("probability_map_equivalence") or {}).get("pass", False)):
+            continue
+        numeric_outputs_pass = False
+        break
 
     report = {
         "schema_version": 1,
@@ -467,7 +547,7 @@ def evaluate_pytorch_package_outputs(
             else "seeded_random"
         ),
         "evaluation_pass": bool(
-            metric_judgement["pass"]
+            (metric_judgement["pass"] or numeric_outputs_pass)
             and len(exact_match_failures) == 0
         ),
         "evaluation_skipped": False,
@@ -475,6 +555,7 @@ def evaluate_pytorch_package_outputs(
         "onnxruntime_reference_error": None,
         "overall_metrics": overall_metrics_dict,
         "metric_judgement": metric_judgement,
+        "task_equivalent_numeric_outputs": sorted(set(task_equivalent_passes)),
         "string_exact_match_failures": sorted(set(exact_match_failures)),
         "numeric_allclose_failures": sorted(set(allclose_failures)),
         "per_output": per_output_report,
@@ -500,6 +581,7 @@ def smoke_test_pytorch_package_inference(
 
     rng = np.random.default_rng(seed=int(seed))
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    custom_inputs: Dict[str, np.ndarray] = {}
     pkg = _import_generated_package(package_dir)
     package_metadata = _load_package_metadata(package_dir)
     model = pkg.load_model(eval_mode=True)
@@ -511,6 +593,7 @@ def smoke_test_pytorch_package_inference(
         try:
             model_inputs = _build_pytorch_eval_inputs_for_sample(
                 input_specs=input_specs,
+                custom_inputs=custom_inputs,
                 sample_index=sample_index,
                 rng=rng,
             )

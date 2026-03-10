@@ -10,7 +10,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import onnx
@@ -857,6 +857,35 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
     return normalized
 
 
+def _is_layout_agnostic_native_model_ir(model_ir: ModelIR) -> bool:
+    channel_sensitive_ops = {
+        "CONV_2D",
+        "DEPTHWISE_CONV_2D",
+        "TRANSPOSE_CONV",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "MAX_POOL_2D",
+        "AVERAGE_POOL_2D",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "NON_MAX_SUPPRESSION_V4",
+    }
+    op_types = _collect_model_op_types(model_ir)
+    return len(op_types & channel_sensitive_ops) == 0
+
+
+def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
+    try:
+        return normalize_model_ir_for_pytorch_channel_first(model_ir)
+    except ModelIRPyTorchExportError:
+        if not _is_layout_agnostic_native_model_ir(model_ir):
+            raise
+    prepared = copy.deepcopy(model_ir)
+    infer_model_ir_logical_layouts(prepared)
+    prepared.metadata["assume_channel_last_layout_tensor_names"] = []
+    return prepared
+
+
 def _collect_model_op_types(model_ir: ModelIR) -> Set[str]:
     ops: Set[str] = set()
     for op in model_ir.operators:
@@ -1113,6 +1142,7 @@ _DIRECT_CODEGEN_MODULE_OP_TYPES: Set[str] = {
     "TRANSPOSE_CONV",
     "CONV_3D",
     "CONV_3D_TRANSPOSE",
+    "FULLY_CONNECTED",
 }
 
 _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
@@ -1148,6 +1178,7 @@ _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
 _DIRECT_CODEGEN_BINARY_FUNCTIONS: Dict[str, str] = {
     "ADD": "torch.add",
     "DIV": "torch.div",
+    "LESS": "torch.lt",
     "MAXIMUM": "torch.maximum",
     "MINIMUM": "torch.minimum",
     "MUL": "torch.mul",
@@ -1192,6 +1223,8 @@ _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (
         "TILE",
         "TRANSPOSE",
         "UNPACK",
+        "SELECT",
+        "SELECT_V2",
         "WHERE",
     }
 )
@@ -1708,6 +1741,7 @@ def _direct_codegen_module_attr_base(op_type: str) -> str:
         "TRANSPOSE_CONV": "conv_transpose2d",
         "CONV_3D": "conv3d",
         "CONV_3D_TRANSPOSE": "conv_transpose3d",
+        "FULLY_CONNECTED": "linear",
     }
     return str(names.get(str(op_type), str(op_type).lower()))
 
@@ -1766,10 +1800,12 @@ def _write_native_model_file(
     tensor_var_names = _build_tensor_var_name_map(model_ir)
     producer_index, consumer_index = _build_model_ir_producer_consumer_index(model_ir)
     module_param_tensor_names: Set[str] = set()
+    submodule_state_tensor_names: Set[str] = set()
     module_init_lines: List[str] = []
     load_specs: List[Tuple[str, str]] = []
     op_module_attr_names: Dict[int, str] = {}
     fused_module_specs: Dict[int, Dict[str, Any]] = {}
+    affine_layer_norm_specs: Dict[int, Dict[str, Any]] = {}
     nms_method_specs: List[Dict[str, Any]] = []
     module_attr_counts: Dict[str, int] = {}
     inlined_constant_tensor_names: Set[str] = set()
@@ -1893,12 +1929,110 @@ def _write_native_model_file(
         runtime_imports.add("_align_tensor_to_target_shape")
         return f"_align_tensor_to_target_shape({expr}, {_target_shape_literal(output_name)})"
 
-    def _inline_ctor_argument_lines(lines: Sequence[str]) -> List[str]:
-        formatted: List[str] = []
-        for index, line in enumerate(list(lines)):
-            suffix = "," if int(index) == int(len(list(lines)) - 1) else ""
-            formatted.append(f"    {line}{suffix}")
-        return formatted
+    def _is_constant_tensor_name(tensor_name: str) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        return tensor is not None and isinstance(tensor.data, np.ndarray)
+
+    def _next_unique_attr_name(base_name: str) -> str:
+        normalized = re.sub(r"[^0-9a-zA-Z]+", "_", str(base_name)).strip("_").lower()
+        if len(normalized) == 0:
+            normalized = "generated_module"
+        if normalized[0].isdigit():
+            normalized = f"n_{normalized}"
+        candidate = normalized
+        suffix = 1
+        existing_names = {
+            *module_attr_counts.keys(),
+            *(str(spec.get("attr_name")) for spec in affine_layer_norm_specs.values()),
+            *(str(value) for value in op_module_attr_names.values()),
+        }
+        while candidate in existing_names:
+            candidate = f"{normalized}_{suffix}"
+            suffix += 1
+        module_attr_counts[candidate] = 1
+        return candidate
+
+    def _canonical_codegen_name(name: str) -> str:
+        return re.sub(r"[^0-9a-z]+", "_", str(name).lower()).strip("_")
+
+    def _match_affine_layer_norm(op_index: int, op: OperatorIR) -> Optional[Dict[str, Any]]:
+        if str(op.op_type) != "ADD" or len(op.inputs) < 2 or len(op.outputs) != 1:
+            return None
+        output_name = str(op.outputs[0])
+        canonical_output_name = _canonical_codegen_name(output_name)
+        if "fakelayernorm" not in canonical_output_name or not canonical_output_name.endswith("add"):
+            return None
+        beta_input_name = ""
+        mul_output_name = ""
+        for input_name in op.inputs[:2]:
+            input_tensor_name = str(input_name)
+            canonical_input_name = _canonical_codegen_name(input_tensor_name)
+            if _is_constant_tensor_name(input_tensor_name) and "fakelayernorm_beta" in canonical_input_name:
+                beta_input_name = input_tensor_name
+            else:
+                mul_output_name = input_tensor_name
+        if beta_input_name == "" or mul_output_name == "":
+            return None
+        mul_op_index = producer_index.get(str(mul_output_name), None)
+        if mul_op_index is None:
+            return None
+        mul_op = model_ir.operators[int(mul_op_index)]
+        if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) < 2 or len(mul_op.outputs) != 1:
+            return None
+        if str(mul_op.outputs[0]) != mul_output_name:
+            return None
+        gamma_input_name = ""
+        input_name = ""
+        for mul_input_name in mul_op.inputs[:2]:
+            candidate_name = str(mul_input_name)
+            canonical_candidate_name = _canonical_codegen_name(candidate_name)
+            if _is_constant_tensor_name(candidate_name) and "fakelayernorm_gamma" in canonical_candidate_name:
+                gamma_input_name = candidate_name
+            else:
+                input_name = candidate_name
+        if gamma_input_name == "" or input_name == "":
+            return None
+        gamma_tensor = model_ir.tensors.get(str(gamma_input_name), None)
+        beta_tensor = model_ir.tensors.get(str(beta_input_name), None)
+        if gamma_tensor is None or beta_tensor is None:
+            return None
+        attr_stem = re.sub(r"(?i)(?:[/_])?FakeLayerNorm(?:[/_])add$", "", output_name)
+        attr_stem = re.sub(r"^bert[/_]", "", attr_stem, flags=re.IGNORECASE)
+        attr_name = _next_unique_attr_name(f"{attr_stem}_layer_norm")
+        return {
+            "attr_name": attr_name,
+            "input_name": str(input_name),
+            "output_name": output_name,
+            "gamma_name": str(gamma_input_name),
+            "beta_name": str(beta_input_name),
+            "gamma_shape": [int(v) for v in list(gamma_tensor.shape)],
+            "gamma_dtype": str(gamma_tensor.dtype).upper(),
+            "mul_op_index": int(mul_op_index),
+        }
+
+    for op_index, op in enumerate(model_ir.operators):
+        affine_layer_norm_spec = _match_affine_layer_norm(int(op_index), op)
+        if affine_layer_norm_spec is None:
+            continue
+        attr_name = str(affine_layer_norm_spec["attr_name"])
+        module_init_lines.extend(
+            [
+                f"self.{attr_name} = _AffineLayerNorm(",
+                f"    shape={repr(list(affine_layer_norm_spec['gamma_shape']))},",
+                f"    dtype={_torch_dtype_literal(str(affine_layer_norm_spec['gamma_dtype']))},",
+                ")",
+            ]
+        )
+        load_specs.append((f"{attr_name}.gamma", str(affine_layer_norm_spec["gamma_name"])))
+        load_specs.append((f"{attr_name}.beta", str(affine_layer_norm_spec["beta_name"])))
+        submodule_state_tensor_names.update(
+            {
+                str(affine_layer_norm_spec["gamma_name"]),
+                str(affine_layer_norm_spec["beta_name"]),
+            }
+        )
+        affine_layer_norm_specs[int(op_index)] = affine_layer_norm_spec
+        skipped_op_indices.add(int(affine_layer_norm_spec["mul_op_index"]))
 
     for op_index, op in enumerate(model_ir.operators):
         op_type = str(op.op_type)
@@ -1912,6 +2046,8 @@ def _write_native_model_file(
         weight_name = str(op.inputs[1]) if len(op.inputs) >= 2 else ""
         bias_name = ""
         if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D", "CONV_3D"} and len(op.inputs) >= 3 and str(op.inputs[2]) != "":
+            bias_name = str(op.inputs[2])
+        elif op_type == "FULLY_CONNECTED" and len(op.inputs) >= 3 and str(op.inputs[2]) != "":
             bias_name = str(op.inputs[2])
         elif op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} and len(op.inputs) >= 4 and str(op.inputs[3]) != "":
             bias_name = str(op.inputs[3])
@@ -2111,6 +2247,16 @@ def _write_native_model_file(
                     ")",
                 ]
             )
+        elif op_type == "FULLY_CONNECTED":
+            module_init_lines.extend(
+                [
+                    f"self.{attr_name} = torch.nn.Linear(",
+                    f"    in_features={int(weight_tensor.shape[1])},",
+                    f"    out_features={int(weight_tensor.shape[0])},",
+                    f"    bias={str(bias_name != '')},",
+                    ")",
+                ]
+            )
         load_specs.append((f"{attr_name}.conv.weight" if use_conv_block else f"{attr_name}.weight", str(weight_name)))
         if bias_name != "":
             load_specs.append((f"{attr_name}.conv.bias" if use_conv_block else f"{attr_name}.bias", str(bias_name)))
@@ -2136,7 +2282,7 @@ def _write_native_model_file(
     buffer_attr_names = _build_buffer_attr_name_map(
         model_ir=model_ir,
         tensor_storage_name_map=tensor_storage_name_map,
-        excluded_tensor_names=module_param_tensor_names | inlined_constant_tensor_names,
+        excluded_tensor_names=module_param_tensor_names | submodule_state_tensor_names | inlined_constant_tensor_names,
     )
     buffer_init_lines: List[str] = []
     for tensor_name, attr_name in buffer_attr_names.items():
@@ -2252,6 +2398,12 @@ def _write_native_model_file(
         outputs = [str(v) for v in op.outputs]
         output_vars = [tensor_var_names[str(name)] for name in outputs]
         output_target_shape = _target_shape_literal(outputs[0]) if len(outputs) == 1 else "None"
+        affine_layer_norm_spec = affine_layer_norm_specs.get(int(op_index), None)
+        if affine_layer_norm_spec is not None:
+            forward_lines.append(
+                f"{output_vars[0]} = self.{affine_layer_norm_spec['attr_name']}({_tensor_expr(str(affine_layer_norm_spec['input_name']))})"
+            )
+            continue
         if op_type in _DIRECT_CODEGEN_MODULE_OP_TYPES:
             attr_name = op_module_attr_names[int(op_index)]
             fused_module_spec = fused_module_specs.get(int(op_index), None)
@@ -2305,6 +2457,9 @@ def _write_native_model_file(
                 forward_lines.append(
                     f"{output_vars[0]} = _apply_module_transpose_conv3d(self.{attr_name}, {_tensor_expr(str(op.inputs[2]))}, target_shape={output_target_shape}, fallback_shape={repr(fallback_shape)}, fused='NONE')"
                 )
+                forward_lines.extend(_activation_lines(output_vars[0], fused))
+            elif op_type == "FULLY_CONNECTED":
+                forward_lines.append(f"{output_vars[0]} = self.{attr_name}({_tensor_expr(str(op.inputs[0]))})")
                 forward_lines.extend(_activation_lines(output_vars[0], fused))
             continue
         if op_type in _DIRECT_CODEGEN_BINARY_FUNCTIONS:
@@ -2514,6 +2669,12 @@ def _write_native_model_file(
         if op_type == "SOFTMAX":
             runtime_imports.add("_apply_softmax")
             axis = op.options.get("axis", None)
+            if axis is None and len(op.inputs) > 0:
+                input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+                if input_tensor is not None:
+                    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+                    if is_channel_first_logical_layout(input_layout) and len(list(input_tensor.shape)) >= 2:
+                        axis = 1
             axis_expr = repr(int(axis)) if axis is not None else "None"
             beta = float(op.options.get("beta", 1.0))
             forward_lines.append(
@@ -2533,7 +2694,8 @@ def _write_native_model_file(
             forward_lines.extend(_activation_lines(output_vars[0], str(options.get("fusedActivationFunction", "NONE"))))
             continue
         if op_type == "RESIZE_NEAREST_NEIGHBOR":
-            size_literal = _python_literal_for_constant_tensor(model_ir.tensors.get(str(op.inputs[1]), None))
+            size_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            size_literal = _python_literal_for_constant_tensor(size_tensor) if size_tensor is not None else None
             if size_literal is not None:
                 forward_lines.append(
                     f"{output_vars[0]} = F.interpolate({_tensor_expr(str(op.inputs[0]))}, size=tuple(int(v) for v in {size_literal}), mode='nearest')"
@@ -2545,16 +2707,23 @@ def _write_native_model_file(
                 )
             continue
         if op_type == "RESIZE_BILINEAR":
-            size_literal = _python_literal_for_constant_tensor(model_ir.tensors.get(str(op.inputs[1]), None))
+            size_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            size_literal = _python_literal_for_constant_tensor(size_tensor) if size_tensor is not None else None
             align_corners = bool(op.options.get("alignCorners", False))
-            if size_literal is not None:
+            half_pixel_centers = bool(op.options.get("halfPixelCenters", False))
+            if size_literal is not None and not half_pixel_centers:
                 forward_lines.append(
                     f"{output_vars[0]} = F.interpolate({_tensor_expr(str(op.inputs[0]))}, size=tuple(int(v) for v in {size_literal}), mode='bilinear', align_corners={align_corners})"
                 )
             else:
                 runtime_imports.add("_apply_resize")
+                size_expr = (
+                    f"torch.as_tensor({size_literal}, dtype=torch.int32, device={_tensor_expr(str(op.inputs[0]))}.device)"
+                    if size_literal is not None else
+                    _tensor_expr(str(op.inputs[1]))
+                )
                 forward_lines.append(
-                    f"{output_vars[0]} = _apply_resize({_tensor_expr(str(op.inputs[0]))}, {_tensor_expr(str(op.inputs[1]))}, method='bilinear', target_shape={output_target_shape})"
+                    f"{output_vars[0]} = _apply_resize({_tensor_expr(str(op.inputs[0]))}, {size_expr}, method='bilinear', target_shape={output_target_shape}, align_corners={align_corners}, half_pixel_centers={half_pixel_centers})"
                 )
             continue
         if op_type in {"SUM", "MEAN", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}:
@@ -2606,7 +2775,7 @@ def _write_native_model_file(
                 f"{output_vars[0]} = F.pad({_tensor_expr(str(op.inputs[0]))}, {pad_expr}, mode='reflect')"
             )
             continue
-        if op_type == "WHERE":
+        if op_type in {"WHERE", "SELECT", "SELECT_V2"}:
             if len(op.inputs) == 1:
                 forward_lines.append(
                     f"{output_vars[0]} = torch.nonzero({_tensor_expr(str(op.inputs[0]))}, as_tuple=False)"
@@ -2854,11 +3023,6 @@ def _write_native_model_file(
         "    unexpected = sorted(str(key) for key in raw_state_dict.keys() if str(key) not in recognized_keys)\n"
         "    if len(missing) > 0 or len(unexpected) > 0:\n"
         "        raise RuntimeError(f'state_dict mismatch. missing={missing} unexpected={unexpected}')\n\n"
-        "def _apply_binary(fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], x: torch.Tensor, y: torch.Tensor, target_shape: Optional[Sequence[int]], fused: str) -> torch.Tensor:\n"
-        "    x, y = _align_binary_inputs(x, y, target_shape)\n"
-        "    z = fn(x, y)\n"
-        "    z = _align_tensor_to_target_shape(z, target_shape)\n"
-        "    return _apply_fused_activation(z, fused)\n\n"
         "def _apply_concat(values: Sequence[torch.Tensor], axis: int, target_shape: Optional[Sequence[int]], fused: str) -> torch.Tensor:\n"
         "    if any(int(value.ndim) == 0 for value in values):\n"
         "        values = [value.reshape(1) if int(value.ndim) == 0 else value for value in values]\n"
@@ -3003,7 +3167,42 @@ def _write_native_model_file(
         "    if resize_as_channel_last and y.ndim == 4:\n"
         "        y = y.permute(0, 2, 3, 1).contiguous()\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
-        "def _apply_resize(x: torch.Tensor, size: torch.Tensor, method: str, target_shape: Optional[Sequence[int]]) -> torch.Tensor:\n"
+        "def _resize_bilinear_exact(x: torch.Tensor, size: Sequence[int], *, align_corners: bool, half_pixel_centers: bool) -> torch.Tensor:\n"
+        "    if x.ndim != 4:\n"
+        "        return F.interpolate(x, size=[int(size[0]), int(size[1])], mode='bilinear', align_corners=align_corners)\n"
+        "    out_h = int(size[0])\n"
+        "    out_w = int(size[1])\n"
+        "    in_h = int(x.shape[-2])\n"
+        "    in_w = int(x.shape[-1])\n"
+        "    if out_h <= 0 or out_w <= 0:\n"
+        "        raise RuntimeError('Resize target dimensions must be positive.')\n"
+        "    if align_corners:\n"
+        "        ys = torch.zeros([out_h], dtype=torch.float32, device=x.device) if out_h == 1 else torch.arange(out_h, dtype=torch.float32, device=x.device) * float(max(in_h - 1, 0)) / float(max(out_h - 1, 1))\n"
+        "        xs = torch.zeros([out_w], dtype=torch.float32, device=x.device) if out_w == 1 else torch.arange(out_w, dtype=torch.float32, device=x.device) * float(max(in_w - 1, 0)) / float(max(out_w - 1, 1))\n"
+        "    elif half_pixel_centers:\n"
+        "        ys = (torch.arange(out_h, dtype=torch.float32, device=x.device) + 0.5) * float(in_h) / float(out_h) - 0.5\n"
+        "        xs = (torch.arange(out_w, dtype=torch.float32, device=x.device) + 0.5) * float(in_w) / float(out_w) - 0.5\n"
+        "    else:\n"
+        "        ys = torch.arange(out_h, dtype=torch.float32, device=x.device) * float(in_h) / float(out_h)\n"
+        "        xs = torch.arange(out_w, dtype=torch.float32, device=x.device) * float(in_w) / float(out_w)\n"
+        "    y0 = torch.floor(ys).to(dtype=torch.int64)\n"
+        "    x0 = torch.floor(xs).to(dtype=torch.int64)\n"
+        "    y1 = y0 + 1\n"
+        "    x1 = x0 + 1\n"
+        "    y0c = y0.clamp(0, max(in_h - 1, 0))\n"
+        "    x0c = x0.clamp(0, max(in_w - 1, 0))\n"
+        "    y1c = y1.clamp(0, max(in_h - 1, 0))\n"
+        "    x1c = x1.clamp(0, max(in_w - 1, 0))\n"
+        "    ly = (ys - y0.to(dtype=torch.float32)).view(1, 1, out_h, 1)\n"
+        "    lx = (xs - x0.to(dtype=torch.float32)).view(1, 1, 1, out_w)\n"
+        "    hy = 1.0 - ly\n"
+        "    hx = 1.0 - lx\n"
+        "    top_left = x[:, :, y0c[:, None], x0c[None, :]]\n"
+        "    top_right = x[:, :, y0c[:, None], x1c[None, :]]\n"
+        "    bottom_left = x[:, :, y1c[:, None], x0c[None, :]]\n"
+        "    bottom_right = x[:, :, y1c[:, None], x1c[None, :]]\n"
+        "    return top_left * hy * hx + top_right * hy * lx + bottom_left * ly * hx + bottom_right * ly * lx\n\n"
+        "def _apply_resize(x: torch.Tensor, size: torch.Tensor, method: str, target_shape: Optional[Sequence[int]], align_corners: bool = False, half_pixel_centers: bool = False) -> torch.Tensor:\n"
         "    resize_size = [int(v) for v in size.to(dtype=torch.int64).reshape(-1).tolist()]\n"
         "    resize_as_channel_last = False\n"
         "    if x.ndim == 4 and target_shape is not None and len(list(target_shape)) == 4:\n"
@@ -3015,7 +3214,7 @@ def _write_native_model_file(
         "    if str(method).lower() == 'nearest':\n"
         "        y = F.interpolate(resize_input, size=resize_size, mode='nearest')\n"
         "    else:\n"
-        "        y = F.interpolate(resize_input, size=resize_size, mode='bilinear', align_corners=False)\n"
+        "        y = _resize_bilinear_exact(resize_input, resize_size, align_corners=align_corners, half_pixel_centers=half_pixel_centers)\n"
         "    if resize_as_channel_last and y.ndim == 4:\n"
         "        y = y.permute(0, 2, 3, 1).contiguous()\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
@@ -3103,7 +3302,6 @@ def _write_native_model_file(
         output_folder_path,
         runtime_source=runtime_source,
     )
-    module_init_block = "\n".join(f"        {line}" for line in module_init_lines)
     buffer_init_block = "\n".join(f"        {line}" for line in buffer_init_lines)
     buffer_annotation_block = "\n".join(
         f"    {attr_name}: torch.Tensor" for attr_name in buffer_attr_names.values()
@@ -3157,9 +3355,9 @@ def _write_native_model_file(
 
     def _build_forward_stage_methods(
         lines: Sequence[str],
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
         if len(lines) < 80:
-            return "", "\n".join(f"        {line}" for line in lines)
+            return "", [f"        {line}" for line in lines], []
 
         parsed_statements: List[ast.stmt] = []
         top_level_assigned_names: List[List[str]] = []
@@ -3193,6 +3391,7 @@ def _write_native_model_file(
         stage_max_lines = 36
         stage_methods: List[str] = []
         forward_stage_calls: List[str] = []
+        stage_specs: List[Dict[str, Any]] = []
         stage_index = 0
         start_index = 0
         total_lines = len(lines)
@@ -3217,16 +3416,55 @@ def _write_native_model_file(
             outputs = [name for name in assigned_order if name in later_needed]
             return inputs, outputs
 
+        def _append_stage(start: int, end: int) -> None:
+            nonlocal stage_index
+            stage_inputs, stage_outputs = _chunk_io(start, end)
+            if len(stage_outputs) == 0:
+                forward_stage_calls.extend(f"        {line}" for line in lines[start:end + 1])
+                return
+            method_name = f"_forward_stage_{stage_index}"
+            arg_list = ", ".join(f"{name}: torch.Tensor" for name in stage_inputs)
+            if len(arg_list) > 0:
+                signature = f"    def {method_name}(self, {arg_list})"
+            else:
+                signature = f"    def {method_name}(self)"
+            if len(stage_outputs) == 1:
+                signature += " -> torch.Tensor:\n"
+            else:
+                signature += " -> tuple[" + ", ".join("torch.Tensor" for _ in stage_outputs) + "]:\n"
+            stage_body = "\n".join(f"        {line}" for line in lines[start:end + 1])
+            if len(stage_outputs) == 1:
+                stage_return = f"        return {stage_outputs[0]}\n"
+            else:
+                stage_return = f"        return ({', '.join(stage_outputs)})\n"
+            stage_methods.append(f"{signature}{stage_body}\n{stage_return}")
+
+            call_args = ", ".join(stage_inputs)
+            call_expr = f"self.{method_name}({call_args})" if len(call_args) > 0 else f"self.{method_name}()"
+            if len(stage_outputs) == 1:
+                forward_stage_calls.append(f"        {stage_outputs[0]} = {call_expr}")
+            else:
+                forward_stage_calls.append(f"        {', '.join(stage_outputs)} = {call_expr}")
+            stage_specs.append(
+                {
+                    "stage_index": int(stage_index),
+                    "method_name": str(method_name),
+                    "inputs": list(stage_inputs),
+                    "outputs": list(stage_outputs),
+                }
+            )
+            stage_index += 1
+
         while start_index < total_lines:
             remaining = total_lines - start_index
             if remaining < 80 or remaining <= stage_max_lines:
-                forward_stage_calls.extend(f"        {line}" for line in lines[start_index:])
+                _append_stage(start_index, total_lines - 1)
                 break
 
             candidate_min_end = start_index + stage_min_lines - 1
             candidate_max_end = min(start_index + stage_max_lines - 1, total_lines - stage_min_lines - 1)
             if candidate_min_end > candidate_max_end:
-                forward_stage_calls.extend(f"        {line}" for line in lines[start_index:])
+                _append_stage(start_index, total_lines - 1)
                 break
 
             best_candidate: Optional[Tuple[int, List[str], List[str], Tuple[int, int, int]]] = None
@@ -3243,49 +3481,330 @@ def _write_native_model_file(
                     best_candidate = (end_index, inputs, outputs, score)
 
             if best_candidate is None:
-                forward_stage_calls.extend(f"        {line}" for line in lines[start_index:])
+                _append_stage(start_index, total_lines - 1)
                 break
 
             end_index, stage_inputs, stage_outputs, _ = best_candidate
-            method_name = f"_forward_stage_{stage_index}"
-            arg_list = ", ".join(f"{name}: torch.Tensor" for name in stage_inputs)
-            if len(arg_list) > 0:
-                signature = f"    def {method_name}(self, {arg_list})"
-            else:
-                signature = f"    def {method_name}(self)"
-            if len(stage_outputs) == 1:
-                signature += " -> torch.Tensor:\n"
-            else:
-                signature += " -> tuple[" + ", ".join("torch.Tensor" for _ in stage_outputs) + "]:\n"
-            stage_body = "\n".join(f"        {line}" for line in lines[start_index:end_index + 1])
-            if len(stage_outputs) == 1:
-                stage_return = f"        return {stage_outputs[0]}\n"
-            else:
-                stage_return = f"        return ({', '.join(stage_outputs)})\n"
-            stage_methods.append(f"{signature}{stage_body}\n{stage_return}")
-
-            call_args = ", ".join(stage_inputs)
-            call_expr = f"self.{method_name}({call_args})" if len(call_args) > 0 else f"self.{method_name}()"
-            if len(stage_outputs) == 1:
-                forward_stage_calls.append(f"        {stage_outputs[0]} = {call_expr}")
-            else:
-                forward_stage_calls.append(f"        {', '.join(stage_outputs)} = {call_expr}")
+            _append_stage(start_index, end_index)
             start_index = end_index + 1
-            stage_index += 1
 
         stage_methods_source = "\n".join(stage_methods)
         if len(stage_methods_source) > 0:
             stage_methods_source += "\n"
-        return stage_methods_source, "\n".join(forward_stage_calls)
+        return stage_methods_source, forward_stage_calls, stage_specs
 
-    stage_methods_source, forward_block = _build_forward_stage_methods(forward_lines)
+    def _build_named_encoder_methods(
+        stage_specs: Sequence[Dict[str, Any]],
+        *,
+        final_output_names: Set[str],
+    ) -> Tuple[str, List[str], List[str]]:
+        if len(stage_specs) == 0:
+            return "", [], []
+
+        def _call_line_from_spec(spec: Dict[str, Any]) -> str:
+            outputs = [str(name) for name in list(spec.get("outputs", []))]
+            call_args = ", ".join(str(name) for name in list(spec.get("inputs", [])))
+            call_expr = f"self.{spec['method_name']}({call_args})" if len(call_args) > 0 else f"self.{spec['method_name']}()"
+            if len(outputs) == 1:
+                return f"        {outputs[0]} = {call_expr}"
+            return f"        {', '.join(outputs)} = {call_expr}"
+
+        layer_pattern = re.compile(r"bert_encoder_layer_(\d+)", flags=re.IGNORECASE)
+        default_forward_lines = [_call_line_from_spec(spec) for spec in stage_specs]
+        if not any(
+            any(
+                layer_pattern.search(str(name)) is not None
+                and "attention_self_mul_1" not in str(name)
+                for name in list(spec.get("outputs", []))
+            )
+            for spec in stage_specs
+        ):
+            return "", [], default_forward_lines
+
+        def _stage_layer_index(spec: Dict[str, Any]) -> Optional[int]:
+            matches: List[int] = []
+            for name in list(spec.get("outputs", [])):
+                if "attention_self_mul_1" in str(name):
+                    continue
+                match = layer_pattern.search(str(name))
+                if match is not None:
+                    matches.append(int(match.group(1)))
+            if len(matches) == 0:
+                return None
+            return min(matches)
+
+        grouped_ranges: List[Tuple[int, int, int]] = []
+        start_spec_index: Optional[int] = None
+        active_layer_index: Optional[int] = None
+        for spec_index, spec in enumerate(stage_specs):
+            layer_index = _stage_layer_index(spec)
+            if layer_index is None:
+                if start_spec_index is not None and active_layer_index is not None:
+                    grouped_ranges.append((int(active_layer_index), int(start_spec_index), int(spec_index - 1)))
+                    start_spec_index = None
+                    active_layer_index = None
+                continue
+            if start_spec_index is None:
+                start_spec_index = int(spec_index)
+                active_layer_index = int(layer_index)
+                continue
+            if active_layer_index is None:
+                active_layer_index = int(layer_index)
+                continue
+            if int(layer_index) != int(active_layer_index):
+                grouped_ranges.append((int(active_layer_index), int(start_spec_index), int(spec_index - 1)))
+                start_spec_index = int(spec_index)
+                active_layer_index = int(layer_index)
+        if start_spec_index is not None and active_layer_index is not None:
+            grouped_ranges.append((int(active_layer_index), int(start_spec_index), int(len(stage_specs) - 1)))
+
+        if len(grouped_ranges) == 0:
+            return "", [], default_forward_lines
+
+        class_chunks: List[str] = []
+        init_lines: List[str] = []
+        forward_lines_local: List[str] = []
+        previous_end = 0
+
+        def _group_io(start_idx: int, end_idx: int) -> Tuple[List[str], List[str]]:
+            defined: Set[str] = set()
+            assigned_order: List[str] = []
+            seen_inputs: Set[str] = set()
+            method_inputs: List[str] = []
+            for spec_index in range(start_idx, end_idx + 1):
+                spec = stage_specs[spec_index]
+                for name in list(spec.get("inputs", [])):
+                    normalized = str(name)
+                    if normalized not in defined and normalized not in seen_inputs:
+                        seen_inputs.add(normalized)
+                        method_inputs.append(normalized)
+                for name in list(spec.get("outputs", [])):
+                    normalized = str(name)
+                    if normalized not in defined:
+                        defined.add(normalized)
+                        assigned_order.append(normalized)
+            later_needed = set(final_output_names)
+            for spec_index in range(end_idx + 1, len(stage_specs)):
+                later_needed.update(str(name) for name in list(stage_specs[spec_index].get("inputs", [])))
+            method_outputs = [name for name in assigned_order if name in later_needed]
+            return method_inputs, method_outputs
+
+        def _emit_submodule_class_from_stage_range(
+            *,
+            class_name: str,
+            start_idx: int,
+            end_idx: int,
+        ) -> Optional[Tuple[str, List[str], List[str], List[str]]]:
+            method_inputs, method_outputs = _group_io(int(start_idx), int(end_idx))
+            if len(method_outputs) == 0:
+                return None
+            class_stage_specs = list(stage_specs[start_idx:end_idx + 1])
+            init_signature_lines = [
+                f"class {class_name}(torch.nn.Module):",
+                "    def __init__(",
+                "        self,",
+                "        *,",
+            ]
+            init_body_lines = ["        super().__init__()"]
+            for spec in class_stage_specs:
+                stage_name = str(spec["method_name"])
+                init_signature_lines.append(f"        {stage_name}: Callable[..., Any],")
+                init_body_lines.append(f"        self.{stage_name} = {stage_name}")
+            init_signature_lines.append("    ) -> None:")
+            arg_list = ", ".join(f"{name}: torch.Tensor" for name in method_inputs)
+            signature = "    def forward(self"
+            if len(arg_list) > 0:
+                signature += f", {arg_list}"
+            signature += ")"
+            if len(method_outputs) == 1:
+                signature += " -> torch.Tensor:\n"
+            else:
+                signature += " -> tuple[" + ", ".join("torch.Tensor" for _ in method_outputs) + "]:\n"
+            method_body_lines: List[str] = []
+            init_call_lines: List[str] = []
+            for spec in class_stage_specs:
+                outputs = [str(name) for name in list(spec.get("outputs", []))]
+                call_args = ", ".join(str(name) for name in list(spec.get("inputs", [])))
+                call_expr = f"self.{spec['method_name']}({call_args})" if len(call_args) > 0 else f"self.{spec['method_name']}()"
+                if len(outputs) == 1:
+                    method_body_lines.append(f"        {outputs[0]} = {call_expr}")
+                else:
+                    method_body_lines.append(f"        {', '.join(outputs)} = {call_expr}")
+                init_call_lines.append(f"            {spec['method_name']}=self.{spec['method_name']},")
+            if len(method_outputs) == 1:
+                return_line = f"        return {method_outputs[0]}\n"
+            else:
+                return_line = f"        return ({', '.join(method_outputs)})\n"
+            class_source = (
+                "\n".join(init_signature_lines)
+                + "\n"
+                + "\n".join(init_body_lines)
+                + "\n\n"
+                + f"{signature}"
+                + "\n".join(method_body_lines)
+                + "\n"
+                + return_line
+            )
+            return class_source, method_inputs, method_outputs, init_call_lines
+
+        for layer_index, start_idx, end_idx in grouped_ranges:
+            while previous_end < start_idx:
+                spec = stage_specs[previous_end]
+                forward_lines_local.append(_call_line_from_spec(spec))
+                previous_end += 1
+
+            method_inputs, method_outputs = _group_io(int(start_idx), int(end_idx))
+            if len(method_outputs) == 0:
+                for spec_index in range(start_idx, end_idx + 1):
+                    spec = stage_specs[spec_index]
+                    forward_lines_local.append(_call_line_from_spec(spec))
+                previous_end = int(end_idx + 1)
+                continue
+
+            method_name = f"_forward_encoder_layer_{int(layer_index)}"
+            layer_prefix = f"bert_encoder_layer_{int(layer_index)}_"
+            split_idx: Optional[int] = None
+            for spec_index in range(start_idx, end_idx + 1):
+                output_names = [str(name) for name in list(stage_specs[spec_index].get("outputs", []))]
+                if any(
+                    output_name.startswith(layer_prefix + marker)
+                    for output_name in output_names
+                    for marker in ("ffn_", "output_", "output_bottleneck_")
+                ):
+                    split_idx = int(spec_index)
+                    break
+
+            composite_init_lines: Optional[List[str]] = None
+            layer_attr_name = f"encoder_layer_{int(layer_index)}"
+            if split_idx is not None and int(split_idx) > int(start_idx):
+                attention_class_name = f"_GeneratedEncoderLayer{int(layer_index)}Attention"
+                ffn_class_name = f"_GeneratedEncoderLayer{int(layer_index)}FFN"
+                layer_class_name = f"_GeneratedEncoderLayer{int(layer_index)}"
+                attention_emitted = _emit_submodule_class_from_stage_range(
+                    class_name=attention_class_name,
+                    start_idx=int(start_idx),
+                    end_idx=int(split_idx - 1),
+                )
+                ffn_emitted = _emit_submodule_class_from_stage_range(
+                    class_name=ffn_class_name,
+                    start_idx=int(split_idx),
+                    end_idx=int(end_idx),
+                )
+                if attention_emitted is not None and ffn_emitted is not None:
+                    attention_source, attention_inputs, attention_outputs, attention_init_call_lines = attention_emitted
+                    ffn_source, ffn_inputs, ffn_outputs, ffn_init_call_lines = ffn_emitted
+                    class_chunks.append(attention_source)
+                    class_chunks.append(ffn_source)
+                    class_chunks.append(
+                        "class {layer_class_name}(torch.nn.Module):\n"
+                        "    def __init__(self, *, attention: torch.nn.Module, ffn: torch.nn.Module) -> None:\n"
+                        "        super().__init__()\n"
+                        "        self.attention = attention\n"
+                        "        self.ffn = ffn\n\n"
+                        "    def forward({signature_args}){signature_return}"
+                        "{body}"
+                        "{return_line}".format(
+                            layer_class_name=layer_class_name,
+                            signature_args=(
+                                "self"
+                                + (", " + ", ".join(f"{name}: torch.Tensor" for name in method_inputs) if len(method_inputs) > 0 else "")
+                            ),
+                            signature_return=(
+                                " -> torch.Tensor:\n"
+                                if len(method_outputs) == 1 else
+                                " -> tuple[" + ", ".join("torch.Tensor" for _ in method_outputs) + "]:\n"
+                            ),
+                            body="".join(
+                                [
+                                    (
+                                        f"        {attention_outputs[0]} = self.attention({', '.join(attention_inputs)})\n"
+                                        if len(attention_outputs) == 1 else
+                                        f"        {', '.join(attention_outputs)} = self.attention({', '.join(attention_inputs)})\n"
+                                    ),
+                                    (
+                                        f"        {ffn_outputs[0]} = self.ffn({', '.join(ffn_inputs)})\n"
+                                        if len(ffn_outputs) == 1 else
+                                        f"        {', '.join(ffn_outputs)} = self.ffn({', '.join(ffn_inputs)})\n"
+                                    ),
+                                ]
+                            ),
+                            return_line=(
+                                f"        return {method_outputs[0]}\n"
+                                if len(method_outputs) == 1 else
+                                f"        return ({', '.join(method_outputs)})\n"
+                            ),
+                        )
+                    )
+                    composite_init_lines = [
+                        f"self.{layer_attr_name} = {layer_class_name}(",
+                        f"    attention={attention_class_name}(",
+                        *attention_init_call_lines,
+                        "    ),",
+                        f"    ffn={ffn_class_name}(",
+                        *ffn_init_call_lines,
+                        "    ),",
+                        ")",
+                    ]
+
+            if composite_init_lines is None:
+                layer_class_name = f"_GeneratedEncoderLayer{int(layer_index)}"
+                emitted = _emit_submodule_class_from_stage_range(
+                    class_name=layer_class_name,
+                    start_idx=int(start_idx),
+                    end_idx=int(end_idx),
+                )
+                if emitted is None:
+                    for spec_index in range(start_idx, end_idx + 1):
+                        spec = stage_specs[spec_index]
+                        forward_lines_local.append(_call_line_from_spec(spec))
+                    previous_end = int(end_idx + 1)
+                    continue
+                layer_source, _, _, layer_init_call_lines = emitted
+                class_chunks.append(layer_source)
+                composite_init_lines = [
+                    f"self.{layer_attr_name} = {layer_class_name}(",
+                    *layer_init_call_lines,
+                    ")",
+                ]
+            if composite_init_lines is not None:
+                init_lines.extend(composite_init_lines)
+
+            call_args = ", ".join(method_inputs)
+            call_expr = f"self.{layer_attr_name}({call_args})" if len(call_args) > 0 else f"self.{layer_attr_name}()"
+            if len(method_outputs) == 1:
+                forward_lines_local.append(f"        {method_outputs[0]} = {call_expr}")
+            else:
+                forward_lines_local.append(f"        {', '.join(method_outputs)} = {call_expr}")
+            previous_end = int(end_idx + 1)
+
+        while previous_end < len(stage_specs):
+            spec = stage_specs[previous_end]
+            forward_lines_local.append(_call_line_from_spec(spec))
+            previous_end += 1
+
+        named_class_source = "\n".join(class_chunks)
+        if len(named_class_source) > 0:
+            named_class_source += "\n"
+        return named_class_source, init_lines, forward_lines_local
+
+    stage_methods_source, forward_stage_calls, stage_specs = _build_forward_stage_methods(forward_lines)
+    named_encoder_class_source = ""
+    named_encoder_init_lines: List[str] = []
+    if len(stage_specs) > 0:
+        named_encoder_class_source, named_encoder_init_lines, forward_stage_calls = _build_named_encoder_methods(
+            stage_specs,
+            final_output_names={str(tensor_var_names[str(name)]) for name in model_ir.outputs},
+        )
+    if len(named_encoder_init_lines) > 0:
+        module_init_lines.extend(named_encoder_init_lines)
+    module_init_block = "\n".join(f"        {line}" for line in module_init_lines)
+    forward_block = "\n".join(forward_stage_calls)
     forward_kwargs_block = "\n".join(forward_kwargs_lines) if len(forward_kwargs_lines) > 0 else "            pass"
     forward_args_block = "\n".join(forward_args_lines) if len(forward_args_lines) > 0 else "            pass"
     outputs_expr = ", ".join(_tensor_expr(str(name)) for name in model_ir.outputs)
     has_conv_blocks = len(fused_module_specs) > 0
     runtime_import_order = [
         "_align_tensor_to_target_shape",
-        "_apply_binary",
         "_apply_concat",
         "_apply_fused_activation",
         "_apply_gather",
@@ -3373,6 +3892,18 @@ def _write_native_model_file(
         "            return torch.sigmoid(x)\n"
         "        return x\n\n"
     ) if has_conv_blocks else ""
+    has_affine_layer_norms = len(affine_layer_norm_specs) > 0
+    affine_layer_norm_source = (
+        "class _AffineLayerNorm(torch.nn.Module):\n"
+        "    gamma: torch.Tensor\n"
+        "    beta: torch.Tensor\n\n"
+        "    def __init__(self, *, shape: list[int], dtype: torch.dtype) -> None:\n"
+        "        super().__init__()\n"
+        "        self.register_buffer('gamma', torch.zeros(shape, dtype=dtype), persistent=True)\n"
+        "        self.register_buffer('beta', torch.zeros(shape, dtype=dtype), persistent=True)\n\n"
+        "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n"
+        "        return torch.add(torch.mul(x, self.gamma), self.beta)\n\n"
+    ) if has_affine_layer_norms else ""
     nms_method_source = ""
     if len(nms_method_specs) > 0:
         method_chunks: List[str] = []
@@ -3397,7 +3928,7 @@ def _write_native_model_file(
     model_source = (
         "from __future__ import annotations\n\n"
         "from pathlib import Path\n"
-        "from typing import Any, Dict, Optional\n\n"
+        "from typing import Any, Callable, Dict, Optional\n\n"
         "import torch\n"
         "import torch.nn.functional as F\n\n"
         "from .runtime import (\n"
@@ -3407,6 +3938,8 @@ def _write_native_model_file(
         f"INPUT_NAMES = {repr([str(v) for v in model_ir.inputs])}\n"
         f"OUTPUT_NAMES = {repr([str(v) for v in model_ir.outputs])}\n"
         f"{conv_block_source}"
+        f"{affine_layer_norm_source}"
+        f"{named_encoder_class_source}"
         "class Model(torch.nn.Module):\n"
         f"{buffer_annotation_block}"
         "    def __init__(self, *, device: str | None = None, eval_mode: bool = True, load_weights: bool = True):\n"
@@ -3730,6 +4263,7 @@ def export_pytorch_package_from_model_ir(
     fallback_tflite_path: Optional[str] = None,
     fallback_onnx_graph: Optional[Any] = None,
     fallback_saved_model_path: Optional[str] = None,
+    fallback_saved_model_factory: Optional[Callable[[], Optional[str]]] = None,
     fallback_tflite_has_custom_ops: bool = False,
 ) -> str:
     try:
@@ -3739,26 +4273,48 @@ def export_pytorch_package_from_model_ir(
             "PyTorch export requires `torch` to be installed."
         ) from ex
 
+    resolved_fallback_saved_model_path = (
+        str(fallback_saved_model_path)
+        if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != ""
+        else None
+    )
+
+    def _get_fallback_saved_model_path() -> Optional[str]:
+        nonlocal resolved_fallback_saved_model_path
+        if resolved_fallback_saved_model_path is not None:
+            return resolved_fallback_saved_model_path
+        if fallback_saved_model_factory is None:
+            return None
+        try:
+            generated_path = fallback_saved_model_factory()
+        except Exception:
+            return None
+        if generated_path is None or str(generated_path).strip() == "":
+            return None
+        resolved_fallback_saved_model_path = str(generated_path)
+        return resolved_fallback_saved_model_path
+
     try:
         normalized: Optional[ModelIR] = None
         native_prep_error: Optional[Exception] = None
+
         try:
-            normalized = normalize_model_ir_for_pytorch_channel_first(model_ir)
+            normalized = prepare_model_ir_for_native_pytorch(model_ir)
             _ensure_no_custom_ops(normalized)
             _ensure_supported_ops(normalized)
         except Exception as ex:
             normalized = None
             native_prep_error = ex
+        fallback_saved_model_path_for_export = _get_fallback_saved_model_path() if normalized is None else resolved_fallback_saved_model_path
         if (
             normalized is None
-            and fallback_saved_model_path is not None
-            and str(fallback_saved_model_path).strip() != ""
+            and fallback_saved_model_path_for_export is not None
             and _should_prefer_saved_model_backed_package(model_ir)
         ):
             return export_pytorch_package_from_saved_model_artifact(
                 model_ir=model_ir,
                 output_folder_path=output_folder_path,
-                saved_model_path=str(fallback_saved_model_path),
+                saved_model_path=str(fallback_saved_model_path_for_export),
             )
         if (
             normalized is None
@@ -3847,11 +4403,12 @@ def export_pytorch_package_from_model_ir(
                 output_folder_path=output_folder_path,
                 onnx_graph=fallback_onnx_graph,
             )
-        if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != "":
+        fallback_saved_model_path_for_export = _get_fallback_saved_model_path()
+        if fallback_saved_model_path_for_export is not None:
             return export_pytorch_package_from_saved_model_artifact(
                 model_ir=model_ir,
                 output_folder_path=output_folder_path,
-                saved_model_path=str(fallback_saved_model_path),
+                saved_model_path=str(fallback_saved_model_path_for_export),
             )
         if fallback_tflite_path is None or str(fallback_tflite_path).strip() == "":
             raise
@@ -3866,12 +4423,14 @@ def export_pytorch_package_from_model_ir(
             pass
         if not bool(fallback_tflite_has_custom_ops):
             try:
-                return _try_export_native_package_from_tflite_import(
+                imported_native_package_path = _try_export_native_package_from_tflite_import(
                     output_folder_path=output_folder_path,
                     fallback_tflite_path=str(fallback_tflite_path),
                     reference_model_ir=model_ir,
                     reference_onnx_graph=fallback_onnx_graph,
                 )
+                if imported_native_package_path is not None:
+                    return imported_native_package_path
             except Exception:
                 pass
         if (

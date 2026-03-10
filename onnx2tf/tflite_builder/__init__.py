@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.ir import (
     clone_model_ir_with_float16,
@@ -786,7 +786,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     export_pytorch_package_from_model_ir,
                 )
                 fallback_saved_model_path = saved_model_path
-                if fallback_saved_model_path is None:
+
+                def _ensure_pytorch_saved_model_bridge() -> Optional[str]:
+                    nonlocal fallback_saved_model_path
+                    if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != "":
+                        return str(fallback_saved_model_path)
                     try:
                         from onnx2tf.tflite_builder.saved_model_exporter import (
                             export_saved_model_from_model_ir,
@@ -800,6 +804,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                         )
                     except Exception:
                         fallback_saved_model_path = None
+                    return (
+                        str(fallback_saved_model_path)
+                        if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != ""
+                        else None
+                    )
 
                 pytorch_package_path = export_pytorch_package_from_model_ir(
                     model_ir=model_ir,
@@ -807,6 +816,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     fallback_tflite_path=float32_path,
                     fallback_onnx_graph=onnx_graph,
                     fallback_saved_model_path=fallback_saved_model_path,
+                    fallback_saved_model_factory=_ensure_pytorch_saved_model_bridge,
                     fallback_tflite_has_custom_ops=bool(len(custom_ops_used) > 0),
                 )
             _advance_export_progress()

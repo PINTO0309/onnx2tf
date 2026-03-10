@@ -335,82 +335,69 @@ These options have the following constraints:
   ```
   <img width="1249" height="315" alt="image" src="https://github.com/user-attachments/assets/baf38dd4-cd3b-4116-af07-6d3282b66b30" />
 
-### PyTorch export tutorial (`yolov7_tiny_head_0.768_post_480x640.onnx`)
+### PyTorch export tutorial (`yolox_s.onnx`)
 
 If you want LiteRT output, a reloadable PyTorch package, and accuracy reports from the same run, use:
 
 ```bash
 onnx2tf \
-  -i yolov7_tiny_head_0.768_post_480x640.onnx \
-  -o tmp_yolov7_tiny_head_0.768_post_480x640 \
-  -tb flatbuffer_direct \
-  -fdopt \
-  -cotof
+-i yolox_s.onnx \
+-o tmp_yolox_s \
+-tb flatbuffer_direct \
+-fdopt \
+-cotof
 ```
 
 The output directory contains:
 
-- `yolov7_tiny_head_0.768_post_480x640_float32.tflite`
-- `yolov7_tiny_head_0.768_post_480x640_pytorch/`
-- `yolov7_tiny_head_0.768_post_480x640_accuracy_report.json` (`ONNX↔TFLite`)
-- `yolov7_tiny_head_0.768_post_480x640_pytorch_accuracy_report.json` (`ONNX↔PyTorch`)
-- `yolov7_tiny_head_0.768_post_480x640_accuracy_comparison_report.json` (same-input summary of both)
+- `yolox_s_float32.tflite`
+- `yolox_s_pytorch/`
+- `yolox_s_accuracy_report.json` (`ONNX↔TFLite`)
+- `yolox_s_pytorch_accuracy_report.json` (`ONNX↔PyTorch`)
+- `yolox_s_accuracy_comparison_report.json` (same-input summary of both)
 
 The generated PyTorch package is a normal `torch.nn.Module` package. The example below loads it from disk and runs inference:
 
 ```python
-import hashlib
-import importlib.util
 import sys
-from pathlib import Path
 
 import torch
 
-package_dir = Path(
-    "tmp_yolov7_tiny_head_0.768_post_480x640/"
-    "yolov7_tiny_head_0.768_post_480x640_pytorch"
-).resolve()
-package_init = package_dir / "__init__.py"
+sys.path.append("tmp_yolox_s")
+from yolox_s_pytorch import load_model
 
-module_name = (
-    "_onnx2tf_generated_"
-    + hashlib.sha256(str(package_dir).encode("utf-8")).hexdigest()
-)
-spec = importlib.util.spec_from_file_location(
-    module_name,
-    str(package_init),
-    submodule_search_locations=[str(package_dir)],
-)
-module = importlib.util.module_from_spec(spec)
-sys.modules[module_name] = module
-assert spec is not None and spec.loader is not None
-spec.loader.exec_module(module)
-
-model = module.load_model(device="cpu", eval_mode=True)
-x = torch.zeros((1, 3, 480, 640), dtype=torch.float32)
+model = load_model(device="cpu", eval_mode=True)
+x = torch.zeros((1, 3, 640, 640), dtype=torch.float32)
 
 with torch.no_grad():
-    score, batchno_classid_x1y1x2y2 = model(x)
+    output = model(x)
 
-print(score.shape, score.dtype)
-print(batchno_classid_x1y1x2y2.shape, batchno_classid_x1y1x2y2.dtype)
+print("input :", tuple(x.shape))
+print("output:", tuple(output.shape))
 print(model.forward_named(x).keys())
 ```
 
-Expected output for the current `yolov7_tiny_head_0.768_post_480x640` package:
+Expected output for the current `yolox_s` package:
 
 ```python
-torch.Size([20, 1]) torch.float32
-torch.Size([20, 6]) torch.int32
-dict_keys(['score', 'batchno_classid_x1y1x2y2'])
+input : (1, 3, 640, 640)
+output: (1, 85, 8400)
+dict_keys(['output'])
 ```
 
 You can also load the bundled `state_dict.pth` explicitly with standard PyTorch APIs:
 
 ```python
+import sys
+from pathlib import Path
+
 import torch
 
-model = module.Model(load_weights=False, eval_mode=True)
+sys.path.append("tmp_yolox_s")
+from yolox_s_pytorch.model import Model
+
+package_dir = Path("tmp_yolox_s/yolox_s_pytorch")
+model = Model(load_weights=False, eval_mode=True)
 state_dict = torch.load(package_dir / "state_dict.pth", map_location="cpu")
 model.load_state_dict(state_dict, strict=True)
 ```

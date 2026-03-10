@@ -1602,6 +1602,7 @@ def test_export_pytorch_package_model_source_is_pytorch_like_for_fused_conv_relu
     assert model_source.count("x = torch.relu(x)") >= 1
     assert "def _copy_tensor_data" in runtime_source
     assert "def load_generated_weights(" in runtime_source
+    assert "def _apply_binary(" not in runtime_source
     assert list(saved_state_dict.keys()) == list(model.state_dict().keys())
     assert torch.allclose(out, out_reloaded, atol=1e-5, rtol=1e-5)
 
@@ -1622,6 +1623,26 @@ def test_export_pytorch_package_state_dict_is_load_state_dict_compatible(tmp_pat
     x = torch.arange(1, 1 + (1 * 3 * 4 * 4), dtype=torch.float32).reshape(1, 3, 4, 4)
     assert list(torch.load(Path(package_path) / "state_dict.pth", map_location="cpu").keys()) == list(direct_model.state_dict().keys())
     assert torch.allclose(direct_model(x), loaded_model(x), atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_does_not_materialize_saved_model_bridge_when_native_succeeds(tmp_path) -> None:
+    calls = {"count": 0}
+
+    def _unused_saved_model_factory() -> str | None:
+        calls["count"] += 1
+        bridge_dir = tmp_path / "unused_saved_model_bridge"
+        bridge_dir.mkdir(parents=True, exist_ok=True)
+        return str(bridge_dir)
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_conv2d_relu_model_ir(),
+        output_folder_path=str(tmp_path / "native_without_bridge"),
+        fallback_saved_model_factory=_unused_saved_model_factory,
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert calls["count"] == 0
+    assert not (tmp_path / "unused_saved_model_bridge").exists()
+    assert "load_generated_model_package" not in model_source
 
 
 def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_available(tmp_path) -> None:
@@ -1694,6 +1715,58 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     assert isinstance(reloaded_outputs, torch.Tensor)
     assert list(loaded_outputs.shape) == list(reloaded_outputs.shape)
     assert torch.allclose(loaded_outputs, reloaded_outputs)
+
+
+def test_export_pytorch_package_generates_native_mobilebert_package_when_model_is_available(tmp_path) -> None:
+    model_path = Path("lite_model_mobilebert_1_metadata_1.onnx")
+    if not model_path.exists():
+        pytest.skip("lite_model_mobilebert_1_metadata_1.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = lower_onnx_to_ir(
+        model_proto,
+        output_file_name="mobilebert_native_codegen_test",
+        show_progress=False,
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "mobilebert_native_pytorch"),
+        fallback_saved_model_path=str(tmp_path / "saved_model_fallback"),
+    )
+    package_dir = Path(package_path)
+    metadata = json.loads((package_dir / "metadata.json").read_text())
+    model_source = (package_dir / "model.py").read_text()
+    assert "execution_backend" not in metadata
+    assert "load_generated_model_package" not in model_source
+    assert "class _AffineLayerNorm(torch.nn.Module):" in model_source
+    assert "class _GeneratedEncoderLayer0Attention(torch.nn.Module):" in model_source
+    assert "class _GeneratedEncoderLayer0FFN(torch.nn.Module):" in model_source
+    assert "class _GeneratedEncoderLayer0(torch.nn.Module):" in model_source
+    assert "self.encoder_layer_0 = _GeneratedEncoderLayer0(" in model_source
+    assert "_layer_norm(" in model_source
+    assert "FakeLayerNorm_gamma_read: torch.Tensor" not in model_source
+    assert "self.linear_0 = torch.nn.Linear(" in model_source
+    assert "torch.where(" in model_source
+    assert "torch.lt(" in model_source
+
+    pkg = _import_generated_package(package_path)
+    loaded_model = pkg.Model(load_weights=True, eval_mode=True)
+    reloaded_model = pkg.Model(load_weights=False, eval_mode=True)
+    reloaded_model.load_state_dict(torch.load(package_dir / "state_dict.pth", map_location="cpu"), strict=True)
+    input_ids = torch.zeros((1, 384), dtype=torch.int32)
+    input_mask = torch.ones((1, 384), dtype=torch.int32)
+    segment_ids = torch.zeros((1, 384), dtype=torch.int32)
+    with torch.no_grad():
+        loaded_outputs = loaded_model(input_ids, input_mask, segment_ids)
+        reloaded_outputs = reloaded_model(input_ids, input_mask, segment_ids)
+    assert isinstance(loaded_outputs, tuple)
+    assert isinstance(reloaded_outputs, tuple)
+    state_dict_keys = set(torch.load(package_dir / "state_dict.pth", map_location="cpu").keys())
+    assert any(key.endswith("_layer_norm.gamma") for key in state_dict_keys)
+    assert any(key.endswith("_layer_norm.beta") for key in state_dict_keys)
+    assert len(loaded_outputs) == len(reloaded_outputs) == 2
+    for loaded_output, reloaded_output in zip(loaded_outputs, reloaded_outputs):
+        assert list(loaded_output.shape) == list(reloaded_output.shape)
+        assert torch.allclose(loaded_output, reloaded_output, atol=1e-5, rtol=1e-5)
 
 
 def test_export_pytorch_package_conv2d_nchw(tmp_path) -> None:
@@ -2237,6 +2310,63 @@ def test_evaluate_pytorch_package_outputs_numeric(tmp_path) -> None:
     assert report["evaluation_pass"] is True
 
 
+def test_evaluate_pytorch_package_outputs_accepts_task_equivalent_probability_maps(tmp_path) -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 2, 2])
+    node = helper.make_node("Softmax", ["x"], ["y"], name="SoftmaxNode", axis=1)
+    graph = helper.make_graph([node], "softmax_graph", [x], [y])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    package_dir = tmp_path / "probability_map_pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .model import load_model\n",
+        encoding="utf-8",
+    )
+    (package_dir / "model.py").write_text(
+        "from __future__ import annotations\n\n"
+        "import torch\n\n"
+        "class _Model:\n"
+        "    def forward_named(self, *, x):\n"
+        "        return {'y': torch.softmax(x * 0.9, dim=1)}\n\n"
+        "def load_model(*, eval_mode=True):\n"
+        "    return _Model()\n",
+        encoding="utf-8",
+    )
+    (package_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "inputs": ["x"],
+                "outputs": ["y"],
+                "tensors": {
+                    "x": {"shape": [1, 2, 2, 2], "shape_signature": [1, 2, 2, 2], "logical_layout": "NCHW"},
+                    "y": {"shape": [1, 2, 2, 2], "shape_signature": [1, 2, 2, 2], "logical_layout": "NCHW"},
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    custom_input_path = tmp_path / "probability_map_input.npy"
+    np.save(
+        custom_input_path,
+        np.asarray([[[[0.1, 0.2], [0.3, 0.4]], [[1.0, 1.1], [1.2, 1.3]]]], dtype=np.float32),
+    )
+    report = evaluate_pytorch_package_outputs(
+        onnx_graph=model,
+        package_dir=str(package_dir),
+        output_report_path=str(tmp_path / "probability_map_report.json"),
+        num_samples=1,
+        custom_input_op_name_np_data_path=[
+            ["x", str(custom_input_path)]
+        ],
+    )
+    assert report["evaluation_pass"] is True
+    assert report["task_equivalent_numeric_outputs"] == ["y"]
+    assert report["per_output"]["y"]["probability_map_equivalence"]["pass"] is True
+
+
 def test_evaluate_pytorch_package_outputs_resolves_sanitized_output_aliases(tmp_path) -> None:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("Identity:0", TensorProto.FLOAT, [1, 3])
@@ -2644,6 +2774,84 @@ def test_generated_softmax_aligns_output_to_target_shape(tmp_path) -> None:
     out = model(x)
     ref = torch.softmax(x, dim=1)
     assert torch.allclose(out, ref)
+
+
+def test_native_softmax_codegen_uses_channel_axis_for_channel_first_input(tmp_path) -> None:
+    model_ir = ModelIR(name="softmax_native_codegen")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(op_type="SOFTMAX", inputs=["x"], outputs=["y"], options={})
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "softmax_native_codegen_pkg"),
+    )
+    package_dir = Path(package_path)
+    model_source = (package_dir / "model.py").read_text(encoding="utf-8")
+    assert "_apply_softmax(x, axis=1, beta=1.0" in model_source
+    pkg = _import_generated_package(package_path)
+    model = pkg.Model(load_weights=True, eval_mode=True)
+    x = torch.arange(12, dtype=torch.float32).reshape(1, 3, 2, 2)
+    out = model(x)
+    ref = torch.softmax(x, dim=1)
+    assert torch.allclose(out, ref)
+
+
+def test_native_resize_bilinear_half_pixel_codegen_uses_runtime_helper(tmp_path) -> None:
+    model_ir = ModelIR(name="resize_bilinear_half_pixel_codegen")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 2, 2],
+        shape_signature=[1, 3, 2, 2],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["size"] = TensorIR(
+        name="size",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        logical_layout="UNKNOWN",
+        data=np.asarray([4, 4], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 4],
+        shape_signature=[1, 3, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESIZE_BILINEAR",
+            inputs=["x", "size"],
+            outputs=["y"],
+            options={"alignCorners": False, "halfPixelCenters": True},
+        )
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "resize_bilinear_half_pixel_codegen_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_apply_resize(x, torch.as_tensor([4, 4], dtype=torch.int32, device=x.device), method='bilinear'" in model_source
 
 
 def test_generated_gather_handles_axis_one_before_depth_to_space(tmp_path) -> None:

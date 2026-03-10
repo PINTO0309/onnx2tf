@@ -1463,6 +1463,46 @@ def _kernel_pool2d(is_max_pool: bool) -> Callable[[_GraphExecutor, Dict[str, Any
 
 
 def _kernel_resize(method: str) -> Callable[[_GraphExecutor, Dict[str, Any], Dict[str, torch.Tensor]], None]:
+    def _resize_bilinear_exact(
+        x: torch.Tensor,
+        size: Sequence[int],
+        *,
+        align_corners: bool,
+        half_pixel_centers: bool,
+    ) -> torch.Tensor:
+        if x.ndim != 4:
+            return F.interpolate(x, size=[int(size[0]), int(size[1])], mode="bilinear", align_corners=align_corners)
+        out_h = int(size[0])
+        out_w = int(size[1])
+        in_h = int(x.shape[-2])
+        in_w = int(x.shape[-1])
+        if align_corners:
+            ys = torch.zeros([out_h], dtype=torch.float32, device=x.device) if out_h == 1 else torch.arange(out_h, dtype=torch.float32, device=x.device) * float(max(in_h - 1, 0)) / float(max(out_h - 1, 1))
+            xs = torch.zeros([out_w], dtype=torch.float32, device=x.device) if out_w == 1 else torch.arange(out_w, dtype=torch.float32, device=x.device) * float(max(in_w - 1, 0)) / float(max(out_w - 1, 1))
+        elif half_pixel_centers:
+            ys = (torch.arange(out_h, dtype=torch.float32, device=x.device) + 0.5) * float(in_h) / float(out_h) - 0.5
+            xs = (torch.arange(out_w, dtype=torch.float32, device=x.device) + 0.5) * float(in_w) / float(out_w) - 0.5
+        else:
+            ys = torch.arange(out_h, dtype=torch.float32, device=x.device) * float(in_h) / float(out_h)
+            xs = torch.arange(out_w, dtype=torch.float32, device=x.device) * float(in_w) / float(out_w)
+        y0 = torch.floor(ys).to(dtype=torch.int64)
+        x0 = torch.floor(xs).to(dtype=torch.int64)
+        y1 = y0 + 1
+        x1 = x0 + 1
+        y0c = y0.clamp(0, max(in_h - 1, 0))
+        x0c = x0.clamp(0, max(in_w - 1, 0))
+        y1c = y1.clamp(0, max(in_h - 1, 0))
+        x1c = x1.clamp(0, max(in_w - 1, 0))
+        ly = (ys - y0.to(dtype=torch.float32)).view(1, 1, out_h, 1)
+        lx = (xs - x0.to(dtype=torch.float32)).view(1, 1, 1, out_w)
+        hy = 1.0 - ly
+        hx = 1.0 - lx
+        top_left = x[:, :, y0c[:, None], x0c[None, :]]
+        top_right = x[:, :, y0c[:, None], x1c[None, :]]
+        bottom_left = x[:, :, y1c[:, None], x0c[None, :]]
+        bottom_right = x[:, :, y1c[:, None], x1c[None, :]]
+        return top_left * hy * hx + top_right * hy * lx + bottom_left * ly * hx + bottom_right * ly * lx
+
     def _impl(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
         x = executor._resolve_tensor(str(op["inputs"][0]), env)
         target_shape = _target_output_shape(executor, op)
@@ -1488,11 +1528,11 @@ def _kernel_resize(method: str) -> Callable[[_GraphExecutor, Dict[str, Any], Dic
         if method == "nearest":
             y = F.interpolate(resize_input, size=resize_size, mode="nearest")
         else:
-            y = F.interpolate(
+            y = _resize_bilinear_exact(
                 resize_input,
-                size=resize_size,
-                mode="bilinear",
+                resize_size,
                 align_corners=bool(op.get("options", {}).get("alignCorners", False)),
+                half_pixel_centers=bool(op.get("options", {}).get("halfPixelCenters", False)),
             )
         if resize_as_channel_last and x.ndim == 4:
             y = y.permute(0, 2, 3, 1).contiguous()
