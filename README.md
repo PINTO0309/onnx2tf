@@ -236,7 +236,7 @@ https://github.com/PINTO0309/onnx2tf/wiki/model_status
 Currently, the `flatbuffer_direct` backend is faster and has a higher success rate than the default `tf_converter` backend. The simplest conversion command for `flatbuffer_direct` outputs only a LiteRT model, but if you add `--flatbuffer_direct_output_saved_model`, it will output a `saved_model` as before. However, what is different from the previous behavior is that it will build the graph of the `saved_model` from the LiteRT model.
 
 > [!IMPORTANT]
-> **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`. With the v2.3.3 update, all backward compatible conversion options have been migrated to `flatbuffer_direct`, so I will only be doing minor bug fixes until April. If you provide us with ONNX sample models, I will consider incorporating them into `flatbuffer_direct`.**
+> **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`. With the v2.3.3 update, all backward compatible conversion options have been migrated to `flatbuffer_direct`, so I will only be doing minor bug fixes until April. If you provide us with ONNX sample models, I will consider incorporating them into `flatbuffer_direct`. I'll incorporate [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer) when I feel like it, but that will probably be about 10 years from now.**
 
 <img width="1425" height="617" alt="image" src="https://github.com/user-attachments/assets/9d8e247d-45bd-495d-8f9e-bf354e62f55c" />
 
