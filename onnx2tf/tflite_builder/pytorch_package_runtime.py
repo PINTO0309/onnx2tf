@@ -321,14 +321,9 @@ def _align_binary_inputs(
     target = [int(v) for v in list(target_shape)] if target_shape is not None else None
     if x.ndim != y.ndim:
         return x, y
-    if [int(v) for v in list(x.shape)] == [int(v) for v in list(y.shape)]:
-        return x, y
     try:
-        broadcast_shape = list(
-            torch.broadcast_shapes(tuple(int(v) for v in x.shape), tuple(int(v) for v in y.shape))
-        )
-        if target is None or [int(v) for v in broadcast_shape] == target:
-            return x, y
+        torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
+        return x, y
     except Exception:
         pass
     perm = _perm_cl_to_cf(x.ndim)
@@ -410,6 +405,8 @@ def _matches_target_except_axis(
         return False
     for idx, (actual_dim, target_dim) in enumerate(zip(actual_shape, target_shape)):
         if int(idx) == int(axis):
+            continue
+        if int(target_dim) <= 1:
             continue
         if int(actual_dim) != int(target_dim):
             return False

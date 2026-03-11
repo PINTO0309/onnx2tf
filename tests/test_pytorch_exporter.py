@@ -324,6 +324,229 @@ def _make_non_max_suppression_v4_model_ir() -> ModelIR:
     return model_ir
 
 
+def _make_nms_postprocess_chain_model_ir(*, score_threshold: float) -> ModelIR:
+    model_ir = ModelIR(name="nms_postprocess_chain_model_ir")
+    model_ir.inputs = ["boxes", "scores"]
+    model_ir.outputs = ["selected_indices", "valid_count", "head"]
+    model_ir.tensors["boxes"] = TensorIR(
+        name="boxes",
+        dtype="FLOAT32",
+        shape=[1, 5, 4],
+        shape_signature=[1, 5, 4],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["scores"] = TensorIR(
+        name="scores",
+        dtype="FLOAT32",
+        shape=[1, 1, 5],
+        shape_signature=[1, 1, 5],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["max_output"] = TensorIR(
+        name="max_output",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([3], dtype=np.int32),
+    )
+    model_ir.tensors["iou_threshold"] = TensorIR(
+        name="iou_threshold",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+    )
+    model_ir.tensors["score_threshold"] = TensorIR(
+        name="score_threshold",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([score_threshold], dtype=np.float32),
+    )
+    model_ir.tensors["selected_indices"] = TensorIR(
+        name="selected_indices",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+    )
+    model_ir.tensors["valid_count"] = TensorIR(
+        name="valid_count",
+        dtype="INT32",
+        shape=[],
+        shape_signature=[],
+    )
+    model_ir.tensors["selected_indices_i64"] = TensorIR(
+        name="selected_indices_i64",
+        dtype="INT64",
+        shape=[3],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["gathered_boxes"] = TensorIR(
+        name="gathered_boxes",
+        dtype="FLOAT32",
+        shape=[1, 3, 4],
+        shape_signature=[1, -1, 4],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["score_map_shape"] = TensorIR(
+        name="score_map_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 5], dtype=np.int32),
+    )
+    model_ir.tensors["score_map"] = TensorIR(
+        name="score_map",
+        dtype="FLOAT32",
+        shape=[1, 5],
+        shape_signature=[1, 5],
+    )
+    model_ir.tensors["selected_indices_2d_shape"] = TensorIR(
+        name="selected_indices_2d_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([-1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["selected_indices_2d"] = TensorIR(
+        name="selected_indices_2d",
+        dtype="INT64",
+        shape=[3, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.tensors["batch_zeros"] = TensorIR(
+        name="batch_zeros",
+        dtype="INT64",
+        shape=[3, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.tensors["gather_coords"] = TensorIR(
+        name="gather_coords",
+        dtype="INT64",
+        shape=[3, 2],
+        shape_signature=[-1, 2],
+    )
+    model_ir.tensors["gathered_scores"] = TensorIR(
+        name="gathered_scores",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["boxes_slice_begin"] = TensorIR(
+        name="boxes_slice_begin",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, 0, 0], dtype=np.int32),
+    )
+    model_ir.tensors["boxes_slice_size"] = TensorIR(
+        name="boxes_slice_size",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, -1, 4], dtype=np.int32),
+    )
+    model_ir.tensors["sliced_boxes"] = TensorIR(
+        name="sliced_boxes",
+        dtype="FLOAT32",
+        shape=[1, 3, 4],
+        shape_signature=[1, -1, 4],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["gathered_scores_3d_shape"] = TensorIR(
+        name="gathered_scores_3d_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, -1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["gathered_scores_3d"] = TensorIR(
+        name="gathered_scores_3d",
+        dtype="FLOAT32",
+        shape=[1, 3, 1],
+        shape_signature=[1, -1, 1],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["head"] = TensorIR(
+        name="head",
+        dtype="FLOAT32",
+        shape=[1, 1, 5],
+        shape_signature=[1, -1, 5],
+        logical_layout="NCW",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="NON_MAX_SUPPRESSION_V4",
+                inputs=["boxes", "scores", "max_output", "iou_threshold", "score_threshold"],
+                outputs=["selected_indices", "valid_count"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="CAST",
+                inputs=["selected_indices"],
+                outputs=["selected_indices_i64"],
+                options={"outDataType": "INT64"},
+            ),
+            OperatorIR(
+                op_type="GATHER",
+                inputs=["boxes", "selected_indices_i64"],
+                outputs=["gathered_boxes"],
+                options={"axis": 1, "batchDims": 0},
+            ),
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["scores", "score_map_shape"],
+                outputs=["score_map"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["selected_indices_i64", "selected_indices_2d_shape"],
+                outputs=["selected_indices_2d"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="SUB",
+                inputs=["selected_indices_2d", "selected_indices_2d"],
+                outputs=["batch_zeros"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["batch_zeros", "selected_indices_2d"],
+                outputs=["gather_coords"],
+                options={"axis": 1, "fusedActivationFunction": "NONE"},
+            ),
+            OperatorIR(
+                op_type="GATHER_ND",
+                inputs=["score_map", "gather_coords"],
+                outputs=["gathered_scores"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="SLICE",
+                inputs=["gathered_boxes", "boxes_slice_begin", "boxes_slice_size"],
+                outputs=["sliced_boxes"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["gathered_scores", "gathered_scores_3d_shape"],
+                outputs=["gathered_scores_3d"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["sliced_boxes", "gathered_scores_3d"],
+                outputs=["head"],
+                options={"axis": 2, "fusedActivationFunction": "NONE"},
+            ),
+        ]
+    )
+    return model_ir
+
+
 def _make_relu_0_to_1_model_ir() -> ModelIR:
     model_ir = ModelIR(name="relu_0_to_1_model_ir")
     model_ir.inputs = ["x"]
@@ -543,6 +766,94 @@ def _make_sigmoid_mul_nchw_model_ir() -> ModelIR:
                 options={},
             ),
         ]
+    )
+    return model_ir
+
+
+def _make_dynamic_binary_scalar_rhs_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="dynamic_binary_scalar_rhs_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y_add", "y_less"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["zero"] = TensorIR(
+        name="zero",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0], dtype=np.int32),
+    )
+    model_ir.tensors["offset"] = TensorIR(
+        name="offset",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([19248], dtype=np.int32),
+    )
+    model_ir.tensors["y_less"] = TensorIR(
+        name="y_less",
+        dtype="BOOL",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["y_add"] = TensorIR(
+        name="y_add",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(op_type="LESS", inputs=["x", "zero"], outputs=["y_less"], options={}),
+            OperatorIR(op_type="ADD", inputs=["x", "offset"], outputs=["y_add"], options={}),
+        ]
+    )
+    return model_ir
+
+
+def _make_concat_with_rank3_dynamic_middle_dim_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="concat_with_rank3_dynamic_middle_dim_model_ir")
+    model_ir.inputs = ["boxes", "scores", "classes"]
+    model_ir.outputs = ["head"]
+    model_ir.tensors["boxes"] = TensorIR(
+        name="boxes",
+        dtype="FLOAT32",
+        shape=[1, 34, 4],
+        shape_signature=[1, 34, 4],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["scores"] = TensorIR(
+        name="scores",
+        dtype="FLOAT32",
+        shape=[1, 34, 1],
+        shape_signature=[1, 34, 1],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["classes"] = TensorIR(
+        name="classes",
+        dtype="FLOAT32",
+        shape=[1, 34, 1],
+        shape_signature=[1, 34, 1],
+        logical_layout="NCW",
+    )
+    model_ir.tensors["head"] = TensorIR(
+        name="head",
+        dtype="FLOAT32",
+        shape=[1, 1, 6],
+        shape_signature=[1, -1, 6],
+        logical_layout="NCW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["boxes", "scores", "classes"],
+            outputs=["head"],
+            options={"axis": 2, "fusedActivationFunction": "NONE"},
+        )
     )
     return model_ir
 
@@ -2743,6 +3054,191 @@ def test_export_pytorch_package_reshape_flattens_packed_channel_detection_head_t
     assert ".permute(0, 2, 3, 1).contiguous()" in model_source
 
 
+def test_normalize_model_ir_preserves_channel_last_factorized_rank3_detection_head_sequence() -> None:
+    model_ir = ModelIR(name="channel_last_factorized_rank3_detection_head")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["scores"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 6, 3, 4],
+        shape_signature=[1, 6, 3, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["x_cl"] = TensorIR(
+        name="x_cl",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 6],
+        shape_signature=[1, 3, 4, 6],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 36, 2], dtype=np.int32),
+    )
+    model_ir.tensors["seq"] = TensorIR(
+        name="seq",
+        dtype="FLOAT32",
+        shape=[1, 36, 2],
+        shape_signature=[1, 36, 2],
+        logical_layout="NWC",
+    )
+    model_ir.tensors["soft"] = TensorIR(
+        name="soft",
+        dtype="FLOAT32",
+        shape=[1, 36, 2],
+        shape_signature=[1, 36, 2],
+        logical_layout="NWC",
+    )
+    model_ir.tensors["scores"] = TensorIR(
+        name="scores",
+        dtype="FLOAT32",
+        shape=[1, 2, 36],
+        shape_signature=[1, 2, 36],
+        logical_layout="NCW",
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "perm"],
+            outputs=["x_cl"],
+            options={"perm": [0, 2, 3, 1]},
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x_cl", "shape"],
+            outputs=["seq"],
+            options={"newShape": [1, 36, 2], "onnxRawNewShape": [1, 36, 2]},
+        ),
+        OperatorIR(
+            op_type="SOFTMAX",
+            inputs=["seq"],
+            outputs=["soft"],
+            options={"axis": 2, "beta": 1.0},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["soft"],
+            outputs=["scores"],
+            options={"perm": [0, 2, 1]},
+        ),
+    ]
+
+    normalized = normalize_model_ir_for_pytorch_channel_first(model_ir)
+
+    assert normalized.tensors["seq"].shape == [1, 36, 2]
+    reshape_op = next(op for op in normalized.operators if str(op.outputs[0]) == "seq")
+    softmax_op = next(op for op in normalized.operators if str(op.outputs[0]) == "soft")
+    assert reshape_op.inputs[0] == "x"
+    assert reshape_op.options["newShape"] == [1, 36, 2]
+    assert softmax_op.options["axis"] == 2
+
+
+def test_export_pytorch_package_preserves_channel_last_factorized_rank3_detection_head_sequence(tmp_path) -> None:
+    model_ir = ModelIR(name="channel_last_factorized_rank3_detection_head_export")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["scores"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 6, 3, 4],
+        shape_signature=[1, 6, 3, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["x_cl"] = TensorIR(
+        name="x_cl",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 6],
+        shape_signature=[1, 3, 4, 6],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 36, 2], dtype=np.int32),
+    )
+    model_ir.tensors["seq"] = TensorIR(
+        name="seq",
+        dtype="FLOAT32",
+        shape=[1, 36, 2],
+        shape_signature=[1, 36, 2],
+        logical_layout="NWC",
+    )
+    model_ir.tensors["soft"] = TensorIR(
+        name="soft",
+        dtype="FLOAT32",
+        shape=[1, 36, 2],
+        shape_signature=[1, 36, 2],
+        logical_layout="NWC",
+    )
+    model_ir.tensors["scores"] = TensorIR(
+        name="scores",
+        dtype="FLOAT32",
+        shape=[1, 2, 36],
+        shape_signature=[1, 2, 36],
+        logical_layout="NCW",
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "perm"],
+            outputs=["x_cl"],
+            options={"perm": [0, 2, 3, 1]},
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x_cl", "shape"],
+            outputs=["seq"],
+            options={"newShape": [1, 36, 2], "onnxRawNewShape": [1, 36, 2]},
+        ),
+        OperatorIR(
+            op_type="SOFTMAX",
+            inputs=["seq"],
+            outputs=["soft"],
+            options={"axis": 2, "beta": 1.0},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["soft"],
+            outputs=["scores"],
+            options={"perm": [0, 2, 1]},
+        ),
+    ]
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "factorized_rank3_detection_head_sequence"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "[1, 36, 2]" in model_source
+    assert "axis=2" in model_source
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(72, dtype=torch.float32).reshape(1, 6, 3, 4)
+    out = model(x)
+    ref = torch.softmax(x.permute(0, 2, 3, 1).contiguous().reshape(1, 36, 2), dim=2).permute(0, 2, 1)
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
 def test_export_pytorch_package_reshape_preserves_runtime_minus_one_shape_tensor(tmp_path) -> None:
     model_ir = ModelIR(name="reshape_preserves_runtime_minus_one_shape_tensor")
     model_ir.inputs = ["x"]
@@ -3747,6 +4243,20 @@ def test_export_dynamo_onnx_from_generated_package_writes_artifact_and_metadata(
     assert dynamo_onnx_path is not None
     assert Path(dynamo_onnx_path).exists()
     exported_model = onnx.load(str(dynamo_onnx_path))
+
+    def _assert_graph_and_node_metadata_cleared(graph: onnx.GraphProto) -> None:
+        assert len(graph.metadata_props) == 0
+        for node in graph.node:
+            assert len(node.metadata_props) == 0
+            for attr in node.attribute:
+                if attr.type == onnx.AttributeProto.GRAPH:
+                    _assert_graph_and_node_metadata_cleared(attr.g)
+                elif attr.type == onnx.AttributeProto.GRAPHS:
+                    for subgraph in attr.graphs:
+                        _assert_graph_and_node_metadata_cleared(subgraph)
+
+    assert len(exported_model.metadata_props) == 0
+    _assert_graph_and_node_metadata_cleared(exported_model.graph)
     assert len(exported_model.graph.input) == 2
     assert len(exported_model.graph.output) == 1
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
@@ -4891,6 +5401,21 @@ def test_direct_codegen_concat_keeps_axis_only_match_for_ambiguous_square_tensor
     assert torch.equal(out, expected)
 
 
+def test_direct_codegen_concat_keeps_rank3_dynamic_middle_dim_orientation(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_concat_with_rank3_dynamic_middle_dim_model_ir(),
+        output_folder_path=str(tmp_path / "concat_rank3_dynamic_middle_dim_pytorch"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    boxes = torch.arange(1, 1 + (1 * 34 * 4), dtype=torch.float32).reshape(1, 34, 4)
+    scores = torch.arange(1000, 1000 + (1 * 34 * 1), dtype=torch.float32).reshape(1, 34, 1)
+    classes = torch.arange(2000, 2000 + (1 * 34 * 1), dtype=torch.float32).reshape(1, 34, 1)
+    out = model(boxes, scores, classes)
+    expected = torch.cat([boxes, scores, classes], dim=2)
+    assert torch.equal(out, expected)
+
+
 def test_direct_codegen_split_uses_axis_tensor_input(tmp_path) -> None:
     package_path = export_pytorch_package_from_model_ir(
         model_ir=_make_split_axis_tensor_codegen_model_ir(),
@@ -5053,6 +5578,74 @@ def test_should_prefer_tflite_backend_for_large_detection_head_runtime_fallback(
 def test_should_prefer_tflite_backend_for_large_nhwc_heavy_graph() -> None:
     model_ir = _make_large_nhwc_heavy_model_ir()
     assert _should_prefer_tflite_backed_package(model_ir) is True
+
+
+def test_export_pytorch_package_does_not_force_tflite_backend_for_large_detection_head_when_native_is_possible(
+    tmp_path,
+) -> None:
+    model_ir = _make_large_detection_head_model_ir()
+    tflite_path = _write_model_ir_as_tflite(str(tmp_path), "large_detection_head", model_ir)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "large_detection_head_pytorch"),
+        fallback_tflite_path=tflite_path,
+    )
+    metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata.get("execution_backend") != "tflite"
+
+
+def test_native_nms_postprocess_chain_keeps_public_selected_indices_and_crops_internal_consumers_when_empty(
+    tmp_path,
+) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_nms_postprocess_chain_model_ir(score_threshold=0.99),
+        output_folder_path=str(tmp_path / "nms_postprocess_chain_empty_pytorch"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    boxes = torch.tensor(
+        [[[0.0, 0.0, 1.0, 1.0], [0.0, 0.1, 1.0, 1.1], [10.0, 10.0, 11.0, 11.0], [20.0, 20.0, 21.0, 21.0], [30.0, 30.0, 31.0, 31.0]]],
+        dtype=torch.float32,
+    )
+    scores = torch.tensor([[[0.95, 0.90, 0.70, 0.20, 0.80]]], dtype=torch.float32)
+    outputs = cast(Any, model).forward_named(boxes=boxes, scores=scores)
+    assert outputs["selected_indices"].tolist() == [0, 0, 0]
+    assert int(outputs["valid_count"].item()) == 0
+    assert tuple(outputs["head"].shape) == (1, 0, 5)
+
+
+def test_native_nms_postprocess_chain_handles_positive_valid_count_and_exports_artifacts(
+    tmp_path,
+) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_nms_postprocess_chain_model_ir(score_threshold=0.4),
+        output_folder_path=str(tmp_path / "nms_postprocess_chain_positive_pytorch"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    boxes = torch.tensor(
+        [[[0.0, 0.0, 1.0, 1.0], [0.0, 0.1, 1.0, 1.1], [10.0, 10.0, 11.0, 11.0], [20.0, 20.0, 21.0, 21.0], [30.0, 30.0, 31.0, 31.0]]],
+        dtype=torch.float32,
+    )
+    scores = torch.tensor([[[0.95, 0.90, 0.70, 0.20, 0.80]]], dtype=torch.float32)
+    outputs = cast(Any, model).forward_named(boxes=boxes, scores=scores)
+    assert outputs["selected_indices"].tolist() == [0, 4, 2]
+    assert int(outputs["valid_count"].item()) == 3
+    expected_head = torch.tensor(
+        [[[0.0, 0.0, 1.0, 1.0, 0.95], [30.0, 30.0, 31.0, 31.0, 0.80], [10.0, 10.0, 11.0, 11.0, 0.70]]],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(outputs["head"], expected_head)
+
+    torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
+    assert Path(torchscript_path).exists()
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
 
 
 def test_export_pytorch_package_does_not_force_tflite_backend_when_custom_ops_exist(
@@ -6479,6 +7072,29 @@ def test_export_dynamo_onnx_and_exported_program_handle_constant_negative_one_re
         model_ir=model_ir,
         output_folder_path=str(tmp_path / "constant_negative_one_reshape_pkg"),
     )
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+    )
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
+def test_export_artifacts_scalarize_singleton_binary_rhs_constants(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_dynamic_binary_scalar_rhs_model_ir(),
+        output_folder_path=str(tmp_path / "dynamic_binary_scalar_rhs_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_align_binary_inputs(x, torch.as_tensor([0]" not in model_source
+    assert "_align_binary_inputs(x, torch.as_tensor([19248]" not in model_source
+    assert "torch.lt(x, 0)" in model_source
+    assert "torch.add(x, 19248)" in model_source
+
     dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
         package_dir=package_path,
     )
