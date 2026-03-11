@@ -5,12 +5,70 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    TensorIR,
+    channel_last_logical_layout,
+    infer_model_ir_logical_layouts,
+    normalize_logical_layout,
+)
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 
 
 class TFLiteModelIRImportError(RuntimeError):
     pass
+
+
+_TFLITE_CHANNEL_LAST_DATA_INPUT_INDEX: Dict[str, int] = {
+    "AVERAGE_POOL_2D": 0,
+    "CONV_2D": 0,
+    "CONV_3D": 0,
+    "DEPTHWISE_CONV_2D": 0,
+    "DEPTH_TO_SPACE": 0,
+    "L2_NORMALIZATION": 0,
+    "LOGISTIC": 0,
+    "MAX_POOL_2D": 0,
+    "PAD": 0,
+    "PADV2": 0,
+    "PRELU": 0,
+    "RELU": 0,
+    "RELU6": 0,
+    "RELU_0_TO_1": 0,
+    "RELU_N1_TO_1": 0,
+    "RESIZE_BILINEAR": 0,
+    "RESIZE_NEAREST_NEIGHBOR": 0,
+    "SPACE_TO_DEPTH": 0,
+    "TANH": 0,
+    "TRANSPOSE_CONV": 2,
+    "CONV_3D_TRANSPOSE": 2,
+}
+
+
+def _seed_tflite_logical_layouts(model_ir: ModelIR) -> None:
+    def _mark_channel_last(tensor_name: str) -> None:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            return
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            return
+        if normalize_logical_layout(tensor.logical_layout) != "UNKNOWN":
+            return
+        tensor.logical_layout = channel_last_logical_layout(rank)
+
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        _mark_channel_last(str(tensor_name))
+
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        data_input_index = _TFLITE_CHANNEL_LAST_DATA_INPUT_INDEX.get(op_type, None)
+        if data_input_index is not None and len(op.inputs) > int(data_input_index):
+            _mark_channel_last(str(op.inputs[int(data_input_index)]))
+        for output_name in op.outputs:
+            _mark_channel_last(str(output_name))
+
+    infer_model_ir_logical_layouts(model_ir)
 
 
 _SUPPORTED_TENSOR_DTYPES: Dict[str, np.dtype] = {
@@ -553,6 +611,7 @@ def import_model_ir_from_tflite(
         getattr(model_obj, "description", "")
     ) or "onnx2tf tflite direct import"
     root_model_ir.metadata["onnx_public_layout_map"] = {}
+    _seed_tflite_logical_layouts(root_model_ir)
 
     for subgraph_index in range(1, len(subgraphs)):
         child_ir = _import_subgraph(
@@ -562,6 +621,7 @@ def import_model_ir_from_tflite(
             preferred_input_names=None,
             preferred_output_names=None,
         )
+        _seed_tflite_logical_layouts(child_ir)
         root_model_ir.subgraphs.append(child_ir)
 
     return root_model_ir

@@ -1636,6 +1636,7 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
         "RESIZE_BILINEAR": _kernel_resize(method="bilinear"),
         "RESIZE_NEAREST_NEIGHBOR": _kernel_resize(method="nearest"),
         "ABS": _kernel_unary(torch.abs),
+        "ATAN": _kernel_unary(torch.atan),
         "CEIL": _kernel_unary(torch.ceil),
         "COS": _kernel_unary(torch.cos),
         "ELU": _kernel_unary(F.elu),
