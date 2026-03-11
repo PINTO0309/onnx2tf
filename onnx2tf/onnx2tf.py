@@ -1251,6 +1251,8 @@ def convert(
     flatbuffer_direct_output_saved_model: Optional[bool] = False,
     flatbuffer_direct_output_pytorch: Optional[bool] = False,
     flatbuffer_direct_output_torchscript: Optional[bool] = False,
+    flatbuffer_direct_output_dynamo_onnx: Optional[bool] = False,
+    flatbuffer_direct_output_exported_program: Optional[bool] = False,
     flatbuffer_direct_allow_custom_ops: Optional[bool] = False,
     flatbuffer_direct_custom_op_allowlist: Optional[List[str]] = None,
     tflite_split_max_bytes: Optional[int] = 1073741824,
@@ -1466,6 +1468,26 @@ def convert(
         with `shape_hints` (recommended), `test_data_nhwc_path` for 4D RGB
         image inputs, or `custom_input_op_name_np_data_path`.
 
+    flatbuffer_direct_output_dynamo_onnx: Optional[bool]
+        Export a Dynamo ONNX artifact from a generated native PyTorch package
+        as `<model_name>_dynamo.onnx` via `torch.onnx.export(..., dynamo=True)`.\n
+        This implicitly enables `flatbuffer_direct_output_pytorch`.\n
+        Only native PyTorch packages are supported; saved_model/tflite-backed
+        packages are rejected.\n
+        If a public input has dynamic dimensions, provide a concrete example
+        input with `shape_hints` (recommended), `test_data_nhwc_path` for 4D
+        RGB image inputs, or `custom_input_op_name_np_data_path`.
+
+    flatbuffer_direct_output_exported_program: Optional[bool]
+        Export a PyTorch ExportedProgram artifact from a generated native
+        PyTorch package as `<model_name>_ep.pt2` via `torch.export.save`.\n
+        This implicitly enables `flatbuffer_direct_output_pytorch`.\n
+        Only native PyTorch packages are supported; saved_model/tflite-backed
+        packages are rejected.\n
+        If a public input has dynamic dimensions, provide a concrete example
+        input with `shape_hints` (recommended), `test_data_nhwc_path` for 4D
+        RGB image inputs, or `custom_input_op_name_np_data_path`.
+
     flatbuffer_direct_allow_custom_ops: Optional[bool]
         Allow lowering selected unsupported ONNX ops as TFLite CUSTOM ops in
         flatbuffer_direct backend.
@@ -1606,7 +1628,11 @@ def convert(
         When there are multiple inputs, for example,\n
         ['data1:1,3,224,224','data2:1,3,112,112','data3:5']\n
         A value of 1 or more must be specified.\n
-        Numerical values other than dynamic dimensions are ignored.
+        Numerical values other than dynamic dimensions are ignored.\n
+        Also used as the recommended example-input hint source for
+        `flatbuffer_direct_output_torchscript`,
+        `flatbuffer_direct_output_dynamo_onnx`, and
+        `flatbuffer_direct_output_exported_program`.
 
     value_hints: Optional[List[str]]
         Value hints for dummy inference input tensors.\n
@@ -1985,10 +2011,20 @@ def convert(
     flatbuffer_direct_output_torchscript = bool(
         flatbuffer_direct_output_torchscript
     )
+    flatbuffer_direct_output_dynamo_onnx = bool(
+        flatbuffer_direct_output_dynamo_onnx
+    )
+    flatbuffer_direct_output_exported_program = bool(
+        flatbuffer_direct_output_exported_program
+    )
     flatbuffer_direct_output_pytorch = bool(
         flatbuffer_direct_output_pytorch
     )
-    if flatbuffer_direct_output_torchscript:
+    if (
+        flatbuffer_direct_output_torchscript
+        or flatbuffer_direct_output_dynamo_onnx
+        or flatbuffer_direct_output_exported_program
+    ):
         flatbuffer_direct_output_pytorch = True
     flatbuffer_direct_allow_custom_ops = bool(flatbuffer_direct_allow_custom_ops)
     replace_to_pseudo_operators = _normalize_replace_to_pseudo_operators(
@@ -2123,6 +2159,16 @@ def convert(
             'flatbuffer_direct_output_torchscript currently supports only tflite_backend="flatbuffer_direct".'
         )
         sys.exit(1)
+    if flatbuffer_direct_output_dynamo_onnx and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_output_dynamo_onnx currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
+    if flatbuffer_direct_output_exported_program and tflite_backend != 'flatbuffer_direct':
+        error(
+            'flatbuffer_direct_output_exported_program currently supports only tflite_backend="flatbuffer_direct".'
+        )
+        sys.exit(1)
     if flatbuffer_direct_output_saved_model and disable_model_save:
         error(
             'flatbuffer_direct_output_saved_model cannot be used with disable_model_save=True.'
@@ -2190,14 +2236,23 @@ def convert(
                 'custom_input_op_name_np_data_path',
                 bool(
                     custom_input_op_name_np_data_path is not None
-                    and not flatbuffer_direct_output_torchscript
+                    and not (
+                        flatbuffer_direct_output_torchscript
+                        or flatbuffer_direct_output_dynamo_onnx
+                        or flatbuffer_direct_output_exported_program
+                    )
                 ),
             ),
             ('replace_to_pseudo_operators', bool(replace_to_pseudo_operators)),
             ('overwrite_input_shape', bool(overwrite_input_shape)),
             (
                 'shape_hints',
-                bool(shape_hints) and not flatbuffer_direct_output_torchscript,
+                bool(shape_hints)
+                and not (
+                    flatbuffer_direct_output_torchscript
+                    or flatbuffer_direct_output_dynamo_onnx
+                    or flatbuffer_direct_output_exported_program
+                ),
             ),
             ('batch_size', bool(batch_size is not None)),
             ('param_replacement_file', bool(str(param_replacement_file).strip() != '')),
@@ -4312,6 +4367,8 @@ def convert(
                         output_folder_path=output_folder_path,
                         output_file_name=output_file_name,
                         output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
+                        output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
+                        output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         shape_hints=shape_hints,
                         test_data_nhwc_path=test_data_nhwc_path,
@@ -4328,6 +4385,35 @@ def convert(
                                 'Split PyTorch TorchScript output complete! '
                                 f'partitions={split_pytorch_outputs["split_pytorch_torchscript_count"]}'
                             )
+                        )
+                    elif flatbuffer_direct_output_torchscript:
+                        warn(
+                            'PyTorch TorchScript export was requested but no split TorchScript artifacts were generated. '
+                            'See each generated PyTorch package metadata.json for the JIT failure details.'
+                        )
+                    if 'split_pytorch_dynamo_onnx_paths' in split_pytorch_outputs:
+                        info(
+                            Color.GREEN(
+                                'Split PyTorch Dynamo ONNX output complete! '
+                                f'partitions={split_pytorch_outputs["split_pytorch_dynamo_onnx_count"]}'
+                            )
+                        )
+                    elif flatbuffer_direct_output_dynamo_onnx:
+                        warn(
+                            'PyTorch Dynamo ONNX export was requested but no split ONNX artifacts were generated. '
+                            'See each generated PyTorch package metadata.json for the export failure details.'
+                        )
+                    if 'split_pytorch_exported_program_paths' in split_pytorch_outputs:
+                        info(
+                            Color.GREEN(
+                                'Split PyTorch ExportedProgram output complete! '
+                                f'partitions={split_pytorch_outputs["split_pytorch_exported_program_count"]}'
+                            )
+                        )
+                    elif flatbuffer_direct_output_exported_program:
+                        warn(
+                            'PyTorch ExportedProgram export was requested but no split .pt2 artifacts were generated. '
+                            'See each generated PyTorch package metadata.json for the export failure details.'
                         )
                 elif (not disable_model_save) or run_saved_model_inference_check:
                     model_ir_fp32 = clone_model_ir_with_float32(model_ir)
@@ -4372,6 +4458,8 @@ def convert(
             saved_model_path = None
             pytorch_package_path = None
             pytorch_torchscript_path = None
+            pytorch_dynamo_onnx_path = None
+            pytorch_exported_program_path = None
             if should_export_tflite_direct_saved_model:
                 saved_model_output_folder_path = tflite_direct_output_folder_path
                 if not persist_tflite_direct_saved_model:
@@ -4408,6 +4496,8 @@ def convert(
                 )
             if flatbuffer_direct_output_pytorch:
                 from onnx2tf.tflite_builder.pytorch_exporter import (
+                    export_dynamo_onnx_from_generated_package,
+                    export_exported_program_from_generated_package,
                     export_pytorch_package_from_model_ir,
                     export_torchscript_from_generated_package,
                 )
@@ -4424,6 +4514,23 @@ def convert(
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         shape_hints=shape_hints,
                         test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
+                    )
+                if flatbuffer_direct_output_dynamo_onnx:
+                    pytorch_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+                        package_dir=pytorch_package_path,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                        test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
+                    )
+                if flatbuffer_direct_output_exported_program:
+                    pytorch_exported_program_path = export_exported_program_from_generated_package(
+                        package_dir=pytorch_package_path,
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                        test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
                     )
         except Exception as ex:
             if tflite_direct_bridge_saved_model_dir is not None:
@@ -4455,6 +4562,25 @@ def convert(
                 info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
                 if pytorch_torchscript_path is not None:
                     info(Color.GREEN(f'PyTorch TorchScript output complete! ({pytorch_torchscript_path})'))
+                elif flatbuffer_direct_output_torchscript:
+                    warn(
+                        'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
+                        'See the generated PyTorch package metadata.json for the JIT failure details.'
+                    )
+                if pytorch_dynamo_onnx_path is not None:
+                    info(Color.GREEN(f'PyTorch Dynamo ONNX output complete! ({pytorch_dynamo_onnx_path})'))
+                elif flatbuffer_direct_output_dynamo_onnx:
+                    warn(
+                        'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
+                        'See the generated PyTorch package metadata.json for the export failure details.'
+                    )
+                if pytorch_exported_program_path is not None:
+                    info(Color.GREEN(f'PyTorch ExportedProgram output complete! ({pytorch_exported_program_path})'))
+                elif flatbuffer_direct_output_exported_program:
+                    warn(
+                        'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
+                        'See the generated PyTorch package metadata.json for the export failure details.'
+                    )
                 tflite_pytorch_eval_result = _run_tflite_pytorch_output_check(
                     tflite_path=input_tflite_file_path,
                     package_dir=pytorch_package_path,
@@ -5033,6 +5159,8 @@ def convert(
                     'flatbuffer_direct_output_saved_model': flatbuffer_direct_output_saved_model,
                     'flatbuffer_direct_output_pytorch': flatbuffer_direct_output_pytorch,
                     'flatbuffer_direct_output_torchscript': flatbuffer_direct_output_torchscript,
+                    'flatbuffer_direct_output_dynamo_onnx': flatbuffer_direct_output_dynamo_onnx,
+                    'flatbuffer_direct_output_exported_program': flatbuffer_direct_output_exported_program,
                     'flatbuffer_direct_allow_custom_ops': flatbuffer_direct_allow_custom_ops,
                     'flatbuffer_direct_custom_op_allowlist': flatbuffer_direct_custom_op_allowlist,
                     'tflite_split_max_bytes': tflite_split_max_bytes,
@@ -5623,6 +5751,8 @@ def convert(
                         output_saved_model_from_model_ir=output_saved_model_from_model_ir,
                         output_pytorch_from_model_ir=output_pytorch_from_model_ir,
                         output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
+                        output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
+                        output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
                         saved_model_output_folder_path=saved_model_output_folder_path,
                         pytorch_output_folder_path=pytorch_output_folder_path,
                         persist_saved_model_output=persist_saved_model_output,
@@ -5749,6 +5879,20 @@ def convert(
                     f'({direct_outputs["pytorch_torchscript_path"]})'
                 )
             )
+        if 'pytorch_dynamo_onnx_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'PyTorch Dynamo ONNX output complete! '
+                    f'({direct_outputs["pytorch_dynamo_onnx_path"]})'
+                )
+            )
+        if 'pytorch_exported_program_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'PyTorch ExportedProgram output complete! '
+                    f'({direct_outputs["pytorch_exported_program_path"]})'
+                )
+            )
         if 'split_pytorch_package_dirs' in direct_outputs:
             info(
                 Color.GREEN(
@@ -5762,6 +5906,47 @@ def convert(
                     'Split PyTorch TorchScript output complete! '
                     f'partitions={direct_outputs["split_pytorch_torchscript_count"]}'
                 )
+            )
+        if 'split_pytorch_dynamo_onnx_paths' in direct_outputs:
+            info(
+                Color.GREEN(
+                    'Split PyTorch Dynamo ONNX output complete! '
+                    f'partitions={direct_outputs["split_pytorch_dynamo_onnx_count"]}'
+                )
+            )
+        if 'split_pytorch_exported_program_paths' in direct_outputs:
+            info(
+                Color.GREEN(
+                    'Split PyTorch ExportedProgram output complete! '
+                    f'partitions={direct_outputs["split_pytorch_exported_program_count"]}'
+                )
+            )
+        if (
+            flatbuffer_direct_output_torchscript
+            and 'pytorch_torchscript_path' not in direct_outputs
+            and 'split_pytorch_torchscript_paths' not in direct_outputs
+        ):
+            warn(
+                'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
+                'See the generated PyTorch package metadata.json for the JIT failure details.'
+            )
+        if (
+            flatbuffer_direct_output_dynamo_onnx
+            and 'pytorch_dynamo_onnx_path' not in direct_outputs
+            and 'split_pytorch_dynamo_onnx_paths' not in direct_outputs
+        ):
+            warn(
+                'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
+                'See the generated PyTorch package metadata.json for the export failure details.'
+            )
+        if (
+            flatbuffer_direct_output_exported_program
+            and 'pytorch_exported_program_path' not in direct_outputs
+            and 'split_pytorch_exported_program_paths' not in direct_outputs
+        ):
+            warn(
+                'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
+                'See the generated PyTorch package metadata.json for the export failure details.'
             )
         _log_flatbuffer_direct_split_outputs(
             direct_outputs,
@@ -6449,6 +6634,8 @@ def convert(
                                     output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                     output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
                                     output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
+                                    output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
+                                    output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
                                     pytorch_output_folder_path=os.path.join(
                                         output_folder_path,
                                         f'{output_file_name}_pytorch',
@@ -6924,6 +7111,8 @@ def convert(
                                 output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
                                 output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
                                 output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
+                                output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
+                                output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
                                 pytorch_output_folder_path=os.path.join(
                                     output_folder_path,
                                     f'{output_file_name}_pytorch',
@@ -8340,6 +8529,26 @@ def main():
             '--test_data_nhwc_path is also accepted for 4D RGB inputs, and -cind remains available.'
     )
     parser.add_argument(
+        '-fdodo',
+        '--flatbuffer_direct_output_dynamo_onnx',
+        action='store_true',
+        help=\
+            'Export a Dynamo ONNX artifact from the generated native PyTorch package. \n' +
+            'This implicitly enables -fdopt. \n' +
+            'If a public input is dynamic, use --shape_hints as the recommended example-input hint. \n' +
+            '--test_data_nhwc_path is also accepted for 4D RGB inputs, and -cind remains available.'
+    )
+    parser.add_argument(
+        '-fdoep',
+        '--flatbuffer_direct_output_exported_program',
+        action='store_true',
+        help=\
+            'Export a PyTorch ExportedProgram (.pt2) artifact from the generated native PyTorch package. \n' +
+            'This implicitly enables -fdopt. \n' +
+            'If a public input is dynamic, use --shape_hints as the recommended example-input hint. \n' +
+            '--test_data_nhwc_path is also accepted for 4D RGB inputs, and -cind remains available.'
+    )
+    parser.add_argument(
         '--flatbuffer_direct_allow_custom_ops',
         action='store_true',
         help=\
@@ -8404,7 +8613,7 @@ def main():
         action='append',
         nargs='+',
         help=\
-            'Input name of OP and path of data file (Numpy) for custom input for -cotof, -fdots, or -oiqt, \n' +
+            'Input name of OP and path of data file (Numpy) for custom input for -cotof, -fdots, -fdodo, -fdoep, or -oiqt, \n' +
             'and mean (optional) and std (optional). \n' +
 
             '\n<Usage in -cotof> \n' +
@@ -8415,10 +8624,10 @@ def main():
             'The input_op_name must be the same as in ONNX, \n' +
             'and it may not work if the input format is different between ONNX and TF. \n' +
 
-            '\n<Usage in -fdots> \n' +
-            'When using -fdots, -cind can be used to provide a concrete trace input for a dynamic public input. \n' +
+            '\n<Usage in -fdots / -fdodo / -fdoep> \n' +
+            'When using -fdots, -fdodo, or -fdoep, -cind can be used to provide a concrete example input for a dynamic public input. \n' +
             'For shape-only hints, prefer --shape_hints. For 4D RGB inputs, --test_data_nhwc_path is also supported. \n' +
-            'In -fdots mode, mean and std are omitted from the input. \n' +
+            'In these modes, mean and std are omitted from the input. \n' +
             '-cind {input_op_name} {numpy_file_path} -fdots \n' +
 
             '\n<Usage in -oiqt> \n' +
@@ -8552,7 +8761,7 @@ def main():
             'When there are multiple inputs, for example, \n' +
             '"data1:1,3,224,224" "data2:1,3,112,112" "data3:5" \n' +
             'Only applied to dynamic dimensions in inputs. \n' +
-            'Also used as the recommended trace hint source for -fdots.'
+            'Also used as the recommended example-input hint source for -fdots, -fdodo, and -fdoep.'
     )
     parser.add_argument(
         '-vh',
@@ -8990,7 +9199,7 @@ def main():
             'normalized to the range [0, 1]. \n' +
             'This option is useful for offline environments or when you want to use \n' +
             'specific test data for validation. \n' +
-            'It is also accepted by -fdots for 4D RGB image inputs. \n\n' +
+            'It is also accepted by -fdots, -fdodo, and -fdoep for 4D RGB image inputs. \n\n' +
             'e.g. \n' +
             '--test_data_nhwc_path "./my_test_data.npy"'
     )
@@ -9109,6 +9318,8 @@ def main():
         flatbuffer_direct_output_saved_model=args.flatbuffer_direct_output_saved_model,
         flatbuffer_direct_output_pytorch=args.flatbuffer_direct_output_pytorch,
         flatbuffer_direct_output_torchscript=args.flatbuffer_direct_output_torchscript,
+        flatbuffer_direct_output_dynamo_onnx=args.flatbuffer_direct_output_dynamo_onnx,
+        flatbuffer_direct_output_exported_program=args.flatbuffer_direct_output_exported_program,
         flatbuffer_direct_allow_custom_ops=args.flatbuffer_direct_allow_custom_ops,
         flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
         tflite_split_max_bytes=args.tflite_split_max_bytes,

@@ -9,6 +9,8 @@ from onnx2tf.tflite_builder.ir import (
     prune_identity_cast_operators,
 )
 from onnx2tf.tflite_builder.pytorch_exporter import (
+    export_dynamo_onnx_from_generated_package,
+    export_exported_program_from_generated_package,
     export_pytorch_package_from_model_ir,
     export_torchscript_from_generated_package,
 )
@@ -22,6 +24,8 @@ def export_split_pytorch_packages(
     output_folder_path: str,
     output_file_name: str,
     output_torchscript_from_model_ir: bool = False,
+    output_dynamo_onnx_from_model_ir: bool = False,
+    output_exported_program_from_model_ir: bool = False,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
     shape_hints: Optional[List[str]] = None,
     test_data_nhwc_path: Optional[str] = None,
@@ -40,6 +44,8 @@ def export_split_pytorch_packages(
 
     package_dirs: List[str] = []
     torchscript_paths: List[str] = []
+    dynamo_onnx_paths: List[str] = []
+    exported_program_paths: List[str] = []
     for partition in partitions:
         partition_id = int(partition["partition_id"])
         part_model_ir = build_partition_model_ir(
@@ -61,25 +67,49 @@ def export_split_pytorch_packages(
             model_ir=part_model_ir,
             output_folder_path=os.path.join(output_folder_path, package_dir_name),
         )
+        package_input_names = [str(v) for v in list(getattr(part_model_ir, "inputs", []))]
+        filtered_custom_inputs = None
+        if custom_input_op_name_np_data_path is not None:
+            filtered_custom_inputs = [
+                param
+                for param in custom_input_op_name_np_data_path
+                if isinstance(param, (list, tuple))
+                and len(param) >= 2
+                and str(param[0]) in package_input_names
+            ]
         if output_torchscript_from_model_ir:
-            package_input_names = [str(v) for v in list(getattr(part_model_ir, "inputs", []))]
-            filtered_custom_inputs = None
-            if custom_input_op_name_np_data_path is not None:
-                filtered_custom_inputs = [
-                    param
-                    for param in custom_input_op_name_np_data_path
-                    if isinstance(param, (list, tuple))
-                    and len(param) >= 2
-                    and str(param[0]) in package_input_names
-                ]
             torchscript_path = export_torchscript_from_generated_package(
                 package_dir=str(package_dir_path),
                 custom_input_op_name_np_data_path=filtered_custom_inputs,
                 shape_hints=shape_hints,
                 test_data_nhwc_path=test_data_nhwc_path,
+                raise_on_failure=False,
             )
-            partition["pytorch_torchscript_file_name"] = os.path.basename(torchscript_path)
-            torchscript_paths.append(str(torchscript_path))
+            if torchscript_path is not None:
+                partition["pytorch_torchscript_file_name"] = os.path.basename(torchscript_path)
+                torchscript_paths.append(str(torchscript_path))
+        if output_dynamo_onnx_from_model_ir:
+            dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+                package_dir=str(package_dir_path),
+                custom_input_op_name_np_data_path=filtered_custom_inputs,
+                shape_hints=shape_hints,
+                test_data_nhwc_path=test_data_nhwc_path,
+                raise_on_failure=False,
+            )
+            if dynamo_onnx_path is not None:
+                partition["pytorch_dynamo_onnx_file_name"] = os.path.basename(dynamo_onnx_path)
+                dynamo_onnx_paths.append(str(dynamo_onnx_path))
+        if output_exported_program_from_model_ir:
+            exported_program_path = export_exported_program_from_generated_package(
+                package_dir=str(package_dir_path),
+                custom_input_op_name_np_data_path=filtered_custom_inputs,
+                shape_hints=shape_hints,
+                test_data_nhwc_path=test_data_nhwc_path,
+                raise_on_failure=False,
+            )
+            if exported_program_path is not None:
+                partition["pytorch_exported_program_file_name"] = os.path.basename(exported_program_path)
+                exported_program_paths.append(str(exported_program_path))
         partition["pytorch_package_dir"] = package_dir_name
         package_dirs.append(package_dir_name)
 
@@ -93,4 +123,10 @@ def export_split_pytorch_packages(
     if len(torchscript_paths) > 0:
         outputs["split_pytorch_torchscript_paths"] = list(torchscript_paths)
         outputs["split_pytorch_torchscript_count"] = int(len(torchscript_paths))
+    if len(dynamo_onnx_paths) > 0:
+        outputs["split_pytorch_dynamo_onnx_paths"] = list(dynamo_onnx_paths)
+        outputs["split_pytorch_dynamo_onnx_count"] = int(len(dynamo_onnx_paths))
+    if len(exported_program_paths) > 0:
+        outputs["split_pytorch_exported_program_paths"] = list(exported_program_paths)
+        outputs["split_pytorch_exported_program_count"] = int(len(exported_program_paths))
     return outputs

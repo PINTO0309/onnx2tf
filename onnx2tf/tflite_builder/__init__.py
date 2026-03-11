@@ -270,7 +270,17 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_torchscript_from_model_ir = bool(
         kwargs.get("output_torchscript_from_model_ir", False)
     )
-    if output_torchscript_from_model_ir:
+    output_dynamo_onnx_from_model_ir = bool(
+        kwargs.get("output_dynamo_onnx_from_model_ir", False)
+    )
+    output_exported_program_from_model_ir = bool(
+        kwargs.get("output_exported_program_from_model_ir", False)
+    )
+    if (
+        output_torchscript_from_model_ir
+        or output_dynamo_onnx_from_model_ir
+        or output_exported_program_from_model_ir
+    ):
         output_pytorch_from_model_ir = True
     saved_model_output_folder_path = kwargs.get(
         "saved_model_output_folder_path",
@@ -686,8 +696,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         split_saved_model_dirs = None
         pytorch_package_path = None
         pytorch_torchscript_path = None
+        pytorch_dynamo_onnx_path = None
+        pytorch_exported_program_path = None
         split_pytorch_package_dirs = None
         split_pytorch_torchscript_paths = None
+        split_pytorch_dynamo_onnx_paths = None
+        split_pytorch_exported_program_paths = None
         if split_plan_requested:
             _set_export_progress_desc("split planning")
             split_plan_report = plan_contiguous_partitions_by_size(
@@ -793,6 +807,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     output_folder_path=output_folder_path,
                     output_file_name=output_file_name,
                     output_torchscript_from_model_ir=output_torchscript_from_model_ir,
+                    output_dynamo_onnx_from_model_ir=output_dynamo_onnx_from_model_ir,
+                    output_exported_program_from_model_ir=output_exported_program_from_model_ir,
                     custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                     shape_hints=shape_hints,
                     test_data_nhwc_path=test_data_nhwc_path,
@@ -802,8 +818,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     "split_pytorch_torchscript_paths",
                     None,
                 )
+                split_pytorch_dynamo_onnx_paths = split_pytorch_outputs.get(
+                    "split_pytorch_dynamo_onnx_paths",
+                    None,
+                )
+                split_pytorch_exported_program_paths = split_pytorch_outputs.get(
+                    "split_pytorch_exported_program_paths",
+                    None,
+                )
             else:
                 from onnx2tf.tflite_builder.pytorch_exporter import (
+                    export_dynamo_onnx_from_generated_package,
+                    export_exported_program_from_generated_package,
                     export_pytorch_package_from_model_ir,
                     export_torchscript_from_generated_package,
                 )
@@ -847,6 +873,23 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                         custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
                         shape_hints=shape_hints,
                         test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
+                    )
+                if output_dynamo_onnx_from_model_ir:
+                    pytorch_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+                        package_dir=str(pytorch_package_path),
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                        test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
+                    )
+                if output_exported_program_from_model_ir:
+                    pytorch_exported_program_path = export_exported_program_from_generated_package(
+                        package_dir=str(pytorch_package_path),
+                        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                        shape_hints=shape_hints,
+                        test_data_nhwc_path=test_data_nhwc_path,
+                        raise_on_failure=False,
                     )
             _advance_export_progress()
 
@@ -1133,6 +1176,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["pytorch_package_path"] = str(pytorch_package_path)
     if pytorch_torchscript_path is not None:
         outputs["pytorch_torchscript_path"] = str(pytorch_torchscript_path)
+    if pytorch_dynamo_onnx_path is not None:
+        outputs["pytorch_dynamo_onnx_path"] = str(pytorch_dynamo_onnx_path)
+    if pytorch_exported_program_path is not None:
+        outputs["pytorch_exported_program_path"] = str(pytorch_exported_program_path)
     if len(write_timing_report) > 0:
         outputs["write_timing_report"] = write_timing_report
     if dynamic_range_path is not None:
@@ -1164,6 +1211,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     if split_pytorch_torchscript_paths is not None:
         outputs["split_pytorch_torchscript_paths"] = list(split_pytorch_torchscript_paths)
         outputs["split_pytorch_torchscript_count"] = int(len(split_pytorch_torchscript_paths))
+    if split_pytorch_dynamo_onnx_paths is not None:
+        outputs["split_pytorch_dynamo_onnx_paths"] = list(split_pytorch_dynamo_onnx_paths)
+        outputs["split_pytorch_dynamo_onnx_count"] = int(len(split_pytorch_dynamo_onnx_paths))
+    if split_pytorch_exported_program_paths is not None:
+        outputs["split_pytorch_exported_program_paths"] = list(split_pytorch_exported_program_paths)
+        outputs["split_pytorch_exported_program_count"] = int(len(split_pytorch_exported_program_paths))
     if op_coverage_report_path is not None:
         outputs["op_coverage_report_path"] = op_coverage_report_path
     outputs["tensor_correspondence_report_path"] = tensor_correspondence_report_path

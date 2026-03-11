@@ -3645,6 +3645,24 @@ def _make_topk_const_k_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_topk_const_k_with_stale_output_shape_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, 10])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 10])
+    k_const = numpy_helper.from_array(np.asarray([3], dtype=np.int64), name="topk_k_const")
+    nodes = [
+        helper.make_node("TopK", ["x", "topk_k_const"], ["values", "indices"], name="TopKConstKStaleShape", axis=1),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "topk_const_k_stale_output_shape_graph",
+        [x],
+        [values, indices],
+        initializer=[k_const],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_topk_dynamic_k_indices_reshape_flat_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, "N"])
     values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, "K"])
@@ -12133,6 +12151,27 @@ def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:
         if str(op.outputs[0]) == k_input_name
     ]
     assert len(k_producers) == 0
+
+
+def test_flatbuffer_direct_topk_const_k_repairs_stale_output_shape_metadata() -> None:
+    model = _make_topk_const_k_with_stale_output_shape_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="topk_const_k_stale_output_shape_test",
+        allow_custom_ops=False,
+    )
+
+    assert list(model_ir.tensors["values"].shape) == [1, 3]
+    assert list(model_ir.tensors["values"].shape_signature) == [1, 3]
+    assert list(model_ir.tensors["indices"].shape) == [1, 3]
+    assert list(model_ir.tensors["indices"].shape_signature) == [1, 3]
+    topk_op = next(op for op in model_ir.operators if str(op.op_type) == "TOPK_V2")
+    for output_name in list(topk_op.outputs):
+        tensor = model_ir.tensors[str(output_name)]
+        assert list(tensor.shape) == [1, 3]
+        assert list(tensor.shape_signature) == [1, 3]
 
 
 def test_flatbuffer_direct_topk_dynamic_k_followed_by_reshape_flat_preserves_dynamic_extent() -> None:
