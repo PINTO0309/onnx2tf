@@ -34,6 +34,7 @@ from onnx2tf.tflite_builder.ir import (
     optimize_redundant_transpose_operators,
     prune_identity_cast_operators,
 )
+from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
     _apply_safe_transpose_reduction_lite,
@@ -103,6 +104,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains,
     _optimize_transpose_swish_qdq_nhwc_islands,
     _optimize_transpose_mean_prepost_nhwc_passthrough_chains,
+    _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains,
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
@@ -5086,6 +5088,15 @@ def _make_shape_gather_div_sub_cast_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_integer_div_const_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [2])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2])
+    div_rhs = numpy_helper.from_array(np.asarray([320], dtype=np.int64), name="div_rhs")
+    node = helper.make_node("Div", ["x", "div_rhs"], ["y"], name="IntegerDivNode")
+    graph = helper.make_graph([node], "integer_div_const_graph", [x], [y], initializer=[div_rhs])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_shape_gather_reduceprod_cast_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
@@ -6550,6 +6561,51 @@ def _make_instance_normalization_model() -> onnx.ModelProto:
         [x],
         [y],
         initializer=[scale, bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_conv_instance_normalization_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 5, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 5, 5])
+    conv_w = numpy_helper.from_array(
+        np.arange(4 * 3 * 1 * 1, dtype=np.float32).reshape(4, 3, 1, 1) / 10.0,
+        name="conv_w",
+    )
+    conv_b = numpy_helper.from_array(
+        np.asarray([0.1, -0.2, 0.3, -0.4], dtype=np.float32),
+        name="conv_b",
+    )
+    scale = numpy_helper.from_array(
+        np.asarray([1.0, 0.5, 2.0, 1.5], dtype=np.float32),
+        name="inst_scale",
+    )
+    bias = numpy_helper.from_array(
+        np.asarray([0.1, -0.2, 0.3, 0.4], dtype=np.float32),
+        name="inst_bias",
+    )
+    conv = helper.make_node(
+        "Conv",
+        ["x", "conv_w", "conv_b"],
+        ["conv_out"],
+        name="ConvNode",
+        kernel_shape=[1, 1],
+        pads=[0, 0, 0, 0],
+        strides=[1, 1],
+    )
+    inst = helper.make_node(
+        "InstanceNormalization",
+        ["conv_out", "inst_scale", "inst_bias"],
+        ["y"],
+        name="InstanceNormAfterConvNode",
+        epsilon=1e-5,
+    )
+    graph = helper.make_graph(
+        [conv, inst],
+        "conv_instance_norm_graph",
+        [x],
+        [y],
+        initializer=[conv_w, conv_b, scale, bias],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
@@ -11721,6 +11777,95 @@ def test_flatbuffer_direct_instance_normalization_lowering() -> None:
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("MEAN") == 2
     assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_instance_normalization_lowering_with_nhwc_internal_layout() -> None:
+    class _FakeBuilderCtx:
+        def __init__(self) -> None:
+            self.model_ir = ModelIR(name="instance_norm_builder_nhwc")
+            self.model_ir.tensors["x"] = TensorIR(
+                name="x",
+                dtype="FLOAT32",
+                shape=[1, 5, 5, 4],
+                shape_signature=[1, 5, 5, 4],
+                logical_layout="NHWC",
+            )
+            self.model_ir.tensors["y"] = TensorIR(
+                name="y",
+                dtype="FLOAT32",
+                shape=[1, 5, 5, 4],
+                shape_signature=[1, 5, 5, 4],
+                logical_layout="NHWC",
+            )
+            self.model_ir.tensors["inst_scale"] = TensorIR(
+                name="inst_scale",
+                dtype="FLOAT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([1.0, 0.5, 2.0, 1.5], dtype=np.float32),
+            )
+            self.model_ir.tensors["inst_bias"] = TensorIR(
+                name="inst_bias",
+                dtype="FLOAT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([0.1, -0.2, 0.3, 0.4], dtype=np.float32),
+            )
+
+        def ensure_tensor(self, name: str) -> None:
+            if name not in self.model_ir.tensors:
+                raise KeyError(name)
+
+        def get_constant_array(self, name: str):
+            tensor = self.model_ir.tensors.get(name)
+            return None if tensor is None else tensor.data
+
+        def get_tensor_shape(self, name: str):
+            return list(self.model_ir.tensors[name].shape)
+
+        def get_tensor_dtype(self, name: str):
+            return self.model_ir.tensors[name].dtype
+
+        def add_const_tensor(self, name: str, value: np.ndarray) -> str:
+            arr = np.asarray(value)
+            self.model_ir.tensors[name] = TensorIR(
+                name=name,
+                dtype="FLOAT16" if arr.dtype == np.float16 else "FLOAT32" if arr.dtype == np.float32 else "INT32",
+                shape=list(arr.shape) if arr.ndim > 0 else [],
+                shape_signature=list(arr.shape) if arr.ndim > 0 else [],
+                data=arr,
+            )
+            return name
+
+        def add_intermediate_tensor(self, name: str, dtype: str, shape: list[int]) -> str:
+            self.model_ir.tensors[name] = TensorIR(
+                name=name,
+                dtype=dtype,
+                shape=list(shape),
+                shape_signature=list(shape),
+                logical_layout="NHWC" if len(shape) == 4 and shape[-1] == 4 else "UNKNOWN",
+            )
+            return name
+
+        def add_operator(self, op: OperatorIR) -> None:
+            self.model_ir.operators.append(op)
+
+    ctx = _FakeBuilderCtx()
+    node = types.SimpleNamespace(
+        name="InstanceNormAfterConvNode",
+        inputs=[types.SimpleNamespace(name="x"), types.SimpleNamespace(name="inst_scale"), types.SimpleNamespace(name="inst_bias")],
+        outputs=[types.SimpleNamespace(name="y")],
+        attrs={"epsilon": 1e-5},
+    )
+    build_instance_normalization_op(node, ctx)
+    axes_tensor = ctx.model_ir.tensors["InstanceNormAfterConvNode_instnorm_axes"]
+    scale_tensor = ctx.model_ir.tensors["InstanceNormAfterConvNode_instnorm_scale"]
+    bias_tensor = ctx.model_ir.tensors["InstanceNormAfterConvNode_instnorm_bias"]
+    mean_tensor = ctx.model_ir.tensors["InstanceNormAfterConvNode_instnorm_mean"]
+    assert np.array_equal(np.asarray(axes_tensor.data), np.asarray([1, 2], dtype=np.int32))
+    assert mean_tensor.shape == [1, 1, 1, 4]
+    assert scale_tensor.shape == [1, 1, 1, 4]
+    assert bias_tensor.shape == [1, 1, 1, 4]
 
 
 def test_flatbuffer_direct_pow_lowering() -> None:
@@ -25040,6 +25185,124 @@ def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_keeps_pre_on_
     assert list(relu_op.inputs) == ["x_nchw"]
 
 
+def test_flatbuffer_direct_mixed_mean_reducemax_concat_mirrorpad_nhwc_chain() -> None:
+    model_ir = ModelIR(name="mixed_mean_reducemax_concat_mirrorpad_nhwc_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc"]
+    for name, shape in [
+        ("x_nhwc", [1, 45, 80, 128]),
+        ("x_nchw", [1, 128, 45, 80]),
+        ("mean_out", [1, 45, 80, 1]),
+        ("max_out", [1, 1, 45, 80]),
+        ("concat_out", [1, 2, 45, 80]),
+        ("pad_out", [1, 2, 51, 86]),
+        ("conv_in", [1, 51, 86, 2]),
+        ("y_nhwc", [1, 45, 80, 1]),
+    ]:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=shape,
+            shape_signature=shape,
+        )
+    model_ir.tensors["x_nhwc"].logical_layout = "NHWC"
+    model_ir.tensors["x_nchw"].logical_layout = "NCHW"
+    model_ir.tensors["mean_out"].logical_layout = "NHWC"
+    model_ir.tensors["max_out"].logical_layout = "UNKNOWN"
+    model_ir.tensors["concat_out"].logical_layout = "NHWC"
+    model_ir.tensors["pad_out"].logical_layout = "NHWC"
+    model_ir.tensors["conv_in"].logical_layout = "NHWC"
+    model_ir.tensors["pre_perm"] = TensorIR(
+        name="pre_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["post_perm"] = TensorIR(
+        name="post_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["mean_axes_nhwc"] = TensorIR(
+        name="mean_axes_nhwc",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([3], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["max_axes_nchw"] = TensorIR(
+        name="max_axes_nchw",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["pads_nchw"] = TensorIR(
+        name="pads_nchw",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray([[0, 0], [3, 3], [0, 0], [3, 3]], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[1, 7, 7, 2],
+        shape_signature=[1, 7, 7, 2],
+        data=np.zeros((1, 7, 7, 2), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.zeros((1,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "pre_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MEAN", inputs=["x_nhwc", "mean_axes_nhwc"], outputs=["mean_out"], options={"keepDims": True}),
+        OperatorIR(op_type="REDUCE_MAX", inputs=["x_nchw", "max_axes_nchw"], outputs=["max_out"], options={"keepDims": True}),
+        OperatorIR(op_type="CONCATENATION", inputs=["mean_out", "max_out"], outputs=["concat_out"], options={"axis": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="MIRROR_PAD", inputs=["concat_out", "pads_nchw"], outputs=["pad_out"], options={"mode": "REFLECT"}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["pad_out", "post_perm"], outputs=["conv_in"]),
+        OperatorIR(op_type="CONV_2D", inputs=["conv_in", "w", "b"], outputs=["y_nhwc"], options={"padding": "VALID", "strideH": 1, "strideW": 1, "dilationHFactor": 1, "dilationWFactor": 1, "fusedActivationFunction": "NONE"}),
+    ]
+
+    stats = _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+    assert stats["optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        "TRANSPOSE",
+        "MEAN",
+        "REDUCE_MAX",
+        "CONCATENATION",
+        "MIRROR_PAD",
+        "CONV_2D",
+    ]
+    max_op = model_ir.operators[2]
+    assert list(max_op.inputs) == ["x_nhwc", "max_axes_nchw"]
+    assert np.array_equal(np.asarray(model_ir.tensors["max_axes_nchw"].data, dtype=np.int32), np.asarray([3], dtype=np.int32))
+    concat_op = model_ir.operators[3]
+    assert int(concat_op.options["axis"]) == 3
+    assert list(model_ir.tensors["max_out"].shape) == [1, 45, 80, 1]
+    assert list(model_ir.tensors["concat_out"].shape) == [1, 45, 80, 2]
+    assert np.array_equal(
+        np.asarray(model_ir.tensors["pads_nchw"].data, dtype=np.int32),
+        np.asarray([[0, 0], [0, 0], [3, 3], [3, 3]], dtype=np.int32),
+    )
+    conv_op = model_ir.operators[5]
+    assert list(conv_op.inputs) == ["pad_out", "w", "b"]
+
+
 def test_flatbuffer_direct_transpose_pre_unary_mean_terminal_nhwc_chain() -> None:
     model_ir = ModelIR(name="transpose_pre_unary_mean_terminal_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
@@ -29374,10 +29637,66 @@ def test_flatbuffer_direct_div_shape_chain_elides_redundant_int64_to_int32_cast(
         user_indices = [int(v) for v in consumers.get(out_name, [])]
         if len(user_indices) != 1:
             continue
-        user_op = operators[int(user_indices[0])]
+            user_op = operators[int(user_indices[0])]
         if str(user_op.op_type) == "CAST":
             user_out_dtype = str(user_op.options.get("outDataType", "")).upper()
             assert user_out_dtype != "INT32"
+
+
+def test_flatbuffer_direct_integer_div_const_keeps_exact_division_path() -> None:
+    model = _make_integer_div_const_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="integer_div_const_lowering_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DIV") == 1
+    assert op_types.count("MUL") == 0
+    assert any(
+        str(op.op_type) == "CAST"
+        and str(op.options.get("outDataType", "")).upper() == "INT64"
+        for op in model_ir.operators
+    )
+
+
+def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_keeps_div() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.INT32, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [1, 2])
+    div_const = numpy_helper.from_array(np.asarray([319.0, 191.0], dtype=np.float32), name="float_div_const")
+    mul_const = numpy_helper.from_array(np.asarray([159.5, 95.5], dtype=np.float32), name="float_mul_const")
+    nodes = [
+        helper.make_node("Cast", ["x"], ["x_f"], name="DivPreciseCast", to=TensorProto.FLOAT),
+        helper.make_node("Div", ["x_f", "float_div_const"], ["div_out"], name="DivPrecise"),
+        helper.make_node("Mul", ["div_out", "float_mul_const"], ["mul_out"], name="MulPrecise"),
+        helper.make_node("Cast", ["mul_out"], ["y"], name="DivPreciseCastInt", to=TensorProto.INT32),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "float_div_with_integer_cast_descendant_graph",
+        [x],
+        [y],
+        initializer=[div_const, mul_const],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="float_div_const_integer_cast_descendant_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DIV") >= 1
+    assert any(str(op.op_type) == "DIV" and "div_out" in list(op.outputs) for op in model_ir.operators)
+
+    reciprocal_tensor_names = {
+        str(name)
+        for name in model_ir.tensors.keys()
+        if "div_reciprocal" in str(name)
+    }
+    assert reciprocal_tensor_names == set()
 
 
 def test_flatbuffer_direct_constant_input_cast_is_embedded_into_output_tensor() -> None:

@@ -16,6 +16,7 @@ import torch
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _align_output_layout_for_compare,
     _build_eval_inputs_for_sample,
+    _build_seeded_input_distribution_overrides,
     _build_tflite_detail_map,
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
@@ -91,6 +92,7 @@ def _build_pytorch_eval_inputs_for_sample(
     custom_inputs: Dict[str, np.ndarray],
     sample_index: int,
     rng: np.random.Generator,
+    distribution_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, np.ndarray]:
     inputs: Dict[str, np.ndarray] = {}
     for input_name, input_dtype, input_shape in input_specs:
@@ -105,6 +107,7 @@ def _build_pytorch_eval_inputs_for_sample(
             custom_inputs=custom_inputs,
             sample_index=sample_index,
             rng=rng,
+            distribution_overrides=distribution_overrides,
         )[str(input_name)]
     return inputs
 
@@ -366,6 +369,10 @@ def evaluate_pytorch_package_outputs(
 
     rng = np.random.default_rng(seed=int(seed))
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    distribution_overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     onnx_output_names = [str(output.name) for output in onnx_graph.graph.output]
     ort_session = None
@@ -434,6 +441,7 @@ def evaluate_pytorch_package_outputs(
             custom_inputs=custom_inputs,
             sample_index=sample_index,
             rng=rng,
+            distribution_overrides=distribution_overrides,
         )
         package_outputs = model.forward_named(
             **_convert_inputs_for_package(
@@ -881,6 +889,10 @@ def smoke_test_pytorch_package_inference(
 
     rng = np.random.default_rng(seed=int(seed))
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    distribution_overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     custom_inputs: Dict[str, np.ndarray] = {}
     pkg = _import_generated_package(package_dir)
     package_metadata = _load_package_metadata(package_dir)
@@ -896,6 +908,7 @@ def smoke_test_pytorch_package_inference(
                 custom_inputs=custom_inputs,
                 sample_index=sample_index,
                 rng=rng,
+                distribution_overrides=distribution_overrides,
             )
             outputs = model.forward_named(
                 **_convert_inputs_for_package(
