@@ -238,7 +238,7 @@ Currently, the `flatbuffer_direct` backend is faster and has a higher success ra
 > [!IMPORTANT]
 > **Starting with onnx2tf v2.4.0, `tf_converter` will be deprecated and the default backend will be switched to `flatbuffer_direct`. With the v2.3.3 update, all backward compatible conversion options have been migrated to `flatbuffer_direct`, so I will only be doing minor bug fixes until April. If you provide us with ONNX sample models, I will consider incorporating them into `flatbuffer_direct`. I'll incorporate [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer) when I feel like it, but that will probably be about 10 years from now.**
 
-<img width="1425" height="617" alt="image" src="https://github.com/user-attachments/assets/9d8e247d-45bd-495d-8f9e-bf354e62f55c" />
+<img width="1390" height="680" alt="image" src="https://github.com/user-attachments/assets/04c5d8e2-2465-4dac-b3ea-37d7e7f987cc" />
 
 When `--tflite_backend flatbuffer_direct` is selected, onnx2tf now uses a direct fast path for both ONNX input and `-it/--input_tflite_file_path` input:
 
