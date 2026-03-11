@@ -838,7 +838,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.3.5
+  ghcr.io/pinto0309/onnx2tf:2.3.6
 
   or
 
@@ -847,7 +847,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.3.5
+  docker.io/pinto0309/onnx2tf:2.3.6
 
   or
 
@@ -857,7 +857,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.3.5 \
+  docker.io/pinto0309/onnx2tf:2.3.6 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
@@ -1104,11 +1104,11 @@ After many upgrades, the need for JSON parameter correction has become much less
 
 `-ois` an option to overwrite the input OP to a static size if it has undefined dimensions. `-cotof` option checks the accuracy of all OPs one by one. `-cotoa` is the error value of the threshold for determining an accuracy error. If there are undefined dimensions in the input OP, it is better to fix them to the static geometry to improve the accuracy of the accuracy measurement.
 
-Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter). If your input is image data in NHWC format, you can also use `--test_data_nhwc_path` to provide fixed test samples for validation.
+Also, you can use the `-cind` option to specify custom input for `-cotof`, instead of using the default dummy input. Otherwise, all input values will be set to 1. You can override the dummy input values with `--value_hints` (scalar only, `*:default` supported). For more information about the `-cind` option, please refer to [here](#cli-parameter). If your input is image data in NHWC format, you can also use `--test_data_nhwc_path` to provide fixed test samples for validation. For `-fdots`, the recommended way to resolve dynamic trace shapes is `--shape_hints`. `--test_data_nhwc_path` is also accepted for eligible 4D RGB inputs, and `-cind` remains available when per-input custom data is needed.
 
 Quick difference between `-tdnp` and `-cind`:
-- `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`. For multi-input models, this single array is reused across inputs (per-input mapping is not supported).
-- `-cind` (`--custom_input_op_name_np_data_path`): Per-input custom data mapping by input name. Supports multi-input/non-image inputs. Also used for INT8 calibration (`-oiqt`) with optional `mean/std`.
+- `-tdnp` (`--test_data_nhwc_path`): Validation-only test data for accuracy checks. Expects one NHWC RGB `.npy` (`[N,H,W,3]`). No `mean/std`. For multi-input models, this single array is reused across inputs (per-input mapping is not supported). Also accepted by `-fdots` for eligible 4D RGB inputs.
+- `-cind` (`--custom_input_op_name_np_data_path`): Per-input custom data mapping by input name. Supports multi-input/non-image inputs. Also used for `-fdots` trace inputs and INT8 calibration (`-oiqt`) with optional `mean/std`.
 
 The `-cotof` option evaluates Float32 accuracy only. In the default path it checks ONNX against TensorFlow/TFLite outputs. When `--tflite_backend flatbuffer_direct` is used, the base report is ONNX↔TFLite. If `--flatbuffer_direct_output_pytorch` is also enabled, onnx2tf additionally emits ONNX↔PyTorch and combined comparison reports using the same input samples.
 
@@ -2200,6 +2200,42 @@ optional arguments:
     With `-it/--input_tflite_file_path`, these reports compare `TFLite↔PyTorch`
     using the same seeded inputs.
 
+  -fdots, --flatbuffer_direct_output_torchscript
+    Save a traced TorchScript file (`<model_name>_jit.pt`) into the generated
+    flatbuffer_direct PyTorch package.
+    Requires `--tflite_backend flatbuffer_direct`.
+    Internally enables `--flatbuffer_direct_output_pytorch` automatically.
+    Only native PyTorch packages are supported. If the generated package falls
+    back to a non-native backend, conversion fails explicitly.
+    For dynamic public inputs, a concrete trace shape/input is required.
+    Recommended: `--shape_hints`
+    Also accepted: `--test_data_nhwc_path` for eligible 4D RGB inputs, or
+    `-cind` for per-input custom trace data.
+
+  -fdodo, --flatbuffer_direct_output_dynamo_onnx
+    Save a Dynamo ONNX file (`<model_name>_dynamo.onnx`) into the generated
+    flatbuffer_direct PyTorch package using `torch.onnx.export(..., dynamo=True)`.
+    Requires `--tflite_backend flatbuffer_direct`.
+    Internally enables `--flatbuffer_direct_output_pytorch` automatically.
+    Only native PyTorch packages are supported. If the generated package falls
+    back to a non-native backend, conversion fails explicitly.
+    For dynamic public inputs, a concrete example input is required.
+    Recommended: `--shape_hints`
+    Also accepted: `--test_data_nhwc_path` for eligible 4D RGB inputs, or
+    `-cind` for per-input custom example data.
+
+  -fdoep, --flatbuffer_direct_output_exported_program
+    Save a PyTorch ExportedProgram file (`<model_name>_ep.pt2`) into the
+    generated flatbuffer_direct PyTorch package using `torch.export.save`.
+    Requires `--tflite_backend flatbuffer_direct`.
+    Internally enables `--flatbuffer_direct_output_pytorch` automatically.
+    Only native PyTorch packages are supported. If the generated package falls
+    back to a non-native backend, conversion fails explicitly.
+    For dynamic public inputs, a concrete example input is required.
+    Recommended: `--shape_hints`
+    Also accepted: `--test_data_nhwc_path` for eligible 4D RGB inputs, or
+    `-cind` for per-input custom example data.
+
   -qt {per-channel,per-tensor}, --quant_type {per-channel,per-tensor}
     Selects whether "per-channel" or "per-tensor" quantization is used.
     Default: "per-channel"
@@ -2216,7 +2252,7 @@ optional arguments:
 
   -cind INPUT_NAME NUMPY_FILE_PATH MEAN STD, \
     --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
-    Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
+    Input name of OP and path of data file (Numpy) for custom input for -cotof, -fdots, -fdodo, -fdoep, or -oiqt,
     and mean (optional) and std (optional).
     Unlike -tdnp, this option supports per-input mapping, non-image tensors, and INT8 calibration.
 
@@ -2227,6 +2263,12 @@ optional arguments:
       e.g. -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof
       The input_op_name must be the same as in ONNX,
       and it may not work if the input format is different between ONNX and TF.
+
+    <Usage in -fdots / -fdodo / -fdoep>
+      When using -fdots, -fdodo, or -fdoep, -cind can be used to provide a concrete example input for a dynamic public input.
+      For shape-only hints, prefer --shape_hints. For 4D RGB inputs, --test_data_nhwc_path is also supported.
+      In these modes, mean and std are omitted from the input.
+      -cind {input_op_name} {numpy_file_path} -fdots
 
     <Usage in -oiqt>
       INPUT Name of OP and path of calibration data file (Numpy) for quantization
@@ -2335,6 +2377,8 @@ optional arguments:
     "data1:1,3,224,224" "data2:1,3,112" "data3:5"
     A value of 1 or more must be specified.
     Numerical values other than dynamic dimensions are ignored.
+    Also used as the recommended example-input hint source for -fdots,
+    -fdodo, and -fdoep.
 
   -vh VALUE_HINTS [VALUE_HINTS ...], \
       --value_hints VALUE_HINTS [VALUE_HINTS ...]
@@ -2695,6 +2739,7 @@ optional arguments:
     normalized to the range [0, 1].
     This option is useful for offline environments or when you want to use
     specific test data for validation.
+    It is also accepted by -fdots, -fdodo, and -fdoep for 4D RGB image inputs.
     For models with multiple inputs, the same test array is reused for each eligible input
     after per-input resize/layout conversion.
     Unlike -cind, this option is not used for INT8 calibration and does not accept mean/std.
@@ -2751,6 +2796,9 @@ convert(
   output_integer_quantized_tflite: Optional[bool] = False,
   flatbuffer_direct_output_saved_model: Optional[bool] = False,
   flatbuffer_direct_output_pytorch: Optional[bool] = False,
+  flatbuffer_direct_output_torchscript: Optional[bool] = False,
+  flatbuffer_direct_output_dynamo_onnx: Optional[bool] = False,
+  flatbuffer_direct_output_exported_program: Optional[bool] = False,
   tflite_backend: Optional[str] = 'tf_converter',
   quant_norm_mean: Optional[str] = '[[[[0.485, 0.456, 0.406]]]]',
   quant_norm_std: Optional[str] = '[[[[0.229, 0.224, 0.225]]]]',
@@ -2923,6 +2971,42 @@ convert(
       Unsupported/CUSTOM ops and residual channel-last layout bridges fail
       explicitly.
 
+    flatbuffer_direct_output_torchscript: Optional[bool]
+      Save a traced TorchScript file (`<model_name>_jit.pt`) into the
+      generated flatbuffer_direct PyTorch package.
+      Requires `tflite_backend="flatbuffer_direct"`.
+      Internally enables `flatbuffer_direct_output_pytorch=True`.
+      Only native PyTorch packages are supported. If package generation falls
+      back to a non-native backend, conversion fails explicitly.
+      For dynamic public inputs, a concrete trace shape/input is required.
+      Recommended: `shape_hints`
+      Also accepted: `test_data_nhwc_path` for eligible 4D RGB inputs, or
+      `custom_input_op_name_np_data_path` for per-input custom trace data.
+
+    flatbuffer_direct_output_dynamo_onnx: Optional[bool]
+      Save a Dynamo ONNX file (`<model_name>_dynamo.onnx`) into the
+      generated flatbuffer_direct PyTorch package.
+      Requires `tflite_backend="flatbuffer_direct"`.
+      Internally enables `flatbuffer_direct_output_pytorch=True`.
+      Only native PyTorch packages are supported. If package generation falls
+      back to a non-native backend, conversion fails explicitly.
+      For dynamic public inputs, a concrete example input is required.
+      Recommended: `shape_hints`
+      Also accepted: `test_data_nhwc_path` for eligible 4D RGB inputs, or
+      `custom_input_op_name_np_data_path` for per-input custom example data.
+
+    flatbuffer_direct_output_exported_program: Optional[bool]
+      Save a PyTorch ExportedProgram file (`<model_name>_ep.pt2`) into the
+      generated flatbuffer_direct PyTorch package.
+      Requires `tflite_backend="flatbuffer_direct"`.
+      Internally enables `flatbuffer_direct_output_pytorch=True`.
+      Only native PyTorch packages are supported. If package generation falls
+      back to a non-native backend, conversion fails explicitly.
+      For dynamic public inputs, a concrete example input is required.
+      Recommended: `shape_hints`
+      Also accepted: `test_data_nhwc_path` for eligible 4D RGB inputs, or
+      `custom_input_op_name_np_data_path` for per-input custom example data.
+
     quant_norm_mean: Optional[str]
         Normalized average value during quantization.
         Only valid when the "-cind" option is not used.
@@ -2939,7 +3023,8 @@ convert(
 
     custom_input_op_name_np_data_path: Optional[List]
       --custom_input_op_name_np_data_path INPUT_NAME NUMPY_FILE_PATH MEAN STD
-      Input name of OP and path of data file (Numpy) for custom input for -cotof or -oiqt,
+      Input name of OP and path of data file (Numpy) for custom input for
+      -cotof, -fdots, -fdodo, -fdoep, or -oiqt,
       and mean (optional) and std (optional).
 
       <Usage in -cotof>
@@ -2949,6 +3034,14 @@ convert(
         e.g. -cind onnx::Equal_0 test_cind/x_1.npy -cind onnx::Add_1 test_cind/x_2.npy -cotof
         The input_op_name must be the same as in ONNX,
         and it may not work if the input format is different between ONNX and TF.
+
+      <Usage in -fdots / -fdodo / -fdoep>
+        When using these PyTorch artifact export modes,
+        `custom_input_op_name_np_data_path` can be used to provide a concrete
+        example input for a dynamic public input.
+        For shape-only hints, prefer `shape_hints`.
+        For 4D RGB inputs, `test_data_nhwc_path` is also supported.
+        In these modes, mean and std are omitted from the input.
 
       <Usage in -oiqt>
         INPUT Name of OP and path of calibration data file (Numpy) for quantization
@@ -3058,6 +3151,10 @@ convert(
       ['data1:1,3,224,224', 'data2:1,3,112', 'data3:5']
       A value of 1 or more must be specified.
       Numerical values other than dynamic dimensions are ignored.
+      Also used as the recommended example-input hint source for
+      `flatbuffer_direct_output_torchscript`,
+      `flatbuffer_direct_output_dynamo_onnx`, and
+      `flatbuffer_direct_output_exported_program`.
 
     value_hints: Optional[List[str]]
       Value hints for dummy inference input tensors.
@@ -3421,6 +3518,7 @@ convert(
       normalized to the range [0, 1].
       This option is useful for offline environments or when you want to use
       specific test data for validation.
+      It is also accepted by -fdots, -fdodo, and -fdoep for 4D RGB image inputs.
 
     disable_model_save: Optional[bool]
       Does not save the converted model. For CIs RAM savings.

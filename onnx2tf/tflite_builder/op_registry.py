@@ -172,6 +172,11 @@ from onnx2tf.tflite_builder.op_builders import (
     is_supported_loop_static_unroll_pattern,
     is_supported_loop_while_pattern,
 )
+from onnx2tf.tflite_builder.ir import (
+    is_channel_first_logical_layout,
+    is_channel_last_logical_layout,
+    normalize_logical_layout,
+)
 
 
 class NodeValidationError(ValueError):
@@ -7381,7 +7386,25 @@ def _validate_instance_norm(node: Any, ctx: Any) -> None:
 
     input_tensor = ctx.model_ir.tensors.get(node.inputs[0].name, None)
     if input_tensor is not None and input_tensor.shape_signature is not None and len(input_tensor.shape_signature) >= 2:
-        channel_dim = int(input_tensor.shape_signature[1])
+        normalized_layout = normalize_logical_layout(getattr(input_tensor, "logical_layout", "UNKNOWN"))
+        if is_channel_first_logical_layout(normalized_layout):
+            channel_axis = 1
+        elif is_channel_last_logical_layout(normalized_layout):
+            channel_axis = len(input_tensor.shape_signature) - 1
+        else:
+            candidate_axes = [
+                int(axis)
+                for axis in range(1, len(input_tensor.shape_signature))
+                if int(input_tensor.shape_signature[axis]) > 0
+                and int(input_tensor.shape_signature[axis]) == int(scale_size)
+            ]
+            if len(candidate_axes) == 1:
+                channel_axis = int(candidate_axes[0])
+            elif len(candidate_axes) > 1 and (len(input_tensor.shape_signature) - 1) in candidate_axes:
+                channel_axis = len(input_tensor.shape_signature) - 1
+            else:
+                channel_axis = 1
+        channel_dim = int(input_tensor.shape_signature[channel_axis])
         if channel_dim > 0 and scale_size != channel_dim:
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",

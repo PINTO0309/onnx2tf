@@ -2,6 +2,7 @@ import numpy as np
 from onnx import TensorProto, helper
 
 from onnx2tf.tflite_builder.accuracy_evaluator import (
+    _build_seeded_input_distribution_overrides,
     _build_eval_inputs_for_sample,
     _collect_onnx_input_specs,
     _generate_seeded_input,
@@ -67,6 +68,43 @@ def test_generate_seeded_input_float_env_override_uniform_m1_p1(
     assert x.dtype == np.float32
     assert float(np.min(x)) >= -1.0
     assert float(np.max(x)) <= 1.0
+
+
+def test_build_seeded_input_distribution_overrides_prefers_uniform_for_image_to_image_nchw_model(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", raising=False)
+    graph = helper.make_graph(
+        [],
+        "image_to_image",
+        [
+            helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 32, 48]),
+        ],
+        [
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 3, 32, 48]),
+        ],
+    )
+    model = helper.make_model(graph)
+    input_specs = _collect_onnx_input_specs(model)
+    overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=model,
+        input_specs=input_specs,
+    )
+    assert overrides == {"input": "uniform_0_1"}
+
+
+def test_build_eval_inputs_for_sample_uses_uniform_override_for_nchw_image_input() -> None:
+    inputs = _build_eval_inputs_for_sample(
+        input_specs=[
+            ("input", np.dtype(np.float32), (1, 3, 16, 16)),
+        ],
+        custom_inputs={},
+        sample_index=0,
+        rng=np.random.default_rng(0),
+        distribution_overrides={"input": "uniform_0_1"},
+    )
+    assert float(np.min(inputs["input"])) >= 0.0
+    assert float(np.max(inputs["input"])) <= 1.0
 
 
 def test_build_eval_inputs_for_sample_fills_length_like_integer_input_from_peer_shape() -> None:

@@ -122,8 +122,11 @@ def _align_tensor_to_target_shape(
 ) -> torch.Tensor:
     if target_shape is None:
         return value
-    actual_shape = [int(v) for v in list(value.shape)]
-    target = [int(v) for v in list(target_shape)]
+    try:
+        actual_shape = [int(v) for v in list(value.shape)]
+        target = [int(v) for v in list(target_shape)]
+    except Exception:
+        return value
     if actual_shape == target:
         return value
     perm = _perm_cl_to_cf(value.ndim)
@@ -1148,39 +1151,37 @@ def _run_non_max_suppression_v4(
     flat_boxes = boxes.to(dtype=torch.float32).reshape(-1, 4)
     flat_scores = scores.to(dtype=torch.float32).reshape(-1)
     max_outputs = max(0, int(max_output_size.reshape(-1)[0].to(dtype=torch.int64).item()))
+    selected_tensor = torch.zeros([max_outputs], dtype=torch.int64, device=flat_boxes.device)
+    valid_count = torch.zeros([], dtype=torch.int32, device=flat_boxes.device)
+    if max_outputs == 0:
+        return selected_tensor.to(dtype=torch.int32), valid_count
     iou_thresh = float(iou_threshold.reshape(-1)[0].item())
     score_thresh = float(score_threshold.reshape(-1)[0].item())
-    if max_outputs == 0 or int(flat_boxes.shape[0]) == 0 or int(flat_scores.shape[0]) == 0:
-        empty = torch.zeros([max_outputs], dtype=torch.int32, device=flat_boxes.device)
-        valid = torch.zeros([], dtype=torch.int32, device=flat_boxes.device)
-        return empty, valid
-    candidate_indices = torch.nonzero(flat_scores > score_thresh, as_tuple=False).reshape(-1)
-    if int(candidate_indices.numel()) == 0:
-        empty = torch.zeros([max_outputs], dtype=torch.int32, device=flat_boxes.device)
-        valid = torch.zeros([], dtype=torch.int32, device=flat_boxes.device)
-        return empty, valid
-    order = candidate_indices[torch.argsort(flat_scores[candidate_indices], descending=True)]
-    selected: List[int] = []
-    while int(order.numel()) > 0 and len(selected) < max_outputs:
-        current = int(order[0].item())
-        selected.append(current)
-        if int(order.numel()) == 1:
-            break
-        remaining = order[1:]
-        ious = _box_iou(flat_boxes[remaining], flat_boxes[current])
-        order = remaining[ious <= iou_thresh]
-    selected_tensor = torch.as_tensor(selected, dtype=torch.int32, device=flat_boxes.device)
-    valid_count = torch.as_tensor(int(selected_tensor.numel()), dtype=torch.int32, device=flat_boxes.device)
-    if pad_to_max_output_size and int(selected_tensor.numel()) < max_outputs:
-        pad_count = max_outputs - int(selected_tensor.numel())
-        selected_tensor = torch.cat(
-            [
-                selected_tensor,
-                torch.zeros([pad_count], dtype=torch.int32, device=flat_boxes.device),
-            ],
-            dim=0,
-        )
-    return selected_tensor, valid_count
+    candidate_scores = torch.where(
+        flat_scores > score_thresh,
+        flat_scores,
+        torch.full_like(flat_scores, float("-inf")),
+    )
+    all_indices = torch.arange(flat_scores.shape[0], dtype=torch.int64, device=flat_boxes.device)
+    neg_inf = torch.full_like(candidate_scores, float("-inf"))
+    for output_index in range(max_outputs):
+        current_score, current_index = torch.max(candidate_scores, dim=0)
+        current_index = current_index.to(dtype=torch.int64)
+        is_valid = torch.isfinite(current_score)
+        selected_tensor[output_index : output_index + 1] = torch.where(
+            is_valid,
+            current_index,
+            torch.zeros_like(current_index),
+        ).reshape(1)
+        valid_count = valid_count + is_valid.to(dtype=torch.int32)
+        current_box = torch.index_select(flat_boxes, 0, current_index.reshape(1)).reshape(4)
+        suppress = _box_iou(flat_boxes, current_box) > iou_thresh
+        suppress = torch.logical_or(suppress, all_indices == current_index)
+        suppress = torch.logical_and(suppress, is_valid)
+        candidate_scores = torch.where(suppress, neg_inf, candidate_scores)
+    if not pad_to_max_output_size:
+        selected_tensor = selected_tensor[: int(valid_count.item())]
+    return selected_tensor.to(dtype=torch.int32), valid_count
 
 
 def _kernel_non_max_suppression_v4(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
@@ -1636,6 +1637,7 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
         "RESIZE_BILINEAR": _kernel_resize(method="bilinear"),
         "RESIZE_NEAREST_NEIGHBOR": _kernel_resize(method="nearest"),
         "ABS": _kernel_unary(torch.abs),
+        "ATAN": _kernel_unary(torch.atan),
         "CEIL": _kernel_unary(torch.ceil),
         "COS": _kernel_unary(torch.cos),
         "ELU": _kernel_unary(F.elu),

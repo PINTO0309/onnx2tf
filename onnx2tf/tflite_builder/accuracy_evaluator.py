@@ -499,11 +499,14 @@ def _generate_seeded_input(
     shape: Tuple[int, ...],
     np_dtype: np.dtype,
     rng: np.random.Generator,
+    distribution_override: Optional[str] = None,
 ) -> np.ndarray:
     if np.issubdtype(np_dtype, np.bool_):
         return (rng.random(shape) > 0.5).astype(np_dtype)
     if np.issubdtype(np_dtype, np.floating):
-        distribution = _resolve_float_seeded_distribution(shape=shape)
+        distribution = str(distribution_override).strip().lower() if distribution_override is not None else ""
+        if distribution == "":
+            distribution = _resolve_float_seeded_distribution(shape=shape)
         if distribution == "uniform_0_1":
             return rng.uniform(0.0, 1.0, size=shape).astype(np_dtype)
         if distribution == "uniform_-1_1":
@@ -665,6 +668,63 @@ def _resolve_float_seeded_distribution(*, shape: Tuple[int, ...]) -> str:
     )
 
 
+def _collect_onnx_output_specs(
+    onnx_graph: onnx.ModelProto,
+) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
+    output_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
+    for graph_output in onnx_graph.graph.output:
+        tensor_type = graph_output.type.tensor_type
+        np_dtype = np.dtype(onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
+        raw_shape: List[int] = []
+        for dim in tensor_type.shape.dim:
+            if dim.HasField("dim_value") and int(dim.dim_value) > 0:
+                raw_shape.append(int(dim.dim_value))
+            else:
+                raw_shape.append(0)
+        output_specs.append((str(graph_output.name), np_dtype, tuple(raw_shape)))
+    return output_specs
+
+
+def _shape_matches_with_dynamic_wildcards(
+    lhs: Sequence[int],
+    rhs: Sequence[int],
+) -> bool:
+    if len(lhs) != len(rhs):
+        return False
+    for lhs_dim, rhs_dim in zip(lhs, rhs):
+        if int(lhs_dim) > 0 and int(rhs_dim) > 0 and int(lhs_dim) != int(rhs_dim):
+            return False
+    return True
+
+
+def _build_seeded_input_distribution_overrides(
+    *,
+    onnx_graph: onnx.ModelProto,
+    input_specs: Sequence[Tuple[str, np.dtype, Tuple[int, ...]]],
+) -> Dict[str, str]:
+    env_value = str(
+        os.environ.get("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", "auto")
+    ).strip().lower()
+    if env_value not in {"", "auto"}:
+        return {}
+
+    output_specs = _collect_onnx_output_specs(onnx_graph)
+    overrides: Dict[str, str] = {}
+    for input_name, input_dtype, input_shape in input_specs:
+        if not np.issubdtype(np.dtype(input_dtype), np.floating):
+            continue
+        if not _is_likely_nchw_image_tensor_shape(input_shape):
+            continue
+        if any(
+            np.issubdtype(np.dtype(output_dtype), np.floating)
+            and _is_likely_image_tensor_shape(output_shape)
+            and _shape_matches_with_dynamic_wildcards(input_shape, output_shape)
+            for _, output_dtype, output_shape in output_specs
+        ):
+            overrides[str(input_name)] = "uniform_0_1"
+    return overrides
+
+
 def _extract_sample_from_custom(
     *,
     data: np.ndarray,
@@ -708,8 +768,10 @@ def _build_eval_inputs_for_sample(
     sample_index: int,
     rng: np.random.Generator,
     force_zero_generated_inputs: bool = False,
+    distribution_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, np.ndarray]:
     onnx_inputs: Dict[str, np.ndarray] = {}
+    distribution_overrides = distribution_overrides or {}
     for input_name, input_dtype, input_shape in input_specs:
         custom_data = custom_inputs.get(input_name)
         if custom_data is None:
@@ -737,6 +799,7 @@ def _build_eval_inputs_for_sample(
                 shape=input_shape,
                 np_dtype=input_dtype,
                 rng=rng,
+                distribution_override=distribution_overrides.get(str(input_name), None),
             )
         onnx_inputs[input_name] = sample
     return onnx_inputs
@@ -1285,6 +1348,10 @@ def evaluate_onnx_tflite_outputs(
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    distribution_overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
 
@@ -1367,6 +1434,7 @@ def evaluate_onnx_tflite_outputs(
                 sample_index=int(sample_index),
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
+                distribution_overrides=distribution_overrides,
             )
 
             onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
@@ -1851,6 +1919,10 @@ def evaluate_onnx_tflite_outputs_isolated(
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     input_specs = _collect_onnx_input_specs(onnx_graph)
+    distribution_overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
     onnx_graph_serialized = onnx_graph.SerializeToString()
@@ -1913,6 +1985,7 @@ def evaluate_onnx_tflite_outputs_isolated(
                 sample_index=int(sample_index),
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
+                distribution_overrides=distribution_overrides,
             )
 
             onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None

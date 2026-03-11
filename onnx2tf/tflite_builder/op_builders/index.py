@@ -101,6 +101,41 @@ def _maybe_constantize_topk_k(
     )
 
 
+def _resolve_static_topk_k_value(ctx: Any, k_input_name: str) -> int | None:
+    k_const = ctx.get_constant_array(k_input_name)
+    if k_const is None:
+        return None
+    k_arr = np.asarray(k_const)
+    if int(k_arr.size) != 1:
+        raise NotImplementedError(
+            "TopK k input must be scalar-like (shape [] or [1]) in flatbuffer_direct. "
+            f"k_shape={list(k_arr.shape)}"
+        )
+    return int(k_arr.reshape(-1)[0])
+
+
+def _infer_topk_output_shape_and_signature(
+    *,
+    input_shape: list[int],
+    input_signature: list[int],
+    axis: int,
+    static_k_value: int | None,
+) -> tuple[list[int], list[int]]:
+    output_shape = [int(v) for v in list(input_shape)]
+    output_signature = [int(v) for v in list(input_signature)]
+    if int(axis) >= len(output_shape):
+        return output_shape, output_signature
+    if static_k_value is None:
+        output_signature[int(axis)] = -1
+        return output_shape, output_signature
+    resolved_k = int(static_k_value)
+    if int(output_shape[int(axis)]) > 0:
+        resolved_k = min(int(output_shape[int(axis)]), resolved_k)
+    output_shape[int(axis)] = int(resolved_k) if int(resolved_k) > 0 else 1
+    output_signature[int(axis)] = int(resolved_k)
+    return output_shape, output_signature
+
+
 def _tensor_shape_with_signature(ctx: Any, tensor_name: str) -> list[int]:
     shape = [int(v) for v in ctx.get_tensor_shape(tensor_name)]
     tensor = ctx.model_ir.tensors.get(tensor_name, None)
@@ -4560,6 +4595,12 @@ def build_topk_op(node: Any, ctx: Any) -> None:
     input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
     input_rank = int(len(input_shape))
     axis = _normalize_axis_for_rank(int(node.attrs.get("axis", -1)), input_rank)
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
     largest = bool(int(node.attrs.get("largest", 1)))
     sorted_attr = int(node.attrs.get("sorted", 1))
     # ONNX TopK(sorted=0) means output order is unspecified.
@@ -4684,36 +4725,58 @@ def build_topk_op(node: Any, ctx: Any) -> None:
                 f"op={node.name} k_shape={k_shape}"
             )
     runtime_dynamic_k = ctx.get_constant_array(k_for_topk_name) is None
+    static_k_value = None if runtime_dynamic_k else _resolve_static_topk_k_value(ctx, k_for_topk_name)
+    corrected_output_shape, corrected_output_signature = _infer_topk_output_shape_and_signature(
+        input_shape=input_shape,
+        input_signature=input_signature,
+        axis=axis,
+        static_k_value=static_k_value,
+    )
+    _set_tensor_shape_signature(
+        ctx=ctx,
+        tensor_name=values_output_name,
+        shape=corrected_output_shape,
+        signature=corrected_output_signature,
+    )
+    if indices_output_name != "":
+        _set_tensor_shape_signature(
+            ctx=ctx,
+            tensor_name=indices_output_name,
+            shape=corrected_output_shape,
+            signature=corrected_output_signature,
+        )
 
     topk_values_shape = (
-        [int(values_output_shape[int(v)]) for v in perm_to_last]
+        [int(corrected_output_shape[int(v)]) for v in perm_to_last]
         if perm_to_last is not None and len(values_output_shape) == len(perm_to_last)
-        else [int(v) for v in values_output_shape]
+        else [int(v) for v in corrected_output_shape]
     )
     topk_values_signature = (
-        [int(values_output_signature[int(v)]) for v in perm_to_last]
-        if perm_to_last is not None and len(values_output_signature) == len(perm_to_last)
-        else [int(v) for v in values_output_signature]
+        [int(corrected_output_signature[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(corrected_output_signature) == len(perm_to_last)
+        else [int(v) for v in corrected_output_signature]
     )
     topk_indices_shape = (
-        [int(indices_output_shape[int(v)]) for v in perm_to_last]
+        [int(corrected_output_shape[int(v)]) for v in perm_to_last]
         if perm_to_last is not None and len(indices_output_shape) == len(perm_to_last)
-        else [int(v) for v in indices_output_shape]
+        else [int(v) for v in corrected_output_shape]
     )
     topk_indices_signature = (
-        [int(indices_output_signature[int(v)]) for v in perm_to_last]
-        if perm_to_last is not None and len(indices_output_signature) == len(perm_to_last)
-        else [int(v) for v in indices_output_signature]
+        [int(corrected_output_signature[int(v)]) for v in perm_to_last]
+        if perm_to_last is not None and len(corrected_output_signature) == len(perm_to_last)
+        else [int(v) for v in corrected_output_signature]
     )
     if runtime_dynamic_k:
         if len(topk_values_signature) > 0:
             topk_values_signature[-1] = -1
         if len(topk_indices_signature) > 0:
             topk_indices_signature[-1] = -1
-        if int(axis) < len(values_output_signature):
-            values_output_signature[int(axis)] = -1
-        if int(axis) < len(indices_output_signature):
-            indices_output_signature[int(axis)] = -1
+        if int(axis) < len(corrected_output_signature):
+            corrected_output_signature[int(axis)] = -1
+        if values_output_tensor is not None:
+            values_output_tensor.shape_signature = [int(v) for v in corrected_output_signature]
+        if indices_output_tensor is not None:
+            indices_output_tensor.shape_signature = [int(v) for v in corrected_output_signature]
 
     values_topk_name = (
         values_output_name
@@ -4796,7 +4859,7 @@ def build_topk_op(node: Any, ctx: Any) -> None:
             else ctx.add_intermediate_tensor(
                 f"{values_output_name}_topk_indices_axis_restored",
                 dtype="INT32",
-                shape=indices_output_shape,
+                shape=corrected_output_shape,
             )
         )
         make_transpose(
@@ -4808,7 +4871,7 @@ def build_topk_op(node: Any, ctx: Any) -> None:
         if indices_transposed_name != indices_output_name:
             indices_transposed_tensor = ctx.model_ir.tensors.get(indices_transposed_name, None)
             if indices_transposed_tensor is not None:
-                indices_transposed_tensor.shape_signature = [int(v) for v in indices_output_signature]
+                indices_transposed_tensor.shape_signature = [int(v) for v in corrected_output_signature]
         indices_final_i32_name = indices_transposed_name
 
     if indices_output_name != "":
@@ -4828,14 +4891,14 @@ def build_topk_op(node: Any, ctx: Any) -> None:
         elif indices_final_i32_name != indices_output_name:
             shape_name = ctx.add_const_tensor(
                 f"{indices_output_name}_topk_indices_identity_shape",
-                np.asarray([int(v) for v in indices_output_shape], dtype=np.int32),
+                np.asarray([int(v) for v in corrected_output_shape], dtype=np.int32),
             )
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
                     inputs=[indices_final_i32_name, shape_name],
                     outputs=[indices_output_name],
-                    options={"newShape": [int(v) for v in indices_output_shape]},
+                    options={"newShape": [int(v) for v in corrected_output_shape]},
                 )
             )
 

@@ -4,7 +4,12 @@ from typing import Any
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.ir import (
+    OperatorIR,
+    is_channel_first_logical_layout,
+    is_channel_last_logical_layout,
+    normalize_logical_layout,
+)
 from onnx2tf.tflite_builder.op_builders.shared import (
     make_transpose,
     materialize_broadcast_operand_for_gpu_delegate,
@@ -61,6 +66,35 @@ def _reduced_shape_for_axes(
     for axis in axes:
         reduced_shape[int(axis)] = 1
     return reduced_shape
+
+
+def _infer_channel_axis_from_tensor_layout(
+    *,
+    input_shape: list[int],
+    scale_size: int,
+    logical_layout: str,
+) -> int:
+    rank = len(input_shape)
+    normalized_layout = normalize_logical_layout(logical_layout)
+    if is_channel_first_logical_layout(normalized_layout) and rank >= 2:
+        return 1
+    if is_channel_last_logical_layout(normalized_layout) and rank >= 2:
+        return rank - 1
+
+    candidate_axes: list[int] = []
+    for axis in range(1, rank):
+        dim = int(input_shape[axis])
+        if dim > 0 and dim == int(scale_size):
+            candidate_axes.append(int(axis))
+    if len(candidate_axes) == 1:
+        return int(candidate_axes[0])
+    if len(candidate_axes) > 1:
+        if rank - 1 in candidate_axes:
+            return rank - 1
+        if 1 in candidate_axes:
+            return 1
+        return int(candidate_axes[0])
+    return 1 if rank >= 2 else 0
 
 
 def _reshape_with_preserve_dynamic_shape(
@@ -748,6 +782,13 @@ def build_instance_normalization_op(node: Any, ctx: Any) -> None:
     compute_dtype = input_dtype
     np_compute_dtype = _float_numpy_dtype(compute_dtype)
     epsilon = float(node.attrs.get("epsilon", 1e-5))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    channel_axis = _infer_channel_axis_from_tensor_layout(
+        input_shape=input_shape,
+        scale_size=int(np.asarray(scale).size),
+        logical_layout=input_tensor.logical_layout if input_tensor is not None else "UNKNOWN",
+    )
+    reduction_axes = [int(axis) for axis in range(1, rank) if int(axis) != int(channel_axis)]
 
     x_name = input_name
     if input_dtype != compute_dtype:
@@ -768,9 +809,12 @@ def build_instance_normalization_op(node: Any, ctx: Any) -> None:
 
     axes_name = ctx.add_const_tensor(
         f"{node.name}_instnorm_axes",
-        np.asarray([int(v) for v in range(2, rank)], dtype=np.int32),
+        np.asarray(reduction_axes, dtype=np.int32),
     )
-    reduced_shape = [int(input_shape[0]), int(input_shape[1])] + [1 for _ in range(rank - 2)]
+    reduced_shape = _reduced_shape_for_axes(
+        input_shape=input_shape,
+        axes=reduction_axes,
+    )
 
     mean_name = ctx.add_intermediate_tensor(
         f"{node.name}_instnorm_mean",
@@ -892,7 +936,8 @@ def build_instance_normalization_op(node: Any, ctx: Any) -> None:
     )
 
     scale_size = int(np.asarray(scale).size)
-    broadcast_shape = [1, scale_size] + [1 for _ in range(rank - 2)]
+    broadcast_shape = [1 for _ in range(rank)]
+    broadcast_shape[int(channel_axis)] = int(scale_size)
     scale_name_const = ctx.add_const_tensor(
         f"{node.name}_instnorm_scale",
         np.asarray(scale, dtype=np_compute_dtype).reshape(broadcast_shape),
