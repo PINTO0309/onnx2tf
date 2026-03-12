@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _adapt_input_layout_for_tflite_input,
     _align_output_layout_for_compare,
     _build_tflite_detail_map,
+    _collect_nondeterministic_onnx_tensor_reasons,
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
     _dequantize_tflite_output,
@@ -915,6 +916,9 @@ def generate_op_error_report(
     onnx_graph = onnx.load(onnx_path)
     onnx_quant_param_map = _build_onnx_quant_param_map(onnx_graph)
     onnx_output_meta = _build_onnx_output_meta(onnx_graph)
+    nondeterministic_tensor_reasons = _collect_nondeterministic_onnx_tensor_reasons(
+        onnx_graph=onnx_graph,
+    )
     onnx_tensor_names = list(onnx_output_meta.keys())
 
     interpreter: _LiteInterpreterProtocol = _create_tflite_interpreter(tflite_path)
@@ -1047,6 +1051,11 @@ def generate_op_error_report(
                 records.append(record)
                 continue
 
+            if tensor_name in nondeterministic_tensor_reasons:
+                record["reason"] = nondeterministic_tensor_reasons[tensor_name]
+                records.append(record)
+                continue
+
             if detail is None:
                 record["reason"] = "no_matching_tflite_tensor"
                 records.append(record)
@@ -1164,6 +1173,13 @@ def generate_op_error_report(
         "matchable_inferable_targets": len(target_output_names),
         "compared_count": len(compared),
         "skipped_count": len(skipped),
+        "skipped_nondeterministic_count": int(
+            sum(
+                1
+                for r in skipped
+                if str(r.get("reason", "")).startswith("depends_on_unseeded_random_op:")
+            )
+        ),
         "allclose_pass_count": int(sum(1 for r in compared if bool(r["allclose"]))),
     }
     report = {

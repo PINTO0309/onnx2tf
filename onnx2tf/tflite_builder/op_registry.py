@@ -4598,6 +4598,15 @@ def _is_numeric_dtype(dtype: str) -> bool:
     return _is_integer_dtype(dt) or dt in {"FLOAT16", "FLOAT32"}
 
 
+def _normalize_scatter_nd_work_dtype(dtype: str) -> str:
+    dt = str(dtype).upper()
+    if dt == "INT64":
+        return "INT32"
+    if dt == "UINT64":
+        return "UINT32"
+    return dt
+
+
 def _validate_scatter_nd(node: Any, ctx: Any) -> None:
     reduction = str(node.attrs.get("reduction", "none")).lower()
     if reduction != "none":
@@ -4668,11 +4677,14 @@ def _validate_scatter_nd(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if output_dtype != data_dtype:
+    if (
+        output_dtype != data_dtype
+        and _normalize_scatter_nd_work_dtype(output_dtype) != str(data_dtype).upper()
+    ):
         raise NodeValidationError(
             reason_code="unsupported_output_dtype",
             message=(
-                "ScatterND output dtype must match data dtype in flatbuffer_direct. "
+                "ScatterND output dtype must match the ScatterND work dtype in flatbuffer_direct. "
                 f"data_dtype={data_dtype} output_dtype={output_dtype}"
             ),
             node_name=node.name,
@@ -8198,17 +8210,33 @@ def _validate_resize(node: Any, ctx: Any) -> None:
     output_shape = ctx.get_tensor_shape(node.outputs[0].name)
     input_is_unknown_placeholder = _is_unknown_rank_placeholder_tensor(ctx, node.inputs[0].name)
     output_is_unknown_placeholder = _is_unknown_rank_placeholder_tensor(ctx, node.outputs[0].name)
-    if len(input_shape) != 4 and not input_is_unknown_placeholder:
+    input_rank = len(input_shape)
+    output_rank = len(output_shape)
+    if input_rank not in {3, 4} and not input_is_unknown_placeholder:
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
-            message=f"Resize supports rank-4 input. input_shape={input_shape}",
+            message=f"Resize supports rank-3/4 input. input_shape={input_shape}",
             node_name=node.name,
             node_op=node.op,
         )
-    if len(output_shape) != 4 and not output_is_unknown_placeholder:
+    if output_rank not in {3, 4} and not output_is_unknown_placeholder:
         raise NodeValidationError(
             reason_code="unsupported_output_rank",
-            message=f"Resize supports rank-4 output. output_shape={output_shape}",
+            message=f"Resize supports rank-3/4 output. output_shape={output_shape}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if (
+        not input_is_unknown_placeholder
+        and not output_is_unknown_placeholder
+        and input_rank != output_rank
+    ):
+        raise NodeValidationError(
+            reason_code="unsupported_output_rank",
+            message=(
+                "Resize requires matching input/output rank in flatbuffer_direct. "
+                f"input_shape={input_shape} output_shape={output_shape}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
@@ -8274,11 +8302,12 @@ def _validate_resize(node: Any, ctx: Any) -> None:
             if sizes_len == 1:
                 # Placeholder length from symbolic shape inference.
                 sizes_len = -1
-            if sizes_len > 0 and sizes_len not in [2, 4]:
+            expected_lengths = [2, 3] if input_rank == 3 else [2, 4]
+            if sizes_len > 0 and sizes_len not in expected_lengths:
                 raise NodeValidationError(
                     reason_code="unsupported_input_shape",
                     message=(
-                        "Resize dynamic sizes input length must be 2 or 4. "
+                        f"Resize dynamic sizes input length must be one of {expected_lengths}. "
                         f"sizes_shape={sizes_shape}"
                     ),
                     node_name=node.name,

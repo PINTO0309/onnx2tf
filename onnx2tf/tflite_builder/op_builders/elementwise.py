@@ -1670,39 +1670,99 @@ def _is_integer_dtype(dtype: str) -> bool:
     }
 
 
-def _harmonize_unary_input_output_dtype(
+def _normalize_unary_integer_work_dtype(dtype: str) -> str:
+    dt = str(dtype).upper()
+    if dt == "INT64":
+        return "INT32"
+    if dt == "UINT64":
+        return "UINT32"
+    return dt
+
+
+def _prepare_passthrough_unary_runtime(
     *,
     node: Any,
     ctx: Any,
     input_name: str,
     output_name: str,
-) -> str:
+) -> tuple[str, str]:
     """
     Ensure unary builtin runtime dtype compatibility.
 
-    TFLite unary kernels such as SIGN require input/output dtypes to match.
-    When upstream shape/index lowering normalizes INT64->INT32, ONNX metadata
-    may still declare unary outputs as INT64. In integer-only mismatch cases,
-    align output dtype to runtime input dtype.
+    TFLite unary kernels require matching input/output dtypes. Prefer INT32/UINT32
+    work dtypes for integer passthrough ops, then cast back to the ONNX contract
+    only when needed.
     """
     input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    op_tag = str(getattr(node, "op_type", getattr(node, "op", "unary"))).lower()
     if input_dtype == output_dtype:
-        return str(input_name)
+        return str(input_name), str(output_name)
+
+    def _add_cast(
+        *,
+        source_name: str,
+        source_dtype: str,
+        target_dtype: str,
+        target_name: str,
+    ) -> None:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[source_name],
+                outputs=[target_name],
+                options={
+                    "inDataType": source_dtype,
+                    "outDataType": target_dtype,
+                },
+            )
+        )
 
     if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
-        output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
-        if output_tensor is not None:
-            output_tensor.dtype = str(input_dtype)
-            src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
-            if src_tensor is not None:
-                output_tensor.quantization = _clone_quantization(src_tensor.quantization)
-        if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
-            ctx.dtype_map[str(output_name)] = str(input_dtype)
-        return str(input_name)
+        work_dtype = _normalize_unary_integer_work_dtype(input_dtype)
+        runtime_input_name = str(input_name)
+        runtime_output_name = str(output_name)
+        src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+        if input_dtype != work_dtype:
+            runtime_input_name = ctx.add_intermediate_tensor(
+                f"{output_name}_{op_tag}_input_{work_dtype.lower()}",
+                dtype=work_dtype,
+                shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
+            )
+            cast_tensor = ctx.model_ir.tensors.get(str(runtime_input_name), None)
+            if src_tensor is not None and cast_tensor is not None:
+                cast_tensor.shape_signature = (
+                    [int(v) for v in list(src_tensor.shape_signature)]
+                    if src_tensor.shape_signature is not None
+                    else [int(v) for v in list(src_tensor.shape)]
+                )
+                cast_tensor.quantization = _clone_quantization(src_tensor.quantization)
+            _add_cast(
+                source_name=str(input_name),
+                source_dtype=input_dtype,
+                target_dtype=work_dtype,
+                target_name=str(runtime_input_name),
+            )
+        if output_dtype != work_dtype:
+            runtime_output_name = ctx.add_intermediate_tensor(
+                f"{output_name}_{op_tag}_{work_dtype.lower()}",
+                dtype=work_dtype,
+                shape=[int(v) for v in ctx.get_tensor_shape(output_name)],
+            )
+            runtime_output_tensor = ctx.model_ir.tensors.get(str(runtime_output_name), None)
+            if runtime_output_tensor is not None:
+                output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+                runtime_output_tensor.shape_signature = (
+                    [int(v) for v in list(output_tensor.shape_signature)]
+                    if output_tensor is not None and output_tensor.shape_signature is not None
+                    else [int(v) for v in ctx.get_tensor_shape(output_name)]
+                )
+                if src_tensor is not None:
+                    runtime_output_tensor.quantization = _clone_quantization(src_tensor.quantization)
+        return str(runtime_input_name), str(runtime_output_name)
 
     cast_name = ctx.add_intermediate_tensor(
-        f"{output_name}_{node.op_type.lower()}_input_cast",
+        f"{output_name}_{op_tag}_input_cast",
         dtype=output_dtype,
         shape=[int(v) for v in ctx.get_tensor_shape(input_name)],
     )
@@ -1725,7 +1785,31 @@ def _harmonize_unary_input_output_dtype(
             },
         )
     )
-    return str(cast_name)
+    return str(cast_name), str(output_name)
+
+
+def _finalize_passthrough_unary_runtime(
+    *,
+    node: Any,
+    ctx: Any,
+    runtime_output_name: str,
+    output_name: str,
+) -> None:
+    if str(runtime_output_name) == str(output_name):
+        return
+    runtime_output_dtype = str(ctx.get_tensor_dtype(runtime_output_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[str(runtime_output_name)],
+            outputs=[str(output_name)],
+            options={
+                "inDataType": runtime_output_dtype,
+                "outDataType": output_dtype,
+            },
+        )
+    )
 
 
 def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
@@ -1734,7 +1818,7 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
-    runtime_input_name = _harmonize_unary_input_output_dtype(
+    runtime_input_name, runtime_output_name = _prepare_passthrough_unary_runtime(
         node=node,
         ctx=ctx,
         input_name=input_name,
@@ -1744,8 +1828,14 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
         OperatorIR(
             op_type=op_type,
             inputs=[runtime_input_name],
-            outputs=[output_name],
+            outputs=[runtime_output_name],
         )
+    )
+    _finalize_passthrough_unary_runtime(
+        node=node,
+        ctx=ctx,
+        runtime_output_name=runtime_output_name,
+        output_name=output_name,
     )
 
 
@@ -2458,39 +2548,24 @@ def build_abs_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
 
-    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
-    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
-
-    # TFLite ABS does not support INT64. Lower to max(x, -x).
-    if input_dtype == "INT64":
-        neg_name = ctx.add_intermediate_tensor(
-            f"{output_name}_abs_neg",
-            dtype=input_dtype,
-            shape=output_shape,
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="NEG",
-                inputs=[input_name],
-                outputs=[neg_name],
-            )
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="MAXIMUM",
-                inputs=[input_name, neg_name],
-                outputs=[output_name],
-                options={},
-            )
-        )
-        return
-
+    runtime_input_name, runtime_output_name = _prepare_passthrough_unary_runtime(
+        node=node,
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="ABS",
-            inputs=[input_name],
-            outputs=[output_name],
+            inputs=[runtime_input_name],
+            outputs=[runtime_output_name],
         )
+    )
+    _finalize_passthrough_unary_runtime(
+        node=node,
+        ctx=ctx,
+        runtime_output_name=runtime_output_name,
+        output_name=output_name,
     )
 
 

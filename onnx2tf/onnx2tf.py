@@ -19,6 +19,7 @@ import ast
 import json
 import logging
 import warnings
+from pathlib import Path
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
@@ -122,6 +123,29 @@ from sng4onnx import generate as op_name_auto_generate
 
 
 _SAVED_MODEL_BRIDGE_SIGNATURE_CACHE: Dict[tuple[str, str], Any] = {}
+
+
+def _generated_pytorch_export_skip_reason(
+    package_dir: Optional[str],
+    metadata_key: str,
+) -> Optional[str]:
+    if package_dir is None or str(package_dir).strip() == '':
+        return None
+    metadata_path = Path(str(package_dir)) / 'metadata.json'
+    if not metadata_path.exists():
+        return None
+    try:
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+    except Exception:
+        return None
+    entry = metadata.get(str(metadata_key), None)
+    if not isinstance(entry, dict):
+        return None
+    skip_reason = entry.get('skipped_reason', None)
+    if not isinstance(skip_reason, str) or skip_reason.strip() == '':
+        return None
+    return skip_reason.strip()
 
 
 def _get_trackable_signatures(trackable_obj: Any) -> Dict[str, Any]:
@@ -4558,29 +4582,50 @@ def convert(
                     float32_tflite_path=input_tflite_file_path,
                     source_label='tflite_direct_input',
                 )
-            if pytorch_package_path is not None:
-                info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
+                if pytorch_package_path is not None:
+                    info(Color.GREEN(f'PyTorch package output complete! ({pytorch_package_path})'))
                 if pytorch_torchscript_path is not None:
                     info(Color.GREEN(f'PyTorch TorchScript output complete! ({pytorch_torchscript_path})'))
                 elif flatbuffer_direct_output_torchscript:
-                    warn(
-                        'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
-                        'See the generated PyTorch package metadata.json for the JIT failure details.'
+                    skip_reason = _generated_pytorch_export_skip_reason(
+                        pytorch_package_path,
+                        'torchscript',
                     )
+                    if skip_reason is not None:
+                        info(Color.YELLOW(f'PyTorch TorchScript export skipped. {skip_reason}'))
+                    else:
+                        warn(
+                            'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
+                            'See the generated PyTorch package metadata.json for the JIT failure details.'
+                        )
                 if pytorch_dynamo_onnx_path is not None:
                     info(Color.GREEN(f'PyTorch Dynamo ONNX output complete! ({pytorch_dynamo_onnx_path})'))
                 elif flatbuffer_direct_output_dynamo_onnx:
-                    warn(
-                        'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
-                        'See the generated PyTorch package metadata.json for the export failure details.'
+                    skip_reason = _generated_pytorch_export_skip_reason(
+                        pytorch_package_path,
+                        'dynamo_onnx',
                     )
+                    if skip_reason is not None:
+                        info(Color.YELLOW(f'PyTorch Dynamo ONNX export skipped. {skip_reason}'))
+                    else:
+                        warn(
+                            'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
+                            'See the generated PyTorch package metadata.json for the export failure details.'
+                        )
                 if pytorch_exported_program_path is not None:
                     info(Color.GREEN(f'PyTorch ExportedProgram output complete! ({pytorch_exported_program_path})'))
                 elif flatbuffer_direct_output_exported_program:
-                    warn(
-                        'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
-                        'See the generated PyTorch package metadata.json for the export failure details.'
+                    skip_reason = _generated_pytorch_export_skip_reason(
+                        pytorch_package_path,
+                        'exported_program',
                     )
+                    if skip_reason is not None:
+                        info(Color.YELLOW(f'PyTorch ExportedProgram export skipped. {skip_reason}'))
+                    else:
+                        warn(
+                            'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
+                            'See the generated PyTorch package metadata.json for the export failure details.'
+                        )
                 tflite_pytorch_eval_result = _run_tflite_pytorch_output_check(
                     tflite_path=input_tflite_file_path,
                     package_dir=pytorch_package_path,
@@ -5926,28 +5971,49 @@ def convert(
             and 'pytorch_torchscript_path' not in direct_outputs
             and 'split_pytorch_torchscript_paths' not in direct_outputs
         ):
-            warn(
-                'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
-                'See the generated PyTorch package metadata.json for the JIT failure details.'
+            skip_reason = _generated_pytorch_export_skip_reason(
+                direct_outputs.get('pytorch_package_path', None),
+                'torchscript',
             )
+            if skip_reason is not None:
+                info(Color.YELLOW(f'PyTorch TorchScript export skipped. {skip_reason}'))
+            else:
+                warn(
+                    'PyTorch TorchScript export was requested but no TorchScript artifact was generated. '
+                    'See the generated PyTorch package metadata.json for the JIT failure details.'
+                )
         if (
             flatbuffer_direct_output_dynamo_onnx
             and 'pytorch_dynamo_onnx_path' not in direct_outputs
             and 'split_pytorch_dynamo_onnx_paths' not in direct_outputs
         ):
-            warn(
-                'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
-                'See the generated PyTorch package metadata.json for the export failure details.'
+            skip_reason = _generated_pytorch_export_skip_reason(
+                direct_outputs.get('pytorch_package_path', None),
+                'dynamo_onnx',
             )
+            if skip_reason is not None:
+                info(Color.YELLOW(f'PyTorch Dynamo ONNX export skipped. {skip_reason}'))
+            else:
+                warn(
+                    'PyTorch Dynamo ONNX export was requested but no ONNX artifact was generated. '
+                    'See the generated PyTorch package metadata.json for the export failure details.'
+                )
         if (
             flatbuffer_direct_output_exported_program
             and 'pytorch_exported_program_path' not in direct_outputs
             and 'split_pytorch_exported_program_paths' not in direct_outputs
         ):
-            warn(
-                'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
-                'See the generated PyTorch package metadata.json for the export failure details.'
+            skip_reason = _generated_pytorch_export_skip_reason(
+                direct_outputs.get('pytorch_package_path', None),
+                'exported_program',
             )
+            if skip_reason is not None:
+                info(Color.YELLOW(f'PyTorch ExportedProgram export skipped. {skip_reason}'))
+            else:
+                warn(
+                    'PyTorch ExportedProgram export was requested but no .pt2 artifact was generated. '
+                    'See the generated PyTorch package metadata.json for the export failure details.'
+                )
         _log_flatbuffer_direct_split_outputs(
             direct_outputs,
             split_plan_requested=split_plan_enabled,

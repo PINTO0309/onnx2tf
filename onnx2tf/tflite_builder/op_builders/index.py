@@ -1202,10 +1202,22 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
     data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
     data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     output_tensor = ctx.model_ir.tensors[output_name]
+    requested_output_dtype = str(output_tensor.dtype).upper()
     data_tensor = ctx.model_ir.tensors[data_name]
-    output_tensor.dtype = data_dtype
     output_tensor.quantization = _clone_quantization(data_tensor.quantization)
     _propagate_shape(ctx, data_name, output_name)
+    scatter_output_name = output_name
+    if requested_output_dtype != data_dtype:
+        scatter_output_name = ctx.add_intermediate_tensor(
+            f"{output_name}_scatter_nd_work",
+            dtype=data_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in data_meta_shape],
+        )
+        scatter_output_tensor = ctx.model_ir.tensors.get(scatter_output_name, None)
+        if scatter_output_tensor is not None:
+            scatter_output_tensor.shape_signature = [int(v) for v in data_meta_shape]
+            scatter_output_tensor.quantization = _clone_quantization(data_tensor.quantization)
+    output_tensor.dtype = requested_output_dtype if requested_output_dtype != "" else data_dtype
 
     updates_meta_shape = _tensor_shape_with_signature(ctx, updates_name)
     updates_for_scatter = updates_name
@@ -1520,10 +1532,22 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
         OperatorIR(
             op_type="ADD",
             inputs=[retained, scattered_updates],
-            outputs=[output_name],
+            outputs=[scatter_output_name],
             options={"fusedActivationFunction": "NONE"},
         )
     )
+    if scatter_output_name != output_name:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[scatter_output_name],
+                outputs=[output_name],
+                options={
+                    "inDataType": data_dtype,
+                    "outDataType": requested_output_dtype,
+                },
+            )
+        )
 
 
 def build_tensor_scatter_op(node: Any, ctx: Any) -> None:

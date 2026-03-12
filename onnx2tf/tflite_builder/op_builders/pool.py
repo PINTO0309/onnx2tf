@@ -1370,6 +1370,17 @@ def build_pool2d_op(node: Any, ctx: Any, op_type: str) -> None:
             ceil_mode=ceil_mode,
         )
         if (
+            int(average_count_include_pad) == 1
+            and padding == "SAME"
+            and any(int(v) != 0 for v in effective_pads)
+        ):
+            # TFLite SAME average pooling does not preserve ONNX
+            # count_include_pad=1 semantics at the padded border. Materialize the
+            # zeros explicitly, then run VALID pooling so the divisor includes the
+            # padded elements exactly like ONNX.
+            padding = "VALID"
+            explicit_pads = [int(v) for v in list(effective_pads)]
+        if (
             padding == "VALID"
             and int(input_shape[2]) > 0
             and int(input_shape[3]) > 0

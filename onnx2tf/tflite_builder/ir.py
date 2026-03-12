@@ -646,31 +646,180 @@ def _permute_shape(values: List[int], perm: List[int]) -> Optional[List[int]]:
     return [int(values[int(idx)]) for idx in perm]
 
 
+def _read_transpose_perm_from_op(op: OperatorIR) -> Optional[List[int]]:
+    perm = op.options.get("perm", None)
+    if perm is None:
+        return None
+    try:
+        values = [int(v) for v in list(perm)]
+    except Exception:
+        return None
+    return values
+
+
+def _is_boundary_layout_passthrough_op(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    source_tensor_name: str,
+) -> bool:
+    passthrough_op_types = {
+        "ABS",
+        "ADD",
+        "CAST",
+        "CLIP",
+        "DIV",
+        "FLOOR",
+        "HARD_SWISH",
+        "IDENTITY",
+        "LEAKY_RELU",
+        "LOG",
+        "LOGISTIC",
+        "MAXIMUM",
+        "MINIMUM",
+        "MUL",
+        "NEG",
+        "POW",
+        "PRELU",
+        "RELU",
+        "RELU6",
+        "RSQRT",
+        "SIGN",
+        "SIN",
+        "SOFTMAX",
+        "SQRT",
+        "SQUARE",
+        "SUB",
+        "TANH",
+    }
+    if str(op.op_type) not in passthrough_op_types:
+        return False
+    if len(op.outputs) != 1 or str(source_tensor_name) not in {str(v) for v in op.inputs}:
+        return False
+    source_tensor = model_ir.tensors.get(str(source_tensor_name), None)
+    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+    if source_tensor is None or output_tensor is None:
+        return False
+    if len(list(source_tensor.shape)) != len(list(output_tensor.shape)):
+        return False
+    return True
+
+
+def _infer_public_boundary_layout_from_topology(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+    rank: int,
+    is_input: bool,
+    consumers: Dict[str, List[int]],
+    producer_index: Dict[str, int],
+) -> Optional[str]:
+    if rank not in {3, 4, 5}:
+        return None
+    channel_first_layout = channel_first_logical_layout(rank)
+    channel_last_layout = channel_last_logical_layout(rank)
+    cl_to_cf_perm = logical_layout_permutation(
+        source_layout=channel_last_layout,
+        target_layout=channel_first_layout,
+    )
+    cf_to_cl_perm = logical_layout_permutation(
+        source_layout=channel_first_layout,
+        target_layout=channel_last_layout,
+    )
+    if cl_to_cf_perm is None or cf_to_cl_perm is None:
+        return None
+
+    if is_input:
+        current_tensor_name = str(tensor_name)
+        visited: set[str] = set()
+        for _ in range(4):
+            if current_tensor_name in visited:
+                break
+            visited.add(current_tensor_name)
+            user_indices = consumers.get(current_tensor_name, [])
+            if len(user_indices) != 1:
+                return None
+            op = model_ir.operators[int(user_indices[0])]
+            if str(op.op_type) == "TRANSPOSE":
+                perm = _read_transpose_perm_from_op(op)
+                if perm == cl_to_cf_perm:
+                    return channel_last_layout
+                if perm == cf_to_cl_perm:
+                    return channel_first_layout
+                return None
+            if not _is_boundary_layout_passthrough_op(
+                model_ir=model_ir,
+                op=op,
+                source_tensor_name=current_tensor_name,
+            ):
+                return None
+            current_tensor_name = str(op.outputs[0])
+        return None
+
+    current_tensor_name = str(tensor_name)
+    visited = set()
+    for _ in range(4):
+        if current_tensor_name in visited:
+            break
+        visited.add(current_tensor_name)
+        producer_op_idx = producer_index.get(current_tensor_name, None)
+        if producer_op_idx is None:
+            return None
+        op = model_ir.operators[int(producer_op_idx)]
+        if str(op.op_type) == "TRANSPOSE":
+            perm = _read_transpose_perm_from_op(op)
+            if perm == cf_to_cl_perm:
+                return channel_last_layout
+            if perm == cl_to_cf_perm:
+                return channel_first_layout
+            return None
+        if len(op.inputs) != 1:
+            return None
+        previous_tensor_name = str(op.inputs[0])
+        if not _is_boundary_layout_passthrough_op(
+            model_ir=model_ir,
+            op=op,
+            source_tensor_name=previous_tensor_name,
+        ):
+            return None
+        current_tensor_name = previous_tensor_name
+    return None
+
+
 def _boundary_current_layout(
     *,
     tensor: TensorIR,
     boundary_signature: Optional[List[int]],
     assume_channel_last_names: set[str],
+    public_layout: Optional[str] = None,
 ) -> str:
     rank = len(list(tensor.shape))
     if rank not in {3, 4, 5}:
         return LOGICAL_LAYOUT_UNKNOWN
     if str(tensor.name) in assume_channel_last_names:
         return channel_last_logical_layout(rank)
+    normalized_public_layout = normalize_logical_layout(public_layout)
+    if logical_layout_rank(normalized_public_layout) != rank:
+        normalized_public_layout = channel_first_logical_layout(rank)
     if isinstance(boundary_signature, list) and len(boundary_signature) == rank:
         current_shape = [int(v) for v in list(tensor.shape)]
-        cf_shape = [int(v) if int(v) > 0 else 1 for v in list(boundary_signature)]
-        if current_shape == cf_shape:
-            return channel_first_logical_layout(rank)
-        cl_shape = _permute_shape(
-            cf_shape,
+        public_shape = [int(v) if int(v) > 0 else 1 for v in list(boundary_signature)]
+        if current_shape == public_shape:
+            return normalized_public_layout
+        alternate_layout = (
+            channel_last_logical_layout(rank)
+            if is_channel_first_logical_layout(normalized_public_layout)
+            else channel_first_logical_layout(rank)
+        )
+        alternate_shape = _permute_shape(
+            public_shape,
             logical_layout_permutation(
-                source_layout=channel_first_logical_layout(rank),
-                target_layout=channel_last_logical_layout(rank),
+                source_layout=normalized_public_layout,
+                target_layout=alternate_layout,
             ) or [],
         )
-        if cl_shape is not None and current_shape == cl_shape:
-            return channel_last_logical_layout(rank)
+        if alternate_shape is not None and current_shape == alternate_shape:
+            return alternate_layout
     lowered_name = str(tensor.name).lower()
     if any(token in lowered_name for token in ["_nwc", "_nhwc", "_ndhwc"]):
         return channel_last_logical_layout(rank)
@@ -683,6 +832,9 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
     boundary_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
     if not isinstance(boundary_map, dict):
         boundary_map = {}
+    existing_public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(existing_public_layout_map, dict):
+        existing_public_layout_map = {}
     assume_channel_last_names = {
         str(v)
         for v in model_ir.metadata.get("assume_channel_last_layout_tensor_names", [])
@@ -699,6 +851,13 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
         }
         for op in model_ir.operators
     )
+    producer_index: Dict[str, int] = {}
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            producer_index[str(output_name)] = int(op_idx)
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
     public_layout_map: Dict[str, str] = {}
     for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
         tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -709,7 +868,23 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
             if recurrent_public_boundary_context and rank == 3:
                 public_layout_map[str(tensor_name)] = channel_last_logical_layout(rank)
             else:
-                public_layout_map[str(tensor_name)] = channel_first_logical_layout(rank)
+                inferred_layout = _infer_public_boundary_layout_from_topology(
+                    model_ir=model_ir,
+                    tensor_name=str(tensor_name),
+                    rank=rank,
+                    is_input=str(tensor_name) in {str(v) for v in model_ir.inputs},
+                    consumers=consumers,
+                    producer_index=producer_index,
+                )
+                existing_layout = normalize_logical_layout(
+                    existing_public_layout_map.get(str(tensor_name), None)
+                )
+                if logical_layout_rank(existing_layout) == rank:
+                    public_layout_map[str(tensor_name)] = existing_layout
+                elif inferred_layout is not None:
+                    public_layout_map[str(tensor_name)] = inferred_layout
+                else:
+                    public_layout_map[str(tensor_name)] = channel_first_logical_layout(rank)
     model_ir.metadata["onnx_public_layout_map"] = dict(public_layout_map)
 
     for tensor_name, tensor in model_ir.tensors.items():
@@ -719,6 +894,7 @@ def infer_model_ir_logical_layouts(model_ir: ModelIR) -> Dict[str, str]:
                 tensor=tensor,
                 boundary_signature=boundary_map.get(str(tensor_name), None),
                 assume_channel_last_names=assume_channel_last_names,
+                public_layout=public_layout_map.get(str(tensor_name), None),
             )
         elif tensor.logical_layout == LOGICAL_LAYOUT_UNKNOWN:
             rank = len(list(tensor.shape))

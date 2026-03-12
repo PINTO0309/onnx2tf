@@ -263,6 +263,79 @@ def _normalize_tensor_name(name: str) -> str:
     return normalized
 
 
+_UNSEEDED_NONDETERMINISTIC_ONNX_OP_TYPES = {
+    "Bernoulli",
+    "Multinomial",
+    "RandomNormal",
+    "RandomNormalLike",
+    "RandomUniform",
+    "RandomUniformLike",
+}
+
+
+def _collect_nondeterministic_onnx_tensor_reasons(
+    onnx_graph: onnx.ModelProto,
+) -> Dict[str, str]:
+    if onnx_graph is None or onnx_graph.graph is None:
+        return {}
+
+    consumers_by_tensor: Dict[str, List[str]] = {}
+    nondeterministic_reasons: Dict[str, str] = {}
+    pending_tensor_names: List[str] = []
+
+    for node in onnx_graph.graph.node:
+        output_names = [str(v) for v in node.output if str(v) != ""]
+        if len(output_names) == 0:
+            continue
+
+        for input_name in node.input:
+            normalized_input_name = str(input_name)
+            if normalized_input_name == "":
+                continue
+            consumers_by_tensor.setdefault(normalized_input_name, []).extend(output_names)
+
+        op_type = str(node.op_type)
+        if op_type not in _UNSEEDED_NONDETERMINISTIC_ONNX_OP_TYPES:
+            continue
+        if any(str(attr.name) == "seed" for attr in node.attribute):
+            continue
+
+        node_name = str(node.name) if str(node.name) != "" else f"<unnamed:{op_type}>"
+        reason = f"depends_on_unseeded_random_op: {node_name}({op_type})"
+        for output_name in output_names:
+            if output_name in nondeterministic_reasons:
+                continue
+            nondeterministic_reasons[output_name] = reason
+            pending_tensor_names.append(output_name)
+
+    pending_index = 0
+    while pending_index < len(pending_tensor_names):
+        tensor_name = pending_tensor_names[pending_index]
+        pending_index += 1
+        reason = nondeterministic_reasons[tensor_name]
+        for consumer_output_name in consumers_by_tensor.get(tensor_name, []):
+            if consumer_output_name in nondeterministic_reasons:
+                continue
+            nondeterministic_reasons[consumer_output_name] = reason
+            pending_tensor_names.append(consumer_output_name)
+
+    return nondeterministic_reasons
+
+
+def _collect_nondeterministic_onnx_output_reasons(
+    onnx_graph: onnx.ModelProto,
+    output_names: Sequence[str],
+) -> Dict[str, str]:
+    nondeterministic_tensor_reasons = _collect_nondeterministic_onnx_tensor_reasons(
+        onnx_graph=onnx_graph,
+    )
+    return {
+        str(output_name): nondeterministic_tensor_reasons[str(output_name)]
+        for output_name in output_names
+        if str(output_name) in nondeterministic_tensor_reasons
+    }
+
+
 def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
     from ai_edge_litert.interpreter import (
         Interpreter,
@@ -1354,6 +1427,20 @@ def evaluate_onnx_tflite_outputs(
     )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
+    nondeterministic_output_reasons = _collect_nondeterministic_onnx_output_reasons(
+        onnx_graph=onnx_graph,
+        output_names=onnx_output_names,
+    )
+    compared_output_names = [
+        output_name
+        for output_name in onnx_output_names
+        if output_name not in nondeterministic_output_reasons
+    ]
+    skipped_output_names = [
+        output_name
+        for output_name in onnx_output_names
+        if output_name in nondeterministic_output_reasons
+    ]
 
     try:
         onnx_session = ort.InferenceSession(
@@ -1495,6 +1582,8 @@ def evaluate_onnx_tflite_outputs(
                 raise
 
             for output_name in onnx_output_names:
+                if output_name in nondeterministic_output_reasons:
+                    continue
                 detail = tflite_output_map[output_name]
                 tflite_output = interpreter.get_tensor(detail["index"])
                 if resolved_compare_mode == "dequant":
@@ -1573,6 +1662,12 @@ def evaluate_onnx_tflite_outputs(
         ),
         "onnx_input_names": onnx_input_names,
         "onnx_output_names": onnx_output_names,
+        "compared_output_names": compared_output_names,
+        "skipped_output_names": skipped_output_names,
+        "skipped_output_reasons": {
+            output_name: nondeterministic_output_reasons[output_name]
+            for output_name in skipped_output_names
+        },
         "tflite_path": tflite_path,
         "metric_thresholds": {
             k: float(v) for k, v in resolved_thresholds.items()
@@ -1593,12 +1688,22 @@ def evaluate_onnx_tflite_outputs(
         "per_output_metrics": {
             output_name: {
                 "tflite_output_name": tflite_output_name_map[output_name],
+                "status": (
+                    "skipped"
+                    if output_name in nondeterministic_output_reasons
+                    else "compared"
+                ),
+                "reason": nondeterministic_output_reasons.get(output_name, ""),
                 "allclose": {
                     "matched": int(per_output_allclose[output_name]["matched"]),
                     "total": int(per_output_allclose[output_name]["total"]),
                     "pass": (
-                        per_output_allclose[output_name]["matched"]
-                        == per_output_allclose[output_name]["total"]
+                        None
+                        if output_name in nondeterministic_output_reasons
+                        else (
+                            per_output_allclose[output_name]["matched"]
+                            == per_output_allclose[output_name]["total"]
+                        )
                     ),
                 },
                 "layout_alignment": {
@@ -1925,6 +2030,20 @@ def evaluate_onnx_tflite_outputs_isolated(
     )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
+    nondeterministic_output_reasons = _collect_nondeterministic_onnx_output_reasons(
+        onnx_graph=onnx_graph,
+        output_names=onnx_output_names,
+    )
+    compared_output_names = [
+        output_name
+        for output_name in onnx_output_names
+        if output_name not in nondeterministic_output_reasons
+    ]
+    skipped_output_names = [
+        output_name
+        for output_name in onnx_output_names
+        if output_name in nondeterministic_output_reasons
+    ]
     onnx_graph_serialized = onnx_graph.SerializeToString()
     use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
         onnx_graph=onnx_graph,
@@ -2077,6 +2196,8 @@ def evaluate_onnx_tflite_outputs_isolated(
                     }
 
                 for output_name in onnx_output_names:
+                    if output_name in nondeterministic_output_reasons:
+                        continue
                     onnx_output = np.asarray(onnx_outputs_by_name[output_name])
                     tflite_output = np.asarray(tflite_outputs_by_name[output_name])
                     try:
@@ -2165,6 +2286,12 @@ def evaluate_onnx_tflite_outputs_isolated(
         ),
         "onnx_input_names": onnx_input_names,
         "onnx_output_names": onnx_output_names,
+        "compared_output_names": compared_output_names,
+        "skipped_output_names": skipped_output_names,
+        "skipped_output_reasons": {
+            output_name: nondeterministic_output_reasons[output_name]
+            for output_name in skipped_output_names
+        },
         "tflite_path": tflite_path,
         "metric_thresholds": {
             k: float(v) for k, v in resolved_thresholds.items()
@@ -2185,12 +2312,22 @@ def evaluate_onnx_tflite_outputs_isolated(
         "per_output_metrics": {
             output_name: {
                 "tflite_output_name": tflite_output_name_map.get(output_name, output_name),
+                "status": (
+                    "skipped"
+                    if output_name in nondeterministic_output_reasons
+                    else "compared"
+                ),
+                "reason": nondeterministic_output_reasons.get(output_name, ""),
                 "allclose": {
                     "matched": int(per_output_allclose[output_name]["matched"]),
                     "total": int(per_output_allclose[output_name]["total"]),
                     "pass": (
-                        per_output_allclose[output_name]["matched"]
-                        == per_output_allclose[output_name]["total"]
+                        None
+                        if output_name in nondeterministic_output_reasons
+                        else (
+                            per_output_allclose[output_name]["matched"]
+                            == per_output_allclose[output_name]["total"]
+                        )
                     ),
                 },
                 "layout_alignment": {

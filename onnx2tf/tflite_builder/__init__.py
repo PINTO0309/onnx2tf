@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.ir import (
@@ -108,6 +109,40 @@ def _create_progress_bar(
         desc=str(desc),
         dynamic_ncols=True,
     )
+
+
+class _ProgressSpinner:
+    def __init__(self, progress_bar: Any) -> None:
+        self._progress_bar = progress_bar
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        self.stop()
+        if self._progress_bar is None:
+            return
+        self._stop_event = threading.Event()
+        self._progress_bar.set_postfix_str("|", refresh=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        thread = self._thread
+        if thread is not None:
+            self._stop_event.set()
+            thread.join(timeout=0.5)
+        self._thread = None
+        if self._progress_bar is not None:
+            self._progress_bar.set_postfix_str("", refresh=True)
+
+    def _run(self) -> None:
+        frames = ["|", "/", "-", "\\"]
+        frame_index = 0
+        while not self._stop_event.wait(0.1):
+            if self._progress_bar is None:
+                return
+            frame_index = (frame_index + 1) % len(frames)
+            self._progress_bar.set_postfix_str(frames[frame_index], refresh=True)
 
 
 def _build_export_progress_labels(
@@ -609,10 +644,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         desc="flatbuffer_direct export",
         enabled=bool(flatbuffer_direct_show_progress),
     )
+    export_progress_spinner = _ProgressSpinner(export_progress_bar)
 
     def _set_export_progress_desc(stage_label: str) -> None:
         if export_progress_bar is None:
             return
+        export_progress_spinner.start()
         export_progress_bar.set_description_str(
             f"flatbuffer_direct export [{export_progress_step + 1}/{export_progress_total}] {stage_label}"
         )
@@ -621,6 +658,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         nonlocal export_progress_step
         if export_progress_bar is None:
             return
+        export_progress_spinner.stop()
         export_progress_bar.update(1)
         export_progress_step = int(export_progress_step + 1)
 
@@ -1162,6 +1200,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 )
                 _advance_export_progress()
     finally:
+        export_progress_spinner.stop()
         if export_progress_bar is not None:
             export_progress_bar.close()
 
