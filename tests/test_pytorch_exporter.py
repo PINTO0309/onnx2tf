@@ -4026,6 +4026,7 @@ def test_export_pytorch_package_reshape_preserves_runtime_minus_one_shape_tensor
     assert torch.equal(out, x.reshape(20, 1))
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "[int(v) for v in [1, 1]]" not in model_source
+    assert "_resolve_reshape_shape([-1, 1], x, allow_zero=False)" in model_source
 
 
 def test_export_pytorch_package_reshape_detection_head_packed_channels_to_rank5(tmp_path) -> None:
@@ -8381,6 +8382,78 @@ def test_scatter_nd_with_constant_shape_supports_dynamo_onnx_and_exported_progra
     assert Path(exported_program_path).exists()
 
 
+def test_scatter_nd_with_dynamic_prefix_supports_dynamo_onnx_and_exported_program(tmp_path) -> None:
+    model_ir = ModelIR(name="scatter_nd_dynamic_prefix_export")
+    model_ir.inputs = ["indices", "updates"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["indices"] = TensorIR(
+        name="indices",
+        dtype="INT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["updates"] = TensorIR(
+        name="updates",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([5], dtype=np.int32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[5],
+        shape_signature=[5],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=["indices", "updates", "shape"],
+            outputs=["y"],
+            options={},
+        )
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "scatter_nd_dynamic_prefix_export_pkg"),
+    )
+    runtime_source = (Path(package_path) / "runtime.py").read_text(encoding="utf-8")
+    assert "prefix_shape = list(indices_i64.shape[:-1])" in runtime_source
+    assert "prefix_shape = [int(v) for v in list(indices_i64.shape[:-1])]" not in runtime_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    indices = torch.tensor([[0], [2], [4]], dtype=torch.int32)
+    updates = torch.tensor([1.5, 2.5, 3.5], dtype=torch.float32)
+    out = cast(Any, model).forward_named(indices=indices, updates=updates)["y"]
+    assert torch.equal(out, torch.tensor([1.5, 0.0, 2.5, 0.0, 3.5], dtype=torch.float32))
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+        shape_hints=["indices:3,1", "updates:3"],
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+        shape_hints=["indices:3,1", "updates:3"],
+    )
+
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
 def test_export_pytorch_package_handles_same_max_pool_on_nhwc_inputs(tmp_path) -> None:
     model_ir = ModelIR(name="pool_nhwc_same_test")
     model_ir.inputs = ["x"]
@@ -8877,7 +8950,7 @@ def test_export_artifacts_handle_runtime_minus_one_shape_tensor(tmp_path) -> Non
         output_folder_path=str(tmp_path / "runtime_minus_one_shape_tensor_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "[int(v) for v in [-1, 1]]" in model_source
+    assert "_resolve_reshape_shape([-1, 1], x, allow_zero=False)" in model_source
     assert "_resolve_reshape_shape(shape," not in model_source
 
     dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
@@ -9104,8 +9177,8 @@ def test_export_artifacts_handle_dynamic_fill_shape_tensor(tmp_path) -> None:
         output_folder_path=str(tmp_path / "dynamic_fill_shape_tensor_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "_shape_list(shape)" not in model_source
-    assert "torch.full(list(x.to(dtype=torch.int64).reshape(-1))" in model_source
+    assert "_shape_tensor(x, dtype=torch.int32, device=x.device)" in model_source
+    assert "torch.full(_shape_list(x), 1.5" in model_source
     assert "dtype=torch.float32, device=x.device" in model_source
 
     pkg = _import_generated_package(package_path)
@@ -9120,6 +9193,67 @@ def test_export_artifacts_handle_dynamic_fill_shape_tensor(tmp_path) -> None:
     )
     exported_program_path = export_exported_program_from_generated_package(
         package_dir=package_path,
+    )
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
+def test_export_artifacts_handle_dynamic_tile_without_aten_tile(tmp_path) -> None:
+    model_ir = ModelIR(name="dynamic_tile_without_aten_tile")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 256, 1, 1],
+        shape_signature=[1, 256, -1, 1],
+    )
+    model_ir.tensors["multiples"] = TensorIR(
+        name="multiples",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 1, 7, 1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 256, 7, 1],
+        shape_signature=[1, 256, -1, 1],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="TILE",
+            inputs=["x", "multiples"],
+            outputs=["y"],
+            options={},
+        )
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "dynamic_tile_without_aten_tile_pkg"),
+    )
+    runtime_source = (Path(package_path) / "runtime.py").read_text(encoding="utf-8")
+    assert "def _apply_tile_eager" in runtime_source
+    assert "aten.tile.default" not in runtime_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1 * 256 * 5 * 1, dtype=torch.float32).reshape(1, 256, 5, 1)
+    out = cast(Any, model).forward_named(x=x)["y"]
+    assert tuple(out.shape) == (1, 256, 35, 1)
+    assert torch.equal(out, torch.tile(x, (1, 1, 7, 1)))
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+        shape_hints=["x:1,256,5,1"],
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+        shape_hints=["x:1,256,5,1"],
     )
     assert dynamo_onnx_path is not None
     assert Path(dynamo_onnx_path).exists()
@@ -9211,6 +9345,149 @@ def test_export_pytorch_package_conv2d_same_stride2_uses_explicit_same_upper_pad
     w = model.conv_block_0.conv.weight.detach()
     b = model.conv_block_0.conv.bias.detach()
     expected = torch.relu(F.conv2d(F.pad(x, [0, 1, 0, 1]), w, b, stride=(2, 2), padding=(0, 0)))
+    assert torch.allclose(out, expected, atol=1e-6, rtol=1e-6)
+
+
+def test_export_pytorch_package_handles_constant_public_output_in_staged_native_codegen(
+    tmp_path,
+) -> None:
+    model_ir = ModelIR(name="constant_public_output_staged_native")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y", "labels"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4],
+        shape_signature=[1, 4],
+    )
+    model_ir.tensors["labels"] = TensorIR(
+        name="labels",
+        dtype="INT64",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 2, 3, 4], dtype=np.int64),
+    )
+
+    previous_name = "x"
+    for op_index in range(90):
+        output_name = "y" if op_index == 89 else f"identity_{op_index}"
+        model_ir.tensors[output_name] = TensorIR(
+            name=output_name,
+            dtype="FLOAT32",
+            shape=[1, 4],
+            shape_signature=[1, 4],
+        )
+        model_ir.operators.append(
+            OperatorIR(
+                op_type="IDENTITY",
+                inputs=[previous_name],
+                outputs=[output_name],
+                options={},
+            )
+        )
+        previous_name = output_name
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "constant_public_output_staged_native_pkg"),
+    )
+    metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata.get("execution_backend") == "native"
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(4, dtype=torch.float32).reshape(1, 4)
+    outputs = cast(Any, model).forward_named(x=x)
+    assert torch.allclose(outputs["y"], x)
+    assert outputs["labels"].tolist() == [1, 2, 3, 4]
+
+
+def test_export_pytorch_package_fuses_pad_before_permuted_conv_without_padding_channel_dim(
+    tmp_path,
+) -> None:
+    model_ir = ModelIR(name="conv2d_pad_fusion_prepermute")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 4, 3],
+        shape_signature=[1, 4, 4, 3],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray([[0, 0], [0, 1], [0, 1], [0, 0]], dtype=np.int32),
+    )
+    model_ir.tensors["x_padded"] = TensorIR(
+        name="x_padded",
+        dtype="FLOAT32",
+        shape=[1, 5, 5, 3],
+        shape_signature=[1, 5, 5, 3],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[8, 3, 3, 3],
+        shape_signature=[8, 3, 3, 3],
+        data=(np.arange(8 * 3 * 3 * 3, dtype=np.float32).reshape(8, 3, 3, 3) / 50.0),
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[8],
+        shape_signature=[8],
+        data=np.zeros((8,), dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 8],
+        shape_signature=[1, 2, 2, 8],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="PAD",
+                inputs=["x", "pads"],
+                outputs=["x_padded"],
+                options={},
+            ),
+            OperatorIR(
+                op_type="CONV_2D",
+                inputs=["x_padded", "w", "b"],
+                outputs=["y"],
+                options={
+                    "strideH": 2,
+                    "strideW": 2,
+                    "dilationHFactor": 1,
+                    "dilationWFactor": 1,
+                    "padding": "VALID",
+                    "fusedActivationFunction": "NONE",
+                },
+            ),
+        ]
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "conv2d_pad_fusion_prepermute_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "pad=[0, 1, 0, 1]" in model_source
+    assert "pad=[0, 0, 0, 1, 0, 1]" not in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1 * 4 * 4 * 3, dtype=torch.float32).reshape(1, 4, 4, 3) / 10.0
+    with torch.no_grad():
+        out = model(x)
+
+    expected = model.conv_block_0(x.permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
     assert torch.allclose(out, expected, atol=1e-6, rtol=1e-6)
 
 
@@ -9345,6 +9622,41 @@ def test_convert_flatbuffer_direct_lstm_undefined_dim_outputs_all_native_artifac
     assert "error" not in metadata["torchscript"]
     assert "error" not in metadata["dynamo_onnx"]
     assert "error" not in metadata["exported_program"]
+
+
+def test_convert_flatbuffer_direct_recognizer_japanese_g2_outputs_all_native_artifacts_when_model_is_available(
+    tmp_path,
+) -> None:
+    model_path = Path("recognizer_japanese_g2.onnx")
+    if not model_path.exists():
+        pytest.skip("recognizer_japanese_g2.onnx is not available")
+
+    output_dir = tmp_path / "recognizer_japanese_g2_out"
+    onnx2tf.convert(
+        input_onnx_file_path=str(model_path),
+        output_folder_path=str(output_dir),
+        tflite_backend="flatbuffer_direct",
+        flatbuffer_direct_output_pytorch=True,
+        flatbuffer_direct_output_torchscript=True,
+        flatbuffer_direct_output_dynamo_onnx=True,
+        flatbuffer_direct_output_exported_program=True,
+        disable_model_save=True,
+        output_signaturedefs=False,
+        non_verbose=True,
+        verbosity="error",
+    )
+    package_path = output_dir / "recognizer_japanese_g2_pytorch"
+    metadata = json.loads((package_path / "metadata.json").read_text())
+    assert metadata["execution_backend"] == "native"
+    assert (package_path / "recognizer_japanese_g2_jit.pt").exists()
+    assert (package_path / "recognizer_japanese_g2_dynamo.onnx").exists()
+    assert (package_path / "recognizer_japanese_g2_ep.pt2").exists()
+    assert "error" not in metadata["torchscript"]
+    assert "error" not in metadata["dynamo_onnx"]
+    assert "error" not in metadata["exported_program"]
+    assert "skipped_reason" not in metadata["torchscript"]
+    assert "skipped_reason" not in metadata["dynamo_onnx"]
+    assert "skipped_reason" not in metadata["exported_program"]
 
 
 def test_generated_batch_matmul_handles_rank_two_dense_case(tmp_path) -> None:
