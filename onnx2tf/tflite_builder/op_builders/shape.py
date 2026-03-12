@@ -5885,7 +5885,10 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
             op_type="RESHAPE",
             inputs=[input_name, shape_const],
             outputs=[output_name],
-            options={"newShape": [int(v) for v in reshape_options_shape]},
+            options={
+                "newShape": [int(v) for v in reshape_options_shape],
+                "onnxFlattenAxis": int(axis),
+            },
         )
     )
 
@@ -5915,9 +5918,43 @@ def _get_original_node_input_names(node: Any, ctx: Any) -> list[str]:
     return [str(v.name) for v in node.inputs]
 
 
-def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tuple[int, int]:
+def _infer_resize_rank3_layout(
+    *,
+    input_tensor: Any,
+    output_tensor: Any,
+    input_shape: list[int],
+    output_shape: list[int],
+) -> str:
+    input_layout = str(getattr(input_tensor, "logical_layout", "UNKNOWN")).upper()
+    output_layout = str(getattr(output_tensor, "logical_layout", "UNKNOWN")).upper()
+    for layout in (input_layout, output_layout):
+        if layout in {"NCW", "NWC"}:
+            return layout
+    if len(input_shape) == 3 and len(output_shape) == 3:
+        if int(input_shape[1]) == int(output_shape[1]) and int(input_shape[2]) != int(output_shape[2]):
+            return "NCW"
+        if int(input_shape[2]) == int(output_shape[2]) and int(input_shape[1]) != int(output_shape[1]):
+            return "NWC"
+    return "NCW"
+
+
+def _resolve_resize_target_hw(
+    node: Any,
+    ctx: Any,
+    input_shape: list[int],
+    *,
+    rank3_layout: str | None = None,
+) -> tuple[int, int]:
+    input_rank = len(list(input_shape))
+    width_axis_rank3 = 2 if str(rank3_layout).upper() != "NWC" else 1
+
     def _resolve_from_sizes(arr: np.ndarray) -> tuple[int, int]:
         values = np.asarray(arr).reshape(-1).astype(np.int64)
+        if input_rank == 3:
+            if values.size >= 3:
+                return 1, int(values[width_axis_rank3])
+            if values.size == 2:
+                return 1, int(values[-1])
         if values.size >= 4:
             return int(values[-2]), int(values[-1])
         if values.size == 2:
@@ -5928,6 +5965,14 @@ def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tu
 
     def _resolve_from_scales(arr: np.ndarray) -> tuple[int, int]:
         values = np.asarray(arr).reshape(-1).astype(np.float32)
+        if input_rank == 3:
+            in_w = int(input_shape[width_axis_rank3])
+            if values.size >= 3:
+                out_w = int(round(float(in_w) * float(values[width_axis_rank3])))
+                return 1, max(out_w, 1)
+            if values.size == 2:
+                out_w = int(round(float(in_w) * float(values[-1])))
+                return 1, max(out_w, 1)
         in_h = int(input_shape[2])
         in_w = int(input_shape[3])
         if values.size >= 4:
@@ -5973,7 +6018,13 @@ def _resolve_resize_target_hw(node: Any, ctx: Any, input_shape: list[int]) -> tu
     )
 
 
-def _build_resize_dynamic_size_input(node: Any, ctx: Any) -> str | None:
+def _build_resize_dynamic_size_input(
+    node: Any,
+    ctx: Any,
+    *,
+    input_rank: int = 4,
+    rank3_layout: str | None = None,
+) -> str | None:
     original_inputs = _get_original_node_input_names(node, ctx)
     sizes_name = ""
     if len(original_inputs) >= 4:
@@ -6005,8 +6056,8 @@ def _build_resize_dynamic_size_input(node: Any, ctx: Any) -> str | None:
         sizes_len = int(sizes_signature[0])
     if sizes_len == 1:
         # Placeholder rank-1 length from symbolic shape inference.
-        # ONNX Resize `sizes` for rank-4 tensors is typically length-4 (N,C,H,W).
-        sizes_len = 4
+        # ONNX Resize `sizes` is typically length==rank.
+        sizes_len = 3 if int(input_rank) == 3 else 4
 
     sizes_i32 = sizes_name
     sizes_dtype = str(ctx.get_tensor_dtype(sizes_name)).upper()
@@ -6052,6 +6103,46 @@ def _build_resize_dynamic_size_input(node: Any, ctx: Any) -> str | None:
 
     if sizes_len == 2:
         return _clamp_hw_size(sizes_i32, suffix="from_sizes2")
+    if int(input_rank) == 3 and sizes_len == 3:
+        width_index = 2 if str(rank3_layout).upper() != "NWC" else 1
+        size_w = ctx.add_intermediate_tensor(
+            f"{node.name}_resize_size_w",
+            dtype="INT32",
+            shape=[1],
+        )
+        begin = ctx.add_const_tensor(
+            f"{node.name}_resize_sizes_begin_rank3",
+            np.asarray([int(width_index)], dtype=np.int32),
+        )
+        size = ctx.add_const_tensor(
+            f"{node.name}_resize_sizes_size_rank3",
+            np.asarray([1], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[sizes_i32, begin, size],
+                outputs=[size_w],
+            )
+        )
+        size_h = ctx.add_const_tensor(
+            f"{node.name}_resize_size_h_rank3",
+            np.asarray([1], dtype=np.int32),
+        )
+        size_hw = ctx.add_intermediate_tensor(
+            f"{node.name}_resize_size_hw_rank3",
+            dtype="INT32",
+            shape=[2],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[size_h, size_w],
+                outputs=[size_hw],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+        return _clamp_hw_size(size_hw, suffix="from_sizes3")
     if sizes_len == 4:
         size_hw = ctx.add_intermediate_tensor(
             f"{node.name}_resize_size_hw",
@@ -6076,7 +6167,7 @@ def _build_resize_dynamic_size_input(node: Any, ctx: Any) -> str | None:
         return _clamp_hw_size(size_hw, suffix="from_sizes4")
 
     raise NotImplementedError(
-        f"Resize dynamic sizes input length must be 2 or 4. "
+        f"Resize dynamic sizes input length must be 2, 3, or 4. "
         f"op={node.name} sizes_shape={sizes_shape} sizes_signature={sizes_signature}"
     )
 
@@ -6114,6 +6205,41 @@ def _infer_resize_output_signature_nchw(
     return [int(v) for v in signature]
 
 
+def _infer_resize_output_signature_rank3(
+    *,
+    input_signature_rank3: list[int],
+    output_shape_rank3: list[int],
+    onnx_sizes_hw: list[int] | None,
+    onnx_scales_hw: list[float] | None,
+    existing_output_signature_rank3: list[int] | None,
+    rank3_layout: str,
+) -> list[int]:
+    signature = [int(v) for v in list(output_shape_rank3)]
+    if existing_output_signature_rank3 is not None and len(existing_output_signature_rank3) == 3:
+        for axis in range(3):
+            if int(existing_output_signature_rank3[axis]) < 0:
+                signature[axis] = -1
+    if len(input_signature_rank3) != 3:
+        return signature
+    width_axis = 2 if str(rank3_layout).upper() != "NWC" else 1
+    channel_axis = 1 if int(width_axis) == 2 else 2
+    if int(input_signature_rank3[0]) < 0:
+        signature[0] = -1
+    if int(input_signature_rank3[channel_axis]) < 0:
+        signature[channel_axis] = -1
+    if onnx_sizes_hw is not None and len(onnx_sizes_hw) >= 2:
+        signature[width_axis] = int(onnx_sizes_hw[1])
+    elif onnx_scales_hw is not None and len(onnx_scales_hw) >= 2:
+        if int(input_signature_rank3[width_axis]) < 0:
+            signature[width_axis] = -1
+        else:
+            signature[width_axis] = max(
+                int(round(float(input_signature_rank3[width_axis]) * float(onnx_scales_hw[1]))),
+                1,
+            )
+    return [int(v) for v in signature]
+
+
 def _resolve_integer_resize_scales_hw(onnx_scales_hw: list[float] | None) -> list[int] | None:
     if onnx_scales_hw is None or len(onnx_scales_hw) < 2:
         return None
@@ -6129,9 +6255,16 @@ def _resolve_integer_resize_scales_hw(onnx_scales_hw: list[float] | None) -> lis
     return scales_int
 
 
-def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None, list[float] | None]:
+def _extract_resize_onnx_hw_hints(
+    node: Any,
+    ctx: Any,
+    *,
+    input_rank: int = 4,
+    rank3_layout: str | None = None,
+) -> tuple[list[int] | None, list[float] | None]:
     onnx_sizes_hw: list[int] | None = None
     onnx_scales_hw: list[float] | None = None
+    width_axis_rank3 = 2 if str(rank3_layout).upper() != "NWC" else 1
 
     original_inputs = _get_original_node_input_names(node, ctx)
 
@@ -6141,7 +6274,11 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
             sizes = ctx.get_constant_array(sizes_name)
             if sizes is not None and int(np.asarray(sizes).size) >= 2:
                 values = np.asarray(sizes).reshape(-1).astype(np.int64)
-                if values.size >= 4:
+                if int(input_rank) == 3 and values.size >= 3:
+                    onnx_sizes_hw = [1, int(values[width_axis_rank3])]
+                elif int(input_rank) == 3 and values.size == 2:
+                    onnx_sizes_hw = [1, int(values[-1])]
+                elif values.size >= 4:
                     onnx_sizes_hw = [int(values[-2]), int(values[-1])]
                 elif values.size == 2:
                     onnx_sizes_hw = [int(values[0]), int(values[1])]
@@ -6152,7 +6289,11 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
             scales = ctx.get_constant_array(scales_name)
             if scales is not None and int(np.asarray(scales).size) >= 2:
                 values = np.asarray(scales).reshape(-1).astype(np.float32)
-                if values.size >= 4:
+                if int(input_rank) == 3 and values.size >= 3:
+                    onnx_scales_hw = [1.0, float(values[width_axis_rank3])]
+                elif int(input_rank) == 3 and values.size == 2:
+                    onnx_scales_hw = [1.0, float(values[-1])]
+                elif values.size >= 4:
                     onnx_scales_hw = [float(values[-2]), float(values[-1])]
                 elif values.size == 2:
                     onnx_scales_hw = [float(values[0]), float(values[1])]
@@ -6164,13 +6305,21 @@ def _extract_resize_onnx_hw_hints(node: Any, ctx: Any) -> tuple[list[int] | None
                 values = np.asarray(param).reshape(-1)
                 if np.issubdtype(values.dtype, np.integer):
                     v = values.astype(np.int64)
-                    if v.size >= 4:
+                    if int(input_rank) == 3 and v.size >= 3:
+                        onnx_sizes_hw = [1, int(v[width_axis_rank3])]
+                    elif int(input_rank) == 3 and v.size == 2:
+                        onnx_sizes_hw = [1, int(v[-1])]
+                    elif v.size >= 4:
                         onnx_sizes_hw = [int(v[-2]), int(v[-1])]
                     elif v.size == 2:
                         onnx_sizes_hw = [int(v[0]), int(v[1])]
                 else:
                     v = values.astype(np.float32)
-                    if v.size >= 4:
+                    if int(input_rank) == 3 and v.size >= 3:
+                        onnx_scales_hw = [1.0, float(v[width_axis_rank3])]
+                    elif int(input_rank) == 3 and v.size == 2:
+                        onnx_scales_hw = [1.0, float(v[-1])]
+                    elif v.size >= 4:
                         onnx_scales_hw = [float(v[-2]), float(v[-1])]
                     elif v.size == 2:
                         onnx_scales_hw = [float(v[0]), float(v[1])]
@@ -8261,24 +8410,35 @@ def build_resize_op(node: Any, ctx: Any) -> None:
     )
     existing_output_signature = (
         [int(v) for v in list(output_tensor.shape_signature)]
-        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) == 4
+        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) in {3, 4}
         else None
     )
-    if len(input_shape) != 4:
-        if len(input_signature) == 4:
+    if len(input_shape) not in {3, 4}:
+        if len(input_signature) in {3, 4}:
             _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
             input_shape = [int(v) for v in list(input_tensor.shape)]
-        elif _is_unresolved_placeholder_shape(input_shape, input_signature):
+        elif _is_unresolved_placeholder_shape(input_shape, input_signature) and len(input_signature) in {0, 1}:
             _materialize_tensor_shape_from_signature(
                 input_tensor,
                 signature=[-1, -1, -1, -1],
             )
             input_shape = [int(v) for v in list(input_tensor.shape)]
             input_signature = [int(v) for v in list(input_tensor.shape_signature)]
-    if len(input_shape) != 4:
+    if len(input_shape) not in {3, 4}:
         raise NotImplementedError(
-            f"Resize supports only rank-4 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
+            f"Resize supports only rank-3/4 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
         )
+    input_rank = len(input_shape)
+    rank3_layout = (
+        _infer_resize_rank3_layout(
+            input_tensor=input_tensor,
+            output_tensor=output_tensor,
+            input_shape=input_shape,
+            output_shape=output_shape,
+        )
+        if input_rank == 3
+        else None
+    )
     has_dynamic_sizes_input = False
     original_inputs = _get_original_node_input_names(node, ctx)
     dynamic_sizes_name = ""
@@ -8292,12 +8452,29 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         if sizes_const is None or int(np.asarray(sizes_const).size) == 0:
             sizes_dtype = str(ctx.get_tensor_dtype(dynamic_sizes_name)).upper()
             has_dynamic_sizes_input = sizes_dtype in {"INT32", "INT64"}
-    if len(output_shape) != 4 or _is_unresolved_placeholder_shape(output_shape, existing_output_signature) or output_shape == [1]:
+    if len(output_shape) != input_rank or _is_unresolved_placeholder_shape(output_shape, existing_output_signature) or output_shape == [1]:
         if has_dynamic_sizes_input:
-            output_shape = [int(input_shape[0]), int(input_shape[1]), 1, 1]
+            if input_rank == 3:
+                if str(rank3_layout).upper() == "NWC":
+                    output_shape = [int(input_shape[0]), 1, int(input_shape[2])]
+                else:
+                    output_shape = [int(input_shape[0]), int(input_shape[1]), 1]
+            else:
+                output_shape = [int(input_shape[0]), int(input_shape[1]), 1, 1]
         else:
-            out_h, out_w = _resolve_resize_target_hw(node, ctx, input_shape)
-            output_shape = [int(input_shape[0]), int(input_shape[1]), int(out_h), int(out_w)]
+            out_h, out_w = _resolve_resize_target_hw(
+                node,
+                ctx,
+                input_shape,
+                rank3_layout=rank3_layout,
+            )
+            if input_rank == 3:
+                if str(rank3_layout).upper() == "NWC":
+                    output_shape = [int(input_shape[0]), int(out_w), int(input_shape[2])]
+                else:
+                    output_shape = [int(input_shape[0]), int(input_shape[1]), int(out_w)]
+            else:
+                output_shape = [int(input_shape[0]), int(input_shape[1]), int(out_h), int(out_w)]
         ctx.model_ir.tensors[output_name].shape = list(output_shape)
 
     output_signature_for_resize = (
@@ -8307,7 +8484,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
     )
     resize_existing_output_signature = (
         [int(v) for v in list(existing_output_signature)]
-        if existing_output_signature is not None
+        if existing_output_signature is not None and len(list(existing_output_signature)) == input_rank
         else None
     )
     fused_argmax_mode = str(getattr(ctx, "argmax_mode", "none"))
@@ -8366,15 +8543,299 @@ def build_resize_op(node: Any, ctx: Any) -> None:
 
     mode, coordinate_transformation_mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
     tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
-    onnx_sizes_hw, onnx_scales_hw = _extract_resize_onnx_hw_hints(node, ctx)
-    output_signature = _infer_resize_output_signature_nchw(
-        input_signature_nchw=input_signature,
-        output_shape_nchw=output_shape,
-        onnx_sizes_hw=onnx_sizes_hw,
-        onnx_scales_hw=onnx_scales_hw,
-        existing_output_signature_nchw=resize_existing_output_signature,
+    onnx_sizes_hw, onnx_scales_hw = _extract_resize_onnx_hw_hints(
+        node,
+        ctx,
+        input_rank=input_rank,
+        rank3_layout=rank3_layout,
     )
+    if input_rank == 3:
+        output_signature = _infer_resize_output_signature_rank3(
+            input_signature_rank3=input_signature,
+            output_shape_rank3=output_shape,
+            onnx_sizes_hw=onnx_sizes_hw,
+            onnx_scales_hw=onnx_scales_hw,
+            existing_output_signature_rank3=resize_existing_output_signature,
+            rank3_layout=str(rank3_layout),
+        )
+    else:
+        output_signature = _infer_resize_output_signature_nchw(
+            input_signature_nchw=input_signature,
+            output_shape_nchw=output_shape,
+            onnx_sizes_hw=onnx_sizes_hw,
+            onnx_scales_hw=onnx_scales_hw,
+            existing_output_signature_nchw=resize_existing_output_signature,
+        )
     output_tensor.shape_signature = [int(v) for v in list(output_signature)]
+
+    if input_rank == 3:
+        channel_first_rank3 = str(rank3_layout).upper() != "NWC"
+        n = int(input_shape[0])
+        c = int(input_shape[1] if channel_first_rank3 else input_shape[2])
+        in_w = int(input_shape[2] if channel_first_rank3 else input_shape[1])
+        out_w = int(output_shape[2] if channel_first_rank3 else output_shape[1])
+        input_signature_rank3 = [int(v) for v in list(input_signature)]
+        output_signature_rank3 = [int(v) for v in list(output_signature)]
+        input_rank3_signature_nwc = (
+            [int(input_signature_rank3[0]), int(input_signature_rank3[2]), int(input_signature_rank3[1])]
+            if channel_first_rank3
+            else [int(v) for v in list(input_signature_rank3)]
+        )
+        output_rank3_signature_nwc = (
+            [int(output_signature_rank3[0]), int(output_signature_rank3[2]), int(output_signature_rank3[1])]
+            if channel_first_rank3
+            else [int(v) for v in list(output_signature_rank3)]
+        )
+
+        def _add_reshape(
+            *,
+            src_name: str,
+            dst_name: str,
+            dst_shape: list[int],
+            dst_signature: list[int] | None,
+        ) -> None:
+            shape_name = ctx.add_const_tensor(
+                f"{dst_name}_reshape_shape",
+                np.asarray(dst_shape, dtype=np.int32),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[src_name, shape_name],
+                    outputs=[dst_name],
+                    options={
+                        "newShape": [int(v) for v in list(dst_shape)],
+                        "preserveDynamicShape": True,
+                    },
+                )
+            )
+            dst_tensor = ctx.model_ir.tensors[dst_name]
+            if dst_signature is not None and len(list(dst_signature)) == len(list(dst_shape)):
+                dst_tensor.shape_signature = [int(v) for v in list(dst_signature)]
+
+        rank3_work_name = input_name
+        if channel_first_rank3:
+            x_nwc_name = ctx.add_intermediate_tensor(
+                f"{node.name}_input_nwc",
+                dtype=ctx.get_tensor_dtype(input_name),
+                shape=[int(n), int(in_w), int(c)],
+            )
+            x_nwc_tensor = ctx.model_ir.tensors[x_nwc_name]
+            x_nwc_tensor.shape_signature = [int(v) for v in list(input_rank3_signature_nwc)]
+            x_quant = ctx.model_ir.tensors[input_name].quantization
+            if x_quant is not None:
+                x_nwc_tensor.quantization = _clone_quantization(x_quant)
+            x_nwc_tensor.logical_layout = "NWC"
+            rank3_work_name = make_transpose(
+                ctx,
+                input_name,
+                x_nwc_name,
+                [0, 2, 1],
+                allow_elide_inverse_chain=True,
+            )
+
+        nhwc_input_shape = [int(n), 1, int(in_w), int(c)]
+        nhwc_output_shape = [int(n), 1, int(out_w), int(c)]
+        nhwc_input_signature = [
+            int(input_rank3_signature_nwc[0]),
+            1,
+            int(input_rank3_signature_nwc[1]),
+            int(input_rank3_signature_nwc[2]),
+        ]
+        nhwc_output_signature = [
+            int(output_rank3_signature_nwc[0]),
+            1,
+            int(output_rank3_signature_nwc[1]),
+            int(output_rank3_signature_nwc[2]),
+        ]
+
+        x_nhwc = ctx.add_intermediate_tensor(
+            f"{node.name}_input_nhwc",
+            dtype=ctx.get_tensor_dtype(input_name),
+            shape=nhwc_input_shape,
+        )
+        x_nhwc_tensor = ctx.model_ir.tensors[x_nhwc]
+        x_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_input_signature)]
+        x_nhwc_tensor.logical_layout = "NHWC"
+        x_quant = ctx.model_ir.tensors[input_name].quantization
+        if x_quant is not None:
+            x_nhwc_tensor.quantization = _clone_quantization(x_quant)
+        _add_reshape(
+            src_name=rank3_work_name,
+            dst_name=x_nhwc,
+            dst_shape=nhwc_input_shape,
+            dst_signature=nhwc_input_signature,
+        )
+
+        y_nhwc = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nhwc",
+            dtype=ctx.get_tensor_dtype(output_name),
+            shape=nhwc_output_shape,
+        )
+        y_nhwc_tensor = ctx.model_ir.tensors[y_nhwc]
+        y_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_output_signature)]
+        y_nhwc_tensor.logical_layout = "NHWC"
+        y_quant = ctx.model_ir.tensors[output_name].quantization
+        if y_quant is not None:
+            y_nhwc_tensor.quantization = _clone_quantization(y_quant)
+
+        lifted_input_signature_nchw = [
+            int(input_rank3_signature_nwc[0]),
+            int(input_rank3_signature_nwc[2]),
+            1,
+            int(input_rank3_signature_nwc[1]),
+        ]
+        lifted_output_signature_nchw = [
+            int(output_rank3_signature_nwc[0]),
+            int(output_rank3_signature_nwc[2]),
+            1,
+            int(output_rank3_signature_nwc[1]),
+        ]
+
+        if mode == "cubic":
+            exclude_outside_attr = node.attrs.get("exclude_outside", 0)
+            try:
+                exclude_outside = bool(int(exclude_outside_attr))
+            except Exception:
+                exclude_outside = bool(exclude_outside_attr)
+            cubic_coeff_a_attr = node.attrs.get("cubic_coeff_a", -0.75)
+            try:
+                cubic_coeff_a = float(cubic_coeff_a_attr)
+            except Exception:
+                cubic_coeff_a = -0.75
+            _build_resize_cubic_strict_op(
+                node=node,
+                ctx=ctx,
+                x_nhwc=x_nhwc,
+                y_nhwc=y_nhwc,
+                input_signature_nchw=lifted_input_signature_nchw,
+                output_signature_nchw=lifted_output_signature_nchw,
+                coordinate_transformation_mode=str(coordinate_transformation_mode),
+                cubic_coeff_a=float(cubic_coeff_a),
+                exclude_outside=bool(exclude_outside),
+            )
+        else:
+            size_input_name = ""
+            dynamic_size_input_name = _build_resize_dynamic_size_input(
+                node,
+                ctx,
+                input_rank=3,
+                rank3_layout=rank3_layout,
+            )
+            has_dynamic_width_input = (
+                len(nhwc_input_signature) == 4 and int(nhwc_input_signature[2]) < 0
+            )
+            resize_scales_hw_int = _resolve_integer_resize_scales_hw(onnx_scales_hw)
+            if dynamic_size_input_name is not None:
+                size_input_name = dynamic_size_input_name
+            elif has_dynamic_width_input and onnx_sizes_hw is None and onnx_scales_hw is not None:
+                if resize_scales_hw_int is None:
+                    raise NotImplementedError(
+                        f"Resize with dynamic 1D spatial input supports integer scales only in flatbuffer_direct. "
+                        f"op={node.name} scales_hw={onnx_scales_hw}"
+                    )
+                input_hw_shape = ctx.add_intermediate_tensor(
+                    f"{node.name}_input_hw_shape",
+                    dtype="INT32",
+                    shape=[2],
+                )
+                shape_vec = ctx.add_intermediate_tensor(
+                    f"{node.name}_input_shape_vec",
+                    dtype="INT32",
+                    shape=[4],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SHAPE",
+                        inputs=[x_nhwc],
+                        outputs=[shape_vec],
+                        options={"outType": "INT32"},
+                    )
+                )
+                shape_begin = ctx.add_const_tensor(
+                    f"{node.name}_shape_slice_begin",
+                    np.asarray([1], dtype=np.int32),
+                )
+                shape_size = ctx.add_const_tensor(
+                    f"{node.name}_shape_slice_size",
+                    np.asarray([2], dtype=np.int32),
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="SLICE",
+                        inputs=[shape_vec, shape_begin, shape_size],
+                        outputs=[input_hw_shape],
+                    )
+                )
+                scales_const = ctx.add_const_tensor(
+                    f"{node.name}_resize_scales_hw_int",
+                    np.asarray([int(resize_scales_hw_int[0]), int(resize_scales_hw_int[1])], dtype=np.int32),
+                )
+                dynamic_size = ctx.add_intermediate_tensor(
+                    f"{node.name}_resize_size_dynamic",
+                    dtype="INT32",
+                    shape=[2],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="MUL",
+                        inputs=[input_hw_shape, scales_const],
+                        outputs=[dynamic_size],
+                        options={"fusedActivationFunction": "NONE"},
+                    )
+                )
+                size_input_name = dynamic_size
+            else:
+                size_input_name = ctx.add_const_tensor(
+                    f"{node.name}_resize_size",
+                    np.asarray([1, int(out_w)], dtype=np.int32),
+                )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type=tflite_op,
+                    inputs=[x_nhwc, size_input_name],
+                    outputs=[y_nhwc],
+                    options={
+                        "alignCorners": bool(align_corners),
+                        "halfPixelCenters": bool(half_pixel_centers),
+                        "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
+                        "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
+                    },
+                )
+            )
+
+        if channel_first_rank3:
+            y_nwc_name = ctx.add_intermediate_tensor(
+                f"{node.name}_output_nwc",
+                dtype=ctx.get_tensor_dtype(output_name),
+                shape=[int(n), int(out_w), int(c)],
+            )
+            y_nwc_tensor = ctx.model_ir.tensors[y_nwc_name]
+            y_nwc_tensor.shape_signature = [int(v) for v in list(output_rank3_signature_nwc)]
+            y_nwc_tensor.logical_layout = "NWC"
+            y_quant = ctx.model_ir.tensors[output_name].quantization
+            if y_quant is not None:
+                y_nwc_tensor.quantization = _clone_quantization(y_quant)
+            _add_reshape(
+                src_name=y_nhwc,
+                dst_name=y_nwc_name,
+                dst_shape=[int(n), int(out_w), int(c)],
+                dst_signature=output_rank3_signature_nwc,
+            )
+            make_transpose(
+                ctx,
+                y_nwc_name,
+                output_name,
+                [0, 2, 1],
+            )
+        else:
+            _add_reshape(
+                src_name=y_nhwc,
+                dst_name=output_name,
+                dst_shape=[int(v) for v in list(output_shape)],
+                dst_signature=output_signature_rank3,
+            )
+        return
 
     nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
     nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]
@@ -8437,7 +8898,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         )
     else:
         size_input_name = ""
-        dynamic_size_input_name = _build_resize_dynamic_size_input(node, ctx)
+        dynamic_size_input_name = _build_resize_dynamic_size_input(node, ctx, input_rank=4)
         has_dynamic_spatial_input = (
             len(input_signature) == 4 and (int(input_signature[2]) < 0 or int(input_signature[3]) < 0)
         )

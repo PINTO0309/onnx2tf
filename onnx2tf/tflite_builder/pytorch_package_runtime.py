@@ -41,7 +41,9 @@ def _torch_dtype(dtype_name: str) -> torch.dtype:
     return _TORCH_DTYPE_BY_TFLITE_DTYPE[key]
 
 
-def _module_device(module: torch.nn.Module) -> torch.device:
+def _module_device(module: Any) -> torch.device:
+    if torch.jit.is_scripting():
+        return torch.device("cpu")
     for parameter in module.parameters():
         return parameter.device
     for buffer in module.buffers():
@@ -130,11 +132,12 @@ def _align_tensor_to_target_shape(
 ) -> torch.Tensor:
     if target_shape is None:
         return value
-    try:
-        actual_shape = [int(v) for v in list(value.shape)]
-        target = [int(v) for v in list(target_shape)]
-    except Exception:
-        return value
+    actual_shape: List[int] = []
+    for dim in list(value.shape):
+        if not isinstance(dim, int):
+            return value
+        actual_shape.append(int(dim))
+    target = [int(v) for v in list(target_shape)]
     if actual_shape == target:
         return value
     perm = _perm_cl_to_cf(value.ndim)
@@ -976,63 +979,124 @@ def _kernel_softmax(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str,
     executor._assign_outputs(op, [y], env)
 
 
+def _normalize_axes_list(value: Sequence[int], rank: int) -> List[int]:
+    normalized: List[int] = []
+    for raw_axis in list(value):
+        axis = _normalize_dim(int(raw_axis), rank)
+        insert_at = 0
+        while insert_at < len(normalized) and int(normalized[insert_at]) < axis:
+            insert_at += 1
+        if insert_at < len(normalized) and int(normalized[insert_at]) == axis:
+            continue
+        normalized.insert(insert_at, axis)
+    return normalized
+
+
 def _kernel_reduce(
-    fn: Callable[[torch.Tensor, Optional[Tuple[int, ...]], bool], torch.Tensor],
+    fn: Callable[[torch.Tensor, Optional[List[int]], bool], torch.Tensor],
 ) -> Callable[[_GraphExecutor, Dict[str, Any], Dict[str, torch.Tensor]], None]:
     def _impl(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
         x = executor._resolve_tensor(str(op["inputs"][0]), env)
         keepdims = bool(op.get("options", {}).get("keepDims", True))
-        axis: Optional[Tuple[int, ...]] = None
+        axis: Optional[List[int]] = None
         if len(op["inputs"]) >= 2:
             raw_axis = executor._resolve_tensor(str(op["inputs"][1]), env).to(dtype=torch.int64).reshape(-1).tolist()
-            axis = tuple(sorted({_normalize_dim(int(v), x.ndim) for v in raw_axis}))
+            axis = _normalize_axes_list(raw_axis, x.ndim)
         y = fn(x, axis, keepdims)
         y = _align_tensor_to_target_shape(y, _target_output_shape(executor, op))
         executor._assign_outputs(op, [y], env)
     return _impl
 
 
-def _reduce_sum(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_sum(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         return torch.sum(x) if not keepdims else torch.sum(x).reshape([1] * x.ndim)
-    return torch.sum(x, dim=axis, keepdim=keepdims)
+    result = x
+    if keepdims:
+        for dim in axis:
+            result = torch.sum(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.sum(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
+    return result
 
 
-def _reduce_mean(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_mean(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         return torch.mean(x) if not keepdims else torch.mean(x).reshape([1] * x.ndim)
-    return torch.mean(x, dim=axis, keepdim=keepdims)
+    result = x
+    if keepdims:
+        for dim in axis:
+            result = torch.mean(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.mean(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
+    return result
 
 
-def _reduce_max(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_max(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         return torch.amax(x, keepdim=keepdims)
-    return torch.amax(x, dim=axis, keepdim=keepdims)
+    result = x
+    if keepdims:
+        for dim in axis:
+            result = torch.amax(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.amax(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
+    return result
 
 
-def _reduce_min(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_min(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         return torch.amin(x, keepdim=keepdims)
-    return torch.amin(x, dim=axis, keepdim=keepdims)
+    result = x
+    if keepdims:
+        for dim in axis:
+            result = torch.amin(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.amin(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
+    return result
 
 
-def _reduce_prod(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_prod(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         y = torch.prod(x)
         return y if not keepdims else y.reshape([1] * x.ndim)
     result = x
-    for dim in sorted(axis, reverse=True):
-        result = torch.prod(result, dim=dim, keepdim=keepdims)
+    if keepdims:
+        for dim in axis:
+            result = torch.prod(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.prod(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
     return result
 
 
-def _reduce_any(x: torch.Tensor, axis: Optional[Tuple[int, ...]], keepdims: bool) -> torch.Tensor:
+def _reduce_any(x: torch.Tensor, axis: Optional[List[int]], keepdims: bool) -> torch.Tensor:
     if axis is None:
         y = torch.any(x)
         return y if not keepdims else y.reshape([1] * x.ndim)
     result = x
-    for dim in sorted(axis, reverse=True):
-        result = torch.any(result, dim=dim, keepdim=keepdims)
+    if keepdims:
+        for dim in axis:
+            result = torch.any(result, dim=int(dim), keepdim=True)
+        return result
+    reverse_index = len(axis) - 1
+    while reverse_index >= 0:
+        result = torch.any(result, dim=int(axis[reverse_index]), keepdim=False)
+        reverse_index -= 1
     return result
 
 
@@ -1269,10 +1333,48 @@ def _kernel_l2_norm(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str,
     executor._assign_outputs(op, [x / denom], env)
 
 
+def _apply_cumsum(
+    x: torch.Tensor,
+    *,
+    axis: int,
+    exclusive: bool,
+    reverse: bool,
+) -> torch.Tensor:
+    dim = _normalize_dim(int(axis), x.ndim)
+    y = torch.flip(x, dims=[dim]) if reverse else x
+    y = torch.cumsum(y, dim=dim)
+    if exclusive:
+        axis_size = int(y.shape[dim])
+        if axis_size > 0:
+            zeros = torch.zeros_like(torch.narrow(y, dim, 0, 1))
+            prefix = torch.narrow(y, dim, 0, max(axis_size - 1, 0))
+            y = torch.cat([zeros, prefix], dim=dim)
+    if reverse:
+        y = torch.flip(y, dims=[dim])
+    return y
+
+
 def _kernel_cumsum(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
     x = executor._resolve_tensor(str(op["inputs"][0]), env)
     axis = _coerce_scalar_axis(executor._resolve_tensor(str(op["inputs"][1]), env), device=x.device)
-    executor._assign_outputs(op, [torch.cumsum(x, dim=_normalize_dim(axis, x.ndim))], env)
+    options = dict(op.get("options", {}))
+    executor._assign_outputs(
+        op,
+        [
+            _apply_cumsum(
+                x,
+                axis=axis,
+                exclusive=bool(options.get("exclusive", False)),
+                reverse=bool(options.get("reverse", False)),
+            )
+        ],
+        env,
+    )
+
+
+def _kernel_gelu(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
+    x = executor._resolve_tensor(str(op["inputs"][0]), env)
+    executor._assign_outputs(op, [F.gelu(x)], env)
 
 
 def _kernel_one_hot(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
@@ -1648,6 +1750,7 @@ def _register_supported_kernels() -> Dict[str, Callable[[_GraphExecutor, Dict[st
         "ELU": _kernel_unary(F.elu),
         "EXP": _kernel_unary(torch.exp),
         "FLOOR": _kernel_unary(torch.floor),
+        "GELU": _kernel_gelu,
         "LOG": _kernel_unary(torch.log),
         "NEG": _kernel_unary(torch.neg),
         "RELU": _kernel_unary(torch.relu),

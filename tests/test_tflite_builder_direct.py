@@ -110,6 +110,8 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains,
     _optimize_transpose_input_chains_pre_concat_to_single_post_adapter,
+    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains,
+    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains,
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains,
     _optimize_transpose_logistic_muladd_prepost_nhwc_chains,
     _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains,
@@ -144,6 +146,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _reconcile_static_tensor_shapes,
     _realign_dynamic_boundary_shape_signature_map,
     _find_unbound_nonconstant_operator_inputs,
+    _repair_orphan_recurrent_step_tensors,
     _repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
     _resolve_dynamic_reshape_shapes,
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
@@ -163,6 +166,9 @@ from onnx2tf.tflite_builder.preprocess import (
     run_preprocess_pipeline,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
+from onnx2tf.utils.flatbuffer_direct_op_error_report import (
+    generate_op_error_report,
+)
 
 Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
 pytest.importorskip("onnxruntime")
@@ -1279,6 +1285,79 @@ def _make_scatternd_mismatched_updates_dtype_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_scatternd_after_int64_add_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1, 4])
+    updates = helper.make_tensor_value_info("updates", TensorProto.INT64, [1])
+    out = helper.make_tensor_value_info("out", TensorProto.INT64, [1, 4])
+    bias = numpy_helper.from_array(
+        np.asarray([[10, 20, 30, 40]], dtype=np.int64),
+        name="bias",
+    )
+    indices = numpy_helper.from_array(
+        np.asarray([[0, 2]], dtype=np.int64),
+        name="indices",
+    )
+    nodes = [
+        helper.make_node("Add", ["x", "bias"], ["data"], name="Int64AddNode"),
+        helper.make_node(
+            "ScatterND",
+            ["data", "indices", "updates"],
+            ["out"],
+            name="ScatterNDAfterInt64AddNode",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "scatternd_after_int64_add_graph",
+        [x, updates],
+        [out],
+        initializer=[bias, indices],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_abs_after_int64_add_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, 4])
+    bias = numpy_helper.from_array(
+        np.asarray([[1, -2, 3, -4]], dtype=np.int64),
+        name="bias",
+    )
+    nodes = [
+        helper.make_node("Add", ["x", "bias"], ["sum"], name="AbsAfterInt64AddNode_Add"),
+        helper.make_node("Abs", ["sum"], ["y"], name="AbsAfterInt64AddNode_Abs"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "abs_after_int64_add_graph",
+        [x],
+        [y],
+        initializer=[bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_sign_after_int64_add_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, 4])
+    bias = numpy_helper.from_array(
+        np.asarray([[1, -2, 3, -4]], dtype=np.int64),
+        name="bias",
+    )
+    nodes = [
+        helper.make_node("Add", ["x", "bias"], ["sum"], name="SignAfterInt64AddNode_Add"),
+        helper.make_node("Sign", ["sum"], ["y"], name="SignAfterInt64AddNode_Sign"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "sign_after_int64_add_graph",
+        [x],
+        [y],
+        initializer=[bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
 def _make_unique_axis0_rank2_output0_only_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [6, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT64, ["M", 2])
@@ -2101,6 +2180,23 @@ def _make_average_pool_exclude_pad_model() -> onnx.ModelProto:
         count_include_pad=0,
     )
     graph = helper.make_graph([node], "average_pool_exclude_pad_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_average_pool_include_pad_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+    node = helper.make_node(
+        "AveragePool",
+        ["x"],
+        ["y"],
+        name="AveragePoolIncludePadNode",
+        kernel_shape=[3, 3],
+        strides=[2, 2],
+        pads=[1, 1, 1, 1],
+        count_include_pad=1,
+    )
+    graph = helper.make_graph([node], "average_pool_include_pad_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -4241,6 +4337,50 @@ def _make_resize_dynamic_sizes_omitted_optional_inputs_model() -> onnx.ModelProt
         [y],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_resize_1d_dynamic_sizes_omitted_optional_inputs_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, "W"])
+    ref = helper.make_tensor_value_info("ref", TensorProto.FLOAT, ["N", 1, "RW"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 1, "RW"])
+    nodes = [
+        helper.make_node("Shape", ["ref"], ["resize_1d_dyn_sizes"], name="Resize1DDynShapeRef"),
+        helper.make_node(
+            "Resize",
+            ["x", "", "", "resize_1d_dyn_sizes"],
+            ["y"],
+            name="Resize1DDynSizesNodeOmitted",
+            mode="nearest",
+            coordinate_transformation_mode="asymmetric",
+            nearest_mode="floor",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "resize_1d_dynamic_sizes_omitted_optional_inputs_graph",
+        [x, ref],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_unseeded_random_accuracy_skip_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    det = helper.make_tensor_value_info("det", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
+    graph = helper.make_graph(
+        [
+            helper.make_node("Abs", ["x"], ["det"], name="DetAbsNode"),
+            helper.make_node("RandomNormalLike", ["x"], ["rand"], name="UnseededRandomNode"),
+            helper.make_node("Add", ["rand", "x"], ["y"], name="RandomAddNode"),
+        ],
+        "unseeded_random_accuracy_skip_graph",
+        [x],
+        [det, y],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 19)])
+    model.ir_version = 10
+    return model
 
 
 def _make_qlinear_sigmoid_model() -> onnx.ModelProto:
@@ -11575,6 +11715,164 @@ def test_flatbuffer_direct_repair_unbound_split_data_input_with_layout_transpose
     assert len(after_issues) == 0
 
 
+def test_flatbuffer_direct_repair_orphan_recurrent_step_tensors() -> None:
+    model_ir = ModelIR(name="repair_orphan_recurrent_step_tensors_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["hidden_out", "seq"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 5],
+        shape_signature=[1, 5],
+    )
+    model_ir.tensors["GRU_1_gru_fw_h_step_8"] = TensorIR(
+        name="GRU_1_gru_fw_h_step_8",
+        dtype="FLOAT32",
+        shape=[1, 1, 5],
+        shape_signature=[1, 1, 5],
+    )
+    model_ir.tensors["GRU_1_gru_fw_h_step_9"] = TensorIR(
+        name="GRU_1_gru_fw_h_step_9",
+        dtype="FLOAT32",
+        shape=[1, 1, 5],
+        shape_signature=[1, 1, 5],
+    )
+    model_ir.tensors["GRU_1_gru_fw_h_step_shape_9"] = TensorIR(
+        name="GRU_1_gru_fw_h_step_shape_9",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 1, 5], dtype=np.int32),
+    )
+    model_ir.tensors["hidden_out"] = TensorIR(
+        name="hidden_out",
+        dtype="FLOAT32",
+        shape=[1, 1, 5],
+        shape_signature=[1, 1, 5],
+    )
+    model_ir.tensors["seq"] = TensorIR(
+        name="seq",
+        dtype="FLOAT32",
+        shape=[2, 1, 5],
+        shape_signature=[2, 1, 5],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["x", "GRU_1_gru_fw_h_step_shape_9"],
+                outputs=["hidden_out"],
+                options={"newShape": [1, 1, 5]},
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["GRU_1_gru_fw_h_step_8", "GRU_1_gru_fw_h_step_9"],
+                outputs=["seq"],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            ),
+        ]
+    )
+
+    before_issues = _find_unbound_nonconstant_operator_inputs(model_ir)
+    assert len(before_issues) == 2
+    assert {str(issue["tensor_name"]) for issue in before_issues} == {
+        "GRU_1_gru_fw_h_step_8",
+        "GRU_1_gru_fw_h_step_9",
+    }
+
+    stats = _repair_orphan_recurrent_step_tensors(model_ir)
+    assert int(stats["repaired_orphan_recurrent_step_tensors"]) == 1
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert list(concat_op.inputs) == ["GRU_1_gru_fw_h_step_8", "hidden_out"]
+    assert "GRU_1_gru_fw_h_step_9" not in model_ir.tensors
+
+
+def test_flatbuffer_direct_lower_gru_keeps_final_step_alias_bound() -> None:
+    x = helper.make_tensor_value_info("data_input", TensorProto.FLOAT, [1, 3, 10])
+    init_hidden = helper.make_tensor_value_info("init_hidden", TensorProto.FLOAT, [1, 1, 5])
+    preds = helper.make_tensor_value_info("preds", TensorProto.FLOAT, [1, 5, 10])
+    hidden_out = helper.make_tensor_value_info("hidden_out", TensorProto.FLOAT, [1, 1, 5])
+
+    w = helper.make_tensor(
+        "89",
+        TensorProto.FLOAT,
+        [1, 15, 3],
+        (np.arange(45, dtype=np.float32).reshape(1, 15, 3) / 50.0).reshape(-1).tolist(),
+    )
+    r = helper.make_tensor(
+        "90",
+        TensorProto.FLOAT,
+        [1, 15, 5],
+        (np.arange(75, dtype=np.float32).reshape(1, 15, 5) / 100.0).reshape(-1).tolist(),
+    )
+    b = helper.make_tensor(
+        "91",
+        TensorProto.FLOAT,
+        [1, 30],
+        np.zeros((1, 30), dtype=np.float32).reshape(-1).tolist(),
+    )
+    squeeze_axes = helper.make_tensor(
+        "69",
+        TensorProto.INT64,
+        [1],
+        [1],
+    )
+    transposed = helper.make_node(
+        "Transpose",
+        ["data_input"],
+        ["6"],
+        name="Transpose_0",
+        perm=[2, 0, 1],
+    )
+    gru = helper.make_node(
+        "GRU",
+        ["6", "89", "90", "91", "", "init_hidden"],
+        ["67", "hidden_out"],
+        name="GRU_1",
+        hidden_size=5,
+        direction="forward",
+        linear_before_reset=1,
+    )
+    squeezed = helper.make_node(
+        "Squeeze",
+        ["67", "69"],
+        ["70"],
+        name="Squeeze_3",
+    )
+    preds_transpose = helper.make_node(
+        "Transpose",
+        ["70"],
+        ["preds"],
+        name="Transpose_4",
+        perm=[1, 2, 0],
+    )
+    graph = helper.make_graph(
+        [transposed, gru, squeezed, preds_transpose],
+        "gru_hidden_out_alias_graph",
+        [x, init_hidden],
+        [preds, hidden_out],
+        initializer=[w, r, b, squeeze_axes],
+    )
+    onnx_model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    onnx_model.ir_version = 10
+
+    model_ir = lower_onnx_to_ir(
+        onnx_model,
+        output_file_name="gru_hidden_out_alias_test",
+        show_progress=False,
+    )
+    issues = _find_unbound_nonconstant_operator_inputs(model_ir)
+    assert len(issues) == 0
+
+    concat_op = next(
+        op for op in model_ir.operators
+        if str(op.op_type) == "CONCATENATION" and str(op.outputs[0]) == "GRU_1_gru_fw_seq"
+    )
+    assert list(concat_op.inputs)[-1] == "hidden_out"
+    assert "GRU_1_gru_fw_h_step_9" not in model_ir.tensors
+
+
 def test_flatbuffer_direct_replace_unsupported_split_with_slice_inserts_cast_on_dtype_mismatch() -> None:
     model_ir = ModelIR(name="unsupported_split_cast_fallback_test")
     model_ir.inputs = ["state_in"]
@@ -12606,6 +12904,27 @@ def test_flatbuffer_direct_resize_dynamic_sizes_with_omitted_optional_inputs_low
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("RESIZE_NEAREST_NEIGHBOR") == 1
     assert op_types.count("CUSTOM") == 0
+
+    resize_op = next(op for op in model_ir.operators if str(op.op_type) == "RESIZE_NEAREST_NEIGHBOR")
+    size_input_name = str(resize_op.inputs[1])
+    size_tensor = model_ir.tensors[size_input_name]
+    assert str(size_tensor.dtype).upper() == "INT32"
+    assert size_tensor.data is None
+
+
+def test_flatbuffer_direct_resize_1d_dynamic_sizes_with_omitted_optional_inputs_lowering() -> None:
+    model = _make_resize_1d_dynamic_sizes_omitted_optional_inputs_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="resize_1d_dynamic_sizes_omitted_optional_inputs_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("RESIZE_NEAREST_NEIGHBOR") == 1
+    assert op_types.count("CUSTOM") == 0
+    assert op_types.count("RESHAPE") >= 2
 
     resize_op = next(op for op in model_ir.operators if str(op.op_type) == "RESIZE_NEAREST_NEIGHBOR")
     size_input_name = str(resize_op.inputs[1])
@@ -19958,8 +20277,286 @@ def test_flatbuffer_direct_transpose_split_mixed_pre_concat_single_post_adapter_
         str(op.op_type) == "TRANSPOSE" and str(op.outputs[0]) in {"s1_nhwc", "b0_nchw", "b1_nchw", "b2_nchw"}
         for op in model_ir.operators
     )
-    assert list(model_ir.tensors["s0_nchw"].shape) == [1, 3, 5, 4]
-    assert list(model_ir.tensors["s1_nchw"].shape) == [1, 3, 5, 6]
+
+
+def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optimized() -> None:
+    model_ir = ModelIR(name="transpose_relu_split_all_outputs_to_nhwc_test")
+    model_ir.inputs = ["src_nhwc"]
+    model_ir.outputs = ["out0", "out1"]
+    model_ir.tensors["to_nchw_perm"] = TensorIR(
+        name="to_nchw_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["to_nhwc_perm"] = TensorIR(
+        name="to_nhwc_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["split_axis"] = TensorIR(
+        name="split_axis",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["src_nhwc"] = TensorIR(
+        name="src_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 6],
+        shape_signature=[1, 5, 7, 6],
+    )
+    model_ir.tensors["src_nchw"] = TensorIR(
+        name="src_nchw",
+        dtype="FLOAT32",
+        shape=[1, 6, 5, 7],
+        shape_signature=[1, 6, 5, 7],
+    )
+    model_ir.tensors["relu_out"] = TensorIR(
+        name="relu_out",
+        dtype="FLOAT32",
+        shape=[1, 6, 5, 7],
+        shape_signature=[1, 6, 5, 7],
+    )
+    model_ir.tensors["split0_nchw"] = TensorIR(
+        name="split0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 2, 5, 7],
+        shape_signature=[1, 2, 5, 7],
+    )
+    model_ir.tensors["split1_nchw"] = TensorIR(
+        name="split1_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
+    )
+    model_ir.tensors["split0_nhwc"] = TensorIR(
+        name="split0_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 2],
+        shape_signature=[1, 5, 7, 2],
+    )
+    model_ir.tensors["split1_nhwc"] = TensorIR(
+        name="split1_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 4],
+        shape_signature=[1, 5, 7, 4],
+    )
+    model_ir.tensors["out0"] = TensorIR(
+        name="out0",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 2],
+        shape_signature=[1, 5, 7, 2],
+    )
+    model_ir.tensors["out1"] = TensorIR(
+        name="out1",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 4],
+        shape_signature=[1, 5, 7, 4],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["src_nhwc", "to_nchw_perm"], outputs=["src_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["src_nchw"], outputs=["relu_out"]),
+        OperatorIR(op_type="SPLIT", inputs=["split_axis", "relu_out"], outputs=["split0_nchw", "split1_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["split0_nchw", "to_nhwc_perm"], outputs=["split0_nhwc"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["split1_nchw", "to_nhwc_perm"], outputs=["split1_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["split0_nhwc"], outputs=["out0"]),
+        OperatorIR(op_type="AVERAGE_POOL_2D", inputs=["split1_nhwc"], outputs=["out1"], options={"padding": "VALID", "strideH": 1, "strideW": 1, "filterHeight": 1, "filterWidth": 1, "fusedActivationFunction": "NONE"}),
+    ]
+
+    stats = _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_relu_split_all_outputs_to_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+
+    relu_op = model_ir.operators[0]
+    assert str(relu_op.op_type) == "RELU"
+    assert relu_op.inputs == ["src_nhwc"]
+
+    split_op = next(op for op in model_ir.operators if str(op.op_type) == "SPLIT")
+    split_axis_tensor = model_ir.tensors[str(split_op.inputs[0])]
+    np.testing.assert_array_equal(
+        np.asarray(split_axis_tensor.data, dtype=np.int32).reshape(-1),
+        np.asarray([3], dtype=np.int32),
+    )
+    assert split_op.inputs[1] == "relu_out"
+
+    consumer_inputs = [list(op.inputs) for op in model_ir.operators if str(op.op_type) in {"RELU", "AVERAGE_POOL_2D"}]
+    assert ["split0_nchw"] in consumer_inputs
+    assert ["split1_nchw"] in consumer_inputs
+    assert list(model_ir.tensors["relu_out"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 2]
+    assert list(model_ir.tensors["split1_nchw"].shape) == [1, 5, 7, 4]
+
+
+def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_optimized() -> None:
+    model_ir = ModelIR(name="transpose_relu_split_conv_relu_concat_posttranspose_test")
+    model_ir.inputs = ["src_nhwc"]
+    model_ir.outputs = ["sink"]
+    model_ir.tensors["to_nchw_perm"] = TensorIR(
+        name="to_nchw_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["to_nhwc_perm"] = TensorIR(
+        name="to_nhwc_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["split_axis"] = TensorIR(
+        name="split_axis",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["src_nhwc"] = TensorIR(
+        name="src_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 6],
+        shape_signature=[1, 5, 7, 6],
+    )
+    model_ir.tensors["src_nchw"] = TensorIR(
+        name="src_nchw",
+        dtype="FLOAT32",
+        shape=[1, 6, 5, 7],
+        shape_signature=[1, 6, 5, 7],
+    )
+    model_ir.tensors["relu0_nchw"] = TensorIR(
+        name="relu0_nchw",
+        dtype="FLOAT32",
+        shape=[1, 6, 5, 7],
+        shape_signature=[1, 6, 5, 7],
+    )
+    model_ir.tensors["keep_nchw"] = TensorIR(
+        name="keep_nchw",
+        dtype="FLOAT32",
+        shape=[1, 2, 5, 7],
+        shape_signature=[1, 2, 5, 7],
+    )
+    model_ir.tensors["branch_nchw"] = TensorIR(
+        name="branch_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
+    )
+    model_ir.tensors["branch_nhwc"] = TensorIR(
+        name="branch_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 4],
+        shape_signature=[1, 5, 7, 4],
+    )
+    model_ir.tensors["conv_out_nhwc"] = TensorIR(
+        name="conv_out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 4],
+        shape_signature=[1, 5, 7, 4],
+    )
+    model_ir.tensors["conv_out_nchw"] = TensorIR(
+        name="conv_out_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
+    )
+    model_ir.tensors["relu1_nchw"] = TensorIR(
+        name="relu1_nchw",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
+    )
+    model_ir.tensors["cat_nchw"] = TensorIR(
+        name="cat_nchw",
+        dtype="FLOAT32",
+        shape=[1, 6, 5, 7],
+        shape_signature=[1, 6, 5, 7],
+    )
+    model_ir.tensors["out_nhwc"] = TensorIR(
+        name="out_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 6],
+        shape_signature=[1, 5, 7, 6],
+    )
+    model_ir.tensors["sink"] = TensorIR(
+        name="sink",
+        dtype="FLOAT32",
+        shape=[1, 5, 7, 6],
+        shape_signature=[1, 5, 7, 6],
+    )
+    model_ir.tensors["conv_filter"] = TensorIR(
+        name="conv_filter",
+        dtype="FLOAT32",
+        shape=[4, 1, 1, 4],
+        shape_signature=[4, 1, 1, 4],
+        data=np.zeros((4, 1, 1, 4), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["conv_bias"] = TensorIR(
+        name="conv_bias",
+        dtype="FLOAT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.zeros((4,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["src_nhwc", "to_nchw_perm"], outputs=["src_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["src_nchw"], outputs=["relu0_nchw"]),
+        OperatorIR(op_type="SPLIT", inputs=["split_axis", "relu0_nchw"], outputs=["keep_nchw", "branch_nchw"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["branch_nchw", "to_nhwc_perm"], outputs=["branch_nhwc"]),
+        OperatorIR(op_type="CONV_2D", inputs=["branch_nhwc", "conv_filter", "conv_bias"], outputs=["conv_out_nhwc"], options={"padding": "VALID", "strideH": 1, "strideW": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["conv_out_nhwc", "to_nchw_perm"], outputs=["conv_out_nchw"]),
+        OperatorIR(op_type="RELU", inputs=["conv_out_nchw"], outputs=["relu1_nchw"]),
+        OperatorIR(op_type="CONCATENATION", inputs=["relu1_nchw", "keep_nchw"], outputs=["cat_nchw"], options={"axis": 1, "fusedActivationFunction": "NONE"}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["cat_nchw", "to_nhwc_perm"], outputs=["out_nhwc"]),
+        OperatorIR(op_type="RELU", inputs=["out_nhwc"], outputs=["sink"]),
+    ]
+
+    stats = _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
+    assert stats["optimized_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains"] == 1
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE") == 0
+
+    relu0_op = next(op for op in model_ir.operators if str(op.outputs[0]) == "relu0_nchw")
+    assert relu0_op.inputs == ["src_nhwc"]
+
+    split_op = next(op for op in model_ir.operators if str(op.op_type) == "SPLIT")
+    split_axis_tensor = model_ir.tensors[str(split_op.inputs[0])]
+    np.testing.assert_array_equal(
+        np.asarray(split_axis_tensor.data, dtype=np.int32).reshape(-1),
+        np.asarray([3], dtype=np.int32),
+    )
+
+    conv_op = next(op for op in model_ir.operators if str(op.op_type) == "CONV_2D")
+    assert conv_op.inputs[0] == "branch_nchw"
+
+    relu1_op = next(op for op in model_ir.operators if str(op.outputs[0]) == "relu1_nchw")
+    assert relu1_op.inputs == ["conv_out_nhwc"]
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert concat_op.inputs == ["relu1_nchw", "keep_nchw"]
+
+    assert list(model_ir.tensors["relu0_nchw"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["branch_nchw"].shape) == [1, 5, 7, 4]
+    assert list(model_ir.tensors["keep_nchw"].shape) == [1, 5, 7, 2]
+    assert list(model_ir.tensors["relu1_nchw"].shape) == [1, 5, 7, 4]
+    assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 6]
 
 
 def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> None:
@@ -28706,6 +29303,20 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
     assert op_types.count("DIV") == 1
 
 
+def test_flatbuffer_direct_average_pool_include_pad_materializes_zero_padding() -> None:
+    model = _make_average_pool_include_pad_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="average_pool_include_pad_padding_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("DIV") == 0
+    assert "PADV2" in op_types or "PAD" in op_types
+
+
 def test_flatbuffer_direct_average_pool_ceil_mode_exclude_pad_uses_builtin_ops() -> None:
     model = _make_average_pool_ceil_mode_exclude_pad_model()
     register_default_preprocess_rules()
@@ -28936,6 +29547,51 @@ def test_flatbuffer_direct_average_pool_exclude_pad_runtime_match() -> None:
         if tuple(y.shape) == (1, 2, 2, 1):
             y = np.transpose(y, (0, 3, 1, 2))
         ref = _reference_avgpool_exclude_pad(x)
+        np.testing.assert_allclose(y, ref, rtol=0.0, atol=1e-6)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_average_pool_include_pad_runtime_match() -> None:
+    def _reference_avgpool_include_pad(x_nchw: np.ndarray) -> np.ndarray:
+        out = np.zeros((1, 1, 2, 2), dtype=np.float32)
+        for oh in range(2):
+            for ow in range(2):
+                h_start = int(oh * 2 - 1)
+                w_start = int(ow * 2 - 1)
+                total = 0.0
+                for ih in range(h_start, h_start + 3):
+                    for iw in range(w_start, w_start + 3):
+                        if 0 <= ih < 4 and 0 <= iw < 4:
+                            total += float(x_nchw[0, 0, ih, iw])
+                out[0, 0, oh, ow] = total / 9.0
+        return out
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_average_pool_include_pad_model()
+        model_path = _save_model(tmpdir, "average_pool_include_pad", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, out_dir, "flatbuffer_direct")
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        x = np.asarray(
+            [[[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0], [13.0, 14.0, 15.0, 16.0]]]],
+            dtype=np.float32,
+        )
+        input_shape = tuple(int(v) for v in input_details[0]["shape"])
+        if input_shape == tuple(x.shape):
+            x_feed = x
+        elif input_shape == (1, 4, 4, 1):
+            x_feed = np.transpose(x, (0, 2, 3, 1))
+        else:
+            raise AssertionError(f"Unexpected input shape: {input_shape}")
+        interpreter.set_tensor(input_details[0]["index"], x_feed)
+        interpreter.invoke()
+        y = interpreter.get_tensor(output_details[0]["index"])
+        if tuple(y.shape) == (1, 2, 2, 1):
+            y = np.transpose(y, (0, 3, 1, 2))
+        ref = _reference_avgpool_include_pad(x)
         np.testing.assert_allclose(y, ref, rtol=0.0, atol=1e-6)
 
 
@@ -33901,6 +34557,62 @@ def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_accuracy_and_op_error_reports_skip_unseeded_random_outputs() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_unseeded_random_accuracy_skip_model()
+        model_path = _save_model(tmpdir, "unseeded_random_eval", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            eval_with_onnx=True,
+            eval_num_samples=2,
+            report_op_coverage=True,
+        )
+
+        with open(os.path.join(out_dir, "unseeded_random_eval_accuracy_report.json"), "r", encoding="utf-8") as f:
+            accuracy_report = json.load(f)
+        assert accuracy_report["evaluation_pass"] is True
+        assert accuracy_report["compared_output_names"] == ["det"]
+        assert accuracy_report["skipped_output_names"] == ["y"]
+        assert accuracy_report["skipped_output_reasons"]["y"].startswith(
+            "depends_on_unseeded_random_op: UnseededRandomNode(RandomNormalLike)"
+        )
+        assert accuracy_report["allclose_summary"]["total"] == 2
+        assert accuracy_report["per_output_metrics"]["det"]["status"] == "compared"
+        assert accuracy_report["per_output_metrics"]["y"]["status"] == "skipped"
+        assert accuracy_report["per_output_metrics"]["y"]["allclose"]["total"] == 0
+        assert accuracy_report["per_output_metrics"]["y"]["allclose"]["pass"] is None
+
+        op_error_report = generate_op_error_report(
+            onnx_path=model_path,
+            tflite_path=tflite_path,
+            output_dir=out_dir,
+            tensor_correspondence_report=os.path.join(
+                out_dir,
+                "unseeded_random_eval_tensor_correspondence_report.json",
+            ),
+            verbose=False,
+        )["report"]
+        records_by_tensor = {
+            record["tensor_name"]: record
+            for record in op_error_report["records"]
+        }
+        assert records_by_tensor["det"]["status"] == "compared"
+        assert records_by_tensor["rand"]["status"] == "skipped"
+        assert records_by_tensor["rand"]["reason"].startswith(
+            "depends_on_unseeded_random_op: UnseededRandomNode(RandomNormalLike)"
+        )
+        assert records_by_tensor["y"]["status"] == "skipped"
+        assert records_by_tensor["y"]["reason"].startswith(
+            "depends_on_unseeded_random_op: UnseededRandomNode(RandomNormalLike)"
+        )
+        assert op_error_report["summary"]["skipped_nondeterministic_count"] == 2
+        assert {item["tensor_name"] for item in op_error_report["top_errors"]} == {"det"}
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         model = _make_gemm_model()
@@ -34621,6 +35333,160 @@ def test_flatbuffer_direct_scatternd_mismatched_updates_dtype_builtin_smoke() ->
         out = interpreter.get_tensor(output_details[0]["index"])
 
         expected = np.asarray([[10, 20, 7, 40]], dtype=np.int64)
+        np.testing.assert_array_equal(out, expected)
+
+
+def test_flatbuffer_direct_scatternd_after_int64_add_lowers_to_builtin() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_scatternd_after_int64_add_model(),
+        output_file_name="scatternd_after_int64_add_ir_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert op_types.count("SCATTER_ND") == 2
+
+    final_cast_ops = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CAST"
+        and str(op.options.get("inDataType", "")).upper() == "INT32"
+        and str(op.options.get("outDataType", "")).upper() == "INT64"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == "out"
+    ]
+    assert len(final_cast_ops) == 1
+
+
+def test_flatbuffer_direct_abs_after_int64_add_preserves_unary_runtime_dtype_match() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_abs_after_int64_add_model(),
+        output_file_name="abs_after_int64_add_ir_test",
+    )
+    abs_ops = [op for op in model_ir.operators if str(op.op_type) == "ABS"]
+    assert len(abs_ops) == 1
+    abs_op = abs_ops[0]
+    abs_input = model_ir.tensors[str(abs_op.inputs[0])]
+    abs_output = model_ir.tensors[str(abs_op.outputs[0])]
+    assert abs_input.dtype == "INT32"
+    assert abs_output.dtype == "INT32"
+
+    final_cast_ops = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CAST"
+        and str(op.options.get("inDataType", "")).upper() == "INT32"
+        and str(op.options.get("outDataType", "")).upper() == "INT64"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == "y"
+    ]
+    assert len(final_cast_ops) == 1
+
+
+def test_flatbuffer_direct_sign_after_int64_add_preserves_unary_runtime_dtype_match() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_sign_after_int64_add_model(),
+        output_file_name="sign_after_int64_add_ir_test",
+    )
+    sign_ops = [op for op in model_ir.operators if str(op.op_type) == "SIGN"]
+    assert len(sign_ops) == 1
+    sign_op = sign_ops[0]
+    sign_input = model_ir.tensors[str(sign_op.inputs[0])]
+    sign_output = model_ir.tensors[str(sign_op.outputs[0])]
+    assert sign_input.dtype == "INT32"
+    assert sign_output.dtype == "INT32"
+
+    final_cast_ops = [
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CAST"
+        and str(op.options.get("inDataType", "")).upper() == "INT32"
+        and str(op.options.get("outDataType", "")).upper() == "INT64"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == "y"
+    ]
+    assert len(final_cast_ops) == 1
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_abs_after_int64_add_builtin_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_abs_after_int64_add_model()
+        model_path = _save_model(tmpdir, "abs_after_int64_add", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        by_name = {d["name"]: d for d in input_details}
+
+        x = np.asarray([[-5, 2, -1, 9]], dtype=np.int64)
+        interpreter.set_tensor(by_name["x"]["index"], x)
+        interpreter.invoke()
+        out = interpreter.get_tensor(output_details[0]["index"])
+
+        expected = np.abs(x + np.asarray([[1, -2, 3, -4]], dtype=np.int64))
+        np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_sign_after_int64_add_builtin_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_sign_after_int64_add_model()
+        model_path = _save_model(tmpdir, "sign_after_int64_add", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        by_name = {d["name"]: d for d in input_details}
+
+        x = np.asarray([[-5, 2, -1, 9]], dtype=np.int64)
+        interpreter.set_tensor(by_name["x"]["index"], x)
+        interpreter.invoke()
+        out = interpreter.get_tensor(output_details[0]["index"])
+
+        expected = np.sign(x + np.asarray([[1, -2, 3, -4]], dtype=np.int64)).astype(np.int64)
+        np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_scatternd_after_int64_add_builtin_smoke() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_scatternd_after_int64_add_model()
+        model_path = _save_model(tmpdir, "scatternd_after_int64_add", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            "flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        by_name = {d["name"]: d for d in input_details}
+
+        x = np.asarray([[1, 2, 3, 4]], dtype=np.int64)
+        updates = np.asarray([7], dtype=np.int64)
+        interpreter.set_tensor(by_name["x"]["index"], x)
+        interpreter.set_tensor(by_name["updates"]["index"], updates)
+        interpreter.invoke()
+        out = interpreter.get_tensor(output_details[0]["index"])
+
+        expected = np.asarray([[11, 22, 7, 44]], dtype=np.int64)
         np.testing.assert_array_equal(out, expected)
 
 
