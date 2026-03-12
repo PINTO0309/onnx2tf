@@ -388,6 +388,26 @@ def _shared_tensor_layout(
     return first
 
 
+def _can_emit_direct_torch_reshape_shape(
+    shape_values: Sequence[int],
+    *,
+    allow_zero: bool,
+) -> bool:
+    values = [int(v) for v in list(shape_values)]
+    if values.count(-1) > 1:
+        return False
+    for dim_value in values:
+        if dim_value == -1:
+            continue
+        if dim_value == 0:
+            if allow_zero:
+                continue
+            return False
+        if dim_value < 0:
+            return False
+    return True
+
+
 def _is_degenerate_sequence_like_rank4_or_rank5_tensor(
     tensor: Optional[TensorIR],
 ) -> bool:
@@ -3845,6 +3865,7 @@ def _write_generated_package_common_files(
     )
     if runtime_source is None:
         runtime_source = (
+            "# pyright: reportArgumentType=false, reportCallIssue=false\n"
             "from onnx2tf.tflite_builder.pytorch_package_runtime import load_generated_model_package\n"
         )
     (package_dir / "runtime.py").write_text(
@@ -3856,6 +3877,7 @@ def _write_generated_package_common_files(
 def _write_wrapper_model_file(output_folder_path: str) -> None:
     package_dir = Path(output_folder_path)
     (package_dir / "model.py").write_text(
+        "# pyright: reportArgumentType=false, reportCallIssue=false\n"
         "from __future__ import annotations\n\n"
         "from typing import Any, Callable, cast\n\n"
         "from pathlib import Path\n\n"
@@ -3890,6 +3912,7 @@ _RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] = {
 
 def _build_native_runtime_source(helper_source: str) -> str:
     runtime_source = (
+        "# pyright: reportArgumentType=false, reportCallIssue=false\n"
         "from pathlib import Path\n"
         "import re\n"
         "from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple\n\n"
@@ -4168,6 +4191,7 @@ def _write_native_model_file(
             if len(perm) != 4:
                 return None
             in_shape = [int(in_shape[idx]) for idx in perm]
+            out_shape = [int(out_shape[idx]) for idx in perm]
         stride_hw = [
             max(1, int((options or {}).get("strideH", 1))),
             max(1, int((options or {}).get("strideW", 1))),
@@ -5067,10 +5091,7 @@ def _write_native_model_file(
                     fused_block_activation, fused_block_negative_slope = _conv_block_activation_config(activation_op)
                     fused_block_output_name = str(activation_op.outputs[0])
                     skipped_op_indices.add(int(output_consumer_indices[0]))
-        use_conv_block = (
-            op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
-            and (fused_block_pad is not None or fused_block_activation != "none")
-        )
+        use_conv_block = op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
         if use_conv_block:
             attr_base = "conv_block"
             attr_index = int(module_attr_counts.get(attr_base, 0))
@@ -5329,9 +5350,10 @@ def _write_native_model_file(
         tensor = model_ir.tensors.get(str(tensor_name), None)
         literal = _python_literal_for_constant_tensor(tensor) if tensor is not None else None
         if tensor is not None and literal is not None:
+            runtime_imports.add("_module_device")
             return (
                 f"torch.as_tensor({literal}, dtype={_torch_dtype_literal(str(tensor.dtype).upper())}, "
-                "device=self._device())"
+                "device=_module_device(self))"
             )
         raise ModelIRPyTorchExportError(
             "Native PyTorch-like model.py codegen could not resolve a tensor expression. "
@@ -5522,6 +5544,16 @@ def _write_native_model_file(
     def _pad_literal_expr(tensor_name: str) -> Optional[str]:
         return _torch_pad_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
 
+    def _constant_pad_pairs(tensor_name: str) -> Optional[List[List[int]]]:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None or not isinstance(tensor.data, np.ndarray):
+            return None
+        try:
+            values = np.asarray(tensor.data, dtype=np.int64).reshape(-1, 2)
+        except Exception:
+            return None
+        return [[int(v) for v in list(row)] for row in values.tolist()]
+
     def _scalar_literal_expr(tensor_name: str) -> Optional[str]:
         return _scalar_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
 
@@ -5557,6 +5589,50 @@ def _write_native_model_file(
         if key == "TANH":
             return [f"{var_name} = torch.tanh({var_name})"]
         return [f"{var_name} = _apply_fused_activation({var_name}, {fused!r})"]
+
+    def _static_mirror_pad_expr(
+        *,
+        input_tensor_name: str,
+        pads_tensor_name: str,
+    ) -> Optional[str]:
+        pad_pairs = _constant_pad_pairs(pads_tensor_name)
+        input_tensor = model_ir.tensors.get(str(input_tensor_name), None)
+        if pad_pairs is None or input_tensor is None:
+            return None
+        rank = len(list(input_tensor.shape))
+        if rank <= 0:
+            return None
+        if len(pad_pairs) < rank:
+            pad_pairs = ([[0, 0]] * (rank - len(pad_pairs))) + pad_pairs
+        elif len(pad_pairs) > rank:
+            pad_pairs = pad_pairs[-rank:]
+        non_zero_axes = [
+            idx for idx, (before, after) in enumerate(pad_pairs)
+            if int(before) != 0 or int(after) != 0
+        ]
+        input_expr = _tensor_expr(str(input_tensor_name))
+        if len(non_zero_axes) == 0:
+            return input_expr
+        if len(non_zero_axes) > 3:
+            return None
+        keep_axes = [idx for idx in range(rank) if idx not in non_zero_axes]
+        perm = keep_axes + non_zero_axes
+        expr = input_expr
+        if perm != list(range(rank)):
+            runtime_imports.add("_torch_permute")
+            expr = f"_torch_permute({expr}, {repr(perm)})"
+        torch_pad: List[int] = []
+        for axis in reversed(non_zero_axes):
+            before, after = pad_pairs[axis]
+            torch_pad.extend([int(before), int(after)])
+        expr = f"F.pad({expr}, {repr(torch_pad)}, mode='reflect')"
+        if perm == list(range(rank)):
+            return expr
+        inverse_perm = [0] * rank
+        for permuted_axis, original_axis in enumerate(perm):
+            inverse_perm[int(original_axis)] = int(permuted_axis)
+        runtime_imports.add("_torch_permute")
+        return f"_torch_permute({expr}, {repr(inverse_perm)})"
 
     def _is_sequential_single_input_graph() -> bool:
         if len(model_ir.inputs) != 1 or len(model_ir.outputs) != 1:
@@ -5905,6 +5981,7 @@ def _write_native_model_file(
             reshape_input_expr = _tensor_expr(str(op.inputs[0]))
             reshape_input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
             reshape_output_tensor = model_ir.tensors.get(str(outputs[0]), None)
+            reshape_allow_zero = bool(op.options.get("allowZero", False))
             reshape_input_shape = None if reshape_input_tensor is None else [int(v) for v in list(reshape_input_tensor.shape)]
             reshape_output_shape = None if reshape_output_tensor is None else [int(v) for v in list(reshape_output_tensor.shape)]
             reshape_output_preferred_shape = _preferred_reshape_target_values(reshape_output_tensor)
@@ -5931,44 +6008,55 @@ def _write_native_model_file(
                 reshape_pre_perm = list(reshape_feature_last_target[0])
             if reshape_pre_perm is not None:
                 reshape_input_expr = f"{reshape_input_expr}.permute({', '.join(str(int(v)) for v in reshape_pre_perm)}).contiguous()"
+            shape_is_tensor_expr = False
             if reshape_feature_last_target is not None:
                 shape_expr = repr([int(v) for v in list(reshape_feature_last_target[1])])
             elif reshape_special_plan is not None and reshape_special_plan.get("reshape_shape", None) is not None:
                 shape_expr = repr([int(v) for v in list(reshape_special_plan["reshape_shape"])])
+            elif len(op.inputs) >= 2:
+                const_shape_values = _constant_int_list(model_ir.tensors.get(str(op.inputs[1]), None))
+                if const_shape_values is not None:
+                    direct_shape_values = [int(v) for v in list(const_shape_values)]
+                    if _can_emit_direct_torch_reshape_shape(
+                        direct_shape_values,
+                        allow_zero=reshape_allow_zero,
+                    ):
+                        shape_expr = repr(direct_shape_values)
+                    else:
+                        runtime_imports.add("_resolve_reshape_shape")
+                        shape_expr = (
+                            f"_resolve_reshape_shape({repr(direct_shape_values)}, "
+                            f"{reshape_input_expr}, allow_zero={reshape_allow_zero})"
+                        )
+                else:
+                    shape_is_tensor_expr = True
+                    if reshape_allow_zero:
+                        shape_expr = f"{_tensor_expr(str(op.inputs[1]))}.to(dtype=torch.int64).reshape(-1)"
+                    else:
+                        runtime_imports.add("_resolve_reshape_shape_tensor")
+                        shape_expr = (
+                            f"_resolve_reshape_shape_tensor({_tensor_expr(str(op.inputs[1]))}, "
+                            f"{reshape_input_expr}, allow_zero=False)"
+                        )
             elif reshape_output_preferred_shape is not None:
                 preferred_shape_values = [int(v) for v in list(reshape_output_preferred_shape)]
-                if all(int(v) > 0 for v in preferred_shape_values):
-                    shape_expr = repr(preferred_shape_values)
-                elif (
-                    preferred_shape_values.count(-1) <= 1
-                    and all(int(v) == -1 or int(v) > 0 for v in preferred_shape_values)
+                if _can_emit_direct_torch_reshape_shape(
+                    preferred_shape_values,
+                    allow_zero=reshape_allow_zero,
                 ):
                     shape_expr = repr(preferred_shape_values)
                 else:
                     runtime_imports.add("_resolve_reshape_shape")
                     shape_expr = (
                         f"_resolve_reshape_shape({repr(preferred_shape_values)}, "
-                        f"{reshape_input_expr}, allow_zero={bool(op.options.get('allowZero', False))})"
-                    )
-            elif len(op.inputs) >= 2:
-                runtime_imports.add("_resolve_reshape_shape")
-                const_shape_values = _constant_int_list(model_ir.tensors.get(str(op.inputs[1]), None))
-                if const_shape_values is not None:
-                    shape_expr = (
-                        f"_resolve_reshape_shape({repr([int(v) for v in list(const_shape_values)])}, "
-                        f"{reshape_input_expr}, allow_zero={bool(op.options.get('allowZero', False))})"
-                    )
-                else:
-                    shape_expr = (
-                        f"_resolve_reshape_shape({_tensor_expr(str(op.inputs[1]))}, "
-                        f"{reshape_input_expr}, allow_zero={bool(op.options.get('allowZero', False))})"
+                        f"{reshape_input_expr}, allow_zero={reshape_allow_zero})"
                     )
             else:
                 runtime_imports.add("_resolve_reshape_shape")
                 raw_new_shape = op.options.get("onnxRawNewShape", op.options.get("newShape", []))
                 shape_expr = (
                     f"_resolve_reshape_shape({repr([int(v) for v in list(raw_new_shape)])}, "
-                    f"{reshape_input_expr}, allow_zero={bool(op.options.get('allowZero', False))})"
+                    f"{reshape_input_expr}, allow_zero={reshape_allow_zero})"
                 )
             raw_new_shape = op.options.get("onnxRawNewShape", op.options.get("newShape", None))
             reshape_is_gather_elements_axis_coord = bool(
@@ -5981,8 +6069,9 @@ def _write_native_model_file(
             if reshape_is_gather_elements_axis_coord:
                 forward_lines.append(f"{output_vars[0]} = torch.unsqueeze({reshape_input_expr}, dim=-1)")
             else:
+                reshape_shape_arg = f"list({shape_expr})" if shape_is_tensor_expr else f"[int(v) for v in {shape_expr}]"
                 forward_lines.append(
-                    f"{output_vars[0]} = torch.reshape({reshape_input_expr}, [int(v) for v in {shape_expr}])"
+                    f"{output_vars[0]} = torch.reshape({reshape_input_expr}, {reshape_shape_arg})"
                 )
             if reshape_special_plan is not None and reshape_special_plan.get("post_perm", None) is not None:
                 post_perm = [int(v) for v in list(reshape_special_plan["post_perm"])]
@@ -6145,21 +6234,40 @@ def _write_native_model_file(
             continue
         if op_type == "SHAPE":
             out_dtype = str(op.options.get("outType", "INT32"))
+            runtime_imports.add("_shape_tensor")
             forward_lines.append(
-                f"{output_vars[0]} = torch.tensor(list({_tensor_expr(str(op.inputs[0]))}.shape), dtype={_torch_dtype_literal(out_dtype)}, device={_tensor_expr(str(op.inputs[0]))}.device)"
+                f"{output_vars[0]} = _shape_tensor({_tensor_expr(str(op.inputs[0]))}, dtype={_torch_dtype_literal(out_dtype)}, device={_tensor_expr(str(op.inputs[0]))}.device)"
             )
             continue
         if op_type == "FILL":
-            runtime_imports.add("_shape_list")
             fill_value_expr = _scalar_literal_expr(str(op.inputs[1])) or f"{_tensor_expr(str(op.inputs[1]))}.reshape(-1)[0].item()"
+            fill_shape_values = _constant_int_list(model_ir.tensors.get(str(op.inputs[0]), None))
+            fill_value_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            fill_dtype_expr = (
+                _torch_dtype_literal(str(fill_value_tensor.dtype))
+                if fill_value_tensor is not None
+                else f"{_tensor_expr(str(op.inputs[1]))}.dtype"
+            )
+            fill_device_expr = f"{_tensor_expr(str(op.inputs[0]))}.device"
+            if fill_shape_values is not None:
+                fill_shape_expr = repr([int(v) for v in list(fill_shape_values)])
+                fill_shape_arg = f"[int(v) for v in {fill_shape_expr}]"
+            else:
+                fill_shape_arg = f"list({_tensor_expr(str(op.inputs[0]))}.to(dtype=torch.int64).reshape(-1))"
             forward_lines.append(
-                f"{output_vars[0]} = torch.full([int(v) for v in _shape_list({_tensor_expr(str(op.inputs[0]))})], {fill_value_expr}, dtype={_tensor_expr(str(op.inputs[1]))}.dtype, device={_tensor_expr(str(op.inputs[1]))}.device)"
+                f"{output_vars[0]} = torch.full({fill_shape_arg}, {fill_value_expr}, dtype={fill_dtype_expr}, device={fill_device_expr})"
             )
             continue
         if op_type == "SCATTER_ND":
             runtime_imports.add("_apply_scatter_nd")
+            scatter_shape_values = _constant_int_list(model_ir.tensors.get(str(op.inputs[2]), None))
+            scatter_shape_expr = (
+                repr([int(v) for v in list(scatter_shape_values)])
+                if scatter_shape_values is not None
+                else _tensor_expr(str(op.inputs[2]))
+            )
             forward_lines.append(
-                f"{output_vars[0]} = _apply_scatter_nd({_tensor_expr(str(op.inputs[0]))}, {_tensor_expr(str(op.inputs[1]))}, {_tensor_expr(str(op.inputs[2]))}, {output_target_shape})"
+                f"{output_vars[0]} = _apply_scatter_nd({_tensor_expr(str(op.inputs[0]))}, {_tensor_expr(str(op.inputs[1]))}, {scatter_shape_expr}, {output_target_shape})"
             )
             continue
         if op_type == "RANGE":
@@ -6179,8 +6287,14 @@ def _write_native_model_file(
                 if _scalar_literal_expr(str(op.inputs[0])) is None else
                 f"{delta_tensor_expr}.device"
                 if _scalar_literal_expr(str(op.inputs[2])) is None else
-                "self._device()"
+                "_module_device(self)"
             )
+            if (
+                _scalar_literal_expr(str(op.inputs[0])) is not None
+                and _scalar_literal_expr(str(op.inputs[1])) is not None
+                and _scalar_literal_expr(str(op.inputs[2])) is not None
+            ):
+                runtime_imports.add("_module_device")
             range_dtype_expr = (
                 f"{limit_tensor_expr}.dtype"
                 if _scalar_literal_expr(str(op.inputs[1])) is None else
@@ -6445,10 +6559,17 @@ def _write_native_model_file(
             )
             continue
         if op_type == "MIRROR_PAD":
-            runtime_imports.add("_apply_pad_nd")
-            forward_lines.append(
-                f"{output_vars[0]} = _apply_pad_nd({_tensor_expr(str(op.inputs[0]))}, {_tensor_expr(str(op.inputs[1]))}, mode='reflect')"
+            static_mirror_pad_expr = _static_mirror_pad_expr(
+                input_tensor_name=str(op.inputs[0]),
+                pads_tensor_name=str(op.inputs[1]),
             )
+            if static_mirror_pad_expr is not None:
+                forward_lines.append(f"{output_vars[0]} = {static_mirror_pad_expr}")
+            else:
+                runtime_imports.add("_apply_pad_nd")
+                forward_lines.append(
+                    f"{output_vars[0]} = _apply_pad_nd({_tensor_expr(str(op.inputs[0]))}, {_tensor_expr(str(op.inputs[1]))}, mode='reflect')"
+                )
             continue
         if op_type in {"WHERE", "SELECT", "SELECT_V2"}:
             if len(op.inputs) == 1:
@@ -6547,6 +6668,62 @@ def _write_native_model_file(
             f"op_type={op_type}"
         )
 
+    has_conv_blocks = len(fused_module_specs) > 0
+    conv_block_helper_source = (
+        "class _Conv2dBlock(torch.nn.Module):\n"
+        "    def __init__(\n"
+        "        self,\n"
+        "        *,\n"
+        "        in_channels: int,\n"
+        "        out_channels: int,\n"
+        "        kernel_size: tuple[int, int],\n"
+        "        stride: tuple[int, int],\n"
+        "        padding: tuple[int, int],\n"
+        "        dilation: tuple[int, int],\n"
+        "        groups: int,\n"
+        "        bias: bool,\n"
+        "        pad: Optional[list[int]] = None,\n"
+        "        activation: str = 'none',\n"
+        "        negative_slope: float = 0.2,\n"
+        "        pad_mode: str = 'constant',\n"
+        "        pad_value: float = 0.0,\n"
+        "    ) -> None:\n"
+        "        super().__init__()\n"
+        "        self.conv = torch.nn.Conv2d(\n"
+        "            in_channels=in_channels,\n"
+        "            out_channels=out_channels,\n"
+        "            kernel_size=kernel_size,\n"
+        "            stride=stride,\n"
+        "            padding=padding,\n"
+        "            dilation=dilation,\n"
+        "            groups=groups,\n"
+        "            bias=bias,\n"
+        "        )\n"
+        "        self.pad = pad\n"
+        "        self.activation = str(activation)\n"
+        "        self.negative_slope = float(negative_slope)\n"
+        "        self.pad_mode = str(pad_mode)\n"
+        "        self.pad_value = float(pad_value)\n\n"
+        "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n"
+        "        if self.pad is not None:\n"
+        "            x = F.pad(x, self.pad, mode=self.pad_mode, value=self.pad_value)\n"
+        "        x = self.conv(x)\n"
+        "        if self.activation == 'leaky_relu':\n"
+        "            return F.leaky_relu(x, negative_slope=self.negative_slope)\n"
+        "        if self.activation == 'relu':\n"
+        "            return torch.relu(x)\n"
+        "        if self.activation == 'relu6':\n"
+        "            return torch.clamp(x, min=0.0, max=6.0)\n"
+        "        if self.activation == 'relu_n1_to_1':\n"
+        "            return torch.clamp(x, min=-1.0, max=1.0)\n"
+        "        if self.activation == 'relu_0_to_1':\n"
+        "            return torch.clamp(x, min=0.0, max=1.0)\n"
+        "        if self.activation == 'tanh':\n"
+        "            return torch.tanh(x)\n"
+        "        if self.activation == 'sigmoid':\n"
+        "            return torch.sigmoid(x)\n"
+        "        return x\n\n"
+    ) if has_conv_blocks else ""
     helper_source = (
         "def _normalize_tensor_name(name: str) -> str:\n"
         "    normalized = str(name).split(\":\")[0]\n"
@@ -6569,6 +6746,12 @@ def _write_native_model_file(
         "    if key not in _TORCH_DTYPE_BY_TFLITE_DTYPE:\n"
         "        raise RuntimeError(f'Unsupported dtype for PyTorch runtime: {dtype_name}')\n"
         "    return _TORCH_DTYPE_BY_TFLITE_DTYPE[key]\n\n"
+        "def _module_device(module: torch.nn.Module) -> torch.device:\n"
+        "    for parameter in module.parameters():\n"
+        "        return parameter.device\n"
+        "    for buffer in module.buffers():\n"
+        "        return buffer.device\n"
+        "    return torch.device('cpu')\n\n"
         "def _default_tensor_storage_name(tensor_name: str) -> str:\n"
         "    base_name = re.sub(r'[^0-9A-Za-z_]', '_', str(tensor_name)).strip('_')\n"
         "    if base_name == '':\n"
@@ -6775,14 +6958,37 @@ def _write_native_model_file(
         "    if x.ndim != y.ndim:\n"
         "        return x, y\n"
         "    try:\n"
-        "        torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))\n"
+        "        x_shape = [int(v) for v in list(x.shape)]\n"
+        "        y_shape = [int(v) for v in list(y.shape)]\n"
+        "    except Exception:\n"
+        "        try:\n"
+        "            torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))\n"
+        "        except Exception:\n"
+        "            pass\n"
         "        return x, y\n"
+        "    if x_shape == y_shape:\n"
+        "        return x, y\n"
+        "    try:\n"
+        "        broadcast_shape = list(torch.broadcast_shapes(tuple(x.shape), tuple(y.shape)))\n"
+        "        if target is None or [int(v) for v in list(broadcast_shape)] == target:\n"
+        "            return x, y\n"
+        "        if torch.jit.is_scripting():\n"
+        "            return x, y\n"
+        "        return _align_binary_inputs_eager(x, y, target_shape)\n"
         "    except Exception:\n"
         "        pass\n"
-        "    x_shape = [int(v) for v in list(x.shape)]\n"
-        "    y_shape = [int(v) for v in list(y.shape)]\n"
         "    if _can_broadcast_shapes(x_shape, y_shape):\n"
-        "        return x, y\n"
+            "        if target is None:\n"
+            "            return x, y\n"
+        "        try:\n"
+        "            broadcast_shape = list(torch.broadcast_shapes(tuple(x_shape), tuple(y_shape)))\n"
+        "            if [int(v) for v in list(broadcast_shape)] == target:\n"
+        "                return x, y\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "        if torch.jit.is_scripting():\n"
+        "            return x, y\n"
+        "        return _align_binary_inputs_eager(x, y, target_shape)\n"
         "    perm = _perm_cl_to_cf(x.ndim)\n"
         "    if perm is None:\n"
         "        return x, y\n"
@@ -6829,14 +7035,29 @@ def _write_native_model_file(
         "def _align_binary_inputs_to_anchor(anchor: torch.Tensor, other: torch.Tensor, target_shape: Optional[Sequence[int]]) -> Tuple[torch.Tensor, torch.Tensor]:\n"
         "    target = [int(v) for v in list(target_shape)] if target_shape is not None else None\n"
         "    if anchor.ndim != other.ndim:\n"
-            "        return anchor, other\n"
+        "        return anchor, other\n"
         "    try:\n"
-        "        torch.broadcast_shapes(tuple(anchor.shape), tuple(other.shape))\n"
-            "        return anchor, other\n"
+        "        anchor_shape = [int(v) for v in list(anchor.shape)]\n"
+        "        other_shape = [int(v) for v in list(other.shape)]\n"
         "    except Exception:\n"
-            "        pass\n"
-        "    anchor_shape = [int(v) for v in list(anchor.shape)]\n"
-        "    other_shape = [int(v) for v in list(other.shape)]\n"
+        "        try:\n"
+        "            torch.broadcast_shapes(tuple(anchor.shape), tuple(other.shape))\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "        return anchor, other\n"
+        "    if anchor_shape == other_shape:\n"
+        "        return anchor, other\n"
+        "    try:\n"
+        "        broadcast_shape = list(torch.broadcast_shapes(tuple(anchor.shape), tuple(other.shape)))\n"
+        "        if [int(v) for v in list(broadcast_shape)] == [int(v) for v in list(anchor.shape)]:\n"
+            "            return anchor, other\n"
+        "        if target is None or [int(v) for v in list(broadcast_shape)] == target:\n"
+            "            return anchor, other\n"
+        "        if torch.jit.is_scripting():\n"
+        "            return anchor, other\n"
+        "        return _align_binary_inputs_to_anchor_eager(anchor, other, target_shape)\n"
+        "    except Exception:\n"
+        "        pass\n"
         "    perm = _perm_cl_to_cf(other.ndim)\n"
         "    if perm is not None and _permute_shape(other_shape, perm) == anchor_shape:\n"
         "        return anchor, _torch_permute(other, perm)\n"
@@ -6844,7 +7065,15 @@ def _write_native_model_file(
         "    if perm_inv is not None and _permute_shape(other_shape, perm_inv) == anchor_shape:\n"
         "        return anchor, _torch_permute(other, perm_inv)\n"
         "    if target is not None and _can_broadcast_shapes(anchor_shape, other_shape):\n"
-        "        return anchor, other\n"
+        "        try:\n"
+        "            broadcast_shape = list(torch.broadcast_shapes(tuple(anchor_shape), tuple(other_shape)))\n"
+        "            if broadcast_shape == anchor_shape or broadcast_shape == target:\n"
+        "                return anchor, other\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "        if torch.jit.is_scripting():\n"
+        "            return anchor, other\n"
+        "        return _align_binary_inputs_to_anchor_eager(anchor, other, target_shape)\n"
         "    if torch.jit.is_scripting():\n"
         "        return anchor, other\n"
         "    return _align_binary_inputs_to_anchor_eager(anchor, other, target_shape)\n\n"
@@ -6873,33 +7102,45 @@ def _write_native_model_file(
         "            result.append(int(item))\n"
         "        return result\n"
         "    raise RuntimeError('Unsupported shape spec type for _shape_list')\n\n"
+        "def _shape_tensor(input_tensor: torch.Tensor, *, dtype: torch.dtype, device: torch.device) -> torch.Tensor:\n"
+        "    values = torch.jit.annotate(List[int], [])\n"
+        "    for idx in range(int(input_tensor.ndim)):\n"
+        "        values.append(torch.ops.aten.sym_size.int(input_tensor, idx))\n"
+        "    if len(values) == 0:\n"
+        "        return torch.empty((0,), dtype=dtype, device=device)\n"
+        "    return torch.tensor(values, dtype=dtype, device=device)\n\n"
         "def _resolve_reshape_shape(shape_spec: Any, input_tensor: torch.Tensor, *, allow_zero: bool) -> List[int]:\n"
         "    raw_shape = _shape_list(shape_spec)\n"
-        "    input_shape = [int(v) for v in list(input_tensor.shape)]\n"
         "    resolved: List[int] = []\n"
-        "    infer_index: Optional[int] = None\n"
-        "    known_product = 1\n"
-        "    total_elements = int(input_tensor.numel())\n"
+        "    infer_count = 0\n"
+        "    input_rank = int(input_tensor.ndim)\n"
         "    for dim_index, raw_dim in enumerate(raw_shape):\n"
         "        dim_value = int(raw_dim)\n"
-        "        if dim_value == 0 and not allow_zero and dim_index < len(input_shape):\n"
-        "            dim_value = int(input_shape[dim_index])\n"
+        "        if dim_value == 0 and not allow_zero and dim_index < input_rank:\n"
+        "            resolved.append(torch.ops.aten.sym_size.int(input_tensor, dim_index))\n"
+        "            continue\n"
         "        if dim_value == -1:\n"
-        "            if infer_index is not None:\n"
+        "            infer_count += 1\n"
+        "            if infer_count > 1:\n"
         "                raise RuntimeError(f'Multiple -1 values are not allowed in reshape spec: {raw_shape}')\n"
-        "            infer_index = len(resolved)\n"
-        "            resolved.append(-1)\n"
+        "        resolved.append(dim_value)\n"
+        "    return resolved\n\n"
+        "def _resolve_reshape_shape_tensor(shape_spec: torch.Tensor, input_tensor: torch.Tensor, *, allow_zero: bool) -> torch.Tensor:\n"
+        "    flat = shape_spec.to(dtype=torch.int64, device=input_tensor.device).reshape(-1)\n"
+        "    if allow_zero:\n"
+        "        return flat\n"
+        "    resolved = torch.jit.annotate(List[torch.Tensor], [])\n"
+        "    input_rank = int(input_tensor.ndim)\n"
+        "    for dim_index in range(int(flat.numel())):\n"
+        "        dim_value = flat[dim_index]\n"
+        "        if dim_index < input_rank:\n"
+        "            input_dim = torch.scalar_tensor(torch.ops.aten.sym_size.int(input_tensor, dim_index), dtype=flat.dtype, device=flat.device)\n"
+        "            resolved.append(torch.where(dim_value == 0, input_dim, dim_value))\n"
         "            continue\n"
         "        resolved.append(dim_value)\n"
-        "        known_product *= int(dim_value)\n"
-        "    if infer_index is not None:\n"
-        "        if known_product == 0 or total_elements % known_product != 0:\n"
-        "            raise RuntimeError(\n"
-        "                'Failed to infer reshape dimension. '\n"
-        "                f'shape_spec={raw_shape} input_shape={input_shape} total_elements={total_elements}'\n"
-        "            )\n"
-        "        resolved[infer_index] = int(total_elements // known_product)\n"
-        "    return resolved\n\n"
+        "    if len(resolved) == 0:\n"
+        "        return flat\n"
+        "    return torch.stack(resolved)\n\n"
         "def _to_torch_pad_arg(paddings: torch.Tensor) -> List[int]:\n"
         "    pads_tensor = paddings.to(dtype=torch.int64).reshape(-1, 2)\n"
         "    torch_pad: List[int] = []\n"
@@ -7106,20 +7347,33 @@ def _write_native_model_file(
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
         "def _apply_gather_elements(params: torch.Tensor, indices: torch.Tensor, axis_hint: int, axis_hint_cl: Optional[int], target_shape: Optional[Sequence[int]]) -> torch.Tensor:\n"
         "    indices_i64 = indices.to(dtype=torch.int64)\n"
-        "    index_max = -1 if indices_i64.numel() == 0 else int(indices_i64.max().item())\n"
+        "    def _gather_for_axis(axis: int) -> Tuple[torch.Tensor, torch.Tensor]:\n"
+        "        resolved_axis = int(axis)\n"
+        "        dim_size = int(params.shape[resolved_axis])\n"
+        "        if dim_size <= 0:\n"
+        "            safe_indices = torch.zeros_like(indices_i64)\n"
+        "            gathered = torch.gather(params, dim=resolved_axis, index=safe_indices)\n"
+        "            return gathered, torch.zeros((), dtype=torch.bool, device=indices_i64.device)\n"
+        "        dim_size_tensor = torch.as_tensor(dim_size, dtype=torch.int64, device=indices_i64.device)\n"
+        "        normalized_indices = torch.where(indices_i64 < 0, indices_i64 + dim_size_tensor, indices_i64)\n"
+        "        axis_valid = torch.all((indices_i64 >= -dim_size_tensor) & (indices_i64 < dim_size_tensor))\n"
+        "        safe_indices = torch.clamp(normalized_indices, min=0, max=dim_size - 1)\n"
+        "        return torch.gather(params, dim=resolved_axis, index=safe_indices), axis_valid\n"
         "    gather_axis = int(axis_hint)\n"
-        "    if index_max >= 0 and index_max >= int(params.shape[gather_axis]):\n"
-        "        if axis_hint_cl is not None and index_max < int(params.shape[int(axis_hint_cl)]):\n"
-        "            gather_axis = int(axis_hint_cl)\n"
-        "        else:\n"
-        "            exact_axes = [axis for axis in range(params.ndim) if int(params.shape[axis]) == index_max + 1]\n"
-        "            if len(exact_axes) > 0:\n"
-        "                gather_axis = int(exact_axes[-1])\n"
-        "            else:\n"
-        "                valid_axes = [axis for axis in range(params.ndim) if index_max < int(params.shape[axis])]\n"
-        "                if len(valid_axes) > 0:\n"
-        "                    gather_axis = int(valid_axes[-1])\n"
-        "    y = torch.gather(params, dim=gather_axis, index=indices_i64)\n"
+        "    y, y_valid = _gather_for_axis(gather_axis)\n"
+        "    candidate_axes: List[int] = []\n"
+        "    if axis_hint_cl is not None and int(axis_hint_cl) != gather_axis:\n"
+        "        candidate_axes.append(int(axis_hint_cl))\n"
+        "    candidate_axes.extend(\n"
+        "        axis\n"
+        "        for axis in range(params.ndim - 1, -1, -1)\n"
+        "        if axis != gather_axis and (axis_hint_cl is None or axis != int(axis_hint_cl))\n"
+        "    )\n"
+        "    for candidate_axis in candidate_axes:\n"
+        "        candidate_y, candidate_valid = _gather_for_axis(int(candidate_axis))\n"
+        "        use_candidate = torch.logical_and(torch.logical_not(y_valid), candidate_valid)\n"
+        "        y = torch.where(use_candidate, candidate_y, y)\n"
+        "        y_valid = torch.logical_or(y_valid, candidate_valid)\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
         "def _apply_gather_nd(params: torch.Tensor, indices: torch.Tensor, target_shape: Optional[Sequence[int]]) -> torch.Tensor:\n"
         "    indices_i64 = indices.to(dtype=torch.int64)\n"
@@ -7182,13 +7436,21 @@ def _write_native_model_file(
         "        slices.append(slice(resolved_start, resolved_stop, int(step)))\n"
         "    y = x[tuple(slices)]\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
-        "def _resolve_same_padding(kernel_size: int, stride: int) -> Tuple[int, int]:\n"
-        "    total = max(int(kernel_size) - int(stride), 0)\n"
+        "def _resolve_same_padding(input_size: int, kernel_size: int, stride: int, target_size: Optional[int] = None) -> Tuple[int, int]:\n"
+        "    if target_size is None:\n"
+        "        out_size = (int(input_size) + int(stride) - 1) // int(stride)\n"
+        "    else:\n"
+        "        out_size = int(target_size)\n"
+        "    total = max((int(out_size) - 1) * int(stride) + int(kernel_size) - int(input_size), 0)\n"
         "    before = total // 2\n"
         "    after = total - before\n"
         "    return before, after\n\n"
         "def _apply_pool2d(x: torch.Tensor, filter_height: int, filter_width: int, stride_h: int, stride_w: int, padding: str, target_shape: Optional[Sequence[int]], is_max_pool: bool) -> torch.Tensor:\n"
-        "    resize_as_channel_last = False\n"
+        "    resize_as_channel_last = bool(\n"
+        "        x.ndim == 4\n"
+        "        and int(x.shape[1]) > int(x.shape[-1])\n"
+        "        and int(x.shape[2]) > int(x.shape[-1])\n"
+        "    )\n"
         "    if x.ndim == 4 and target_shape is not None and len(list(target_shape)) == 4:\n"
         "        actual_shape = [int(v) for v in list(x.shape)]\n"
         "        target = [int(v) for v in list(target_shape)]\n"
@@ -7196,8 +7458,18 @@ def _write_native_model_file(
         "            resize_as_channel_last = True\n"
         "    pool_input = x.permute(0, 3, 1, 2).contiguous() if resize_as_channel_last and x.ndim == 4 else x\n"
         "    if str(padding).upper() == 'SAME':\n"
-        "        pad_w = _resolve_same_padding(filter_width, stride_w)\n"
-        "        pad_h = _resolve_same_padding(filter_height, stride_h)\n"
+        "        target_h = None\n"
+        "        target_w = None\n"
+        "        if target_shape is not None and len(list(target_shape)) == 4:\n"
+        "            target = [int(v) for v in list(target_shape)]\n"
+        "            if resize_as_channel_last:\n"
+        "                target_h = int(target[1])\n"
+        "                target_w = int(target[2])\n"
+        "            else:\n"
+        "                target_h = int(target[2])\n"
+        "                target_w = int(target[3])\n"
+        "        pad_w = _resolve_same_padding(int(pool_input.shape[-1]), filter_width, stride_w, target_w)\n"
+        "        pad_h = _resolve_same_padding(int(pool_input.shape[-2]), filter_height, stride_h, target_h)\n"
         "        pool_input = F.pad(pool_input, [pad_w[0], pad_w[1], pad_h[0], pad_h[1]], mode='constant', value=float('-inf') if is_max_pool else 0.0)\n"
         "        padding_value = 0\n"
         "    else:\n"
@@ -7343,7 +7615,7 @@ def _write_native_model_file(
         "    for dim in sorted(axis, reverse=True):\n"
         "        result = torch.any(result, dim=dim, keepdim=keepdims)\n"
         "    return result\n\n"
-    )
+    ) + conv_block_helper_source
 
     runtime_source = _build_native_runtime_source(helper_source)
     _write_generated_package_common_files(
@@ -7853,8 +8125,8 @@ def _write_native_model_file(
         for input_name in model_ir.inputs
     )
     outputs_expr = ", ".join(str(tensor_var_names[str(name)]) for name in model_ir.outputs)
-    has_conv_blocks = len(fused_module_specs) > 0
     runtime_import_order = [
+        "_Conv2dBlock",
         "_align_binary_inputs",
         "_align_binary_inputs_to_anchor",
         "_align_tensor_to_target_shape",
@@ -7877,6 +8149,7 @@ def _write_native_model_file(
         "_apply_softmax",
         "_apply_strided_slice",
         "_coerce_scalar_axis",
+        "_module_device",
         "_normalize_axes",
         "_normalize_dim",
         "_reduce_any",
@@ -7886,71 +8159,20 @@ def _write_native_model_file(
         "_reduce_prod",
         "_reduce_sum",
         "_resolve_reshape_shape",
+        "_resolve_reshape_shape_tensor",
         "resolve_named_input_value",
         "_shape_list",
+        "_shape_tensor",
         "_to_torch_pad_arg",
         "_torch_dtype",
         "_torch_permute",
         "load_generated_weights",
     ]
+    if has_conv_blocks:
+        runtime_imports.add("_Conv2dBlock")
     runtime_import_block = "".join(
         f"    {name},\n" for name in runtime_import_order if name in runtime_imports
     )
-    conv_block_source = (
-        "class _Conv2dBlock(torch.nn.Module):\n"
-        "    def __init__(\n"
-        "        self,\n"
-        "        *,\n"
-        "        in_channels: int,\n"
-        "        out_channels: int,\n"
-        "        kernel_size: tuple[int, int],\n"
-        "        stride: tuple[int, int],\n"
-        "        padding: tuple[int, int],\n"
-        "        dilation: tuple[int, int],\n"
-        "        groups: int,\n"
-        "        bias: bool,\n"
-        "        pad: Optional[list[int]] = None,\n"
-        "        activation: str = 'none',\n"
-        "        negative_slope: float = 0.2,\n"
-        "        pad_mode: str = 'constant',\n"
-        "        pad_value: float = 0.0,\n"
-        "    ) -> None:\n"
-        "        super().__init__()\n"
-        "        self.conv = torch.nn.Conv2d(\n"
-        "            in_channels=in_channels,\n"
-        "            out_channels=out_channels,\n"
-        "            kernel_size=kernel_size,\n"
-        "            stride=stride,\n"
-        "            padding=padding,\n"
-        "            dilation=dilation,\n"
-        "            groups=groups,\n"
-        "            bias=bias,\n"
-        "        )\n"
-        "        self.pad = pad\n"
-        "        self.activation = str(activation)\n"
-        "        self.negative_slope = float(negative_slope)\n"
-        "        self.pad_mode = str(pad_mode)\n"
-        "        self.pad_value = float(pad_value)\n\n"
-        "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n"
-        "        if self.pad is not None:\n"
-        "            x = F.pad(x, self.pad, mode=self.pad_mode, value=self.pad_value)\n"
-        "        x = self.conv(x)\n"
-        "        if self.activation == 'leaky_relu':\n"
-        "            return F.leaky_relu(x, negative_slope=self.negative_slope)\n"
-        "        if self.activation == 'relu':\n"
-        "            return torch.relu(x)\n"
-        "        if self.activation == 'relu6':\n"
-        "            return torch.clamp(x, min=0.0, max=6.0)\n"
-        "        if self.activation == 'relu_n1_to_1':\n"
-        "            return torch.clamp(x, min=-1.0, max=1.0)\n"
-        "        if self.activation == 'relu_0_to_1':\n"
-        "            return torch.clamp(x, min=0.0, max=1.0)\n"
-        "        if self.activation == 'tanh':\n"
-        "            return torch.tanh(x)\n"
-        "        if self.activation == 'sigmoid':\n"
-        "            return torch.sigmoid(x)\n"
-        "        return x\n\n"
-    ) if has_conv_blocks else ""
     has_affine_layer_norms = len(affine_layer_norm_specs) > 0
     affine_layer_norm_source = (
         "class _AffineLayerNorm(torch.nn.Module):\n"
@@ -7965,6 +8187,7 @@ def _write_native_model_file(
     ) if has_affine_layer_norms else ""
     nms_method_source = ""
     if len(nms_method_specs) > 0:
+        runtime_imports.add("_module_device")
         method_chunks: List[str] = []
         for spec in nms_method_specs:
             method_chunks.append(
@@ -7972,9 +8195,9 @@ def _write_native_model_file(
                 "        return _apply_non_max_suppression_v4(\n"
                 "            boxes,\n"
                 "            scores,\n"
-                "            torch.as_tensor({max_output_expr}, dtype=torch.int32, device=self._device()),\n"
-                "            torch.as_tensor({iou_threshold_expr}, dtype=torch.float32, device=self._device()),\n"
-                "            torch.as_tensor({score_threshold_expr}, dtype=torch.float32, device=self._device()),\n"
+                "            torch.as_tensor({max_output_expr}, dtype=torch.int32, device=_module_device(self)),\n"
+                "            torch.as_tensor({iou_threshold_expr}, dtype=torch.float32, device=_module_device(self)),\n"
+                "            torch.as_tensor({score_threshold_expr}, dtype=torch.float32, device=_module_device(self)),\n"
                 "        )\n\n".format(
                     name=str(spec["name"]),
                     max_output_expr=str(spec["max_output_expr"]),
@@ -7985,6 +8208,7 @@ def _write_native_model_file(
         nms_method_source = "".join(method_chunks)
 
     model_source = (
+        "# pyright: reportArgumentType=false, reportCallIssue=false\n"
         "from pathlib import Path\n"
         "from typing import Any, Callable, Dict, Optional\n\n"
         "import torch\n"
@@ -7995,7 +8219,6 @@ def _write_native_model_file(
         "PACKAGE_DIR = Path(__file__).resolve().parent\n"
         f"INPUT_NAMES = {repr([str(v) for v in model_ir.inputs])}\n"
         f"OUTPUT_NAMES = {repr([str(v) for v in model_ir.outputs])}\n"
-        f"{conv_block_source}"
         f"{affine_layer_norm_source}"
         f"{named_encoder_class_source}"
         "class Model(torch.nn.Module):\n"
@@ -8017,52 +8240,6 @@ def _write_native_model_file(
         "        if eval_mode:\n"
         "            self.eval()\n\n"
         f"{init_constants_method}"
-        "    def _device(self) -> torch.device:\n"
-        "        for parameter in self.parameters():\n"
-        "            return parameter.device\n"
-        "        for buffer in self.buffers():\n"
-        "            return buffer.device\n"
-        "        return torch.device('cpu')\n\n"
-        "    def _max_pool2d_same(self, x: torch.Tensor, *, kernel_size: tuple[int, int], stride: tuple[int, int]) -> torch.Tensor:\n"
-        "        use_channel_last = bool(\n"
-        "            x.ndim == 4\n"
-        "            and int(x.shape[1]) > int(x.shape[-1])\n"
-        "            and int(x.shape[2]) > int(x.shape[-1])\n"
-        "        )\n"
-        "        pool_input = x.permute(0, 3, 1, 2).contiguous() if use_channel_last else x\n"
-        "        in_h = int(pool_input.shape[-2])\n"
-        "        in_w = int(pool_input.shape[-1])\n"
-        "        out_h = (in_h + int(stride[0]) - 1) // int(stride[0])\n"
-        "        out_w = (in_w + int(stride[1]) - 1) // int(stride[1])\n"
-        "        pad_h_total = max((out_h - 1) * int(stride[0]) + int(kernel_size[0]) - in_h, 0)\n"
-        "        pad_w_total = max((out_w - 1) * int(stride[1]) + int(kernel_size[1]) - in_w, 0)\n"
-        "        pad_top = pad_h_total // 2\n"
-        "        pad_bottom = pad_h_total - pad_top\n"
-        "        pad_left = pad_w_total // 2\n"
-        "        pad_right = pad_w_total - pad_left\n"
-        "        pool_input = F.pad(pool_input, [pad_left, pad_right, pad_top, pad_bottom], mode='constant', value=float('-inf'))\n"
-        "        y = F.max_pool2d(pool_input, kernel_size=kernel_size, stride=stride)\n"
-        "        return y.permute(0, 2, 3, 1).contiguous() if use_channel_last else y\n\n"
-        "    def _avg_pool2d_same(self, x: torch.Tensor, *, kernel_size: tuple[int, int], stride: tuple[int, int]) -> torch.Tensor:\n"
-        "        use_channel_last = bool(\n"
-        "            x.ndim == 4\n"
-        "            and int(x.shape[1]) > int(x.shape[-1])\n"
-        "            and int(x.shape[2]) > int(x.shape[-1])\n"
-        "        )\n"
-        "        pool_input = x.permute(0, 3, 1, 2).contiguous() if use_channel_last else x\n"
-        "        in_h = int(pool_input.shape[-2])\n"
-        "        in_w = int(pool_input.shape[-1])\n"
-        "        out_h = (in_h + int(stride[0]) - 1) // int(stride[0])\n"
-        "        out_w = (in_w + int(stride[1]) - 1) // int(stride[1])\n"
-        "        pad_h_total = max((out_h - 1) * int(stride[0]) + int(kernel_size[0]) - in_h, 0)\n"
-        "        pad_w_total = max((out_w - 1) * int(stride[1]) + int(kernel_size[1]) - in_w, 0)\n"
-        "        pad_top = pad_h_total // 2\n"
-        "        pad_bottom = pad_h_total - pad_top\n"
-        "        pad_left = pad_w_total // 2\n"
-        "        pad_right = pad_w_total - pad_left\n"
-        "        pool_input = F.pad(pool_input, [pad_left, pad_right, pad_top, pad_bottom], mode='constant', value=0.0)\n"
-        "        y = F.avg_pool2d(pool_input, kernel_size=kernel_size, stride=stride)\n"
-        "        return y.permute(0, 2, 3, 1).contiguous() if use_channel_last else y\n\n"
         f"{nms_method_source}"
         f"{stage_methods_source}"
         f"    def forward({forward_signature}) -> Any:\n"

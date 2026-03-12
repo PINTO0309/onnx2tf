@@ -41,6 +41,14 @@ def _torch_dtype(dtype_name: str) -> torch.dtype:
     return _TORCH_DTYPE_BY_TFLITE_DTYPE[key]
 
 
+def _module_device(module: torch.nn.Module) -> torch.device:
+    for parameter in module.parameters():
+        return parameter.device
+    for buffer in module.buffers():
+        return buffer.device
+    return torch.device("cpu")
+
+
 def _as_shape_signature(tensor_meta: Dict[str, Any]) -> List[Optional[int]]:
     signature = tensor_meta.get("shape_signature", tensor_meta.get("shape", []))
     normalized: List[Optional[int]] = []

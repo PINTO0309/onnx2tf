@@ -2757,10 +2757,13 @@ def test_export_pytorch_package_model_class_is_directly_importable(tmp_path) -> 
     assert "_GraphExecutor" not in model_source
     assert "from .runtime import (" in model_source
     assert "load_generated_weights(" in model_source
-    assert "self.conv2d_0 = torch.nn.Conv2d(" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" not in model_source
+    assert "    _Conv2dBlock,\n" in model_source
+    assert "self.conv_block_0 = _Conv2dBlock(" in model_source
     assert "LOAD_SPECS" not in model_source
     assert "_copy_tensor_data" not in model_source
     assert "_validate_state_dict_keys" not in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" in runtime_source
     assert "def _copy_tensor_data" in runtime_source
     assert "def load_generated_weights(" in runtime_source
     assert set(saved_state_dict.keys()) == set(model.state_dict().keys())
@@ -2915,8 +2918,12 @@ def test_export_pytorch_package_model_source_mixes_module_and_functional_ops(tmp
     out_loaded = pkg.load_model()(x)
     assert torch.allclose(out_direct, out_loaded, atol=1e-5, rtol=1e-5)
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    runtime_source = (Path(package_path) / "runtime.py").read_text(encoding="utf-8")
+    assert "class _Conv2dBlock(torch.nn.Module):" not in model_source
+    assert "    _Conv2dBlock,\n" in model_source
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
-    assert "torch.relu(x)" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" in runtime_source
+    assert "return torch.relu(x)" in runtime_source
 
 
 def test_export_pytorch_package_model_source_is_pytorch_like_for_fused_conv_relu(tmp_path) -> None:
@@ -2941,13 +2948,14 @@ def test_export_pytorch_package_model_source_is_pytorch_like_for_fused_conv_relu
     assert "_torch_dtype(" not in model_source
     assert "cast(torch.Tensor, self." not in model_source
     assert "load_generated_weights(" in model_source
-    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" not in model_source
+    assert "    _Conv2dBlock,\n" in model_source
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
     assert "self.conv_block_1 = _Conv2dBlock(" in model_source
     assert "_apply_module_conv2d" not in model_source
     assert "_forward_stage_" not in model_source
-    assert "x = self.conv_block_0(x)" in model_source
-    assert "x = self.conv_block_1(x)" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" in runtime_source
+    assert "return torch.relu(x)" in runtime_source
     assert "def _copy_tensor_data" in runtime_source
     assert "def load_generated_weights(" in runtime_source
     assert "def _apply_binary(" not in runtime_source
@@ -3554,13 +3562,13 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     model_source = (package_dir / "model.py").read_text()
     assert "execution_backend" not in metadata
     assert "load_generated_model_package" not in model_source
-    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
+    assert "class _Conv2dBlock(torch.nn.Module):" not in model_source
     assert "_apply_gather(" not in model_source
     assert "_apply_gather_nd(" not in model_source
     assert "_apply_slice(" not in model_source
     assert "_apply_strided_slice(" not in model_source
     assert model_source.count("register_buffer(") <= 12
-    assert "class _Conv2dBlock(torch.nn.Module):" in model_source
+    assert "    _Conv2dBlock,\n" in model_source
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
     assert "_forward_stage_0" in model_source
 
@@ -3784,6 +3792,25 @@ def test_export_pytorch_package_mirror_pad_handles_non_suffix_axes(tmp_path) -> 
     out = model(x)
     ref = F.pad(x.permute(0, 2, 1, 3).contiguous(), [2, 2, 1, 1], mode="reflect").permute(0, 2, 1, 3).contiguous()
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_mirror_pad_constant_codegen_supports_dynamo_export(tmp_path) -> None:
+    model_ir = _make_mirror_pad_with_non_suffix_axes_model_ir()
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "mirror_pad_non_suffix_export_pytorch"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_apply_pad_nd(" not in model_source
+    assert "mode='reflect'" in model_source
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
 
 
 def test_export_pytorch_package_broadcasts_1d_constant_along_channel_axis(tmp_path) -> None:
@@ -4069,7 +4096,7 @@ def test_export_pytorch_package_swaps_spatial_axes_for_conv1d_bridge_input(tmp_p
     model = pkg.load_model()
     x = torch.arange(64, dtype=torch.float32).reshape(1, 1, 64, 1)
     out = model(x)
-    ref = model.conv2d_0(x.permute(0, 1, 3, 2).contiguous())
+    ref = model.conv_block_0(x.permute(0, 1, 3, 2).contiguous())
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
 
 
@@ -4153,7 +4180,7 @@ def test_export_pytorch_package_elides_inconsistent_layout_transpose_before_conv
     model = pkg.load_model()
     x = torch.arange(32, dtype=torch.float32).reshape(1, 4, 1, 8)
     out = model(x)
-    ref = model.conv2d_0(x)
+    ref = model.conv_block_0(x)
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
     assert Path(torchscript_path).exists()
@@ -4946,6 +4973,10 @@ def test_export_pytorch_package_roundtrip_unsafe_tensor_names(tmp_path) -> None:
         model_ir=model_ir,
         output_folder_path=str(tmp_path / "unsafe_names_pytorch"),
     )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "def _device" not in model_source
+    assert "    _module_device,\n" in model_source
+    assert "device=_module_device(self)" in model_source
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
     x = torch.tensor([[10.0, 20.0, 30.0]], dtype=torch.float32)
@@ -6610,6 +6641,17 @@ def test_export_pytorch_package_reshape_allow_zero_uses_input_dims(tmp_path) -> 
     expected = torch.reshape(x, [1, 2, 12])
     assert torch.equal(out, expected)
 
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+    )
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
 
 def test_export_pytorch_package_handles_local_response_normalization(tmp_path) -> None:
     model_ir = ModelIR(name="lrn_model_ir")
@@ -6762,6 +6804,14 @@ def test_export_pytorch_package_handles_gather_elements_dynamic_coords(tmp_path)
     out = cast(Any, model).forward_named(x=x)["y"]
     expected = torch.topk(x, k=2, dim=-1, largest=True, sorted=True).values
     assert torch.equal(out, expected)
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
 
 
 def test_export_pytorch_package_handles_topk_layout_bridge_with_indices_axis_restore(tmp_path) -> None:
@@ -6944,6 +6994,132 @@ def test_export_pytorch_package_aligns_dynamic_binary_inputs_with_ambiguous_stat
     assert torch.equal(out, expected)
 
 
+def test_export_pytorch_package_prefers_runtime_shape_input_for_ambiguous_reshape_output(tmp_path) -> None:
+    model_ir = ModelIR(name="runtime_shape_input_reshape_model_ir")
+    model_ir.inputs = ["x", "shape"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[1, -1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 1],
+        shape_signature=[-1, -1, -1, -1],
+    )
+    model_ir.operators.append(
+        OperatorIR(op_type="RESHAPE", inputs=["x", "shape"], outputs=["y"], options={})
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "runtime_shape_input_reshape_pkg"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(6, dtype=torch.float32).reshape(1, 6)
+    shape = torch.tensor([1, 1, 2, 3], dtype=torch.int32)
+    out = cast(Any, model).forward_named(x=x, shape=shape)["y"]
+    expected = x.reshape(1, 1, 2, 3)
+    assert out.shape == expected.shape
+    assert torch.equal(out, expected)
+
+
+def test_generated_runtime_align_binary_inputs_prefers_permutation_over_ambiguous_broadcast(tmp_path) -> None:
+    model_ir = ModelIR(name="binary_align_runtime_model_ir")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1], shape_signature=[1])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1], shape_signature=[1])
+    model_ir.tensors["z"] = TensorIR(name="z", dtype="FLOAT32", shape=[1], shape_signature=[1])
+    model_ir.operators.append(
+        OperatorIR(op_type="MUL", inputs=["x", "y"], outputs=["z"], options={})
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "binary_align_runtime_pkg"),
+    )
+    package_name = Path(package_path).name
+    pkg = _import_generated_package(package_path)
+    runtime = importlib.import_module(f"{package_name}.runtime")
+    x = torch.arange(6, dtype=torch.float32).reshape(1, 1, 1, 6)
+    y = torch.arange(6, dtype=torch.float32).reshape(1, 1, 6, 1)
+    aligned_x, aligned_y = runtime._align_binary_inputs(x, y, [1, 1, 1, 1])
+    assert tuple(aligned_x.shape) == (1, 1, 1, 6)
+    assert tuple(aligned_y.shape) == (1, 1, 1, 6)
+    assert torch.equal(aligned_y, y.permute(0, 1, 3, 2).contiguous())
+    del pkg
+
+
+def test_scatter_nd_with_constant_shape_supports_dynamo_onnx_and_exported_program(tmp_path) -> None:
+    model_ir = ModelIR(name="scatter_nd_const_shape_export")
+    model_ir.inputs = ["updates"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["indices"] = TensorIR(
+        name="indices",
+        dtype="INT32",
+        shape=[1, 1, 2, 4],
+        shape_signature=[1, 1, 2, 4],
+        data=np.asarray([[[[0, 0, 0, 1], [0, 0, 1, 2]]]], dtype=np.int32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["updates"] = TensorIR(
+        name="updates",
+        dtype="FLOAT32",
+        shape=[1, 1, 2],
+        shape_signature=[1, 1, 2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 1, 2, 3], dtype=np.int32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 3],
+        shape_signature=[1, 1, 2, 3],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=["indices", "updates", "shape"],
+            outputs=["y"],
+            options={},
+        )
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "scatter_nd_const_shape_export_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_apply_scatter_nd(self.const_indices, updates, [1, 1, 2, 3]" in model_source
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
 def test_export_pytorch_package_handles_same_max_pool_on_nhwc_inputs(tmp_path) -> None:
     model_ir = ModelIR(name="pool_nhwc_same_test")
     model_ir.inputs = ["x"]
@@ -6982,16 +7158,108 @@ def test_export_pytorch_package_handles_same_max_pool_on_nhwc_inputs(tmp_path) -
         model_ir=model_ir,
         output_folder_path=str(tmp_path / "pool_nhwc_same_pkg"),
     )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "def _max_pool2d_same" not in model_source
+    assert "def _avg_pool2d_same" not in model_source
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
-    x = torch.arange(20, dtype=torch.float32).reshape(1, 4, 5, 1)
+    x = torch.arange(20, dtype=torch.float32).reshape(1, 1, 4, 5)
     out = cast(Any, model).forward_named(x=x)["y"]
     expected = F.max_pool2d(
-        F.pad(x.permute(0, 3, 1, 2), [1, 1, 1, 1], mode="constant", value=float("-inf")),
+        F.pad(x, [1, 1, 1, 1], mode="constant", value=float("-inf")),
         kernel_size=(3, 3),
         stride=(1, 1),
-    ).permute(0, 2, 3, 1).contiguous()
+    )
     assert torch.equal(out, expected)
+
+
+def test_export_pytorch_package_handles_same_max_pool_stride2_odd_input(tmp_path) -> None:
+    model_ir = ModelIR(name="pool_same_stride2_odd_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 7, 7],
+        shape_signature=[1, 1, 7, 7],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 4, 4],
+        shape_signature=[1, 1, 4, 4],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="MAX_POOL_2D",
+            inputs=["x"],
+            outputs=["y"],
+            options={
+                "filterHeight": 3,
+                "filterWidth": 3,
+                "strideH": 2,
+                "strideW": 2,
+                "padding": "SAME",
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "pool_same_stride2_odd_pkg"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(49, dtype=torch.float32).reshape(1, 1, 7, 7)
+    out = cast(Any, model).forward_named(x=x)["y"]
+    expected = F.max_pool2d(
+        F.pad(x, [1, 1, 1, 1], mode="constant", value=float("-inf")),
+        kernel_size=(3, 3),
+        stride=(2, 2),
+    )
+    assert out.shape == (1, 1, 4, 4)
+    assert torch.equal(out, expected)
+
+
+def test_export_pytorch_package_omits_unused_same_pool_helpers(tmp_path) -> None:
+    model_ir = ModelIR(name="atan_without_pool_helpers")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 4],
+        shape_signature=[1, 2, 3, 4],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 4],
+        shape_signature=[1, 2, 3, 4],
+        logical_layout="NHWC",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="ATAN",
+            inputs=["x"],
+            outputs=["y"],
+            options={},
+        )
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "atan_without_pool_helpers_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "def _max_pool2d_same" not in model_source
+    assert "def _avg_pool2d_same" not in model_source
+    assert "def _device" not in model_source
+    assert "    _module_device,\n" not in model_source
 
 
 def test_export_dynamo_onnx_handles_static_shape_input_reshape(tmp_path) -> None:
@@ -7208,6 +7476,166 @@ def test_export_artifacts_handle_runtime_minus_one_shape_tensor(tmp_path) -> Non
     assert Path(exported_program_path).exists()
 
 
+def test_export_artifacts_handle_shape_tensor_driven_reshape(tmp_path) -> None:
+    model_ir = ModelIR(name="shape_tensor_driven_reshape")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["one"] = TensorIR(
+        name="one",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+    model_ir.tensors["x_shape"] = TensorIR(
+        name="x_shape",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=["x"],
+                outputs=["x_shape"],
+                options={"outType": "INT32"},
+            ),
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=["x_shape", "one"],
+                outputs=["reshape_shape"],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            ),
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=["x", "reshape_shape"],
+                outputs=["y"],
+                options={},
+            ),
+        ]
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "shape_tensor_driven_reshape_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "torch.tensor(list(" not in model_source
+    assert "_shape_tensor(x" in model_source
+    assert "list(_resolve_reshape_shape_tensor(" in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(5, dtype=torch.float32)
+    out = cast(Any, model).forward_named(x=x)["y"]
+    assert tuple(out.shape) == (5, 1)
+    assert torch.equal(out, x.reshape(5, 1))
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+    )
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
+def test_export_artifacts_handle_dynamic_fill_shape_tensor(tmp_path) -> None:
+    model_ir = ModelIR(name="dynamic_fill_shape_tensor")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.tensors["value"] = TensorIR(
+        name="value",
+        dtype="FLOAT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(1.5, dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=["x"],
+                outputs=["shape"],
+                options={"outType": "INT32"},
+            ),
+            OperatorIR(
+                op_type="FILL",
+                inputs=["shape", "value"],
+                outputs=["y"],
+                options={},
+            ),
+        ]
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "dynamic_fill_shape_tensor_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "_shape_list(shape)" not in model_source
+    assert "torch.full(list(x.to(dtype=torch.int64).reshape(-1))" in model_source
+    assert "dtype=torch.float32, device=x.device" in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(5, dtype=torch.float32)
+    out = cast(Any, model).forward_named(x=x)["y"]
+    assert tuple(out.shape) == (5,)
+    assert torch.equal(out, torch.full((5,), 1.5, dtype=torch.float32))
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(
+        package_dir=package_path,
+    )
+    exported_program_path = export_exported_program_from_generated_package(
+        package_dir=package_path,
+    )
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
+    assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
+
+
 def test_export_artifacts_handle_dynamic_strided_slice_max_stop_literal(tmp_path) -> None:
     model_ir = ModelIR(name="dynamic_strided_slice_max_stop_literal")
     model_ir.inputs = ["x"]
@@ -7293,6 +7721,32 @@ def test_export_pytorch_package_conv2d_same_stride2_uses_explicit_same_upper_pad
     b = model.conv_block_0.conv.bias.detach()
     expected = torch.relu(F.conv2d(F.pad(x, [0, 1, 0, 1]), w, b, stride=(2, 2), padding=(0, 0)))
     assert torch.allclose(out, expected, atol=1e-6, rtol=1e-6)
+
+
+def test_convert_flatbuffer_direct_face_liveness_outputs_pytorch_accuracy(tmp_path) -> None:
+    model_path = Path(__file__).resolve().parents[1] / "face_liveness.onnx"
+    if not model_path.exists():
+        pytest.skip("face_liveness.onnx is not available in the repository")
+
+    output_dir = tmp_path / "face_liveness_out"
+    onnx2tf.convert(
+        input_onnx_file_path=str(model_path),
+        output_folder_path=str(output_dir),
+        tflite_backend="flatbuffer_direct",
+        flatbuffer_direct_output_pytorch=True,
+        disable_model_save=True,
+        output_signaturedefs=False,
+        non_verbose=True,
+        verbosity="error",
+    )
+    package_path = output_dir / "face_liveness_pytorch"
+    report = evaluate_pytorch_package_outputs(
+        onnx_graph=onnx.load(str(model_path)),
+        package_dir=str(package_path),
+        output_report_path=str(output_dir / "face_liveness_pytorch_accuracy_report.json"),
+        num_samples=1,
+    )
+    assert report["evaluation_pass"] is True
 
 
 def test_export_dynamo_onnx_handles_static_resize_size_literal(tmp_path) -> None:
